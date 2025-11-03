@@ -223,14 +223,19 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
     }
 
     private void encodeSuccessJson(HttpChunkedResponse response, State state) {
-        response.put("{\"successful\":[");
+        response.put("{\"data\":[");
         encodeSuccessfulFilesList(response, state);
-        response.put("]}");
+        response.put("],\"meta\":{\"totalFiles\":").put(state.successfulFiles.size()).put("}}");
     }
 
     private void encodeSuccessfulFilesList(HttpChunkedResponse response, State state) {
         for (int i = 0, n = state.successfulFiles.size(); i < n; i++) {
-            response.putQuote().escapeJsonStr(state.successfulFiles.getQuick(i)).putQuote();
+            CharSequence filename = state.successfulFiles.getQuick(i);
+            response.put("{\"type\":\"file\",\"id\":\"")
+                    .escapeJsonStr(filename)
+                    .put("\",\"attributes\":{\"filename\":\"")
+                    .escapeJsonStr(filename)
+                    .put("\",\"status\":\"uploaded\"}}");
             if (i + 1 < n) {
                 response.put(",");
             }
@@ -244,16 +249,20 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                 response.status(HTTP_MULTI_STATUS, CONTENT_TYPE_JSON);
                 response.sendHeader();
                 response.sendChunk(false);
-                response.put("{\"successful\":[");
+                response.put("{\"data\":[");
                 encodeSuccessfulFilesList(response, state);
                 response.put("],\"errors\":[{\"status\":\"").put(errorCode)
-                        .put("\",\"detail\":\"").put(errorMsg);
+                        .put("\",\"title\":\"File Upload Error\",\"detail\":\"")
+                        .escapeJsonStr(errorMsg);
                 if (state.currentFilename != null && !state.currentFilename.isEmpty()) {
-                    response.put("\",\"meta\":{\"filename\":")
-                            .putQuote().escapeJsonStr(state.currentFilename).putQuote().put("}}]}");
+                    response.put("\",\"meta\":{\"filename\":\"")
+                            .escapeJsonStr(state.currentFilename).put("\"}}");
                 } else {
-                    response.put("\"}]}");
+                    response.put("}}");
                 }
+                response.put("],\"meta\":{\"totalFiles\":").put(state.successfulFiles.size() + 1)
+                        .put(",\"successfulFiles\":").put(state.successfulFiles.size())
+                        .put(",\"failedFiles\":1}}");
                 response.sendChunk(true);
                 response.done();
             } else {
@@ -262,13 +271,15 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                 response.sendHeader();
                 response.sendChunk(false);
                 response.put("{\"errors\":[{\"status\":\"").put(errorCode)
-                        .put("\",\"detail\":\"").put(errorMsg);
+                        .put("\",\"title\":\"File Upload Error\",\"detail\":\"")
+                        .escapeJsonStr(errorMsg.toString());
                 if (state.currentFilename != null && !state.currentFilename.isEmpty()) {
-                    response.put("\",\"meta\":{\"filename\":")
-                            .putQuote().escapeJsonStr(state.currentFilename).putQuote().put("}}]}");
+                    response.put("\",\"meta\":{\"filename\":\"")
+                            .escapeJsonStr(state.currentFilename).put("\"}}");
                 } else {
-                    response.put("\"}]}");
+                    response.put("}}");
                 }
+                response.put("],\"meta\":{\"totalFiles\":1,\"successfulFiles\":0,\"failedFiles\":1}}");
                 response.sendChunk(true);
                 response.shutdownWrite();
                 throw ServerDisconnectException.INSTANCE;

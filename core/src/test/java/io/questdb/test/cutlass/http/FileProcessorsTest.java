@@ -92,8 +92,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "78\r\n" +
-                                                "{\"errors\":[{\"status\":\"409\",\"detail\":\"file already exists and overwriting is disabled\",\"meta\":{\"filename\":\"x.parquet\"}}]}\r\n" +
+                                                "d0\r\n" +
+                                                "{\"errors\":[{\"status\":\"409\",\"title\":\"File Upload Error\",\"detail\":\"file already exists and overwriting is disabled\",\"meta\":{\"filename\":\"x.parquet\"}}],\"meta\":{\"totalFiles\":1,\"successfulFiles\":0,\"failedFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -129,8 +129,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "1c\r\n" +
-                                                "{\"successful\":[\"x.parquet\"]}\r\n" +
+                                                "7d\r\n" +
+                                                "{\"data\":[{\"type\":\"file\",\"id\":\"x.parquet\",\"attributes\":{\"filename\":\"x.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -169,17 +169,18 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         Assert.assertTrue("Response should contain file2.txt",
                                 response.contains("\"path\":\"" + file2JsonPath + "\""));
                         Assert.assertTrue("Response should contain file2.txt name",
-                                response.contains("\"name\":\"file2.txt\""));
+                                response.contains("\"filename\":\"file2.txt\""));
                         Assert.assertTrue("Response should contain file3",
                                 response.contains("\"path\":\"" + file3JsonPath + "\""));
                         Assert.assertTrue("Response should contain file3 name",
-                                response.contains("\"name\":\"file3\""));
+                                response.contains("\"filename\":\"file3\""));
                         Assert.assertTrue("Response should contain file1.csv",
                                 response.contains("\"path\":\"" + file1 + "\""));
                         Assert.assertTrue("Response should contain file1.csv name",
-                                response.contains("\"name\":\"" + file1 + "\""));
-
-                        int fileCount = response.split("\\{\"path\":").length - 1;
+                                response.contains("\"filename\":\"" + file1 + "\""));
+                        Assert.assertTrue("Response should start with {\"data\":[", response.startsWith("{\"data\":["));
+                        Assert.assertTrue("Response should contain totalFiles", response.contains("\"totalFiles\":3"));
+                        int fileCount = response.split("\\{\"type\":\"file\"").length - 1;
                         Assert.assertEquals("Should have 3 files", 3, fileCount);
                         testHttpClient.assertGetBinary(
                                 "/api/v1/exports?file=file1.csv",
@@ -218,7 +219,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                 responseAfterDelete.contains("\"path\":\"" + file1 + "\""));
                         Assert.assertFalse("Response should not contain deleted file3",
                                 responseAfterDelete.contains("\"path\":\"" + file3JsonPath + "\""));
-                        int fileCountAfterDelete = responseAfterDelete.split("\\{\"path\":").length - 1;
+                        int fileCountAfterDelete = responseAfterDelete.split("\"path\":").length - 1;
                         Assert.assertEquals("Should have 2 files after deletion", 2, fileCountAfterDelete);
                         testHttpClient.assertDelete(
                                 "/api/v1/exports?file=nonExists",
@@ -276,18 +277,18 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         Assert.assertTrue("Response should contain file2.txt",
                                 response.contains("\"path\":\"" + file2JsonPath + "\""));
                         Assert.assertTrue("Response should contain file2.txt name",
-                                response.contains("\"name\":\"file2.txt\""));
+                                response.contains("\"filename\":\"file2.txt\""));
                         Assert.assertTrue("Response should contain file3",
                                 response.contains("\"path\":\"" + file3JsonPath + "\""));
                         Assert.assertTrue("Response should contain file3 name",
-                                response.contains("\"name\":\"file3\""));
+                                response.contains("\"filename\":\"file3\""));
                         Assert.assertTrue("Response should contain file1.csv",
                                 response.contains("\"path\":\"" + file1 + "\""));
                         Assert.assertTrue("Response should contain file1.csv name",
-                                response.contains("\"name\":\"" + file1 + "\""));
-                        Assert.assertTrue("Response should start with [", response.startsWith("["));
-                        Assert.assertTrue("Response should end with ]", response.endsWith("]"));
-                        int fileCount = response.split("\\{\"path\":").length - 1;
+                                response.contains("\"filename\":\"" + file1 + "\""));
+                        Assert.assertTrue("Response should start with {\"data\":[", response.startsWith("{\"data\":["));
+                        Assert.assertTrue("Response should contain totalFiles", response.contains("\"totalFiles\":3"));
+                        int fileCount = response.split("\\{\"type\":\"file\"").length - 1;
                         Assert.assertEquals("Should have 3 files", 3, fileCount);
 
                         testHttpClient.assertGetBinary(
@@ -328,7 +329,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                 responseAfterDelete.contains("\"path\":\"" + file1 + "\""));
                         Assert.assertFalse("Response should not contain deleted file3",
                                 responseAfterDelete.contains("\"path\":\"" + file3JsonPath + "\""));
-                        int fileCountAfterDelete = responseAfterDelete.split("\\{\"path\":").length - 1;
+                        int fileCountAfterDelete = responseAfterDelete.split("\"path\":").length - 1;
                         Assert.assertEquals("Should have 2 files after deletion", 2, fileCountAfterDelete);
                         testHttpClient.assertDelete(
                                 "/api/v1/imports?file=nonExists",
@@ -378,8 +379,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "4f\r\n" +
-                                                "{\"errors\":[{\"status\":\"403\",\"detail\":\"path traversal not allowed in filename\"}]}\r\n" +
+                                                "a7\r\n" +
+                                                "{\"errors\":[{\"status\":\"403\",\"title\":\"File Upload Error\",\"detail\":\"path traversal not allowed in filename}}],\"meta\":{\"totalFiles\":1,\"successfulFiles\":0,\"failedFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -416,8 +417,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "1f\r\n" +
-                                                "{\"successful\":[\"test.parquet\"]}\r\n" +
+                                                "83\r\n" +
+                                                "{\"data\":[{\"type\":\"file\",\"id\":\"test.parquet\",\"attributes\":{\"filename\":\"test.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -468,8 +469,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                (Os.isWindows() ? "30\r\n" : "2e\r\n") +
-                                                (Os.isWindows() ? "{\"successful\":[\"dir\\\\dir1\\\\large_test.parquet\"]}\r\n" : "{\"successful\":[\"dir/dir1/large_test.parquet\"]}\r\n") +
+                                                (Os.isWindows() ? "a3\r\n" : "a1\r\n") +
+                                                (Os.isWindows() ? "{\"data\":[{\"type\":\"file\",\"id\":\"dir\\\\dir1\\\\large_test.parquet\",\"attributes\":{\"filename\":\"dir\\\\dir1\\\\large_test.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":1}}\r\n" : "{\"data\":[{\"type\":\"file\",\"id\":\"dir/dir1/large_test.parquet\",\"attributes\":{\"filename\":\"dir/dir1/large_test.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":1}}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -533,8 +534,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "4f\r\n" +
-                                                "{\"errors\":[{\"status\":\"403\",\"detail\":\"path traversal not allowed in filename\"}]}\r\n" +
+                                                "a7\r\n" +
+                                                "{\"errors\":[{\"status\":\"403\",\"title\":\"File Upload Error\",\"detail\":\"path traversal not allowed in filename}}],\"meta\":{\"totalFiles\":1,\"successfulFiles\":0,\"failedFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -565,8 +566,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "4e\r\n" +
-                                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"sql.copy.input.root is not configured\"}]}\r\n" +
+                                                "a6\r\n" +
+                                                "{\"errors\":[{\"status\":\"400\",\"title\":\"File Upload Error\",\"detail\":\"sql.copy.input.root is not configured}}],\"meta\":{\"totalFiles\":1,\"successfulFiles\":0,\"failedFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -605,8 +606,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                (Os.isWindows() ? "6e\r\n" : "69\r\n") +
-                                                (Os.isWindows() ? "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1\\\\x3.parquet\",\"dir1\\\\dir2\\\\x4.parquet\",\"dir3\\\\special.parquet\"]}\r\n" : "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1/x3.parquet\",\"dir1/dir2/x4.parquet\",\"dir3/❤️.parquet\"]}\r\n") +
+                                                (Os.isWindows() ? "1b2\r\n" : "0223\r\n") +
+                                                (Os.isWindows() ? "{\"data\":[{\"type\":\"file\",\"id\":\"x1.parquet\",\"attributes\":{\"filename\":\"x1.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"x2.parquet\",\"attributes\":{\"filename\":\"x2.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1\\\\x3.parquet\",\"attributes\":{\"filename\":\"dir1\\\\x3.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1\\\\dir2\\\\x4.parquet\",\"attributes\":{\"filename\":\"dir1\\\\dir2\\\\x4.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir3\\\\special.parquet\",\"attributes\":{\"filename\":\"dir3\\\\special.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":5}}\r\n" : "{\"data\":[{\"type\":\"file\",\"id\":\"x1.parquet\",\"attributes\":{\"filename\":\"x1.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"x2.parquet\",\"attributes\":{\"filename\":\"x2.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1/x3.parquet\",\"attributes\":{\"filename\":\"dir1/x3.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1/dir2/x4.parquet\",\"attributes\":{\"filename\":\"dir1/dir2/x4.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir3/❤️.parquet\",\"attributes\":{\"filename\":\"dir3/❤️.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":5}}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -617,7 +618,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         Assert.assertTrue("Response should contain dir3" + Files.SEPARATOR + expectedSpecialFile,
                                 response.contains("\"path\":\"dir3" + jsonSep + expectedSpecialFile + "\""));
                         Assert.assertTrue("Response should contain dir3" + Files.SEPARATOR + expectedSpecialFile + " name",
-                                response.contains("\"name\":\"" + expectedSpecialFile + "\""));
+                                response.contains("\"filename\":\"" + expectedSpecialFile + "\""));
                         Assert.assertTrue("Response should contain x2.parquet",
                                 response.contains("\"path\":\"x2.parquet\""));
                         Assert.assertTrue("Response should contain x1.parquet",
@@ -628,9 +629,9 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                 response.contains("\"path\":\"dir1" + jsonSep + "x3.parquet\""));
                         Assert.assertTrue("Response should contain x.parquet",
                                 response.contains("\"path\":\"x.parquet\""));
-                        Assert.assertTrue("Response should start with [", response.startsWith("["));
-                        Assert.assertTrue("Response should end with ]", response.endsWith("]"));
-                        int fileCount = response.split("\\{\"path\":").length - 1;
+                        Assert.assertTrue("Response should start with {\"data\":[", response.startsWith("{\"data\":["));
+                        Assert.assertTrue("Response should contain totalFiles", response.contains("\"totalFiles\":6"));
+                        int fileCount = response.split("\\{\"type\":\"file\"").length - 1;
                         Assert.assertEquals("Should have 6 files", 6, fileCount);
                     });
         });
@@ -673,8 +674,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "2a\r\n" +
-                                                "{\"successful\":[\"xx.parquet\",\"yy.parquet\"]}\r\n" +
+                                                "dc\r\n" +
+                                                "{\"data\":[{\"type\":\"file\",\"id\":\"xx.parquet\",\"attributes\":{\"filename\":\"xx.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"yy.parquet\",\"attributes\":{\"filename\":\"yy.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":2}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -727,8 +728,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "94\r\n" +
-                                                "{\"successful\":[\"xx.parquet\"],\"errors\":[{\"status\":\"409\",\"detail\":\"file already exists and overwriting is disabled\",\"meta\":{\"filename\":\"y.parquet\"}}]}\r\n" +
+                                                "0136\r\n" +
+                                                "{\"data\":[{\"type\":\"file\",\"id\":\"xx.parquet\",\"attributes\":{\"filename\":\"xx.parquet\",\"status\":\"uploaded\"}}],\"errors\":[{\"status\":\"409\",\"title\":\"File Upload Error\",\"detail\":\"file already exists and overwriting is disabled\",\"meta\":{\"filename\":\"y.parquet\"}}],\"meta\":{\"totalFiles\":2,\"successfulFiles\":1,\"failedFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );

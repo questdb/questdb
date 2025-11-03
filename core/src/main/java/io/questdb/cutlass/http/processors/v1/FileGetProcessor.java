@@ -290,29 +290,34 @@ public class FileGetProcessor implements HttpRequestProcessor {
                         sink.put(',');
                     }
                     state.firstFile = false;
-                    sink.put('{');
-                    sink.putAsciiQuoted("path").put(':').putQuote();
+                    state.fileCount++;
 
+                    tempSink.clear();
                     if (path.size() > rootLen) {
-                        Utf8s.utf8ZCopyEscaped(path.ptr() + rootLen + 1, path.end(), sink);
+                        Utf8s.utf8ZCopyEscaped(path.ptr() + rootLen + 1, path.end(), tempSink);
                     }
+                    Utf8s.utf8ZCopyEscaped(pUtf8NameZ, tempSink);
+
+                    sink.put("{\"type\":\"file\",\"id\":\"");
+                    sink.put(tempSink);
+                    sink.put("\",\"attributes\":{\"filename\":\"");
                     Utf8s.utf8ZCopyEscaped(pUtf8NameZ, sink);
-                    sink.putQuote().put(',');
-                    sink.putAsciiQuoted("name").put(':').putQuote();
-                    Utf8s.utf8ZCopyEscaped(pUtf8NameZ, sink);
-                    sink.putQuote().put(',');
+                    sink.put("\",\"path\":\"");
+                    sink.put(tempSink);
+                    sink.put("\",");
+
                     int oldLen = path.size();
                     path.concat(tempSink);
                     long fileSize = state.ff.length(path.$());
                     long lastModified = state.ff.getLastModified(path.$());
                     path.trimTo(oldLen);
+
                     sink.putAsciiQuoted("size").put(':').putQuote();
                     SizePrettyFunctionFactory.toSizePretty(sink, fileSize);
                     sink.putQuote().put(',');
                     sink.putAsciiQuoted("lastModified").put(':').putQuote();
                     MillsTimestampDriver.INSTANCE.append(sink, lastModified);
-                    sink.putQuote();
-                    sink.put('}');
+                    sink.putQuote().put("}}");
                 }
 
                 if (state.ff.findNext(pFind) <= 0) {
@@ -371,10 +376,10 @@ public class FileGetProcessor implements HttpRequestProcessor {
             State state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         Utf8StringSink listSink = state.sink;
-        listSink.put('[');
+        listSink.put("{\"data\":[");
         try {
             scanDirectory(root, listSink, state);
-            listSink.put(']');
+            listSink.put("],\"meta\":{\"totalFiles\":").put(state.fileCount).put("}}");
             context.simpleResponse().sendStatusJsonContent(HTTP_OK, listSink, false);
         } catch (CairoException e) {
             LOG.error().$("failed to list files: ").$(e.getFlyweightMessage()).I$();
@@ -412,6 +417,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
         FilesFacade ff;
         DirectUtf8Sequence file;
         long fileAddress = 0;
+        int fileCount = 0;
         long fileOffset;
         long fileSize;
         boolean firstFile = true;
@@ -454,6 +460,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
             findStack.clear();
             pathLenStack.clear();
             firstFile = true;
+            fileCount = 0;
             sink.clear();
         }
 
