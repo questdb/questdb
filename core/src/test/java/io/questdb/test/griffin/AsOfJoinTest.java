@@ -1751,15 +1751,15 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("INSERT INTO t1 values ('2000-02-10T19:00:00.000000Z', 7, 'a');");
 
             executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType.getTypeName());
-            execute("INSERT INTO t1 values ('2000-02-07T14:00:00.000000Z', 8, 'a');");
-            execute("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 9, 'a');");
-            execute("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 10, 'a');");
-            execute("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 10, 'c');");
-            execute("INSERT INTO t1 values ('2000-02-08T21:00:00.000000Z', 11, 'a');");
-            execute("INSERT INTO t1 values ('2000-02-09T15:00:00.000000Z', 12, 'a');");
-            execute("INSERT INTO t1 values ('2000-02-09T20:00:00.000000Z', 13, 'a');");
-            execute("INSERT INTO t1 values ('2000-02-09T20:00:00.000000Z', 13, 'c');");
-            execute("INSERT INTO t1 values ('2000-02-10T16:00:00.000000Z', 14, 'a');");
+            execute("INSERT INTO t2 values ('2000-02-07T14:00:00.000000Z', 8, 'a');");
+            execute("INSERT INTO t2 values ('2000-02-08T02:00:00.000000Z', 9, 'a');");
+            execute("INSERT INTO t2 values ('2000-02-08T02:00:00.000000Z', 10, 'a');");
+            execute("INSERT INTO t2 values ('2000-02-08T02:00:00.000000Z', 10, 'c');");
+            execute("INSERT INTO t2 values ('2000-02-08T21:00:00.000000Z', 11, 'a');");
+            execute("INSERT INTO t2 values ('2000-02-09T15:00:00.000000Z', 12, 'a');");
+            execute("INSERT INTO t2 values ('2000-02-09T20:00:00.000000Z', 13, 'a');");
+            execute("INSERT INTO t2 values ('2000-02-09T20:00:00.000000Z', 13, 'c');");
+            execute("INSERT INTO t2 values ('2000-02-10T16:00:00.000000Z', 14, 'a');");
 
             assertResultSetsMatch("t1", "t2");
         });
@@ -2898,7 +2898,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             // non-keyed join, slave supports timeframe but avoid BINARY_SEARCH hint -> should use Lt Join (full fat)
-            query = "SELECT /*+ avoid_lt_binary_search(orders md) */ * FROM t1 LT JOIN t2 TOLERANCE 2s;";
+            query = "SELECT /*+ avoid_lt_binary_search(t1 t2) */ * FROM t1 LT JOIN t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Lt Join");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
@@ -3661,7 +3661,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     );
 
                     final String sql = """
-                            SELECT /*+ ASOF_LINEAR_SEARCH(m s) */m.sym, ts
+                            SELECT /*+ ASOF_LINEAR(m s) */m.sym, ts
                             FROM dyn_master m
                             ASOF JOIN (
                                 SELECT cast(sym_str as symbol) AS sym, ts
@@ -3686,6 +3686,24 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             null,
                             false,
                             true
+                    );
+
+                    assertSql(
+                            """
+                                    QUERY PLAN
+                                    SelectedRecord
+                                        AsOf Join Light
+                                          condition: s.sym=m.sym
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: dyn_master
+                                            VirtualRecord
+                                              functions: [ts,sym_str::symbol]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: dyn_slave_src
+                                    """,
+                            "explain " + sql
                     );
                 }
         );

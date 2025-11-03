@@ -184,7 +184,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Test
     public void testArrayFilter() throws Exception {
-        Assume.assumeFalse(convertToParquet);
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
@@ -418,7 +417,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Test
     public void testHammerWorkStealing() throws Exception {
-        Assume.assumeFalse(convertToParquet);
         // Here we're stress-testing work stealing, so no shared workers and no reduce jobs.
         final int threadCount = 4;
         final int iterations = 1000;
@@ -667,7 +665,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Test
     public void testReadParquet() throws Exception {
-        Assume.assumeTrue(convertToParquet);
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
@@ -795,7 +792,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testAsyncOffloadTimeout(String query) throws Exception {
-        Assume.assumeFalse(convertToParquet);
         final int rowCount = 10 * ROW_COUNT;
         // The test is very sensitive to page frame sizes.
         Assert.assertEquals(40, rowCount / configuration.getSqlPageFrameMaxRows());
@@ -1039,7 +1035,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testParallelStressSymbol(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
-        Assume.assumeFalse(convertToParquet);
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
         WorkerPool pool = new WorkerPool(() -> workerCount);
@@ -1095,7 +1090,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testParallelStressVarchar(String query, String expected, int threadCount, int jitMode) throws Exception {
-        Assume.assumeFalse(convertToParquet);
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
         WorkerPool pool = new WorkerPool(() -> 4);

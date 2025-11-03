@@ -45,7 +45,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -59,12 +58,9 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
-import org.junit.runners.Parameterized;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Collection;
 
 public class TableBackupTest extends AbstractTest {
     private static final int ERRNO_EIO = 5;
@@ -92,7 +88,7 @@ public class TableBackupTest extends AbstractTest {
     public TableBackupTest() {
         Rnd rnd = TestUtils.generateRandom(LOG);
         isWal = rnd.nextBoolean();
-        switch (rnd.nextInt(5)) {
+        switch (rnd.nextInt(6)) {
             case 0 -> this.partitionBy = PartitionBy.HOUR;
             case 1 -> this.partitionBy = PartitionBy.MONTH;
             case 2 -> this.partitionBy = PartitionBy.DAY;
@@ -100,23 +96,6 @@ public class TableBackupTest extends AbstractTest {
             case 4 -> this.partitionBy = PartitionBy.YEAR;
             default -> this.partitionBy = PartitionBy.NONE;
         }
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.HOUR},
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.DAY},
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.WEEK},
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.MONTH},
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.YEAR},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.NONE},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.HOUR},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.DAY},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.WEEK},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.MONTH},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.YEAR}
-        });
     }
 
     public static TableToken executeCreateTableStmt(

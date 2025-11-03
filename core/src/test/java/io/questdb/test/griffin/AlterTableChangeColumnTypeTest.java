@@ -72,14 +72,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testCannotConvertToSameType() throws Exception {
-        assumeNonWal();
         assertFailure("alter table x alter column d type double", 34, "column 'd' type is already 'DOUBLE'");
     }
 
     @Test
     public void testChangeDoubleToFloat() throws Exception {
         assertMemoryLeak(() -> {
-            assumeWal();
             execute("create table x (ts timestamp, col double) timestamp(ts) partition by day wal", sqlExecutionContext);
             execute("insert into x values('2024-05-14T16:00:00.000000Z', 0.0)", sqlExecutionContext);
             execute("insert into x values('2024-05-14T16:00:01.000000Z', 0.1)", sqlExecutionContext);
@@ -126,7 +124,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testChangeFloatToDouble() throws Exception {
-        assumeWal();
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, col float) timestamp(ts) partition by day wal", sqlExecutionContext);
             execute("insert into x values('2024-05-14T16:00:00.000000Z', 0.0)", sqlExecutionContext);
@@ -514,13 +511,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testColumnDoesNotExist() throws Exception {
-        Assume.assumeTrue(!walEnabled && partitioned);
         assertFailure("alter table x alter column non_existing", 27, "column 'non_existing' does not exist in table 'x'");
     }
 
     @Test
     public void testConversionInvalidToken() throws Exception {
-        Assume.assumeTrue(!walEnabled && partitioned);
         assertFailure("alter table x alter column i type long abc", 39, "unexpected token [abc] while trying to change column type");
     }
 
@@ -825,7 +820,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testFixedSizeColumnNullableBehaviour() throws Exception {
-        assumeNonWal();
         assertMemoryLeak(() -> {
             drainWalQueue();
             final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP", "BOOLEAN", "DATE"};
@@ -887,31 +881,21 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testFixedToStrConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-            testConvertFixedToVar("string");
-        });
+        assertMemoryLeak(() -> testConvertFixedToVar("string"));
     }
 
     @Test
     public void testFixedToSymbolConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-            testConvertVarToFixed("symbol");
-        });
+        assertMemoryLeak(() -> testConvertVarToFixed("symbol"));
     }
 
     @Test
     public void testFixedToVarcharConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-            testConvertFixedToVar("varchar");
-        });
+        assertMemoryLeak(() -> testConvertFixedToVar("varchar"));
     }
 
     @Test
     public void testIntOverflowConversions() throws SqlException {
-        //assumeWal();
         execute("create table x (a long, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR" + (walEnabled ? " WAL" : " BYPASS WAL"));
         execute("insert into x(a, timestamp) values(-7178801693176412875L, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);
         drainWalQueue();
@@ -930,19 +914,16 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testNewTypeInvalid() throws Exception {
-        assumeNonWal();
         assertFailure("alter table x alter column c type abracadabra", 34, "unsupported column type: abracadabra");
     }
 
     @Test
     public void testNewTypeMissing() throws Exception {
-        assumeNonWal();
         assertFailure("alter table x alter column c type", 33, "column type expected");
     }
 
     @Test
     public void testShouldTruncateConvertedColumns() throws Exception {
-        assumeNonWal();
         assertMemoryLeak(() -> {
             // Create table with many partitions
             execute(
@@ -982,37 +963,26 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testStrToFixedConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-            testConvertVarToFixed("string");
-        });
+        assertMemoryLeak(() -> testConvertVarToFixed("string"));
     }
 
     @Test
     public void testSymbolToFixedConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-            testConvertFixedToVar("symbol");
-        });
+        assertMemoryLeak(() -> testConvertFixedToVar("symbol"));
     }
 
     @Test
     public void testTimestampConversionInvalid() throws Exception {
-        Assume.assumeTrue(!walEnabled && partitioned);
         assertFailure("alter table x alter column timestamp type long", 42, "cannot change type of designated timestamp column");
     }
 
     @Test
     public void testVarcharToFixedConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-            testConvertVarToFixed("varchar");
-        });
+        assertMemoryLeak(() -> testConvertVarToFixed("varchar"));
     }
 
     @Test
     public void testWalConversionFromVarToFixedDoesNotLeaveAuxFiles() throws Exception {
-        assumeWal();
         assertMemoryLeak(() -> {
             execute("create table x (s string, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR WAL;");
             execute("alter table x alter column s type int;");
