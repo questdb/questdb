@@ -63,16 +63,14 @@ public class LineTcpSenderV3 extends LineTcpSenderV2 implements ArrayBufferAppen
 
     @Override
     public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        if (value.isNull()) {
+            return this;
+        }
         writeFieldName(name)
                 .putAsciiInternal('=')
                 .put(LineTcpParser.ENTITY_TYPE_DECIMAL)
-                .put((byte) value.getScale());
-        if (value.isNull()) {
-            put((byte) 0); // Length (0 -> null)
-            return this;
-        }
-
-        put((byte) 32); // Length
+                .put((byte) value.getScale())
+                .put((byte) 32); // Length
         putLong(Long.reverseBytes(value.getHh()));
         putLong(Long.reverseBytes(value.getHl()));
         putLong(Long.reverseBytes(value.getLh()));

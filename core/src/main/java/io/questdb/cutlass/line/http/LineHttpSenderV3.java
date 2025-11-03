@@ -154,16 +154,15 @@ public class LineHttpSenderV3 extends LineHttpSenderV2 {
 
     @Override
     public Sender decimalColumn(CharSequence name, Decimal256 value) {
-        var request = writeFieldName(name)
-                .putAscii('=')
-                .put(LineTcpParser.ENTITY_TYPE_DECIMAL)
-                .put((byte) value.getScale());
         if (value.isNull()) {
-            request.put((byte) 0); // Length (0 -> null)
             return this;
         }
 
-        request.put((byte) 32); // Length
+        var request = writeFieldName(name)
+                .putAscii('=')
+                .put(LineTcpParser.ENTITY_TYPE_DECIMAL)
+                .put((byte) value.getScale())
+                .put((byte) 32); // Length
         request.putLong(Long.reverseBytes(value.getHh()));
         request.putLong(Long.reverseBytes(value.getHl()));
         request.putLong(Long.reverseBytes(value.getLh()));
