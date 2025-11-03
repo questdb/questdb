@@ -88,13 +88,23 @@ public class TableBackupTest extends AbstractTest {
     public TableBackupTest() {
         Rnd rnd = TestUtils.generateRandom(LOG);
         isWal = rnd.nextBoolean();
-        switch (rnd.nextInt(6)) {
-            case 0 -> this.partitionBy = PartitionBy.HOUR;
-            case 1 -> this.partitionBy = PartitionBy.MONTH;
-            case 2 -> this.partitionBy = PartitionBy.DAY;
-            case 3 -> this.partitionBy = PartitionBy.WEEK;
-            case 4 -> this.partitionBy = PartitionBy.YEAR;
-            default -> this.partitionBy = PartitionBy.NONE;
+        if (!isWal) {
+            switch (rnd.nextInt(6)) {
+                case 0 -> this.partitionBy = PartitionBy.HOUR;
+                case 1 -> this.partitionBy = PartitionBy.MONTH;
+                case 2 -> this.partitionBy = PartitionBy.DAY;
+                case 3 -> this.partitionBy = PartitionBy.WEEK;
+                case 4 -> this.partitionBy = PartitionBy.YEAR;
+                default -> this.partitionBy = PartitionBy.NONE;
+            }
+        } else {
+            switch (rnd.nextInt(5)) {
+                case 0 -> this.partitionBy = PartitionBy.HOUR;
+                case 1 -> this.partitionBy = PartitionBy.MONTH;
+                case 2 -> this.partitionBy = PartitionBy.DAY;
+                case 3 -> this.partitionBy = PartitionBy.WEEK;
+                default -> this.partitionBy = PartitionBy.YEAR;
+            }
         }
     }
 

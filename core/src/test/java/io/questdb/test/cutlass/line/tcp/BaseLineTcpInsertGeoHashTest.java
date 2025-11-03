@@ -29,33 +29,23 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
-
-@RunWith(Parameterized.class)
 abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     static final String tableName = "tracking";
     static final String targetColumnName = "geohash";
 
     private final boolean walEnabled;
 
-    public BaseLineTcpInsertGeoHashTest(WalMode walMode) {
-        this.walEnabled = (walMode == WalMode.WITH_WAL);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
-        });
+    public BaseLineTcpInsertGeoHashTest() {
+        Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
+        this.walEnabled = rnd.nextBoolean();
     }
 
     @Before
