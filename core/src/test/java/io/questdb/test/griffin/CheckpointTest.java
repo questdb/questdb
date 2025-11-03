@@ -46,7 +46,6 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.Chars;
@@ -56,6 +55,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -143,7 +143,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 return 100;
             }
         };
-        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_CB5) {
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration, MemoryTag.NATIVE_CB5) {
             @Override
             protected boolean testConnection(long fd) {
                 return false;
@@ -606,8 +606,10 @@ public class CheckpointTest extends AbstractCairoTest {
             // Dropped table should be there.
             assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
             assertSql(
-                    "ts\tname\tval\n" +
-                            "2023-09-20T12:39:01.933062Z\tfoobar\t42\n",
+                    """
+                            ts\tname\tval
+                            2023-09-20T12:39:01.933062Z\tfoobar\t42
+                            """,
                     "test;"
             );
             engine.checkpointRelease();
@@ -688,24 +690,30 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             assertSql(
-                    "in_progress\tstarted_at\n" +
-                            "false\t\n",
+                    """
+                            in_progress\tstarted_at
+                            false\t
+                            """,
                     "select * from checkpoint_status();"
             );
 
             execute("checkpoint create");
 
             assertSql(
-                    "in_progress\tstarted_at\n" +
-                            "true\t1970-01-01T00:00:00.000000Z\n",
+                    """
+                            in_progress\tstarted_at
+                            true\t1970-01-01T00:00:00.000000Z
+                            """,
                     "select * from checkpoint_status();"
             );
 
             execute("checkpoint release");
 
             assertSql(
-                    "in_progress\tstarted_at\n" +
-                            "false\t\n",
+                    """
+                            in_progress\tstarted_at
+                            false\t
+                            """,
                     "select * from checkpoint_status();"
             );
         });
@@ -971,18 +979,22 @@ public class CheckpointTest extends AbstractCairoTest {
 
             execute("checkpoint create");
 
-            final String expectedAllColumns = "a\tb\tc\n" +
-                    "JW\tC\t1\n" +
-                    "WH\tB\t2\n" +
-                    "PE\tB\t3\n";
+            final String expectedAllColumns = """
+                    a\tb\tc
+                    JW\tC\t1
+                    WH\tB\t2
+                    PE\tB\t3
+                    """;
             assertSql(expectedAllColumns, "select * from " + tableName);
 
             execute("alter table " + tableName + " drop column b");
             assertSql(
-                    "a\tc\n" +
-                            "JW\t1\n" +
-                            "WH\t2\n" +
-                            "PE\t3\n",
+                    """
+                            a\tc
+                            JW\t1
+                            WH\t2
+                            PE\t3
+                            """,
                     "select * from " + tableName
             );
 
@@ -1180,12 +1192,14 @@ public class CheckpointTest extends AbstractCairoTest {
             assertWalExistence(true, tableName, 1);
 
             assertSql(
-                    "x\tts\n" +
-                            "1\t2022-02-24T00:00:00.000000Z\n" +
-                            "2\t2022-02-24T00:00:01.000000Z\n" +
-                            "3\t2022-02-24T00:00:02.000000Z\n" +
-                            "4\t2022-02-24T00:00:03.000000Z\n" +
-                            "5\t2022-02-24T00:00:04.000000Z\n",
+                    """
+                            x\tts
+                            1\t2022-02-24T00:00:00.000000Z
+                            2\t2022-02-24T00:00:01.000000Z
+                            3\t2022-02-24T00:00:02.000000Z
+                            4\t2022-02-24T00:00:03.000000Z
+                            5\t2022-02-24T00:00:04.000000Z
+                            """,
                     tableName
             );
 
@@ -1254,14 +1268,16 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // all updates above should be applied to table
             assertSql(
-                    "x\tsym\tts\tsym2\tiii\tjjj\n" +
-                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tnull\n" +
-                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tnull\n" +
-                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tnull\n" +
-                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tnull\n" +
-                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tnull\n" +
-                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tnull\n" +
-                            "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\n",
+                    """
+                            x\tsym\tts\tsym2\tiii\tjjj
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tnull
+                            2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tnull
+                            3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tnull
+                            4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tnull
+                            5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tnull
+                            101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tnull
+                            102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42
+                            """,
                     tableName
             );
 
@@ -1286,15 +1302,17 @@ public class CheckpointTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "x\tsym\tts\tsym2\tiii\tjjj\tkkk\n" +
-                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tnull\tnull\n" +
-                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tnull\tnull\n" +
-                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tnull\tnull\n" +
-                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tnull\tnull\n" +
-                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tnull\tnull\n" +
-                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tnull\tnull\n" +
-                            "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tnull\n" +
-                            "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\n",
+                    """
+                            x\tsym\tts\tsym2\tiii\tjjj\tkkk
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tnull\tnull
+                            2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tnull\tnull
+                            3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tnull\tnull
+                            4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tnull\tnull
+                            5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tnull\tnull
+                            101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tnull\tnull
+                            102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tnull
+                            103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43
+                            """,
                     tableName
             );
 
@@ -1307,17 +1325,19 @@ public class CheckpointTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\n" +
-                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tnull\tnull\n" +
-                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tnull\tnull\n" +
-                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tnull\tnull\n" +
-                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tnull\tnull\n" +
-                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tnull\tnull\n" +
-                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tnull\tnull\tnull\n" +
-                            "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tnull\tnull\n" +
-                            "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tnull\n" +
-                            "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\n" +
-                            "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n",
+                    """
+                            x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tnull\tnull
+                            2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tnull\tnull
+                            3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tnull\tnull
+                            4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tnull\tnull
+                            5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tnull\tnull
+                            101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tnull\tnull\tnull
+                            102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tnull\tnull
+                            103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tnull
+                            104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4
+                            105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8
+                            """,
                     tableName
             );
 
@@ -1327,7 +1347,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     walWriter1.addColumn("C", ColumnType.INT);
                     walWriter1.commit();
 
-                    TableWriter.Row row = walWriter1.newRow(SqlUtil.implicitCastStrAsTimestamp("2022-02-24T06:00:00.000000Z"));
+                    TableWriter.Row row = walWriter1.newRow(MicrosFormatUtils.parseTimestamp("2022-02-24T06:00:00.000000Z"));
 
                     row.putLong(0, 777L);
                     row.putSym(1, "XXX");
@@ -1340,7 +1360,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     row.append();
                     walWriter1.commit();
 
-                    TableWriter.Row row2 = walWriter2.newRow(SqlUtil.implicitCastStrAsTimestamp("2022-02-24T06:01:00.000000Z"));
+                    TableWriter.Row row2 = walWriter2.newRow(MicrosFormatUtils.parseTimestamp("2022-02-24T06:01:00.000000Z"));
                     row2.putLong(0, 999L);
                     row2.putSym(1, "AAA");
                     row2.putSym(3, "BBB");
@@ -1354,19 +1374,21 @@ public class CheckpointTest extends AbstractCairoTest {
             }
             drainWalQueue();
             assertSql(
-                    "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\tC\n" +
-                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tnull\tnull\tnull\n" +
-                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tnull\tnull\tnull\n" +
-                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tnull\tnull\tnull\n" +
-                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tnull\tnull\tnull\n" +
-                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tnull\tnull\tnull\n" +
-                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tnull\tnull\tnull\tnull\n" +
-                            "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tnull\tnull\tnull\n" +
-                            "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tnull\tnull\n" +
-                            "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\tnull\n" +
-                            "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\tnull\n" +
-                            "777\tXXX\t2022-02-24T06:00:00.000000Z\tYYY\t0\t1\t2\t3\t42\n" +
-                            "999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tnull\n",
+                    """
+                            x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\tC
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tnull\tnull\tnull
+                            2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tnull\tnull\tnull
+                            3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tnull\tnull\tnull
+                            4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tnull\tnull\tnull
+                            5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tnull\tnull\tnull
+                            101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tnull\tnull\tnull\tnull
+                            102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tnull\tnull\tnull
+                            103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tnull\tnull
+                            104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\tnull
+                            105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\tnull
+                            777\tXXX\t2022-02-24T06:00:00.000000Z\tYYY\t0\t1\t2\t3\t42
+                            999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tnull
+                            """,
                     tableName
             );
 
@@ -1494,7 +1516,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
                         path.concat(TableUtils.META_FILE_NAME).$();
                         try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
-                            metadata.load(path.$());
+                            metadata.loadMetadata(path.$());
                             // Assert _meta contents.
 
                             Assert.assertEquals(metadata0.getColumnCount(), metadata.getColumnCount());
@@ -1518,7 +1540,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             // Assert _txn contents.
                             path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
                             try (TxReader txReader0 = tableReader.getTxFile()) {
-                                try (TxReader txReader1 = new TxReader(ff).ofRO(path.$(), metadata.getPartitionBy())) {
+                                try (TxReader txReader1 = new TxReader(ff).ofRO(path.$(), metadata.getTimestampType(), metadata.getPartitionBy())) {
                                     TableUtils.safeReadTxn(txReader1, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
                                     Assert.assertEquals(txReader0.getTxn(), txReader1.getTxn());

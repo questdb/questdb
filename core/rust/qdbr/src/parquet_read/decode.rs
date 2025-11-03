@@ -30,9 +30,7 @@ use parquet2::page::DataPageHeader;
 use parquet2::page::{split_buffer, DataPage, DictPage, Page};
 use parquet2::read::levels::get_bit_width;
 use parquet2::read::{decompress, get_page_iterator};
-use parquet2::schema::types::{
-    PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
-};
+use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::cmp;
 use std::cmp::min;
@@ -150,7 +148,13 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         let mut decoded = 0usize;
         for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
             let column_idx = column_idx as usize;
-            let mut column_type = self.columns[column_idx].column_type;
+            let mut column_type = self.columns[column_idx].column_type.ok_or_else(|| {
+                fmt_err!(
+                    InvalidType,
+                    "unknown column type, column index: {}",
+                    column_idx
+                )
+            })?;
 
             // Special case for handling symbol columns in QuestDB-created Parquet files.
             // The `read_parquet` function does not support symbol columns,
@@ -306,7 +310,13 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         let row_group_index = row_group_index as usize;
         for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
             let column_idx = column_idx as usize;
-            let column_type = self.columns[column_idx].column_type;
+            let column_type = self.columns[column_idx].column_type.ok_or_else(|| {
+                fmt_err!(
+                    InvalidType,
+                    "unknown column type, column index: {}",
+                    column_idx
+                )
+            })?;
             if column_type != to_column_type {
                 return Err(fmt_err!(
                     InvalidType,
@@ -361,7 +371,15 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         }
 
         let timestamp_column_index = timestamp_column_index as usize;
-        let column_type = self.columns[timestamp_column_index].column_type;
+        let column_type = self.columns[timestamp_column_index]
+            .column_type
+            .ok_or_else(|| {
+                fmt_err!(
+                    InvalidType,
+                    "unknown timestamp column type, column index: {}",
+                    timestamp_column_index
+                )
+            })?;
         if column_type.tag() != ColumnTypeTag::Timestamp {
             return Err(fmt_err!(
                 InvalidType,
@@ -697,45 +715,6 @@ pub fn decode_page(
         }
         (PhysicalType::Int64, logical_type, _) => {
             match (page.encoding(), dict, logical_type, column_type.tag()) {
-                (
-                    Encoding::Plain,
-                    _,
-                    Some(PrimitiveLogicalType::Timestamp {
-                        is_adjusted_to_utc: _,
-                        unit: TimeUnit::Nanoseconds | TimeUnit::Milliseconds,
-                    }),
-                    ColumnTypeTag::Timestamp,
-                ) => {
-                    if let Some(PrimitiveLogicalType::Timestamp {
-                        is_adjusted_to_utc: _,
-                        unit: ts_unit,
-                    }) = logical_type
-                    {
-                        let mut slicer = ValueConvertSlicer::<8, _, _>::new(
-                            DataPageFixedSlicer::<8>::new(values_buffer, row_count),
-                            |nano_ts, out_buff| {
-                                let ts =
-                                    unsafe { ptr::read_unaligned(nano_ts.as_ptr() as *const i64) };
-                                let ts = match ts_unit {
-                                    TimeUnit::Nanoseconds => ts / 1000,
-                                    TimeUnit::Microseconds => ts,
-                                    TimeUnit::Milliseconds => ts * 1000,
-                                };
-                                out_buff.copy_from_slice(&ts.to_le_bytes());
-                            },
-                        );
-
-                        decode_page0(
-                            page,
-                            row_lo,
-                            row_hi,
-                            &mut FixedLongColumnSink::new(&mut slicer, bufs, &LONG_NULL),
-                        )?;
-                    } else {
-                        unreachable!("Timestamp logical type must be set");
-                    }
-                    Ok(())
-                }
                 (
                     Encoding::Plain,
                     _,
@@ -1394,7 +1373,7 @@ fn append_array<T: DataPageSlicer>(
             ));
         }
         // add an optional padding
-        if max_rep_level % 2 != 0 {
+        if !max_rep_level.is_multiple_of(2) {
             data_mem.extend_from_slice(&0_u32.to_le_bytes())?;
         }
 
@@ -1528,7 +1507,7 @@ mod tests {
         let bufs = &mut ColumnChunkBuffers::new(allocator.clone());
 
         for column_index in 0..column_count {
-            let column_type = decoder.columns[column_index].column_type;
+            let column_type = decoder.columns[column_index].column_type.unwrap();
             let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
             for row_group_index in 0..row_group_count {
                 decoder
@@ -1578,7 +1557,7 @@ mod tests {
         for row_lo in 0..row_group_size - 1 {
             for row_hi in row_lo + 1..row_group_size {
                 for column_index in 0..column_count {
-                    let column_type = decoder.columns[column_index].column_type;
+                    let column_type = decoder.columns[column_index].column_type.unwrap();
                     let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
                     for row_group_index in 0..row_group_count {
                         decoder
@@ -1605,32 +1584,6 @@ mod tests {
             }
         }
     }
-
-    // #[test]
-    // fn test_decode_file() {
-    //     let file = File::open("/Users/alpel/temp/db/requests_log.parquet").unwrap();
-    //     let mut decoder = ParquetDecoder::read(file).unwrap();
-    //     let row_group_count = decoder.row_group_count as usize;
-    //     let column_count = decoder.columns.len();
-    //
-    //     for column_index in 0..column_count {
-    //         let mut col_row_count = 0usize;
-    //
-    //         let column_type = decoder.columns[column_index].typ;
-    //         for row_group_index in 0..row_group_count {
-    //             decoder
-    //                 .decode_column_chunk(row_group_index, column_index, column_type)
-    //                 .unwrap();
-    //
-    //             let ccb = &decoder.column_buffers[column_index];
-    //             assert_eq!(ccb.data_vec.len(), ccb.data_size);
-    //
-    //             col_row_count += ccb.row_count;
-    //         }
-    //
-    //         assert_eq!(col_row_count, decoder.row_count);
-    //     }
-    // }
 
     #[test]
     fn test_decode_int_long_column_v2_nulls_multi_groups() {
@@ -1990,12 +1943,12 @@ mod tests {
     }
 
     fn generate_random_unicode_string(len: usize) -> String {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
-        let len = 1 + rng.gen_range(0..len - 1);
+        let len = 1 + rng.random_range(0..len - 1);
 
         // 0x00A0..0xD7FF generates a random Unicode scalar value in a range that includes non-ASCII characters
-        let range = if rng.gen_bool(0.5) {
+        let range = if rng.random_bool(0.5) {
             0x00A0..0xD7FF
         } else {
             33..126
@@ -2003,7 +1956,7 @@ mod tests {
 
         let random_string: String = (0..len)
             .map(|_| {
-                let c = rng.gen_range(range.clone());
+                let c = rng.random_range(range.start..range.end);
                 char::from_u32(c).unwrap_or('�') // Use a replacement character for invalid values
             })
             .collect();
@@ -2012,13 +1965,13 @@ mod tests {
     }
 
     fn generate_random_binary(len: usize) -> Vec<u8> {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
-        let len = 1 + rng.gen_range(0..len - 1);
+        let len = 1 + rng.random_range(0..len - 1);
 
         let random_bin: Vec<u8> = (0..len)
             .map(|_| {
-                let u: u8 = rng.gen();
+                let u: u8 = rng.random();
                 u
             })
             .collect();

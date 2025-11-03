@@ -44,15 +44,21 @@ import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.WeakClosableObjectPool;
+import io.questdb.std.Zip;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.ENCODING_NOT_SUPPORTED;
+import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.MESSAGE_TOO_LARGE;
+
 public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
     private static final String ERROR_ID = generateErrorId();
+    // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
     private final LineWalAppender appender;
@@ -63,10 +69,13 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private final LineTcpParser parser;
     private final AdaptiveRecvBuffer recvBuffer;
     private final WeakClosableObjectPool<SymbolCache> symbolCachePool;
+    private final DirectUtf8Sink utf8Sink = new DirectUtf8Sink(16);
     int errorLine = -1;
     private Status currentStatus = Status.OK;
     private long errorId;
     private long fd = -1;
+    private long inflateStream;
+    private boolean isGzipEncoded;
     private int line = 0;
     private SecurityContext securityContext;
     private SendStatus sendStatus = SendStatus.NONE;
@@ -81,15 +90,15 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         // Response is measured in bytes some error messages can have non-ascii characters
         // approximate 1.5 bytes per character
         this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
-        this.parser = new LineTcpParser(configuration.getCairoConfiguration());
+        this.parser = new LineTcpParser();
         recvBuffer = new AdaptiveRecvBuffer(parser, MemoryTag.NATIVE_HTTP_CONN)
                 .of(initRecvBufSize, configuration.getMaxRecvBufferSize());
         this.appender = new LineWalAppender(
                 configuration.autoCreateNewColumns(),
                 configuration.isStringToCharCastAllowed(),
-                configuration.getTimestampAdapter(),
-                engine.getConfiguration().getMaxFileNameLength(),
-                configuration.getMicrosecondClock()
+                configuration.getTimestampUnit(),
+                utf8Sink,
+                engine.getConfiguration().getMaxFileNameLength()
         );
         final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
         this.ilpTudCache = new LineHttpTudCache(
@@ -106,6 +115,13 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         this.logMessageOnError = configuration.logMessageOnError();
     }
 
+    public void cleanupGzip() {
+        if (inflateStream != 0) {
+            Zip.inflateEnd(inflateStream);
+            inflateStream = 0;
+        }
+    }
+
     public void clear() {
         ilpTudCache.clear();
         recvBuffer.clear();
@@ -114,6 +130,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         errorLine = 0;
         line = 0;
         sendStatus = SendStatus.NONE;
+        cleanupGzip();
     }
 
     @Override
@@ -122,6 +139,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         Misc.free(ilpTudCache);
         Misc.free(symbolCachePool);
         Misc.free(parser);
+        Misc.free(utf8Sink);
+        cleanupGzip();
     }
 
     public void commit() {
@@ -155,6 +174,62 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     public SendStatus getSendStatus() {
         return sendStatus;
+    }
+
+    public void inflateAndParse(long lo, long hi) {
+        if (stopParse()) {
+            return;
+        }
+
+        Zip.setInput(inflateStream, lo, (int) (hi - lo));
+
+        long pp = recvBuffer.getBufPos();
+        while (Zip.availIn(inflateStream) > 0 && !stopParse()) {
+            long p = recvBuffer.getBufPos();
+            int len = (int) (recvBuffer.getBufEnd() - p);
+            int ret = Zip.inflate(inflateStream, p, len, false);
+            int newBytes = len - Zip.availOut(inflateStream);
+            if (newBytes > 0) {
+                recvBuffer.setBufPos(p + newBytes);
+            }
+
+            if (ret < 0) {
+                if (ret != Zip.Z_BUF_ERROR) {
+                    reject(ENCODING_NOT_SUPPORTED, "gzip decompression error", fd);
+                    cleanupGzip();
+                    return;
+                }
+
+                // inflate can return Z_BUF_ERROR after writing bytes once the recv buffer runs out of space
+                if (newBytes > 0) {
+                    currentStatus = processLocalBuffer();
+                    pp = recvBuffer.getBufPos();
+                    continue;
+                }
+
+                reject(MESSAGE_TOO_LARGE, "server buffer is too small", fd);
+                cleanupGzip();
+                return;
+            }
+
+            if (newBytes > 0) {
+                currentStatus = processLocalBuffer();
+                pp = recvBuffer.getBufPos();
+            }
+
+            if (ret == Zip.Z_STREAM_END) {
+                cleanupGzip();
+                break;
+            }
+        }
+
+        if (recvBuffer.getBufPos() > pp) {
+            currentStatus = processLocalBuffer();
+        }
+    }
+
+    public boolean isGzipEncoded() {
+        return isGzipEncoded;
     }
 
     public boolean isOk() {
@@ -214,6 +289,15 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         logError();
     }
 
+    public void setGzipEncoded(boolean gzipEncoded) {
+        isGzipEncoded = gzipEncoded;
+    }
+
+    public void setInflateStream(long streamAddr) {
+        assert this.inflateStream == 0;
+        this.inflateStream = streamAddr;
+    }
+
     public void setSendStatus(SendStatus sendStatus) {
         this.sendStatus = sendStatus;
     }
@@ -266,8 +350,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         final Status status;
         final LogRecord errorRec;
         error.put("commit error for table: ").put(parser.getMeasurementName());
-        if (ex instanceof CairoException) {
-            CairoException exception = (CairoException) ex;
+        if (ex instanceof CairoException exception) {
             error.put(", errno: ").put(exception.getErrno()).put(", error: ").put(exception.getFlyweightMessage());
             if (exception.isAuthorizationError()) {
                 errorRec = LOG.error();
@@ -396,7 +479,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     private void logError() {
         errorId = ERROR_COUNT.incrementAndGet();
-        LOG.info().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
+        LOG.error().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", error=").$safe(error)
                 .$(", fd=").$(fd)
                 .I$();
@@ -461,7 +544,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         INTERNAL_ERROR("internal error", 500),
         MESSAGE_TOO_LARGE("request too large", 413),
         COLUMN_ADD_ERROR("invalid", 400),
-        COMMITTED(null, 204);
+        COMMITTED(null, 204),
+        NOT_ACCEPTING_WRITES("not accepting writes", 421);
 
         private final String codeStr;
         private final int responseCode;

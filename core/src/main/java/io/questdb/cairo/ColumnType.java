@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.sql.Record;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntObjHashMap;
@@ -118,6 +119,11 @@ public final class ColumnType {
     // slightly bigger than needed to make it a power of 2
     private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(NULL) + 1.0);
     private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
+    public static final int INTERVAL_RAW = INTERVAL;
+    public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | 1 << 17;
+    public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | 1 << 18;
+    public static final int TIMESTAMP_MICRO = TIMESTAMP;
+    public static final int TIMESTAMP_NANO = 1 << 18 | TIMESTAMP;
     public static final int VARCHAR_AUX_SHL = 4;
     // column type version as written to the metadata file
     public static final int VERSION = 426;
@@ -129,6 +135,7 @@ public final class ColumnType {
     private static final int ARRAY_NDIMS_FIELD_POS = 14;
     private static final int BYTE_BITS = 8;
     private static final short[][] OVERLOAD_PRIORITY;
+    private static final int TYPE_FLAG_ARRAY_WEAK_DIMS = (1 << 19);
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
     private static final IntHashSet arrayTypeSet = new IntHashSet();
@@ -139,7 +146,7 @@ public final class ColumnType {
     private ColumnType() {
     }
 
-    public static short commonWideningType(short typeA, short typeB) {
+    public static int commonWideningType(int typeA, int typeB) {
         return (typeA == typeB && typeA != SYMBOL) ? typeA
                 : (isStringyType(typeA) && isStringyType(typeB)) ? STRING
                 : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
@@ -150,8 +157,13 @@ public final class ColumnType {
                 : ((typeB == NULL) && isCastableFromNull(typeA) && (typeA != SYMBOL)) ? typeA
 
                 // cast long and timestamp to timestamp in unions instead of longs.
-                : ((typeA == TIMESTAMP) && (typeB == LONG)) ? TIMESTAMP
-                : ((typeA == LONG) && (typeB == TIMESTAMP)) ? TIMESTAMP
+                : ((isTimestamp(typeA)) && (typeB == LONG)) ? typeA
+                : ((typeA == LONG) && (isTimestamp(typeB))) ? typeB
+                : (isTimestamp(typeA) && (isTimestamp(typeB))) ? getHigherPrecisionTimestampType(typeA, typeB)
+
+                // cast long and date to date in unions instead of longs.
+                : ((typeA == LONG) && (typeB == DATE)) ? DATE
+                : ((typeA == DATE) && (typeB == LONG)) ? DATE
 
                 // Varchars take priority over strings, but strings over most types.
                 : (typeA == VARCHAR || typeB == VARCHAR) ? VARCHAR
@@ -166,11 +178,9 @@ public final class ColumnType {
     }
 
     public static int decodeArrayDimensionality(int encodedType) {
-        if (ColumnType.isNull(encodedType)) {
-            return 0;
-        }
-        assert ColumnType.isArray(encodedType) : "typeTag of encodedType is not ARRAY";
-        return ((encodedType >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
+        final int dims = ColumnType.decodeWeakArrayDimensionality(encodedType);
+        assert dims > 0;
+        return dims;
     }
 
     /**
@@ -184,8 +194,27 @@ public final class ColumnType {
         return (short) ((encodedType >> ARRAY_ELEMTYPE_FIELD_POS) & ARRAY_ELEMTYPE_FIELD_MASK);
     }
 
+    /**
+     * Returns the number of dimensions for the given array type or -1 in case of an array with weak dimensionality,
+     * e.g. array type of bind variable.
+     */
+    public static int decodeWeakArrayDimensionality(int encodedType) {
+        if (ColumnType.isNull(encodedType)) {
+            return 0;
+        }
+        assert ColumnType.isArray(encodedType) : "typeTag of encodedType is not ARRAY";
+        if ((encodedType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0) {
+            return -1;
+        }
+        return ((encodedType >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
+    }
+
     public static boolean defaultStringImplementationIsUtf8() {
         return Chars.equals(nameOf(STRING), "VARCHAR");
+    }
+
+    public static int encodeArrayType(short elemType, int nDims) {
+        return encodeArrayType(elemType, nDims, true);
     }
 
     /**
@@ -193,26 +222,43 @@ public final class ColumnType {
      * <br>
      * The encoded type is laid out as follows:
      * <pre>
-     *     31~19      18~14       13~8           7~0
-     * +----------+----------+-----------+------------------+
-     * | Reserved |  nDims   | elemType  | ColumnType.ARRAY |
-     * +----------+----------+-----------+------------------+
-     * |          |  5 bits  |  6 bits   |      8 bits      |
-     * +----------+----------+-----------+------------------+
+     *     31~20      19        18~14       13~8           7~0
+     * +----------+----------+----------+-----------+------------------+
+     * | Reserved | WeakDims |  nDims   | elemType  | ColumnType.ARRAY |
+     * +----------+----------+----------+-----------+------------------+
+     * |          |  1 bit   |  5 bits  |  6 bits   |      8 bits      |
+     * +----------+----------+----------+-----------+------------------+
      * </pre>
+     * <p>
+     * WeakDims bit (19): When set, indicates the dimensionality is tentative and
+     * can be updated based on actual data. This is useful for PostgreSQL wire
+     * protocol where type information doesn't include array dimensions.
      *
      * @param elemType one of the supported array element type tags.
      * @param nDims    dimensionality, from 1 to {@value ARRAY_NDIMS_LIMIT}.
      */
-    public static int encodeArrayType(short elemType, int nDims) {
+    public static int encodeArrayType(int elemType, int nDims, boolean checkSupportedElementTypes) {
         assert nDims >= 1 && nDims <= ARRAY_NDIMS_LIMIT : "nDims out of range: " + nDims;
-        assert isSupportedArrayElementType(elemType) || elemType == UNDEFINED
+        assert !checkSupportedElementTypes || (isSupportedArrayElementType(elemType) || elemType == UNDEFINED)
                 : "not supported as array element type: " + nameOf(elemType);
 
         nDims--; // 0 == one dimension
         return (nDims & ARRAY_NDIMS_FIELD_MASK) << ARRAY_NDIMS_FIELD_POS
                 | (elemType & ARRAY_ELEMTYPE_FIELD_MASK) << ARRAY_ELEMTYPE_FIELD_POS
                 | ARRAY;
+    }
+
+    /**
+     * Encodes an array type with weak dimensionality. The dimensionality is still
+     * encoded but marked as tentative and can be updated based on actual data.
+     * This is useful for PostgreSQL wire protocol where type information doesn't
+     * include array dimensions.
+     * <p>
+     * The number of dimensions of this type is undefined, so the decoded number on
+     * dimensions for the returned column type will be -1.
+     */
+    public static int encodeArrayTypeWithWeakDims(short elemType, boolean checkSupportedElementTypes) {
+        return encodeArrayType(elemType, 1, checkSupportedElementTypes) | TYPE_FLAG_ARRAY_WEAK_DIMS;
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {
@@ -240,8 +286,67 @@ public final class ColumnType {
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
+    public static int getHigherPrecisionTimestampType(int left, int right) {
+        int leftPriority = getTimestampTypePriority(left);
+        int rightPriority = getTimestampTypePriority(right);
+        // Return the timestamp type with higher precision using explicit priority
+        return leftPriority >= rightPriority ? left : right;
+    }
+
+    public static TimestampDriver getTimestampDriver(int timestampType) {
+        final short tag = tagOf(timestampType);
+        // null and UNDEFINED use MicrosTimestamp
+        if (tag == NULL || tag == UNDEFINED) {
+            return MicrosTimestampDriver.INSTANCE;
+        }
+        assert tag == TIMESTAMP;
+
+        switch (timestampType) {
+            case TIMESTAMP_MICRO:
+                return MicrosTimestampDriver.INSTANCE;
+            case TIMESTAMP_NANO:
+                return NanosTimestampDriver.INSTANCE;
+            default:
+                throw new UnsupportedOperationException();
+        }
+    }
+
+    /**
+     * Determines the implicit conversion rule from the other columnTypes to the Timestamp type.
+     * <p>
+     * This conversion rule is consistent with the implementation of the
+     * {@link io.questdb.cairo.sql.Function#getTimestamp(Record)} of functions.
+     * <p>
+     * Conversion rules: <ul>
+     * <li> TIMESTAMP types: returned as-is to preserve existing precision
+     * <li> DATE types: converted to {@link #TIMESTAMP_MICRO}
+     * <li> String types (VARCHAR, STRING, SYMBOL): converted to {@link #TIMESTAMP_NANO}
+     * for maximum precision when parsing timestamp strings
+     * <li> Other types (LONG, INT, etc.): return {@link #UNDEFINED}, the caller should
+     * determine the appropriate timestamp type based on context
+     * </ul>
+     *
+     * @param type the input column type to convert
+     * @return the appropriate timestamp type for the input column type, or {@link #UNDEFINED}
+     * for numeric types where the caller should determine the timestamp type
+     */
+    public static int getTimestampType(int type) {
+        switch (tagOf(type)) {
+            case TIMESTAMP:
+                return type;
+            case VARCHAR:
+            case STRING:
+            case SYMBOL:
+                return TIMESTAMP_NANO;
+            case DATE: // Date
+                return TIMESTAMP_MICRO;
+            default: // Long, Int etc.
+                return UNDEFINED;
+        }
+    }
+
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
-        if (columnType == ColumnType.TIMESTAMP && designatedTimestamp) {
+        if (ColumnType.isTimestamp(columnType) && designatedTimestamp) {
             return 4; // 128 bit column
         }
         return pow2SizeOf(columnType);
@@ -252,6 +357,14 @@ public final class ColumnType {
      */
     public static boolean isArray(int columnType) {
         return ColumnType.tagOf(columnType) == ColumnType.ARRAY;
+    }
+
+    /**
+     * Checks if an array type has weak dimensionality, meaning the dimensionality
+     * is tentative and can be updated based on actual data.
+     */
+    public static boolean isArrayWithWeakDims(int columnType) {
+        return isArray(columnType) && (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0;
     }
 
     public static boolean isAssignableFrom(int fromType, int toType) {
@@ -272,12 +385,15 @@ public final class ColumnType {
         // For example IntFunction has getDouble() method implemented and does not need
         // additional wrap function to CAST to double.
         // This is usually case for widening conversions.
+        fromType = tagOf(fromType);
+        toType = tagOf(toType);
         return (fromType >= BYTE && toType >= BYTE && toType <= DOUBLE && fromType < toType) || fromType == NULL
                 // char can be short and short can be char for symmetry
                 || (fromType == CHAR && toType == SHORT)
                 // Same with bytes and bools
                 || (fromType == BYTE && toType == BOOLEAN)
                 || (fromType == TIMESTAMP && toType == LONG)
+                || (fromType == DATE && toType == LONG)
                 || (fromType == STRING && (toType >= BYTE && toType <= DOUBLE));
     }
 
@@ -316,7 +432,8 @@ public final class ColumnType {
             case LONG:
             case BOOLEAN:
             case BYTE:
-            case TIMESTAMP:
+            case TIMESTAMP_MICRO:
+            case TIMESTAMP_NANO:
             case DATE:
             case DOUBLE:
             case CHAR:
@@ -353,7 +470,7 @@ public final class ColumnType {
     }
 
     public static boolean isInterval(int columnType) {
-        return columnType == INTERVAL;
+        return tagOf(columnType) == INTERVAL;
     }
 
     public static boolean isNull(int columnType) {
@@ -361,7 +478,7 @@ public final class ColumnType {
     }
 
     public static boolean isParseableType(int colType) {
-        return colType == TIMESTAMP || colType == LONG256;
+        return isTimestamp(colType) || colType == LONG256;
     }
 
     public static boolean isPersisted(int columnType) {
@@ -376,7 +493,7 @@ public final class ColumnType {
         return colType == VARCHAR || colType == STRING;
     }
 
-    public static boolean isSupportedArrayElementType(short typeTag) {
+    public static boolean isSupportedArrayElementType(int typeTag) {
         return arrayTypeSet.contains(typeTag);
     }
 
@@ -393,7 +510,15 @@ public final class ColumnType {
     }
 
     public static boolean isTimestamp(int columnType) {
-        return columnType == TIMESTAMP;
+        return ColumnType.tagOf(columnType) == TIMESTAMP;
+    }
+
+    public static boolean isTimestampMicro(int timestampType) {
+        return timestampType == TIMESTAMP_MICRO;
+    }
+
+    public static boolean isTimestampNano(int timestampType) {
+        return timestampType == TIMESTAMP_NANO;
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
@@ -408,18 +533,14 @@ public final class ColumnType {
     }
 
     public static boolean isUndefined(int columnType) {
-        return columnType == UNDEFINED;
-    }
-
-    public static boolean isUnderdefined(int columnType) {
         return columnType == UNDEFINED || isUndefinedArray(columnType);
     }
 
     public static boolean isVarSize(int columnType) {
-        return columnType == STRING ||
-                columnType == BINARY ||
-                columnType == VARCHAR ||
-                tagOf(columnType) == ARRAY;
+        return columnType == STRING
+                || columnType == BINARY
+                || columnType == VARCHAR
+                || tagOf(columnType) == ARRAY;
     }
 
     public static boolean isVarchar(int columnType) {
@@ -509,10 +630,37 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
+    private static void addArrayTypeName(StringSink sink, short type) {
+        sink.clear();
+        sink.put(nameOf(type));
+        for (int d = 1; d <= ARRAY_NDIMS_LIMIT; d++) {
+            sink.put("[]");
+            int arrayType = encodeArrayType(type, d, false);
+            String name = sink.toString();
+            typeNameMap.put(arrayType, name);
+            nameTypeMap.put(name, arrayType);
+        }
+    }
+
+    private static int getTimestampTypePriority(int timestampType) {
+        assert tagOf(timestampType) == TIMESTAMP || timestampType == UNDEFINED;
+        switch (timestampType) {
+            case TIMESTAMP_MICRO:
+                return 1;
+            case TIMESTAMP_NANO:
+                return 2;
+            case UNDEFINED:
+                return 0;
+        }
+
+        return 0;
+    }
+
     private static boolean isArrayCast(int fromType, int toType) {
         return isArray(fromType) && isArray(toType)
                 && decodeArrayElementType(fromType) == decodeArrayElementType(toType)
-                && decodeArrayDimensionality(fromType) == decodeArrayDimensionality(toType);
+                && !isArrayWithWeakDims(fromType) && !isArrayWithWeakDims(toType)
+                && decodeWeakArrayDimensionality(fromType) == decodeWeakArrayDimensionality(toType);
     }
 
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
@@ -559,8 +707,10 @@ public final class ColumnType {
 
     private static boolean isNarrowingCast(int fromType, int toType) {
         return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG)))
-                || (fromType == FLOAT && toType >= BYTE && toType <= LONG)
+                || (fromType == FLOAT && ((toType >= BYTE && toType <= LONG) || toType == DATE || isTimestamp(toType)))
                 || (fromType == LONG && toType >= BYTE && toType <= INT)
+                || (fromType == DATE && toType >= BYTE && toType <= INT)
+                || (isTimestamp(fromType) && ((toType >= BYTE && toType <= INT) || toType == DATE))
                 || (fromType == INT && toType >= BYTE && toType <= SHORT)
                 || (fromType == SHORT && toType == BYTE)
                 || (fromType == CHAR && toType == BYTE)
@@ -570,7 +720,8 @@ public final class ColumnType {
                         toType == INT ||
                         toType == LONG ||
                         toType == DATE ||
-                        toType == TIMESTAMP ||
+                        toType == TIMESTAMP_MICRO ||
+                        toType == TIMESTAMP_NANO ||
                         toType == FLOAT ||
                         toType == DOUBLE ||
                         toType == CHAR ||
@@ -586,8 +737,10 @@ public final class ColumnType {
                 || (fromType == UUID && toType == STRING);
     }
 
+    // Both arrays with undefined element types and arrays with weak dimensionality are considered undefined.
     private static boolean isUndefinedArray(int columnType) {
-        return tagOf(columnType) == ARRAY && decodeArrayElementType(columnType) == UNDEFINED;
+        return tagOf(columnType) == ARRAY
+                && (decodeArrayElementType(columnType) == UNDEFINED || (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0);
     }
 
     private static boolean isVarcharCast(int fromType, int toType) {
@@ -693,7 +846,8 @@ public final class ColumnType {
         typeNameMap.put(BINARY, "BINARY");
         typeNameMap.put(DATE, "DATE");
         typeNameMap.put(PARAMETER, "PARAMETER");
-        typeNameMap.put(TIMESTAMP, "TIMESTAMP");
+        typeNameMap.put(TIMESTAMP_MICRO, "TIMESTAMP");
+        typeNameMap.put(TIMESTAMP_NANO, "TIMESTAMP_NS");
         typeNameMap.put(LONG256, "LONG256");
         typeNameMap.put(UUID, "UUID");
         typeNameMap.put(LONG128, "LONG128");
@@ -705,7 +859,9 @@ public final class ColumnType {
         typeNameMap.put(REGPROCEDURE, "regprocedure");
         typeNameMap.put(ARRAY_STRING, "text[]");
         typeNameMap.put(IPv4, "IPv4");
-        typeNameMap.put(INTERVAL, "INTERVAL");
+        typeNameMap.put(INTERVAL_RAW, "INTERVAL");
+        typeNameMap.put(INTERVAL_TIMESTAMP_MICRO, "INTERVAL");
+        typeNameMap.put(INTERVAL_TIMESTAMP_NANO, "INTERVAL");
         typeNameMap.put(NULL, "NULL");
 
 //        arrayTypeSet.add(BOOLEAN);
@@ -737,7 +893,7 @@ public final class ColumnType {
         nameTypeMap.put("binary", BINARY);
         nameTypeMap.put("date", DATE);
         nameTypeMap.put("parameter", PARAMETER);
-        nameTypeMap.put("timestamp", TIMESTAMP);
+        nameTypeMap.put("timestamp", TIMESTAMP_MICRO);
         nameTypeMap.put("cursor", CURSOR);
         nameTypeMap.put("long256", LONG256);
         nameTypeMap.put("uuid", UUID);
@@ -752,7 +908,8 @@ public final class ColumnType {
         nameTypeMap.put("regprocedure", REGPROCEDURE);
         nameTypeMap.put("text[]", ARRAY_STRING);
         nameTypeMap.put("IPv4", IPv4);
-        nameTypeMap.put("interval", INTERVAL);
+        nameTypeMap.put("interval", INTERVAL_TIMESTAMP_MICRO);
+        nameTypeMap.put("timestamp_ns", TIMESTAMP_NANO);
 
         StringSink sink = new StringSink();
         for (int b = 1; b <= GEOLONG_MAX_BITS; b++) {
@@ -841,20 +998,20 @@ public final class ColumnType {
         nonPersistedTypes.add(REGPROCEDURE);
         nonPersistedTypes.add(ARRAY_STRING);
 
-        // add array type names up to dimension limit
-        // this has to be done after we configured type bit widths
-        for (int i = 0, n = arrayTypeSet.size(); i < n; i++) {
-            short type = (short) arrayTypeSet.get(i);
-            sink.clear();
-            sink.put(nameOf(type));
-            for (int d = 1; d <= ARRAY_NDIMS_LIMIT; d++) {
-                sink.put("[]");
-                int arrayType = encodeArrayType(type, d);
-                String name = sink.toString();
-                typeNameMap.put(arrayType, name);
-                nameTypeMap.put(name, arrayType);
-            }
-        }
+        addArrayTypeName(sink, ColumnType.BOOLEAN);
+        addArrayTypeName(sink, ColumnType.BYTE);
+        addArrayTypeName(sink, ColumnType.SHORT);
+        addArrayTypeName(sink, ColumnType.INT);
+        addArrayTypeName(sink, ColumnType.LONG);
+        addArrayTypeName(sink, ColumnType.FLOAT);
+        addArrayTypeName(sink, ColumnType.DOUBLE);
+        addArrayTypeName(sink, ColumnType.LONG256);
+        addArrayTypeName(sink, ColumnType.VARCHAR);
+        addArrayTypeName(sink, ColumnType.STRING);
+        addArrayTypeName(sink, ColumnType.IPv4);
+        addArrayTypeName(sink, ColumnType.TIMESTAMP);
+        addArrayTypeName(sink, ColumnType.UUID);
+        addArrayTypeName(sink, ColumnType.DATE);
 
         sink.clear();
         for (int i = 0, n = ARRAY_NDIMS_LIMIT + 1; i < n; i++) {

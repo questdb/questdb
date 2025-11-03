@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -70,6 +71,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private final int workerCount;
 
     public AsyncGroupByNotKeyedRecordCursorFactory(
+            @NotNull CairoEngine engine,
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
@@ -105,6 +107,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             );
             if (filter != null) {
                 this.frameSequence = new PageFrameSequence<>(
+                        engine,
                         configuration,
                         messageBus,
                         atom,
@@ -115,6 +118,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 );
             } else {
                 this.frameSequence = new PageFrameSequence<>(
+                        engine,
                         configuration,
                         messageBus,
                         atom,
@@ -285,11 +289,18 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         }
     }
 
+    /**
+     * Releases resources held by this factory.
+     * <p>
+     * Frees the underlying base factory, the prepared cursor, and the frame sequence,
+     * and also frees and clears the list of group-by function instances to remove
+     * references.
+     */
     @Override
     protected void _close() {
         Misc.free(base);
         Misc.free(cursor);
         Misc.free(frameSequence);
-        Misc.freeObjList(groupByFunctions);
+        Misc.freeObjListAndClear(groupByFunctions);
     }
 }

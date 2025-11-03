@@ -36,11 +36,19 @@ import io.questdb.std.str.LPSZ;
 // Contiguous mapped with offset readable memory
 public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     private static final Log LOG = LogFactory.getLog(MemoryCMORImpl.class);
+    private final boolean bypassFdCache;
     private boolean closeFdOnClose = true;
     private long mapFileOffset;
     private long offset;
 
     public MemoryCMORImpl() {
+        super(false);
+        bypassFdCache = false;
+    }
+
+    public MemoryCMORImpl(boolean bypassFdCache) {
+        super(bypassFdCache);
+        this.bypassFdCache = bypassFdCache;
     }
 
     /**
@@ -153,7 +161,9 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     private void openFile(FilesFacade ff, LPSZ name) {
         close();
         this.ff = ff;
-        fd = TableUtils.openRO(ff, name, LOG);
+        fd = bypassFdCache
+                ? TableUtils.openRONoCache(ff, name, LOG)
+                : TableUtils.openRO(ff, name, LOG);
     }
 
     private void setSize0(long newSize) {

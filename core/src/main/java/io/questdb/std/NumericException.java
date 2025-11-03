@@ -90,6 +90,11 @@ public class NumericException extends RuntimeException implements Sinkable, Flyw
         return this;
     }
 
+    public NumericException put(CharSequence cs, int lo, int hi) {
+        message.put(cs, lo, hi);
+        return this;
+    }
+
     public NumericException put(@Nullable Utf8Sequence us) {
         message.put(us);
         return this;

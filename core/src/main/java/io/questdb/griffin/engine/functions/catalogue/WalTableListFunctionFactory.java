@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -40,6 +39,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.griffin.FunctionFactory;
@@ -296,13 +296,15 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                                 return false;
                             }
 
-                            txReader.ofRO(rootPath.$(), PartitionBy.NONE);
-                            final CairoEngine engine = sqlExecutionContext.getCairoEngine();
-                            final MillisecondClock millisecondClock = engine.getConfiguration().getMillisecondClock();
-                            final long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
-                            TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                            bufferedTxnSize = txReader.getLagTxnCount();
-                            return true;
+                            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                                txReader.ofRO(rootPath.$(), metadata.getTimestampType(), metadata.getPartitionBy());
+                                final CairoEngine engine = sqlExecutionContext.getCairoEngine();
+                                final MillisecondClock millisecondClock = engine.getConfiguration().getMillisecondClock();
+                                final long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
+                                TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                                bufferedTxnSize = txReader.getLagTxnCount();
+                                return true;
+                            }
                         } finally {
                             if (txnFd > -1) {
                                 ff.close(txnFd);

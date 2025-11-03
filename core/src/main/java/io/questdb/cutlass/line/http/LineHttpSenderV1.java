@@ -26,16 +26,24 @@ package io.questdb.cutlass.line.http;
 
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+
 public class LineHttpSenderV1 extends AbstractLineHttpSender {
 
+    @SuppressWarnings("unused")
     protected LineHttpSenderV1(String host,
                                int port,
                                String path,
@@ -48,6 +56,7 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
                                String password,
                                int maxNameLength,
                                long maxRetriesNanos,
+                               int maxBackoffMillis,
                                long minRequestThroughput,
                                long flushIntervalNanos,
                                Rnd rnd) {
@@ -63,9 +72,58 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
                 password,
                 maxNameLength,
                 maxRetriesNanos,
+                maxBackoffMillis,
                 minRequestThroughput,
                 flushIntervalNanos,
                 rnd);
+    }
+
+    protected LineHttpSenderV1(ObjList<String> hosts,
+                               IntList ports,
+                               String path,
+                               HttpClientConfiguration clientConfiguration,
+                               ClientTlsConfiguration tlsConfig,
+                               HttpClient client,
+                               int autoFlushRows,
+                               String authToken,
+                               String username,
+                               String password,
+                               int maxNameLength,
+                               long maxRetriesNanos,
+                               int maxBackoffMillis,
+                               long minRequestThroughput,
+                               long flushIntervalNanos,
+                               int currentAddressIndex,
+                               Rnd rnd) {
+        super(hosts,
+                ports,
+                path,
+                clientConfiguration,
+                tlsConfig,
+                client,
+                autoFlushRows,
+                authToken,
+                username,
+                password,
+                maxNameLength,
+                maxRetriesNanos,
+                maxBackoffMillis,
+                minRequestThroughput,
+                flushIntervalNanos,
+                currentAddressIndex,
+                rnd);
+    }
+
+    @Override
+    public void at(long timestamp, ChronoUnit unit) {
+        request.putAscii(' ').put(NanosTimestampDriver.INSTANCE.from(timestamp, unit));
+        atNow();
+    }
+
+    @Override
+    public void at(Instant timestamp) {
+        request.putAscii(' ').put(NanosTimestampDriver.INSTANCE.from(timestamp));
+        atNow();
     }
 
     @Override
@@ -113,5 +171,19 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
     @Override
     public Sender longArray(@NotNull CharSequence name, LongArray values) {
         throw new LineSenderException("current protocol version does not support long-array");
+    }
+
+    @Override
+    public Sender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
+        // micros
+        writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value, unit)).putAscii('t');
+        return this;
+    }
+
+    @Override
+    public Sender timestampColumn(CharSequence name, Instant value) {
+        // micros
+        writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value)).putAscii('t');
+        return this;
     }
 }

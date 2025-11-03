@@ -38,10 +38,12 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testConstant() throws Exception {
         assertQuery(
-                "a\tmax\n" +
-                        "a\t42\n" +
-                        "b\t42\n" +
-                        "c\t42\n",
+                """
+                        a\tmax
+                        a\t42
+                        b\t42
+                        c\t42
+                        """,
                 "select a, max('42') from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
@@ -53,10 +55,12 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testExpression() throws Exception {
         assertQuery(
-                "a\tmax\n" +
-                        "a\tcccccc\n" +
-                        "b\tcccccc\n" +
-                        "c\tcccccc\n",
+                """
+                        a\tmax
+                        a\tcccccc
+                        b\tcccccc
+                        c\tcccccc
+                        """,
                 "select a, max(concat(s, s)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
                 null,
@@ -68,10 +72,12 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGroupKeyed() throws Exception {
         assertQuery(
-                "a\tmax\n" +
-                        "a\t333\n" +
-                        "b\t333\n" +
-                        "c\t333\n",
+                """
+                        a\tmax
+                        a\t333
+                        b\t333
+                        c\t333
+                        """,
                 "select a, max(s) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('111','222','333') s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
@@ -83,8 +89,10 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGroupNotKeyed() throws Exception {
         assertQuery(
-                "max\n" +
-                        "a2\n",
+                """
+                        max
+                        a2
+                        """,
                 "select max(s) from x",
                 "create table x as (select * from (select rnd_str('a','a1','a2') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
@@ -96,8 +104,10 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGroupNotKeyedWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            String expected = "max\n" +
-                    "c\n";
+            String expected = """
+                    max
+                    c
+                    """;
             assertQueryNoLeakCheck(
                     expected,
                     "select max(s) from x",
@@ -117,10 +127,12 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testLargeStrings() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE, 128);
         assertQuery(
-                "a\tlength\n" +
-                        "a\t7439\n" +
-                        "b\t2740\n" +
-                        "c\t3504\n",
+                """
+                        a\tlength
+                        a\t7439
+                        b\t2740
+                        c\t3504
+                        """,
                 "select a, length(s) from (select a, max(s) s from x) order by a",
                 "create table x as (select rnd_symbol('a','b','c') a, rnd_str(10,10000,2) s from long_sequence(1000))",
                 null,
@@ -132,10 +144,12 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNullConstant() throws Exception {
         assertQuery(
-                "a\tmax\n" +
-                        "a\t\n" +
-                        "b\t\n" +
-                        "c\t\n",
+                """
+                        a\tmax
+                        a\t
+                        b\t
+                        c\t
+                        """,
                 "select a, max(cast(null as STRING)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
@@ -163,38 +177,42 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleKeyed() throws Exception {
         assertQuery(
-                "a\tmax\tts\n" +
-                        "a\tтри\t1970-01-01T00:00:00.000000Z\n" +
-                        "b\tтри\t1970-01-01T00:00:00.000000Z\n" +
-                        "f\tтри\t1970-01-01T00:00:00.000000Z\n" +
-                        "c\tтри\t1970-01-01T00:00:00.000000Z\n" +
-                        "e\tтри\t1970-01-01T00:00:00.000000Z\n" +
-                        "d\tедно\t1970-01-01T00:00:00.000000Z\n" +
-                        "d\tтри\t1970-01-01T00:00:05.000000Z\n" +
-                        "b\tтри\t1970-01-01T00:00:05.000000Z\n" +
-                        "a\tтри\t1970-01-01T00:00:05.000000Z\n" +
-                        "c\tтри\t1970-01-01T00:00:05.000000Z\n" +
-                        "f\tтри\t1970-01-01T00:00:05.000000Z\n" +
-                        "e\tедно\t1970-01-01T00:00:05.000000Z\n",
+                """
+                        a\tmax\tts
+                        a\tтри\t1970-01-01T00:00:00.000000Z
+                        b\tтри\t1970-01-01T00:00:00.000000Z
+                        f\tтри\t1970-01-01T00:00:00.000000Z
+                        c\tтри\t1970-01-01T00:00:00.000000Z
+                        e\tтри\t1970-01-01T00:00:00.000000Z
+                        d\tедно\t1970-01-01T00:00:00.000000Z
+                        d\tтри\t1970-01-01T00:00:05.000000Z
+                        b\tтри\t1970-01-01T00:00:05.000000Z
+                        a\tтри\t1970-01-01T00:00:05.000000Z
+                        c\tтри\t1970-01-01T00:00:05.000000Z
+                        f\tтри\t1970-01-01T00:00:05.000000Z
+                        e\tедно\t1970-01-01T00:00:05.000000Z
+                        """,
                 "select a, max(s), ts from x sample by 5s align to first observation",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('едно','две','три') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false
         );
         assertQuery(
-                "a\tmax\tts\n" +
-                        "a\tтри\t1970-01-01T00:00:00.000000Z\n" +
-                        "b\tтри\t1970-01-01T00:00:00.000000Z\n" +
-                        "c\tтри\t1970-01-01T00:00:00.000000Z\n" +
-                        "d\tедно\t1970-01-01T00:00:00.000000Z\n" +
-                        "e\tтри\t1970-01-01T00:00:00.000000Z\n" +
-                        "f\tтри\t1970-01-01T00:00:00.000000Z\n" +
-                        "a\tтри\t1970-01-01T00:00:05.000000Z\n" +
-                        "b\tтри\t1970-01-01T00:00:05.000000Z\n" +
-                        "c\tтри\t1970-01-01T00:00:05.000000Z\n" +
-                        "d\tтри\t1970-01-01T00:00:05.000000Z\n" +
-                        "e\tедно\t1970-01-01T00:00:05.000000Z\n" +
-                        "f\tтри\t1970-01-01T00:00:05.000000Z\n",
+                """
+                        a\tmax\tts
+                        a\tтри\t1970-01-01T00:00:00.000000Z
+                        b\tтри\t1970-01-01T00:00:00.000000Z
+                        c\tтри\t1970-01-01T00:00:00.000000Z
+                        d\tедно\t1970-01-01T00:00:00.000000Z
+                        e\tтри\t1970-01-01T00:00:00.000000Z
+                        f\tтри\t1970-01-01T00:00:00.000000Z
+                        a\tтри\t1970-01-01T00:00:05.000000Z
+                        b\tтри\t1970-01-01T00:00:05.000000Z
+                        c\tтри\t1970-01-01T00:00:05.000000Z
+                        d\tтри\t1970-01-01T00:00:05.000000Z
+                        e\tедно\t1970-01-01T00:00:05.000000Z
+                        f\tтри\t1970-01-01T00:00:05.000000Z
+                        """,
                 "select a, max(s), ts from x sample by 5s align to calendar order by 3, 1",
                 "ts",
                 true,

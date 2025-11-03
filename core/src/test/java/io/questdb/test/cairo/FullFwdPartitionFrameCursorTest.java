@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.MessageBusImpl;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoError;
@@ -53,8 +54,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -106,7 +107,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             long timestamp;
             final Rnd rnd = new Rnd();
             try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
-                timestamp = TimestampFormatUtils.parseTimestamp("1970-01-03T08:00:00.000Z");
+                timestamp = MicrosFormatUtils.parseTimestamp("1970-01-03T08:00:00.000Z");
 
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putInt(0, rnd.nextInt());
@@ -231,17 +232,17 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testIndexFailAtRuntimeByYear1v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "a.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "a.v", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByYear2v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "b.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "b.v", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByYear3v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "c.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test
@@ -541,17 +542,17 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testParallelIndexFailAtRuntimeByYear1v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "a.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "a.v", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByYear2v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "b.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "b.v", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByYear3v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "c.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test
@@ -939,17 +940,17 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolIndexReadByDayAfterAlterSparse() throws Exception {
-        testSymbolIndexReadAfterAlter(PartitionBy.DAY, Timestamps.DAY_MICROS * 2, 3, 10);
+        testSymbolIndexReadAfterAlter(PartitionBy.DAY, Micros.DAY_MICROS * 2, 3, 10);
     }
 
     @Test
     public void testSymbolIndexReadByDayAfterColumnAddAndAlterSparse() throws Exception {
-        testSymbolIndexReadColumnAddAndAlter(PartitionBy.DAY, Timestamps.DAY_MICROS * 2, 3, 10);
+        testSymbolIndexReadColumnAddAndAlter(PartitionBy.DAY, Micros.DAY_MICROS * 2, 3, 10);
     }
 
     @Test
     public void testSymbolIndexReadByDayAfterColumnAddAndAlterSparse2() throws Exception {
-        testSymbolIndexReadColumnAddAndAlter(PartitionBy.DAY, (long) (Timestamps.DAY_MICROS * 1.5), 3, 30);
+        testSymbolIndexReadColumnAddAndAlter(PartitionBy.DAY, (long) (Micros.DAY_MICROS * 1.5), 3, 30);
     }
 
     @Test
@@ -964,7 +965,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolIndexReadByMonthAfterColumnAddAndAlterSparse() throws Exception {
-        testSymbolIndexReadColumnAddAndAlter(PartitionBy.MONTH, (long) ((Timestamps.DAY_MICROS * 1.5) * 30), 2, 40);
+        testSymbolIndexReadColumnAddAndAlter(PartitionBy.MONTH, (long) ((Micros.DAY_MICROS * 1.5) * 30), 2, 40);
     }
 
     @Test
@@ -1252,6 +1253,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testIndexFailureAtRuntime(int partitionBy, long increment, boolean empty, String fileUnderAttack, int expectedPartitionCount) throws Exception {
+        setProperty(PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, "true");
         assertMemoryLeak(() -> {
             int N = 10000;
             int S = 512;
@@ -1585,6 +1587,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testParallelIndexFailureAtRuntime(int partitionBy, long increment, boolean empty, String fileUnderAttack, int expectedPartitionCount) throws Exception {
+        setProperty(PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, "true");
         assertMemoryLeak(() -> {
             int N = 10000;
             int S = 512;

@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
@@ -67,12 +68,15 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
             boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
+            char rowsLoUnit,
             int rowsLoExprPos,
             long rowsHi,
+            char rowsHiUnit,
             int rowsHiExprPos,
             int exclusionKind,
             int exclusionKindPos,
             int timestampIndex,
+            int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
     ) {
@@ -99,6 +103,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public int getIntervalFunctionType() {
+        return ColumnType.INTERVAL_TIMESTAMP_MICRO;
+    }
+
+    @Override
     public int getJitMode() {
         return 0;
     }
@@ -109,8 +118,18 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public long getNow() {
+    public long getNanosecondTimestamp() {
         return 0L;
+    }
+
+    @Override
+    public long getNow(int timestampType) {
+        return 0L;
+    }
+
+    @Override
+    public int getNowTimestampType() {
+        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override
@@ -154,16 +173,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public boolean isCacheHit() {
-        return false;
-    }
-
-    @Override
-    public boolean isColumnPreTouchEnabled() {
-        return false;
-    }
-
-    @Override
-    public boolean isColumnPreTouchEnabledOverride() {
         return false;
     }
 
@@ -226,11 +235,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
-    }
-
-    @Override
-    public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
+    public void setIntervalFunctionType(int intervalFunctionType) {
     }
 
     @Override
@@ -238,7 +243,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void setNowAndFixClock(long now) {
+    public void setNowAndFixClock(long now, int nowTimestampType) {
     }
 
     @Override

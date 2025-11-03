@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -39,12 +41,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
-
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
     @Override
@@ -63,13 +63,15 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         final Function timestampFunc = args.getQuick(0);
         final Function timezoneFunc = args.getQuick(1);
         final int timezonePos = argPositions.getQuick(1);
+        int timestampType = ColumnType.getTimestampType(timestampFunc.getType());
+        timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
 
         if (timezoneFunc.isConstant()) {
-            return toTimezoneConstFunction(timestampFunc, timezoneFunc, timezonePos);
+            return toTimezoneConstFunction(timestampFunc, timezoneFunc, timezonePos, timestampType);
         } else if (timezoneFunc.isRuntimeConstant()) {
-            return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos);
+            return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos, timestampType);
         } else {
-            return new Func(timestampFunc, timezoneFunc);
+            return new Func(timestampFunc, timezoneFunc, timestampType);
         }
     }
 
@@ -77,19 +79,22 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
     private static TimestampFunction toTimezoneConstFunction(
             Function timestampFunc,
             Function timezoneFunc,
-            int timezonePos
+            int timezonePos,
+            int timestampType
     ) throws SqlException {
         final CharSequence tz = timezoneFunc.getStrA(null);
         if (tz != null) {
+            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
             final int hi = tz.length();
-            final long l = Timestamps.parseOffset(tz, 0, hi);
+            final long l = Dates.parseOffset(tz, 0, hi);
             if (l == Long.MIN_VALUE) {
                 try {
                     return new ConstRulesFunc(
                             timestampFunc,
-                            TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                                    Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
-                            )
+                            DateLocaleFactory.EN_LOCALE.getZoneRules(
+                                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
+                            ),
+                            timestampType
                     );
                 } catch (NumericException e) {
                     Misc.free(timestampFunc);
@@ -98,7 +103,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
             } else {
                 return new OffsetTimestampFunction(
                         timestampFunc,
-                        Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS
+                        timestampDriver.fromMinutes(Numbers.decodeLowInt(l)),
+                        timestampType
                 );
             }
         }
@@ -109,7 +115,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         private final Function timestampFunc;
         private final TimeZoneRules tzRules;
 
-        public ConstRulesFunc(Function timestampFunc, TimeZoneRules tzRules) {
+        public ConstRulesFunc(Function timestampFunc, TimeZoneRules tzRules, int timestampType) {
+            super(timestampType);
             this.timestampFunc = timestampFunc;
             this.tzRules = tzRules;
         }
@@ -135,7 +142,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         private final Function timestampFunc;
         private final Function timezoneFunc;
 
-        public Func(Function timestampFunc, Function timezoneFunc) {
+        public Func(Function timestampFunc, Function timezoneFunc, int timestampType) {
+            super(timestampType);
             this.timestampFunc = timestampFunc;
             this.timezoneFunc = timezoneFunc;
         }
@@ -160,7 +168,7 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
             final long timestampValue = timestampFunc.getTimestamp(rec);
             try {
                 final CharSequence tz = timezoneFunc.getStrA(rec);
-                return tz != null ? Timestamps.toTimezone(timestampValue, TimestampFormatUtils.EN_LOCALE, tz) : timestampValue;
+                return tz != null ? timestampDriver.toTimezone(timestampValue, DateLocaleFactory.EN_LOCALE, tz) : timestampValue;
             } catch (NumericException e) {
                 return timestampValue;
             }
@@ -174,7 +182,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         private long tzOffset;
         private TimeZoneRules tzRules;
 
-        public RuntimeConstFunc(Function timestampFunc, Function timezoneFunc, int timezonePos) {
+        public RuntimeConstFunc(Function timestampFunc, Function timezoneFunc, int timezonePos, int timestampType) {
+            super(timestampType);
             this.timestampFunc = timestampFunc;
             this.timezoneFunc = timezoneFunc;
             this.timezonePos = timezonePos;
@@ -214,18 +223,18 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
             }
 
             final int hi = tz.length();
-            final long l = Timestamps.parseOffset(tz, 0, hi);
+            final long l = Dates.parseOffset(tz, 0, hi);
             if (l == Long.MIN_VALUE) {
                 try {
-                    tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                            Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                    tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                            Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
                     );
                     tzOffset = 0;
                 } catch (NumericException e) {
                     throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
                 }
             } else {
-                tzOffset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
+                tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                 tzRules = null;
             }
         }

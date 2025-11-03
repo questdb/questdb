@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
@@ -42,6 +43,7 @@ import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -49,6 +51,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8String;
 
 public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
+    private static final DummyPrincipalContext DUMMY_CONTEXT = new DummyPrincipalContext();
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
@@ -88,7 +91,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             this.scheduler = scheduler;
             this.metrics = configuration.getMetrics();
             this.milliClock = configuration.getMillisecondClock();
-            parser = new LineTcpParser(configuration.getCairoConfiguration());
+            parser = new LineTcpParser();
             recvBuffer = new AdaptiveRecvBuffer(parser, MemoryTag.NATIVE_ILP_RSS);
             this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
             clear();
@@ -242,9 +245,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     assert authenticator.isAuthenticated();
                     assert securityContext == DenyAllSecurityContext.INSTANCE;
                     securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                            authenticator.getPrincipal(),
-                            authenticator.getAuthType(),
-                            SecurityContextFactory.ILP
+                            authenticator, SecurityContextFactory.ILP
                     );
                     try {
                         securityContext.checkEntityEnabled();
@@ -308,9 +309,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             // when security context has not been set by anything else (subclass) we assume
             // this is an authenticated, anonymous user
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                    null,
-                    SecurityContext.AUTH_TYPE_NONE,
-                    SecurityContextFactory.ILP
+                    DUMMY_CONTEXT, SecurityContextFactory.ILP
             );
             securityContext.authorizeLineTcp();
         }
@@ -424,5 +423,22 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     public enum IOContextResult {
         NEEDS_READ, NEEDS_WRITE, QUEUE_FULL, NEEDS_DISCONNECT
+    }
+
+    private static class DummyPrincipalContext implements PrincipalContext {
+        @Override
+        public byte getAuthType() {
+            return SecurityContext.AUTH_TYPE_NONE;
+        }
+
+        @Override
+        public ReadOnlyObjList<CharSequence> getGroups() {
+            return null;
+        }
+
+        @Override
+        public CharSequence getPrincipal() {
+            return null;
+        }
     }
 }

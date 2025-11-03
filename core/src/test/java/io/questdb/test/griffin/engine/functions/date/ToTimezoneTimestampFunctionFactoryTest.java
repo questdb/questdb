@@ -26,11 +26,30 @@ package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
+
+    public ToTimezoneTimestampFunctionFactoryTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Test
     public void testAreaName() throws Exception {
@@ -184,9 +203,9 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarInvalidTimezone() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "to_timezone\n" +
-                        "2020-03-12T15:30:00.000000Z\n",
-                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select 'XU' zone)"
+                replaceTimestampSuffix("to_timezone\n" +
+                        "2020-03-12T15:30:00.000000Z\n", timestampType.getTypeName()),
+                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as " + timestampType.getTypeName() + "), zone) from (select 'XU' zone)"
         ));
     }
 
@@ -194,9 +213,9 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
     public void testVarNullTimezone() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertExceptionNoLeakCheck("select to_timezone(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select null zone)");
+                assertExceptionNoLeakCheck("select to_timezone(cast('2020-03-12T15:30:00.000000Z' as " + timestampType.getTypeName() + "), zone) from (select null zone)");
             } catch (SqlException e) {
-                Assert.assertEquals(69, e.getPosition());
+                Assert.assertEquals(timestampType == TestTimestampType.MICRO ? 69 : 72, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "timezone must not be null");
             }
         });
@@ -205,9 +224,9 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarTimezone() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "to_timezone\n" +
-                        "2020-03-12T07:50:00.000000Z\n",
-                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select '-07:40' zone)"
+                replaceTimestampSuffix("to_timezone\n" +
+                        "2020-03-12T07:50:00.000000Z\n", timestampType.getTypeName()),
+                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as " + timestampType.getTypeName() + "), zone) from (select '-07:40' zone)"
         ));
     }
 
@@ -226,6 +245,8 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
             String timestamp,
             String timeZone
     ) throws SqlException {
+        expected = replaceTimestampSuffix(expected, timestampType.getTypeName());
+        timestamp = replaceTimestampSuffix(timestamp, timestampType.getTypeName());
         assertSql(
                 expected,
                 "select to_timezone('" +

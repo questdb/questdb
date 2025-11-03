@@ -89,6 +89,11 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
     }
 
     @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public void setDouble(MapValue mapValue, double value) {
         mapValue.putDouble(valueIndex, value);
     }

@@ -117,7 +117,23 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
         );
         assertSqlWithTypes(
                 "greatest\n2020-09-11T20:00:00.000000Z:TIMESTAMP\n",
-                "select greatest('2020-09-10T20:00:00.000000Z'::timestamp, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000Z'::timestamp)"
+                "select greatest('2020-09-10T20:00:00.000000Z'::timestamp, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000Z'::timestamp, null)"
+        );
+        assertSqlWithTypes(
+                "greatest\n2020-09-11T20:00:00.000000789Z:TIMESTAMP_NS\n",
+                "select greatest('2020-09-10T20:00:00.000000123Z'::timestamp_ns, '2020-09-10T20:01:00.000000123Z'::timestamp_ns, '2020-09-11T20:00:00.000000789Z'::timestamp_ns, null)"
+        );
+        assertSqlWithTypes(
+                "greatest\n2020-09-11T20:00:00.000000789Z:TIMESTAMP_NS\n",
+                "select greatest('2020-09-10T20:00:00.000Z'::date, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000789Z'::timestamp_ns, null)"
+        );
+        assertSqlWithTypes(
+                "greatest\n2020-09-11T20:00:00.000000789Z:TIMESTAMP_NS\n",
+                "select greatest('2020-09-10T20:00:00.000Z'::date, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000789Z'::timestamp_ns, null, 123456789L)"
+        );
+        assertSqlWithTypes(
+                "greatest\n2020-09-11T20:00:00.000000Z:TIMESTAMP\n",
+                "select greatest('2020-09-10T20:00:00.000Z'::date, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000Z'::timestamp, null, 123456789L)"
         );
     }
 

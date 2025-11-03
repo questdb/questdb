@@ -32,6 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class InsertCastTest extends AbstractCairoTest {
@@ -258,6 +259,30 @@ public class InsertCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastCharTimestampNSFunc() throws Exception {
+        assertMemoryLeak(() -> assertCharFunc(
+                "timestamp_ns",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000005Z\n" +
+                        "1970-01-01T00:00:00.000000003Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\n"
+        ));
+    }
+
+    @Test
+    public void testCastCharTimestampNSTab() throws Exception {
+        assertMemoryLeak(() -> assertCharTab(
+                "timestamp_ns",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000005Z\n" +
+                        "1970-01-01T00:00:00.000000003Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\n" +
+                        "1970-01-01T00:00:00.000000007Z\n" +
+                        "1970-01-01T00:00:00.000000000Z\n"
+        ));
+    }
+
+    @Test
     public void testCastCharTimestampTab() throws Exception {
         assertMemoryLeak(() -> assertCharTab(
                 "timestamp",
@@ -475,6 +500,28 @@ public class InsertCastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000004Z\n" +
                         "1970-01-01T00:00:00.000007Z\n" +
                         "1970-01-01T00:00:00.000001Z\n"
+        ));
+    }
+
+    @Test
+    public void testCastCharToTimestampNSBind() throws Exception {
+        // this is internal widening cast
+        assertMemoryLeak(() -> assertCharBind(
+                "timestamp_ns",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000000Z\n" +
+                        "1970-01-01T00:00:00.000000003Z\n"
+        ));
+    }
+
+    @Test
+    public void testCastCharToTimestampNSLit() throws Exception {
+        assertMemoryLeak(() -> assertCharLit(
+                "timestamp_ns",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000004Z\n" +
+                        "1970-01-01T00:00:00.000000007Z\n" +
+                        "1970-01-01T00:00:00.000000001Z\n"
         ));
     }
 
@@ -849,6 +896,19 @@ public class InsertCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastStrTimestampNSTab() throws Exception {
+        assertMemoryLeak(() -> assertStrTab(
+                "timestamp_ns",
+                "a\tb\n" +
+                        "1970-01-01T00:00:00.000000076Z\t76\n" +
+                        "1970-01-01T00:00:00.000000102Z\t102\n" +
+                        "1970-01-01T00:00:00.000000027Z\t27\n" +
+                        "1970-01-01T00:00:00.000000087Z\t87\n" +
+                        "1970-01-01T00:00:00.000000079Z\t79\n"
+        ));
+    }
+
+    @Test
     public void testCastStrTimestampTab() throws Exception {
         assertMemoryLeak(() -> assertStrTab(
                 "timestamp",
@@ -1184,6 +1244,80 @@ public class InsertCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastStrToTimestampLitAsTimestampNS() throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            execute("create table y(a " + "timestamp_ns" + ");");
+            // execute insert statement for each value of reference table
+            execute("insert into y values ('2022-01-01T00:00:00.000045678Z');");
+            execute("insert into y values ('2222-01-01T00:00:00.000076543Z');");
+            try {
+                execute("insert into y values ('c')");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+            }
+            execute("insert into y values ('2222-01-01T00:00:00.000124987Z');");
+            assertSql(
+                    "a\n" +
+                            "2022-01-01T00:00:00.000045678Z\n" +
+                            "2222-01-01T00:00:00.000076543Z\n" +
+                            "2222-01-01T00:00:00.000124987Z\n",
+                    "y"
+            );
+        });
+    }
+
+    @Test
+    @Ignore("todo wait BindVariableService support timestamp_ns type")
+    public void testCastStrToTimestampNSBind() throws Exception {
+        assertMemoryLeak(() -> {
+            // insert table
+            execute("create table y(a timestamp_ns);");
+            // execute insert statement for each value of reference table
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
+            ) {
+                bindVariableService.setStr(0, "2012-04-11T10:45:11");
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setStr(0, "2012-04-11T10:45:11.344999123");
+                insert.execute(sqlExecutionContext);
+
+                bindVariableService.setStr(0, null);
+                insert.execute(sqlExecutionContext);
+
+                try {
+                    bindVariableService.setStr(0, "iabc");
+                    insert.execute(sqlExecutionContext);
+                    Assert.fail();
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                }
+            }
+            assertSql(
+                    "a\n" +
+                            "2012-04-11T10:45:11.000000000Z\n" +
+                            "2012-04-11T10:45:11.344999123Z\n" +
+                            "\n",
+                    "y"
+            );
+        });
+    }
+
+    @Test
+    public void testCastStrToTimestampNSLit() throws Exception {
+        assertMemoryLeak(() -> assertStrLit(
+                "timestamp_ns",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000045Z\n" +
+                        "1970-01-01T00:00:00.000000076Z\n" +
+                        "1970-01-01T00:00:00.000000124Z\n"
+        ));
+    }
+
+    @Test
     public void testCastTimestampToByteBind() throws Exception {
         assertMemoryLeak(() -> assertTimestampBind(
                 "byte",
@@ -1290,9 +1424,36 @@ public class InsertCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastVarcharToDesignatedTimestampNS() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab(d string, ts timestamp_ns) timestamp(ts) partition by day");
+            execute("insert into tab values ('string', '2000'::string), ('varchar', '2000'::varchar);");
+            assertSql(
+                    "d\tts\n" +
+                            "string\t2000-01-01T00:00:00.000000000Z\n" +
+                            "varchar\t2000-01-01T00:00:00.000000000Z\n",
+                    "select * from tab order by d"
+            );
+        });
+    }
+
+    @Test
     public void testInsertNullDateIntoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x(ts timestamp)");
+            execute("insert into x values (cast(null as date))");
+            assertSql(
+                    "ts\n" +
+                            "\n",
+                    "x"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertNullDateIntoTimestampNS() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x(ts timestamp_ns)");
             execute("insert into x values (cast(null as date))");
             assertSql(
                     "ts\n" +
@@ -1316,9 +1477,35 @@ public class InsertCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullStringToTimestampNS() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab(ts timestamp_ns) timestamp(ts)");
+            try {
+                execute("insert into tab values(null::string)");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "designated timestamp column cannot be NULL");
+            }
+        });
+    }
+
+    @Test
     public void testNullVarcharToTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab(ts timestamp) timestamp(ts)");
+            try {
+                execute("insert into tab values(null::varchar)");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "designated timestamp column cannot be NULL");
+            }
+        });
+    }
+
+    @Test
+    public void testNullVarcharToTimestamp_ns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab(ts timestamp_ns) timestamp(ts)");
             try {
                 execute("insert into tab values(null::varchar)");
                 Assert.fail();
@@ -1583,7 +1770,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 SqlCompiler compiler = engine.getSqlCompiler();
                 InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
         ) {
-            bindVariableService.setTimestamp(0, 8); // compatible with everything
+            bindVariableService.setTimestamp(0, 8L); // compatible with everything
             insert.execute(sqlExecutionContext);
 
             bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
@@ -1607,7 +1794,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 SqlCompiler compiler = engine.getSqlCompiler();
                 InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
         ) {
-            bindVariableService.setTimestamp(0, 8); // compatible with everything
+            bindVariableService.setTimestamp(0, 8L); // compatible with everything
             insert.execute(sqlExecutionContext);
 
             bindVariableService.setTimestamp(0, Numbers.LONG_NULL);

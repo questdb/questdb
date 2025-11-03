@@ -178,6 +178,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean recordCursorSupportsLongTopK(int columnIndex) {
+        return base.recordCursorSupportsLongTopK(columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }
@@ -395,6 +400,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public void close() {
             baseCursor = Misc.free(baseCursor);
+        }
+
+        @Override
+        public BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
+            return baseCursor.getIndexReaderForCurrentFrame(columnCrossIndex.getQuick(columnIndex), direction);
         }
 
         @Override

@@ -33,9 +33,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
     private static final int EVM_OPERATION_ID = 2;
     protected final LongMatrix pendingEvents = new LongMatrix(3);
     private final Epoll epoll;
-    // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1);
-    // id 0 is reserved for operations on the server fd
-    private long idSeq = 1;
+    private boolean pendingAccept;
 
     public IODispatcherLinux(
             IODispatcherConfiguration configuration,
@@ -53,10 +51,6 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         LOG.info().$("closed").$();
     }
 
-    private static boolean isEventId(long id) {
-        return (id & 1) == 1;
-    }
-
     private void doDisconnect(C context, long id, int reason) {
         final SuspendEvent suspendEvent = context.getSuspendEvent();
         if (suspendEvent != null) {
@@ -69,7 +63,8 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                 final long eventId = pendingEvents.get(eventRow, EVM_ID);
                 if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
                     LOG.critical().$("internal error: epoll_ctl remove suspend event failure [eventId=").$(eventId)
-                            .$(", err=").$(nf.errno()).I$();
+                            .$(", err=").$(nf.errno())
+                            .I$();
                 }
                 pendingEvents.deleteRow(eventRow);
             }
@@ -86,7 +81,8 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             pending.set(i, OPM_OPERATION, operation);
             if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_ADD, epollOp(operation, context)) < 0) {
                 LOG.critical().$("internal error: epoll_ctl failure [id=").$(id)
-                        .$(", err=").$(nf.errno()).I$();
+                        .$(", err=").$(nf.errno())
+                        .I$();
             }
         }
     }
@@ -176,14 +172,6 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         pendingEvents.deleteRow(eventsRow);
     }
 
-    private long nextEventId() {
-        return (idSeq++ << 1) + 1;
-    }
-
-    private long nextOpId() {
-        return idSeq++ << 1;
-    }
-
     private void processHeartbeats(int watermark, long timestamp) {
         int count = 0;
         for (int i = 0; i < watermark && pending.get(i, OPM_HEARTBEAT_TIMESTAMP) < timestamp; i++, count++) {
@@ -194,7 +182,8 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             final long opId = pending.get(i, OPM_ID);
             if (epoll.control(fd, opId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
                 LOG.critical().$("internal error: epoll_ctl remove operation failure [id=").$(opId)
-                        .$(", err=").$(nf.errno()).I$();
+                        .$(", err=").$(nf.errno())
+                        .I$();
             } else {
                 context.setHeartbeatId(opId);
                 publishOperation(IOOperation.HEARTBEAT, context);
@@ -209,7 +198,8 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
                 LOG.debug().$("published heartbeat [fd=").$(fd)
                         .$(", op=").$(operation)
-                        .$(", id=").$(opId).I$();
+                        .$(", id=").$(opId)
+                        .I$();
             }
 
             final SuspendEvent suspendEvent = context.getSuspendEvent();
@@ -222,7 +212,8 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                     final long eventId = pendingEvents.get(eventRow, EVM_ID);
                     if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
                         LOG.critical().$("internal error: epoll_ctl remove suspend event failure [eventId=").$(eventId)
-                                .$(", err=").$(nf.errno()).I$();
+                                .$(", err=").$(nf.errno())
+                                .I$();
                     }
                     pendingEvents.deleteRow(eventRow);
                 }
@@ -262,7 +253,10 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
                 int heartbeatRow = pendingHeartbeats.binarySearch(srcOpId, OPM_ID);
                 if (heartbeatRow < 0) {
-                    continue; // The connection is already closed.
+                    LOG.info().$("could not find heartbeat, connection must be already closed [fd=").$(fd)
+                            .$(", srcId=").$(srcOpId)
+                            .I$();
+                    continue;
                 } else {
                     epollCmd = EpollAccessor.EPOLL_CTL_ADD;
                     operation = (int) pendingHeartbeats.get(heartbeatRow, OPM_OPERATION);
@@ -270,7 +264,8 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                     LOG.debug().$("processing heartbeat registration [fd=").$(fd)
                             .$(", op=").$(operation)
                             .$(", srcId=").$(srcOpId)
-                            .$(", id=").$(opId).I$();
+                            .$(", id=").$(opId)
+                            .I$();
 
                     int r = pending.addRow();
                     pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(heartbeatRow, OPM_CREATE_TIMESTAMP));
@@ -290,7 +285,8 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
                 LOG.debug().$("processing registration [fd=").$(fd)
                         .$(", op=").$(operation)
-                        .$(", id=").$(opId).I$();
+                        .$(", id=").$(opId)
+                        .I$();
 
                 int opRow = pending.addRow();
                 pending.set(opRow, OPM_CREATE_TIMESTAMP, timestamp);
@@ -310,7 +306,8 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                         .$(", op=").$(operation)
                         .$(", eventId=").$(eventId)
                         .$(", suspendedOpId=").$(opId)
-                        .$(", deadline=").$(suspendEvent.getDeadline()).I$();
+                        .$(", deadline=").$(suspendEvent.getDeadline())
+                        .I$();
 
                 int eventRow = pendingEvents.addRow();
                 pendingEvents.set(eventRow, EVM_ID, eventId);
@@ -350,7 +347,8 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             assert suspendEvent != null;
             if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
                 LOG.critical().$("internal error: epoll_ctl remove suspend event failure [eventId=").$(eventId)
-                        .$(", err=").$(nf.errno()).I$();
+                        .$(", err=").$(nf.errno())
+                        .I$();
             }
             // Next, resume the original operation and close the event.
             resumeOperation(context, opId, operation);
@@ -361,7 +359,8 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
     private void rearmEpoll(C context, long id, int operation) {
         if (epoll.control(context.getFd(), id, EpollAccessor.EPOLL_CTL_MOD, epollOp(operation, context)) < 0) {
             LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(id)
-                    .$(", err=").$(nf.errno()).I$();
+                    .$(", err=").$(nf.errno())
+                    .I$();
         }
     }
 
@@ -369,11 +368,6 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         // to resume a socket operation, we simply re-arm epoll
         rearmEpoll(context, id, operation);
         context.clearSuspendEvent();
-    }
-
-    @Override
-    protected void pendingAdded(int index) {
-        pending.set(index, OPM_ID, nextOpId());
     }
 
     @Override
@@ -388,34 +382,39 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         //  we should see if we can stay inside of this method until we have a completely idle iteration
         //  at the same time we should hog this thread in case we are always 'useful', we can probably
         //  introduce a loop count after which we always exit
-        boolean useful = false;
 
         final long timestamp = clock.getTicks();
-        processDisconnects(timestamp);
+        boolean useful = processDisconnects(timestamp);
         final int n = epoll.poll();
         int watermark = pending.size();
         int offset = 0;
-        if (n > 0) {
+        if (n > 0 || pendingAccept) {
+            boolean acceptProcessed = false;
+
             // check all activated FDs
-            LOG.debug().$("epoll [n=").$(n).$(']').$();
+            LOG.debug().$("epoll [n=").$(n).I$();
             for (int i = 0; i < n; i++) {
                 epoll.setOffset(offset);
                 offset += EpollAccessor.SIZEOF_EVENT;
                 final long id = epoll.getData();
                 // this is server socket, accept if there aren't too many already
                 if (id == 0) {
-                    accept(timestamp);
+                    pendingAccept = !accept(timestamp);
+                    acceptProcessed = true;
                     useful = true;
-                    continue;
-                }
-                if (isEventId(id)) {
+                } else if (isEventId(id)) {
                     handleSuspendEvent(id);
-                    continue;
-                }
-                if (handleSocketOperation(id)) {
+                } else if (handleSocketOperation(id)) {
                     useful = true;
                     watermark--;
                 }
+            }
+
+            // pendingAccept is almost always false -> testing it as first to make the branch easy to predict
+            if (pendingAccept && !acceptProcessed && isListening()) {
+                // we have left-overs from a previous round, process them now
+                pendingAccept = !accept(timestamp);
+                useful = true;
             }
         }
 

@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
@@ -36,7 +37,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -331,9 +331,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select ik from x"
             );
 
-            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                    "ik\tSYMBOL\ttrue\t256\tfalse\t512\tfalse\tfalse\n", "(SHOW COLUMNS FROM x) WHERE column = 'ik'");
-
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "ik\tSYMBOL\ttrue\t256\tfalse\t512\t5\tfalse\tfalse\n",
+                    "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
+            );
 
             execute("alter table x alter column ik symbol capacity 1000", sqlExecutionContext);
 
@@ -344,8 +346,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select ik from x"
             );
 
-            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                    "ik\tSYMBOL\ttrue\t256\tfalse\t1024\tfalse\tfalse\n", "(SHOW COLUMNS FROM x) WHERE column = 'ik'");
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "ik\tSYMBOL\ttrue\t256\tfalse\t1024\t5\tfalse\tfalse\n",
+                    "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
+            );
         });
     }
 
@@ -787,8 +792,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testFixedSizeColumnEquivalentToCast() throws Exception {
-        final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP", "BOOLEAN", "DATE"};
-        final char[] col_names = {'l', 'f', 'i', 'j', 'e', 'd', 'k', 't', 'g'};
+        final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP", "TIMESTAMP_NS", "BOOLEAN", "DATE"};
+        final char[] col_names = {'l', 'f', 'i', 'j', 'e', 'd', 'k', 'n', 't', 'g'};
 
         testFixedToFixedConversions(types, col_names);
     }
@@ -1220,6 +1225,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         " rnd_symbol(4,4,4,2) ik," +
                         " case WHEN x % 10 = 0 THEN NULL WHEN x % 10 = 1 THEN 0 ELSE rnd_long() END j," +
                         " case WHEN x % 10 = 0 THEN NULL WHEN x % 10 = 1 THEN CAST('1970-01-01' AS TIMESTAMP) ELSE timestamp_sequence(0, 1000000000) END k," +
+                        " case WHEN x % 10 = 0 THEN NULL WHEN x % 10 = 1 THEN CAST('1970-01-01' AS TIMESTAMP_NS) ELSE timestamp_sequence(0, 1000000000) END n," +
                         " rnd_byte(2,50) l," +
                         " rnd_boolean() t," +
                         " rnd_bin(10, 20, 2) m," +
@@ -1297,7 +1303,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         );
 
         try (WalWriter walWriter = getWalWriter("x")) {
-            TableWriter.Row row = walWriter.newRow(IntervalUtils.parseFloorPartialTimestamp("2024-02-04"));
+            TableWriter.Row row = walWriter.newRow(MicrosTimestampDriver.floor("2024-02-04"));
             switch (columnType) {
                 case ColumnType.STRING:
                     row.putStr(0, "abc");

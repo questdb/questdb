@@ -12,7 +12,7 @@ use parquet2::schema::types::{
     IntegerType, ParquetType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
 use parquet2::schema::Repetition;
-use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+use qdb_core::col_type::{ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
 
 pub fn column_type_to_parquet_type(
     column_id: i32,
@@ -83,21 +83,39 @@ pub fn column_type_to_parquet_type(
             }),
             Some(column_id),
         )?),
-        ColumnTypeTag::Timestamp => Ok(ParquetType::try_from_primitive(
-            name,
-            PhysicalType::Int64,
-            if designated_timestamp {
+        ColumnTypeTag::Timestamp => {
+            let repetition = if designated_timestamp {
                 Repetition::Required
             } else {
                 Repetition::Optional
-            },
-            Some(PrimitiveConvertedType::TimestampMicros),
-            Some(PrimitiveLogicalType::Timestamp {
-                unit: TimeUnit::Microseconds,
-                is_adjusted_to_utc: true,
-            }),
-            Some(column_id),
-        )?),
+            };
+
+            if column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG) {
+                Ok(ParquetType::try_from_primitive(
+                    name,
+                    PhysicalType::Int64,
+                    repetition,
+                    None,
+                    Some(PrimitiveLogicalType::Timestamp {
+                        unit: TimeUnit::Nanoseconds,
+                        is_adjusted_to_utc: true,
+                    }),
+                    Some(column_id),
+                )?)
+            } else {
+                Ok(ParquetType::try_from_primitive(
+                    name,
+                    PhysicalType::Int64,
+                    repetition,
+                    Some(PrimitiveConvertedType::TimestampMicros),
+                    Some(PrimitiveLogicalType::Timestamp {
+                        unit: TimeUnit::Microseconds,
+                        is_adjusted_to_utc: true,
+                    }),
+                    Some(column_id),
+                )?)
+            }
+        }
         ColumnTypeTag::Float => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Float,
@@ -261,12 +279,6 @@ pub fn column_type_to_parquet_type(
             None,
             Some(column_id),
         )?),
-        _ => Err(fmt_err!(
-            InvalidType,
-            "unexpected type {} for column {}",
-            column_type,
-            column_name,
-        )),
     }
 }
 
@@ -368,24 +380,23 @@ pub fn to_parquet_schema(
         })
         .collect::<ParquetResult<Vec<_>>>()?;
 
-    let mut qdb_meta = QdbMeta::new();
-    qdb_meta.schema = partition
-        .columns
-        .iter()
-        .map(|c| {
-            let format = if c.data_type.tag() == ColumnTypeTag::Symbol {
-                Some(QdbMetaColFormat::LocalKeyIsGlobal)
-            } else {
-                None
-            };
+    let mut qdb_meta = QdbMeta::new(partition.columns.len());
+    for column in partition.columns.iter() {
+        let format = if column.data_type.tag() == ColumnTypeTag::Symbol {
+            Some(QdbMetaColFormat::LocalKeyIsGlobal)
+        } else {
+            None
+        };
 
-            QdbMetaCol {
-                column_type: c.data_type,
-                column_top: c.column_top,
-                format,
-            }
-        })
-        .collect();
+        let column_type = if column.designated_timestamp {
+            column.data_type.into_designated()?
+        } else {
+            column.data_type
+        };
+        qdb_meta
+            .schema
+            .push(QdbMetaCol { column_type, column_top: column.column_top, format });
+    }
 
     let encoded_qdb_meta = qdb_meta.serialize()?;
     let questdb_keyval = KeyValue::new(QDB_META_KEY.to_string(), encoded_qdb_meta);

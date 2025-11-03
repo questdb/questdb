@@ -38,7 +38,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.griffin.CustomisableRunnable;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -92,17 +92,21 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     private static Rnd rnd;
     private final int workerCount;
 
-    public O3FailureFuzzTest(ParallelMode mode) {
+    public O3FailureFuzzTest(ParallelMode mode, TestTimestampType timestampType) {
+        super(timestampType);
         this.workerCount = mode == ParallelMode.CONTENDED ? 0 : 2;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {ParallelMode.PARALLEL},
-                {ParallelMode.CONTENDED}
+                {ParallelMode.PARALLEL, TestTimestampType.MICRO},
+                {ParallelMode.PARALLEL, TestTimestampType.NANO},
+                {ParallelMode.CONTENDED, TestTimestampType.MICRO},
+                {ParallelMode.CONTENDED, TestTimestampType.NANO},
         });
     }
+
 
     public static void reset() {
         failNextAllocOrOpen.set(false);
@@ -141,7 +145,6 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         reset();
         failCounter = rnd.nextInt(5);
         executeWithPool(0, O3FailureFuzzTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new TestFilesFacadeImpl() {
-
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (failNextAllocOrOpen.get() && this.fd == fd) {
@@ -241,7 +244,8 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     private static void testPartitionedDataAppendOODataNotNullStrTailFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
         engine.execute(
                 "create table x as (" +
@@ -249,7 +253,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -258,7 +262,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " cast(null as binary) m," +
                         " rnd_str(5,16,2) n," +
@@ -276,7 +280,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -285,7 +289,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(518300000010L,100000L) ts," +
+                        " timestamp_sequence(518300000010L,100000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -329,7 +333,8 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     private static void testPartitionedDataAppendOOPrependOODatThenRegularAppend0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
         // create table with roughly 2AM data
         engine.execute(
@@ -338,7 +343,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -347,7 +352,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " cast(null as binary) m," +
                         " rnd_str(5,16,2) n," +
@@ -367,7 +372,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -376,7 +381,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(518390000000L,100000L) ts," +
+                        " timestamp_sequence(518390000000L,100000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -412,7 +417,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -421,7 +426,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(551000000000L,100000L) ts," +
+                        " timestamp_sequence(551000000000L,100000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -454,7 +459,8 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     private static void testPartitionedDataAppendOOPrependOODataFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
         // create table with roughly 2AM data
         engine.execute(
@@ -463,7 +469,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -472,7 +478,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " cast(null as binary) m," +
                         " rnd_str(5,16,2) n," +
@@ -492,7 +498,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                         " rnd_boolean() b," +
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_double(2) d," +
@@ -501,7 +507,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(518390000000L,100000L) ts," +
+                        " timestamp_sequence(518390000000L,100000L)::" + timestampTypeName + " ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -551,14 +557,14 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
-    private void runFuzzRoutine(CustomisableRunnable routine) throws Exception {
+    private void runFuzzRoutine(CustomisableRunnableWithTimestampType routine) throws Exception {
         reset();
         failCounter = 14 + rnd.nextInt(200);
         LOG.info().$("failCounter=").$(failCounter).$();
         executeWithPool(workerCount, routine, ffAllocateFailure);
     }
 
-    private void runFuzzRoutineOpen(CustomisableRunnable routine) throws Exception {
+    private void runFuzzRoutineOpen(CustomisableRunnableWithTimestampType routine) throws Exception {
         reset();
         failCounter = rnd.nextInt(26);
         LOG.info().$("failCounter=").$(failCounter).$();

@@ -27,7 +27,7 @@ package io.questdb.std;
 import java.util.Arrays;
 
 public class IntLongHashMap extends AbstractIntHashSet {
-    private static final int noEntryValue = -1;
+    private static final long noEntryValue = -1;
     private long[] values;
 
     public IntLongHashMap() {
@@ -35,11 +35,7 @@ public class IntLongHashMap extends AbstractIntHashSet {
     }
 
     public IntLongHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5f);
-    }
-
-    private IntLongHashMap(int initialCapacity, double loadFactor) {
-        super(initialCapacity, loadFactor);
+        super(initialCapacity, 0.5f);
         values = new long[keys.length];
         clear();
     }

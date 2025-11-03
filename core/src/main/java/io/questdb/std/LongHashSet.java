@@ -33,6 +33,7 @@ import java.util.Arrays;
 
 public class LongHashSet extends AbstractLongHashSet implements Sinkable {
 
+    public static final double DEFAULT_LOAD_FACTOR = 0.4;
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final LongList list;
 
@@ -41,7 +42,7 @@ public class LongHashSet extends AbstractLongHashSet implements Sinkable {
     }
 
     public LongHashSet(int initialCapacity) {
-        this(initialCapacity, 0.4, noEntryKey);
+        this(initialCapacity, DEFAULT_LOAD_FACTOR, noEntryKey);
     }
 
     public LongHashSet(int initialCapacity, double loadFactor, long noKeyValue) {
@@ -130,7 +131,7 @@ public class LongHashSet extends AbstractLongHashSet implements Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        list.toSink(sink);
+        list.toSinkSorted(sink);
     }
 
     @Override
@@ -164,4 +165,5 @@ public class LongHashSet extends AbstractLongHashSet implements Sinkable {
         keys[to] = keys[from];
         erase(from);
     }
+
 }

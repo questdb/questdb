@@ -30,7 +30,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 // Sends data in slow constant rate. Test case that commits still happen in QuestDB regularly.
@@ -51,7 +51,7 @@ public class LineTCPSenderMainLowConstantRate {
         int bufferCapacity = 4 * 1024;
 
         final Rnd rnd = new Rnd();
-        MicrosecondClock clock = new MicrosecondClockImpl();
+        Clock clock = new MicrosecondClockImpl();
         String tab = "weather";
         try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             while (true) {

@@ -56,7 +56,7 @@ public class PgRolesFunctionFactory extends AbstractEmptyCatalogueFunctionFactor
         metadata.add(new TableColumnMetadata("rolreplication", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("rolconnlimit", ColumnType.INT));
         metadata.add(new TableColumnMetadata("rolpassword", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("rolvaliduntil", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("rolvaliduntil", ColumnType.TIMESTAMP_MICRO));
         metadata.add(new TableColumnMetadata("rolbypassrls", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("rolconfig", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("oid", ColumnType.INT));

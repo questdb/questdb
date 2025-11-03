@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -46,7 +47,7 @@ import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -190,15 +191,6 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGetTableFlagResolver() throws Exception {
-        assertMemoryLeak(() -> {
-            final TableFlagResolver tableFlagResolver = engine.getTableFlagResolver();
-            assertTrue(tableFlagResolver.isSystem(engine.getConfiguration().getSystemTableNamePrefix() + ".tableName"));
-            assertTrue(tableFlagResolver.isPublic(TelemetryTask.TABLE_NAME));
-        });
-    }
-
-    @Test
     public void testExpiry() throws Exception {
         assertMemoryLeak(() -> {
             class MyListener implements PoolListener {
@@ -224,7 +216,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                         @Override
                         public long getIdleCheckInterval() {
                             // Make it big to prevent second run even on slow machines
-                            return Timestamps.DAY_MICROS;
+                            return Micros.DAY_MICROS;
                         }
                     })
             ) {
@@ -235,7 +227,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertWriter(engine, x);
                 assertReader(engine, x);
 
-                Job job = engine.getEngineMaintenanceJob();
+                Job job = new ServerMain.EngineMaintenanceJob(engine);
                 Assert.assertNotNull(job);
 
                 Assert.assertTrue(job.run(0));
@@ -243,6 +235,15 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 Assert.assertEquals(2, listener.count);
             }
+        });
+    }
+
+    @Test
+    public void testGetTableFlagResolver() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableFlagResolver tableFlagResolver = engine.getTableFlagResolver();
+            assertTrue(tableFlagResolver.isSystem(engine.getConfiguration().getSystemTableNamePrefix() + ".tableName"));
+            assertTrue(tableFlagResolver.isPublic(TelemetryTask.TABLE_NAME));
         });
     }
 
@@ -549,7 +550,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                         .col("a", ColumnType.BYTE)
                         .col("b", ColumnType.STRING)
                         .timestamp("ts");
-                Job job = engine.getEngineMaintenanceJob();
+                Job job = new ServerMain.EngineMaintenanceJob(engine);
                 workerPool.assign(job);
                 workerPool.start();
 

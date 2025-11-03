@@ -27,15 +27,19 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.std.Rosti;
 import io.questdb.std.Vect;
 
-import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class CountDoubleVectorAggregateFunction extends AbstractCountVectorAggregateFunction {
 
     public CountDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         super(columnIndex);
-        if (keyKind == GKK_HOUR_INT) {
-            distinctFunc = Rosti::keyedHourDistinct;
-            keyValueFunc = Rosti::keyedHourCountDouble;
+        if (keyKind == GKK_MICRO_HOUR_INT) {
+            distinctFunc = Rosti::keyedMicroHourDistinct;
+            keyValueFunc = Rosti::keyedMicroHourCountDouble;
+        } else if (keyKind == GKK_NANO_HOUR_INT) {
+            distinctFunc = Rosti::keyedNanoHourDistinct;
+            keyValueFunc = Rosti::keyedNanoHourCountDouble;
         } else {
             distinctFunc = Rosti::keyedIntDistinct;
             keyValueFunc = Rosti::keyedIntCountDouble;

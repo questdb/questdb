@@ -25,8 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 
 public interface LineHttpProcessorConfiguration {
 
@@ -42,6 +41,8 @@ public interface LineHttpProcessorConfiguration {
 
     int getDefaultPartitionBy();
 
+    int getDefaultTimestampColumnType();
+
     CharSequence getInfluxPingVersion();
 
     long getMaxRecvBufferSize();
@@ -50,7 +51,7 @@ public interface LineHttpProcessorConfiguration {
 
     long getSymbolCacheWaitUsBeforeReload();
 
-    LineTcpTimestampAdapter getTimestampAdapter();
+    byte getTimestampUnit();
 
     boolean isEnabled();
 

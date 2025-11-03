@@ -68,6 +68,14 @@ public interface MapWriter extends SymbolCountProvider {
         }
     }
 
+    /**
+     * Column index in table writer metadata. This value is a pass-thru from table writer, and
+     * it used by table writer to look-back the column name when needed.
+     *
+     * @return column index or -1 if this is a NullWriter (noop writer)
+     */
+    int getColumnIndex();
+
     boolean getNullFlag();
 
     int getSymbolCapacity();

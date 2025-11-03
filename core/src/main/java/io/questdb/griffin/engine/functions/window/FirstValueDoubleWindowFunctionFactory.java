@@ -191,7 +191,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                             args.get(0)
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new FirstValueOverCurrentRowFunction(args.get(0), true);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -272,7 +272,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                 if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
                     return new FirstNotNullValueOverWholeResultSetFunction(args.get(0));
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new FirstValueDoubleWindowFunctionFactory.FirstValueOverCurrentRowFunction(args.get(0), true);
                 } // between [unbounded | x] preceding and [y preceding | current row]
                 else {
@@ -396,7 +396,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                             args.get(0)
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new FirstValueOverCurrentRowFunction(args.get(0), false);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -476,7 +476,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                 if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
                     return new FirstValueOverWholeResultSetFunction(args.get(0));
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new FirstValueOverCurrentRowFunction(args.get(0), false);
                 } // between [unbounded | x] preceding and [y preceding | current row]
                 else {
@@ -1334,7 +1334,8 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         @Override
@@ -1691,7 +1692,8 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         @Override

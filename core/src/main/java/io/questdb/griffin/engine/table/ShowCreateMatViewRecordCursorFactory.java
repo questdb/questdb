@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
@@ -156,6 +157,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             }
             try {
                 MatViewDefinition.readFrom(
+                        executionContext.getCairoEngine(),
                         viewDefinition,
                         reader,
                         path,
@@ -205,7 +207,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                 }
                 if (viewDefinition.getPeriodLength() == 0) {
                     sink.putAscii(" START '");
-                    sink.putISODate(viewDefinition.getTimerStart());
+                    sink.putISODate(MicrosTimestampDriver.INSTANCE, viewDefinition.getTimerStartUs());
                     if (viewDefinition.getTimerTimeZone() != null) {
                         sink.putAscii("' TIME ZONE '");
                         sink.put(viewDefinition.getTimerTimeZone());

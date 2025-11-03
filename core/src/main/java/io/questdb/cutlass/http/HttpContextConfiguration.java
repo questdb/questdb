@@ -27,7 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.NanosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface HttpContextConfiguration {
@@ -41,6 +41,8 @@ public interface HttpContextConfiguration {
     int getConnectionStringPoolCapacity();
 
     boolean getDumpNetworkTraffic();
+
+    int getExportConnectionLimit();
 
     FactoryProvider getFactoryProvider();
 
@@ -69,6 +71,8 @@ public interface HttpContextConfiguration {
     int getRequestHeaderBufferSize();
 
     boolean getServerKeepAlive();
+
+    long getSessionTimeout();
 
     boolean readOnlySecurityContext();
 }

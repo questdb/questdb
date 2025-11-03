@@ -27,8 +27,11 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
@@ -51,17 +54,22 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -75,16 +83,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 import static io.questdb.cairo.wal.WalUtils.EVENT_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
-import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 import static io.questdb.test.tools.TestUtils.generateRandom;
 
 
 @RunWith(Parameterized.class)
 public class MatViewTest extends AbstractCairoTest {
     private final int rowsPerQuery;
+    private final TestTimestampType timestampType;
 
-    public MatViewTest(int rowsPerQuery) {
+    public MatViewTest(int rowsPerQuery, TestTimestampType timestampType) {
         this.rowsPerQuery = rowsPerQuery;
+        this.timestampType = timestampType;
     }
 
     @BeforeClass
@@ -95,14 +104,14 @@ public class MatViewTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
     }
 
-    @Parameterized.Parameters(name = "rows_per_query={0}")
+    @Parameterized.Parameters(name = "rows_per_query={0},ts={1}")
     public static Collection<Object[]> testParams() {
         // only run a single combination per CI run
         final Rnd rnd = generateRandom(LOG);
         if (rnd.nextInt(100) > 50) {
-            return Arrays.asList(new Object[][]{{-1}});
+            return Arrays.asList(new Object[][]{{-1, TestTimestampType.MICRO}, {-1, TestTimestampType.NANO}});
         }
-        return Arrays.asList(new Object[][]{{1}});
+        return Arrays.asList(new Object[][]{{1, TestTimestampType.MICRO}, {1, TestTimestampType.NANO}});
     }
 
     @Before
@@ -220,9 +229,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterMixed() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym symbol, price double, ts timestamp" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -230,7 +239,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T12:01')");
             // set refresh limit
             execute("alter materialized view price_1h set refresh limit 2 hours;");
-            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+            currentMicros = MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2024-09-10T13:00:00.000000Z");
             drainQueues();
 
             // expect new limit
@@ -250,13 +259,13 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.323, '2024-09-01T12:02')" +
                             ",('jpyusd', 103.21, '2024-09-01T12:02')"
             );
-            currentMicros = parseFloorPartialTimestamp("2024-09-10T16:00:00.000000Z");
+            currentMicros = MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2024-09-10T16:00:00.000000Z");
             drainQueues();
 
             // all old timestamps should be ignored
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
+                            "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym, ts"
             );
 
@@ -284,9 +293,10 @@ public class MatViewTest extends AbstractCairoTest {
 
             // older partition should be dropped due to TTL
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-30T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-30T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-30T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-30T12:00:00.000000Z\n"),
                     "price_1h order by sym, ts"
             );
         });
@@ -295,9 +305,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterRefreshLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym symbol, price double, ts timestamp" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -325,10 +335,10 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym, ts"
             );
 
@@ -356,11 +366,11 @@ public class MatViewTest extends AbstractCairoTest {
 
             // the older timestamps should be ignored
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T15:00:00.000000Z\n" + // the newer timestamp
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym, ts"
             );
 
@@ -387,13 +397,13 @@ public class MatViewTest extends AbstractCairoTest {
 
             // the older timestamps should be aggregated
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-01T12:00:00.000000Z\n" + // old timestamp
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T15:00:00.000000Z\n" +
                             "jpyusd\t103.21\t2024-09-01T12:00:00.000000Z\n" + // old timestamp
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym, ts"
             );
         });
@@ -402,9 +412,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterRefreshLimitFullRefresh() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym symbol, price double, ts timestamp" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
@@ -452,9 +462,9 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
                             "gbpusd\t1.321\t2023-11-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2023-11-10T12:00:00.000000Z\n",
+                            "jpyusd\t103.21\t2023-11-10T12:00:00.000000Z\n"),
                     "price_1h order by sym, ts"
             );
         });
@@ -463,9 +473,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterRefreshLimitInvalidStatement() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym symbol, price double, ts timestamp" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -506,9 +516,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterRefreshLimitPeriodMatView() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym symbol, price double, ts timestamp" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
@@ -540,9 +550,9 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
                             "gbpusd\t1.321\t2023-12-31T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2023-12-31T12:00:00.000000Z\n",
+                            "jpyusd\t103.21\t2023-12-31T12:00:00.000000Z\n"),
                     "price_1h order by sym, ts"
             );
         });
@@ -611,13 +621,13 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterRefreshTimer1() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
-                    "create materialized view price_1h refresh every 1h deferred start '2999-12-12T12:00:00.000000Z' as (" +
+                    "create materialized view price_1h refresh every 1h deferred start '2260-12-12T12:00:00.000000Z' as (" +
                             "select sym, last(price) as price, ts from base_price sample by 1h" +
                             ") partition by day"
             );
@@ -645,7 +655,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "from materialized_views";
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\n" +
-                            "price_1h\ttimer\tbase_price\t\t\tvalid\t-1\t1\t\t2999-12-12T12:00:00.000000Z\t1\tHOUR\n",
+                            "price_1h\ttimer\tbase_price\t\t\tvalid\t-1\t1\t\t2260-12-12T12:00:00.000000Z\t1\tHOUR\n",
                     matViewsSql,
                     null
             );
@@ -654,7 +664,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter materialized view price_1h set refresh every 1m start '" + start + "';");
             drainQueues();
             // we need timers to tick
-            currentMicros += Timestamps.MINUTE_MICROS;
+            currentMicros += Micros.MINUTE_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -665,10 +675,10 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
         });
@@ -677,9 +687,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterRefreshTimer2() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
@@ -720,7 +730,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter materialized view price_1h set refresh every 1m start '" + start + "';");
             drainQueues();
             // we need timers to tick
-            currentMicros += Timestamps.MINUTE_MICROS;
+            currentMicros += Micros.MINUTE_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -731,10 +741,10 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
         });
@@ -743,9 +753,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterRefreshTimerInvalidStatement() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym symbol, price double, ts timestamp" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             currentMicros = 0;
@@ -951,9 +961,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterSymbolCapacity() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym symbol, price double, ts timestamp" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -994,10 +1004,11 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
         });
@@ -1006,9 +1017,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterSymbolCapacityInvalidStatement() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym symbol, price double, ts timestamp" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -1103,9 +1114,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterTtl() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -1122,10 +1133,11 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.312\t2024-09-12T13:00:00.000000Z\n" +
-                            "gbpusd\t1.313\t2024-09-13T13:00:00.000000Z\n" +
-                            "gbpusd\t1.314\t2024-09-14T13:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.312\t2024-09-12T13:00:00.000000Z\n" +
+                                    "gbpusd\t1.313\t2024-09-13T13:00:00.000000Z\n" +
+                                    "gbpusd\t1.314\t2024-09-14T13:00:00.000000Z\n"),
                     "price_1h order by ts, sym",
                     "ts",
                     true,
@@ -1137,9 +1149,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAlterTtlInvalidStatement() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym symbol, price double, ts timestamp" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -1184,25 +1196,35 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinBinarySearchHintInMatView() throws Exception {
         assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE 'trades' ( \n" +
+                    "price DOUBLE,\n" +
+                    "volume DOUBLE,\n" +
+                    "ts #TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL");
+
             execute(
-                    "create table trades as (\n" +
+                    "insert into trades\n" +
                             "  select \n" +
                             "    rnd_double() price,\n" +
                             "    rnd_double() volume,\n" +
                             "    ('2025'::timestamp + x * 200_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
-                            "  from long_sequence(5_000)\n" +
-                            ") timestamp(ts) partition by day wal;"
+                            "  from long_sequence(5_000)\n"
             );
+            executeWithRewriteTimestamp("CREATE TABLE 'prices' ( \n" +
+                    "bid DOUBLE,\n" +
+                    "ask DOUBLE,\n" +
+                    "valid BOOLEAN,\n" +
+                    "ts #TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL");
 
             execute(
-                    "create table prices as (\n" +
+                    "insert into prices \n" +
                             "  select \n" +
                             "    rnd_double() bid,\n" +
                             "    rnd_double() ask,\n" +
                             "    rnd_boolean() valid,\n" +
                             "    ('2025'::timestamp + x * 1_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,\n" +
-                            "  from long_sequence(1_000_000)\n" +
-                            ") timestamp(ts) partition by day wal;\n"
+                            "  from long_sequence(1_000_000)\n"
             );
 
             final String mvWithoutHint = "create materialized view daily_summary \n" +
@@ -1213,18 +1235,10 @@ public class MatViewTest extends AbstractCairoTest {
                     "asof join (select * from prices where valid) prices\n" +
                     "sample by 1d\n" +
                     ");";
-            final String mvWithUseHint = "create materialized view daily_summary \n" +
-                    "WITH BASE trades\n" +
-                    "as (\n" +
-                    "select /*+ USE_ASOF_BINARY_SEARCH(trades prices) */ trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
-                    "FROM trades\n" +
-                    "asof join (select * from prices where valid) prices\n" +
-                    "sample by 1d\n" +
-                    ");";
             final String mvWithAvoidHint = "create materialized view daily_summary \n" +
                     "WITH BASE trades\n" +
                     "as (\n" +
-                    "select /*+ AVOID_ASOF_BINARY_SEARCH(trades prices) */ trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
+                    "select /*+ ASOF_LINEAR_SEARCH(trades prices) */ trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
                     "FROM trades\n" +
                     "asof join (select * from prices where valid) prices\n" +
                     "sample by 1d\n" +
@@ -1240,11 +1254,6 @@ public class MatViewTest extends AbstractCairoTest {
             printSql("EXPLAIN " + mvWithAvoidHint);
             TestUtils.assertContains(sink, "AsOf Join");
             TestUtils.assertNotContains(sink, "Fast Scan");
-
-            // use hint -> does use binary search
-            sink.clear();
-            printSql("EXPLAIN " + mvWithUseHint);
-            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
 
             // ok, now the real data: first try the view without the hint
             execute(mvWithoutHint);
@@ -1262,7 +1271,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "2025-01-10T00:00:00.000000Z\t432\t208.43848337612906\t0.0028067126112681917\t0.9976283386812487\t0.5136095078793146\n" +
                     "2025-01-11T00:00:00.000000Z\t432\t213.02005186038846\t8.598501058093566E-4\t0.999708216046598\t0.5040670959429089\n" +
                     "2025-01-12T00:00:00.000000Z\t249\t119.80938485754517\t0.007906045439897036\t0.9962991313334122\t0.4923923393746041\n";
-            assertQuery(expectedView, "SELECT * FROM daily_summary", "ts", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expectedView), "SELECT * FROM daily_summary", "ts", true, true);
 
             // now, recreate the view with avoid hint
             execute("drop materialized view daily_summary");
@@ -1270,7 +1279,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             // it must result in the same data
-            assertQuery(expectedView, "SELECT * FROM daily_summary", "ts", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expectedView), "SELECT * FROM daily_summary", "ts", true, true);
         });
     }
 
@@ -1307,9 +1316,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testBaseTableInvalidateOnDedupEnable() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, amount int, ts timestamp" +
+                            "sym varchar, price double, amount int, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -1322,7 +1331,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = MicrosTimestampDriver.floor("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -1384,9 +1393,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testBaseTableNameCaseSensitivity() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "CREATE TABLE 'GLBXMDP3_mbp1_es' ( " +
-                            "       ts_event TIMESTAMP, " +
+                            "       ts_event #TIMESTAMP, " +
                             "       action SYMBOL, " +
                             "       price DOUBLE, " +
                             "       size INT, " +
@@ -1439,9 +1448,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testBaseTableNoDataRangeReplaceCommit() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -1454,14 +1463,15 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:00')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = MicrosTimestampDriver.floor("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                     "price_1h",
                     "ts",
                     true,
@@ -1472,8 +1482,8 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertNotNull(baseToken);
             try (WalWriter writer = engine.getWalWriter(baseToken)) {
                 writer.commitWithParams(
-                        parseFloorPartialTimestamp("2024-09-10T00:00:00.000000Z"),
-                        parseFloorPartialTimestamp("2024-09-10T13:00"),
+                        timestampType.getDriver().parseFloorLiteral("2024-09-10T00:00:00.000000Z"),
+                        timestampType.getDriver().parseFloorLiteral("2024-09-10T13:00"),
                         WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
                 );
             }
@@ -1481,8 +1491,9 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                     "price_1h",
                     "ts",
                     true,
@@ -1494,9 +1505,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testBaseTableRename1() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -1537,9 +1548,9 @@ public class MatViewTest extends AbstractCairoTest {
 
             // Create another base table instead of the one that was renamed.
             // This table is non-WAL, so mat view should be still invalid.
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY BYPASS WAL"
             );
             currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
@@ -1560,9 +1571,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testBaseTableRename2() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -1604,9 +1615,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testBaseTableRenameAndThenRenameBack() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -1638,14 +1649,14 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testBaseTableSwappedWithRename() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price2 (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -1671,7 +1682,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             // Swap the tables with each other.
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T18:00:00.000000Z");
             execute("rename table base_price to base_price_tmp");
             execute("rename table base_price2 to base_price");
             execute("rename table base_price_tmp to base_price2");
@@ -1689,11 +1700,79 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBaseTableTruncateDoesNotInvalidateFreshMatView() throws Exception {
+    public void testBaseTableTimestampTypeChangeThrowError() throws Exception {
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp_ns" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
             execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\n" +
+                            "price_1h\tbase_price\tvalid\n",
+                    "select view_name, base_table_name, view_status from materialized_views",
+                    null,
+                    false
+            );
+
+            execute("drop table base_price;");
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                            "price_1h\tbase_price\tinvalid\tbase table is dropped or renamed\n",
+                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
+                    null,
+                    false
+            );
+
+            // recreate the base table with a different timestamp type
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
                             "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainQueues();
+
+            // revalidate the view
+            execute("refresh materialized view price_1h full;)");
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                            "price_1h\tbase_price\tinvalid\t[-1]: timestamp type mismatch between materialized view and query [view=TIMESTAMP_NS, query=TIMESTAMP]\n",
+                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableTruncateDoesNotInvalidateFreshMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL;"
             );
 
@@ -1717,9 +1796,9 @@ public class MatViewTest extends AbstractCairoTest {
     public void testBaseTableWalNotPurgedOnFullRefreshOfInvalidView() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 5);
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, amount int, ts timestamp" +
+                            "sym varchar, price double, amount int, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
@@ -1754,8 +1833,8 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertNotNull(viewToken);
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h",
                     "ts",
                     true,
@@ -1792,8 +1871,8 @@ public class MatViewTest extends AbstractCairoTest {
                     false
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h",
                     "ts",
                     true,
@@ -1815,9 +1894,9 @@ public class MatViewTest extends AbstractCairoTest {
     public void testBaseTableWalNotPurgedOnInitialRefresh() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 5);
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, amount int, ts timestamp" +
+                            "sym varchar, price double, amount int, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
@@ -1876,8 +1955,8 @@ public class MatViewTest extends AbstractCairoTest {
                     false
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h",
                     "ts",
                     true,
@@ -1898,9 +1977,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testBaseTableWalPurgedDespiteInvalidMatViewState() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, amount int, ts timestamp" +
+                            "sym varchar, price double, amount int, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -1957,9 +2036,9 @@ public class MatViewTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 2);
 
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by MONTH WAL"
             );
 
@@ -1970,7 +2049,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
                             "sym30\t30.0\t2022-02-23T12:00:00.000000Z\n" +
                             "sym27\t27.0\t2022-02-23T13:00:00.000000Z\n" +
                             "sym28\t28.0\t2022-02-23T13:00:00.000000Z\n" +
@@ -2000,7 +2079,7 @@ public class MatViewTest extends AbstractCairoTest {
                             "sym6\t6.0\t2022-02-23T22:00:00.000000Z\n" +
                             "sym2\t2.0\t2022-02-23T23:00:00.000000Z\n" +
                             "sym3\t3.0\t2022-02-23T23:00:00.000000Z\n" +
-                            "sym1\t1.0\t2022-02-24T00:00:00.000000Z\n",
+                            "sym1\t1.0\t2022-02-24T00:00:00.000000Z\n"),
                     "price_1h order by ts, sym",
                     "ts",
                     true,
@@ -2021,9 +2100,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testCheckMatViewModification() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -2063,9 +2142,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testCreateDropCreate() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -2081,10 +2160,10 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                     "price_1h order by ts, sym",
                     "ts",
                     true,
@@ -2099,10 +2178,10 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                     "price_1h order by ts, sym",
                     "ts",
                     true,
@@ -2117,13 +2196,13 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testCreateMatViewLoop() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "CREATE TABLE 'trades' (" +
                             "symbol SYMBOL CAPACITY 256 CACHE, " +
                             "side SYMBOL CAPACITY 256 CACHE, " +
                             "price DOUBLE, " +
                             "amount DOUBLE, " +
-                            "timestamp TIMESTAMP " +
+                            "timestamp #TIMESTAMP " +
                             ") timestamp(timestamp) PARTITION BY HOUR WAL;"
             );
 
@@ -2189,9 +2268,9 @@ public class MatViewTest extends AbstractCairoTest {
         // Verifies that even if someone was able to create a mat view with non-deterministic function
         // on an older version, it'll be marked as invalid on the next refresh.
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -2228,9 +2307,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testDedupKeysNoRowsRangeReplace() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL DEDUP UPSERT KEYS(ts);"
             );
             createMatView("select sym, last(price) as price, ts from base_price where sym <> 'gbpusd' sample by 1h");
@@ -2243,8 +2322,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h",
                     "ts",
                     true,
@@ -2278,9 +2357,9 @@ public class MatViewTest extends AbstractCairoTest {
     public void testDisableParallelSqlExecution() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, "false");
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -2303,9 +2382,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testDropAll() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -2321,10 +2400,11 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                     "price_1h order by ts, sym",
                     "ts",
                     true,
@@ -2359,25 +2439,85 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testEnableDedupWithFewerKeysDoesNotInvalidateMatViews() throws Exception {
-        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts);", false);
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts);");
     }
 
     @Test
     public void testEnableDedupWithMoreKeysInvalidatesMatViews() throws Exception {
-        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, amount);", false);
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, amount);");
     }
 
     @Test
     public void testEnableDedupWithSameKeysDoesNotInvalidateMatViews() throws Exception {
-        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, sym);", false);
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, sym);");
+    }
+
+    @Test
+    public void testEstimateRowsPerBucket() {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+
+        // Basic case: 1 billion rows, hourly bucket, daily partitions, 30 partitions
+        // Expected: (1B * 1hour) / (24hours * 30 partitions) = 1B / 720 ≈ 1,388,888
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 1_000_000, 2_000_000);
+
+        // Small table: 1000 rows
+        testEstimateRowsPerBucket(1_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 1, 100);
+
+        // Large table: 5 billion rows
+        // Expected: (5B * 1hour) / (24hours * 30 partitions) ≈ 6,944,444
+        testEstimateRowsPerBucket(5_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 5_000_000, 10_000_000);
+
+        // Daily bucket
+        // Expected: (1B * 24hours) / (24hours * 30 partitions) = 1B / 30 ≈ 33,333,333
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.DAY_MICROS, Micros.DAY_MICROS, 30, 30_000_000, 40_000_000);
+
+        // Weekly bucket
+        // Expected: (1B * 168hours) / (24hours * 30 partitions) = 1B * 7 / 30 ≈ 233,333,333
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.WEEK_MICROS, Micros.DAY_MICROS, 30, 200_000_000, 300_000_000);
+
+        // Monthly bucket (30 days)
+        // Expected: (1B * 720hours) / (24hours * 30 partitions) = 1B * 30 / 30 = 1B
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.MONTH_MICROS_APPROX, Micros.DAY_MICROS, 30, 900_000_000, 1_100_000_000);
+
+        // Edge case: Weekly partitions with hourly bucket
+        // Expected: (1B * 1hour) / (168hours * 4 partitions) ≈ 1,488,095
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.WEEK_MICROS, 4, 1_000_000, 2_000_000);
+
+        // Edge case: Single partition
+        // Expected: (1B * 1hour) / (720hours * 1 partition) ≈ 1,388,888
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.MONTH_MICROS_APPROX, 1, 1_000_000, 2_000_000);
+
+        // Edge case: Many partitions (1000)
+        // Expected: (1B * 1hour) / (24hours * 1000 partitions) ≈ 41,666
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 1000, 30_000, 50_000);
+
+        // Edge case: Zero partition count (should return 1)
+        final long result = MatViewRefreshJob.estimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.HOUR_MICROS, 0);
+        Assert.assertEquals("expected 1 for zero partitions", 1, result);
+
+        // Overflow prevention test: Very large rows and bucket that would overflow with naive multiplication
+        // Should not overflow, should return a reasonable positive value
+        testEstimateRowsPerBucket(Long.MAX_VALUE / 2, Micros.HOUR_MICROS, Micros.DAY_MICROS, 1, 1, Long.MAX_VALUE / 2);
+
+        // Test with nanoseconds (1000x microseconds)
+        // Expected: same ratio as microseconds ≈ 1,388,888
+        testEstimateRowsPerBucket(1_000_000_000L, Nanos.HOUR_NANOS, Nanos.DAY_NANOS, 30, 1_000_000, 2_000_000);
+
+        // Very small bucket compared to partition
+        // Expected: very small number, but at least 1
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.MILLI_MICROS, Micros.DAY_MICROS, 30, 1, 1000);
+
+        // Bucket larger than partition duration (unusual but possible)
+        // Expected: (1B * 168hours) / (24hours * 1) = 1B * 7 = 7B
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.WEEK_MICROS, Micros.DAY_MICROS, 1, 6_000_000_000L, 8_000_000_000L);
     }
 
     @Test
     public void testFullRefresh() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp, extra_col long" +
+                            "sym varchar, price double, ts #TIMESTAMP, extra_col long" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -2407,7 +2547,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                     "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n";
-            assertQueryNoLeakCheck(expected, "price_1h order by sym");
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "price_1h order by sym");
 
             execute("alter table base_price drop column extra_col");
             drainQueues();
@@ -2428,16 +2568,16 @@ public class MatViewTest extends AbstractCairoTest {
                     matViewsSql,
                     null
             );
-            assertQueryNoLeakCheck(expected, "price_1h order by sym");
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "price_1h order by sym");
         });
     }
 
     @Test
     public void testFullRefreshDroppedBaseColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp, extra_col long" +
+                            "sym varchar, price double, ts #TIMESTAMP, extra_col long" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -2467,7 +2607,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                     "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n";
-            assertQueryNoLeakCheck(expected, "price_1h order by sym");
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "price_1h order by sym");
 
             execute("alter table base_price drop column sym;");
             drainQueues();
@@ -2501,9 +2641,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testFullRefreshFail1() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price where npe() sample by 1h");
@@ -2539,9 +2679,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testFullRefreshFail2() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -2586,9 +2726,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testFullRefreshOfDroppedView() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -2616,9 +2756,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testFullRefreshOfEmptyBaseTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -2634,6 +2774,45 @@ public class MatViewTest extends AbstractCairoTest {
                             "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
                             "from materialized_views",
                     null
+            );
+        });
+    }
+
+    @Test
+    public void testHugeSampleByInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE Samples (" +
+                            "  Time TIMESTAMP," +
+                            "  DeviceId INT," +
+                            "  Register SYMBOL INDEX," +
+                            "  Value DOUBLE" +
+                            ") timestamp(Time) PARTITION BY MONTH WAL " +
+                            "DEDUP UPSERT KEYS(Time, DeviceId, Register);"
+            );
+            execute(
+                    "CREATE MATERIALIZED VIEW Samples_latest AS" +
+                            "  SELECT" +
+                            "    Time as UnixEpoch," +
+                            "    last(Time) AS Time," +
+                            "    DeviceId," +
+                            "    Register," +
+                            "    last(Value) AS Value" +
+                            "  FROM" +
+                            "    Samples" +
+                            "  SAMPLE BY 1000y;"
+            );
+            execute("INSERT INTO Samples (Time, DeviceId, Register, Value) VALUES ('2025-08-08T12:57:07.388314Z', 1, 'hello', 123);");
+
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "UnixEpoch\tTime\tDeviceId\tRegister\tValue\n" +
+                            "1970-01-01T00:00:00.000000Z\t2025-08-08T12:57:07.388314Z\t1\thello\t123.0\n",
+                    "Samples_latest",
+                    "UnixEpoch",
+                    true,
+                    true
             );
         });
     }
@@ -2692,9 +2871,9 @@ public class MatViewTest extends AbstractCairoTest {
     public void testIncrementalRefreshOnExistingTable() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price ( " +
-                            "sym varchar, price double, ts timestamp " +
+                            "sym varchar, price double, ts #TIMESTAMP " +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -2727,11 +2906,12 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T14:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T14:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
         });
@@ -2741,9 +2921,9 @@ public class MatViewTest extends AbstractCairoTest {
     public void testIncrementalRefreshRecoversWhenWalSegmentIsGone() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price ( " +
-                            "sym varchar, price double, ts timestamp " +
+                            "sym varchar, price double, ts #TIMESTAMP " +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
@@ -2791,11 +2971,12 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.423\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.521\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.31\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t103.51\t2024-09-10T14:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.423\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.521\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.31\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.51\t2024-09-10T14:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
         });
@@ -2804,9 +2985,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testIncrementalRefreshStatement() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price ( " +
-                            "sym varchar, price double, ts timestamp " +
+                            "sym varchar, price double, ts #TIMESTAMP " +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -2834,10 +3015,11 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
         });
@@ -2846,9 +3028,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testIncrementalRefreshStatementOnTimerMatView() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
@@ -2896,10 +3078,11 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
         });
@@ -3109,8 +3292,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1h align to calendar";
 
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-27T23:30:00.000000Z");
-            final long step = 100000000L;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-27T23:30:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(100000000L);
             final int N = 100;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
@@ -3122,8 +3305,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T01:00:00.000000Z\ta\t79.9245166429184\t168.04971262491318\n" +
                     "2021-03-28T02:00:00.000000Z\ta\t6.612327943200507\t128.42101395467057\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), "k", true, true);
         });
     }
 
@@ -3137,8 +3320,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin'";
 
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:59:00.000000Z");
-            long step = 60 * 1000000L;
+            long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T00:59:00.000000Z");
+            long step = timestampType.getDriver().fromMicros(60 * 1000000L);
             final int N = 100;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
@@ -3149,8 +3332,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T03:00:00.000000Z\ta\tnull\t127.43011035722469\n" +
                     "2021-03-28T04:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), null, true, true);
         });
     }
 
@@ -3164,8 +3347,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin'";
 
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T01:00:00.000000Z");
-            final long step = 60 * 1000000L;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T01:00:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(60 * 1000000L);
             final int N = 100;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
@@ -3175,8 +3358,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T03:00:00.000000Z\ta\t144.77803379943109\tnull\n" +
                     "2021-03-28T04:00:00.000000Z\ta\t98.27279585461298\t128.42101395467057\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), null, true, true);
         });
     }
 
@@ -3190,8 +3373,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin'";
 
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T01:59:00.000000Z");
-            final long step = 60 * 1000000L;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T01:59:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(60 * 1000000L);
             final int N = 100;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
@@ -3202,8 +3385,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T04:00:00.000000Z\ta\tnull\t127.43011035722469\n" +
                     "2021-03-28T05:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), null, true, true);
         });
     }
 
@@ -3217,8 +3400,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin'";
 
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-27T23:01:00.000000Z");
-            final long step = 60 * 1000000L;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-27T23:01:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(60 * 1000000L);
             final int N = 100;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
@@ -3227,8 +3410,8 @@ public class MatViewTest extends AbstractCairoTest {
             final String expected = "k\ts\tlat\tlon\n" +
                     "2021-03-28T00:00:00.000000Z\ta\t142.30215575416736\t167.4566019970139\n" +
                     "2021-03-28T01:00:00.000000Z\ta\t33.45558404694713\t128.42101395467057\n";
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), null, true, true);
         });
     }
 
@@ -3242,8 +3425,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1d align to calendar time zone 'Europe/Berlin'";
 
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2020-10-23T20:30:00.000000Z");
-            final long step = 50 * 60 * 1000000L;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2020-10-23T20:30:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(50 * 60 * 1000000L);
             final int N = 120;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
@@ -3256,8 +3439,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2020-10-27T00:00:00.000000Z\t2020-10-26T23:00:00.000000Z\ta\t6.612327943200507\t2020-10-27T22:00:00.000000Z\n" +
                     "2020-10-28T00:00:00.000000Z\t2020-10-27T23:00:00.000000Z\ta\tnull\t2020-10-27T23:40:00.000000Z\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), "k", true, true);
         });
     }
 
@@ -3271,8 +3454,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') and k between '2021-03-27 21:00' and '2021-03-28 04:00' " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin' with offset '00:15'";
 
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-26T20:30:00.000000Z");
-            final long step = 13 * 60 * 1000000L;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-26T20:30:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(13 * 60 * 1000000L);
             final int N = 1000;
             final int K = 25;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b') s,";
@@ -3287,8 +3470,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T03:15:00.000000Z\t2021-03-28T01:15:00.000000Z\ta\tnull\t2021-03-28T02:11:00.000000Z\n" +
                     "2021-03-28T04:15:00.000000Z\t2021-03-28T02:15:00.000000Z\ta\tnull\t2021-03-28T02:37:00.000000Z\n" +
                     "2021-03-28T05:15:00.000000Z\t2021-03-28T03:15:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z\n";
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), "k", true, true);
         });
     }
 
@@ -3302,8 +3485,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1d align to calendar time zone 'Europe/Berlin'";
 
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-25T23:30:00.000000Z");
-            final long step = 50 * 60 * 1000000L;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-25T23:30:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(50 * 60 * 1000000L);
             final int N = 120;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
@@ -3315,8 +3498,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-29T00:00:00.000000Z\t2021-03-28T22:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
                     "2021-03-30T00:00:00.000000Z\t2021-03-29T22:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), "k", true, true);
         });
     }
 
@@ -3330,8 +3513,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') " +
                     "sample by 1d align to calendar time zone 'Europe/London'";
 
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-25T23:30:00.000000Z");
-            final long step = 50 * 60 * 1000000L;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-25T23:30:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(50 * 60 * 1000000L);
             final int N = 120;
             final int K = 5;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
@@ -3344,8 +3527,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-29T00:00:00.000000Z\t2021-03-28T23:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
                     "2021-03-30T00:00:00.000000Z\t2021-03-29T23:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), "k", true, true);
         });
     }
 
@@ -3359,8 +3542,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "where s in ('a') and k between '2020-10-24 21:00:00' and '2020-10-25 05:00:00'" +
                     "sample by 1h align to calendar time zone 'Europe/London'";
 
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2020-10-23T20:30:00.000000Z");
-            final long step = 259 * 1000000L;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2020-10-23T20:30:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(259 * 1000000L);
             final int N = 1000;
             final int K = 25;
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b') s,";
@@ -3375,17 +3558,17 @@ public class MatViewTest extends AbstractCairoTest {
                     "2020-10-25T03:00:00.000000Z\t2020-10-25T03:00:00.000000Z\ta\tnull\t2020-10-25T03:43:26.000000Z\n" +
                     "2020-10-25T04:00:00.000000Z\t2020-10-25T04:00:00.000000Z\ta\t34.49948946607576\t2020-10-25T04:56:49.000000Z\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), "k", true, true);
         });
     }
 
     @Test
     public void testInsertAfterTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL;"
             );
 
@@ -3413,14 +3596,14 @@ public class MatViewTest extends AbstractCairoTest {
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                     "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n";
-            assertQueryNoLeakCheck(expected1, "price_1h order by sym");
-            assertQueryNoLeakCheck(expected1, view1Sql + " order by sym");
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected1), "price_1h order by sym");
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected1), view1Sql + " order by sym");
 
             final String expected2 = "sym\tprice\tts\n" +
                     "gbpusd\t1.321\t2024-09-10T00:00:00.000000Z\n" +
                     "jpyusd\t103.21\t2024-09-10T00:00:00.000000Z\n";
-            assertQueryNoLeakCheck(expected2, "price_1d order by sym");
-            assertQueryNoLeakCheck(expected2, view2Sql + " order by sym");
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected2), "price_1d order by sym");
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected2), view2Sql + " order by sym");
         });
     }
 
@@ -3464,11 +3647,34 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLargeSampleByIntervalButFewRows() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table x (ts #TIMESTAMP) timestamp(ts) partition by day wal;");
+            execute("insert into x values('2000-01-01T12:00'),('2010-01-01T12:00'),('2020-01-01T12:00')");
+            drainQueues();
+
+            final String expected = """
+                    ts\tfirst_ts
+                    2000-01-01T00:00:00.000000Z\t2000-01-01T12:00:00.000000Z
+                    2010-01-01T00:00:00.000000Z\t2010-01-01T12:00:00.000000Z
+                    2020-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z
+                    """;
+            final String viewSql = "select ts, first(ts) as first_ts from x sample by 10y";
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewSql, "ts", true, true);
+
+            execute("create materialized view x_1y as (" + viewSql + ") partition by year");
+            drainQueues();
+
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "x_1y", "ts", true, true);
+        });
+    }
+
+    @Test
     public void testManualDeferredMatView() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             currentMicros = parseFloorPartialTimestamp("2001-01-01T01:01:01.000000Z");
@@ -3515,10 +3721,11 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -3537,11 +3744,12 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "gbpusd\t1.333\t2024-09-10T22:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "gbpusd\t1.333\t2024-09-10T22:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
         });
@@ -3550,9 +3758,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testManualMatView() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             currentMicros = parseFloorPartialTimestamp("2001-01-01T01:01:01.000000Z");
@@ -3573,11 +3781,11 @@ public class MatViewTest extends AbstractCairoTest {
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
-            assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -3599,10 +3807,11 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -3618,11 +3827,12 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "gbpusd\t1.323\t2024-09-11T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "gbpusd\t1.323\t2024-09-11T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -3641,12 +3851,13 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "gbpusd\t1.333\t2024-09-10T22:00:00.000000Z\n" +
-                            "gbpusd\t1.323\t2024-09-11T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "gbpusd\t1.333\t2024-09-10T22:00:00.000000Z\n" +
+                                    "gbpusd\t1.323\t2024-09-11T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
         });
@@ -3696,19 +3907,20 @@ public class MatViewTest extends AbstractCairoTest {
     public void testManyTimerMatViews() throws Exception {
         assertMemoryLeak(() -> {
             final int views = 32;
-            final long start = parseFloorPartialTimestamp("2024-12-12T00:00:00.000000Z");
+            final long start = MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2024-12-12T00:00:00.000000Z");
 
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
+            final long viewStart = timestampType.getDriver().fromMicros(start);
             // Create first and last mat view before all others to verify timer list sort logic.
-            createNthTimerMatView(start, 0);
-            createNthTimerMatView(start, (views - 1));
+            createNthTimerMatView(timestampType.getDriver(), viewStart, 0);
+            createNthTimerMatView(timestampType.getDriver(), viewStart, (views - 1));
             for (int i = 1; i < views - 1; i++) {
-                createNthTimerMatView(start, i);
+                createNthTimerMatView(timestampType.getDriver(), viewStart, i);
             }
 
             execute(
@@ -3726,14 +3938,15 @@ public class MatViewTest extends AbstractCairoTest {
                 drainQueues();
 
                 assertQueryNoLeakCheck(
-                        "sym\tprice\tts\n" +
-                                "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                                "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                        replaceExpectedTimestamp(
+                                "sym\tprice\tts\n" +
+                                        "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                        "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                        "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                         "price_1h_" + i + " order by sym"
                 );
 
-                currentMicros += Timestamps.SECOND_MICROS;
+                currentMicros += Micros.SECOND_MICROS;
             }
 
             // Drop all mat views. All timers should be removed as well.
@@ -3743,7 +3956,7 @@ public class MatViewTest extends AbstractCairoTest {
                 dropNthTimerMatView(i);
             }
 
-            currentMicros += Timestamps.DAY_MICROS;
+            currentMicros += Micros.DAY_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -3763,9 +3976,9 @@ public class MatViewTest extends AbstractCairoTest {
         // Mat views may not support renames, but the table can be renamed
         // during replication from a temp name, so the renaming has to be supported on storage level
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -3778,7 +3991,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = MicrosTimestampDriver.floor("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -3811,11 +4024,16 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            assertSql("sym\tprice\tts\n" +
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("sym\tprice\tts\n" +
                             "gbpusd\t1.0\t2024-09-10T12:00:00.000000Z\n" +
                             "jpyusd\t1.0\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.0\t2024-09-10T13:00:00.000000Z\n",
-                    "price_1h_renamed"
+                            "gbpusd\t1.0\t2024-09-10T13:00:00.000000Z\n"),
+                    "price_1h_renamed",
+                    "ts",
+                    true,
+                    true
+
             );
         });
     }
@@ -3857,7 +4075,7 @@ public class MatViewTest extends AbstractCairoTest {
             try (
                     Path path = new Path();
                     TableReader viewReader = engine.getReader(viewToken);
-                    WalTxnRangeLoader txnRangeLoader = new WalTxnRangeLoader(configuration.getFilesFacade())
+                    WalTxnRangeLoader txnRangeLoader = new WalTxnRangeLoader(configuration)
             ) {
                 final LongList intervals = new LongList();
                 final long seqTxn = viewReader.getSeqTxn();
@@ -3890,9 +4108,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testPeriodMatViewSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
@@ -3944,9 +4162,10 @@ public class MatViewTest extends AbstractCairoTest {
             drainMatViewTimerQueue(timerJob);
             drainQueues();
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.32\t2000-01-01T02:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2000-01-01T02:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.32\t2000-01-01T02:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2000-01-01T02:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -3963,11 +4182,12 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.32\t2000-01-01T02:00:00.000000Z\n" +
-                            "gbpusd\t1.323\t2000-01-01T03:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2000-01-01T02:00:00.000000Z\n" +
-                            "jpyusd\t103.29\t2000-01-01T03:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.32\t2000-01-01T02:00:00.000000Z\n" +
+                                    "gbpusd\t1.323\t2000-01-01T03:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2000-01-01T02:00:00.000000Z\n" +
+                                    "jpyusd\t103.29\t2000-01-01T03:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -3976,7 +4196,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
-            final String finalExpected = "sym\tprice\tts\n" +
+            final String finalExpected = replaceExpectedTimestamp("sym\tprice\tts\n" +
                     "gbpusd\t1.32\t2000-01-01T02:00:00.000000Z\n" +
                     "gbpusd\t1.323\t2000-01-01T03:00:00.000000Z\n" +
                     "gbpusd\t1.321\t2000-01-01T04:00:00.000000Z\n" +
@@ -3985,7 +4205,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "jpyusd\t103.21\t2000-01-01T02:00:00.000000Z\n" +
                     "jpyusd\t103.29\t2000-01-01T03:00:00.000000Z\n" +
                     "jpyusd\t103.21\t2000-01-02T01:00:00.000000Z\n" +
-                    "jpyusd\t103.23\t2000-01-02T05:00:00.000000Z\n";
+                    "jpyusd\t103.23\t2000-01-02T05:00:00.000000Z\n");
             assertQueryNoLeakCheck(
                     finalExpected,
                     "price_1h order by sym"
@@ -4025,9 +4245,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testQueryError() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, amount int, ts timestamp" +
+                            "sym varchar, price double, amount int, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -4054,9 +4274,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testQueryError2() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table x (" +
-                            "sym varchar, price double, amount int, ts timestamp" +
+                            "sym varchar, price double, amount int, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute("create table y (sym varchar)");
@@ -4082,14 +4302,58 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueryTimestampMixedWithAggregates() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL;");
+            execute("INSERT INTO x VALUES ('2010-01-01T01'),('2010-01-01T01'),('2020-01-01T01'),('2030-01-01T01');");
+            drainWalQueue();
+
+            execute(
+                    """
+                            CREATE MATERIALIZED VIEW x_view AS
+                            SELECT ts, count()::double / datediff('h', ts, dateadd('d', 1, ts, 'Europe/Copenhagen')) AS Coverage
+                            FROM 'x'
+                            SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Copenhagen';
+                            """
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.000000Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\tperiod_length\tperiod_length_unit\trefresh_limit\trefresh_limit_unit\n" +
+                            "x_view\timmediate\tx\t2024-01-01T01:01:01.000000Z\t2024-01-01T01:01:01.000000Z\tvalid\t\t1\t1\t0\t\t0\t\n",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
+                            "period_length, period_length_unit, refresh_limit, refresh_limit_unit " +
+                            "from materialized_views",
+                    null
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tCoverage
+                            2009-12-31T23:00:00.000000Z\t0.08333333333333333
+                            2019-12-31T23:00:00.000000Z\t0.041666666666666664
+                            2029-12-31T23:00:00.000000Z\t0.041666666666666664
+                            """,
+                    "x_view",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testQueryWithCte() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table exchanges (" +
-                            " uid symbol, amount double, ts timestamp " +
+                            " uid symbol, amount double, ts #TIMESTAMP " +
                             ") timestamp(ts) partition by day wal;"
             );
-            execute("create table aux_start_date (ts timestamp);");
+            executeWithRewriteTimestamp("create table aux_start_date (ts #TIMESTAMP);");
 
             execute(
                     "insert into exchanges values('foo', 1.320, '2024-09-10T12:01')" +
@@ -4101,8 +4365,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             final String expected = "ts\tuid\tamount\n" +
-                    "2000-01-01T00:00:00.000000Z\tbar\t103.21\n" +
-                    "2000-01-01T00:00:00.000000Z\tfoo\t1.321\n";
+                    "2020-01-01T00:00:00.000000Z\tbar\t103.21\n" +
+                    "2020-01-01T00:00:00.000000Z\tfoo\t1.321\n";
             final String viewSql = "with starting_point as ( " +
                     "  select ts from aux_start_date " +
                     "  union " +
@@ -4116,22 +4380,22 @@ public class MatViewTest extends AbstractCairoTest {
                     ") " +
                     "select ts, uid, first(amount) as amount " +
                     "from latest_query " +
-                    "sample by 100y";
-            assertQueryNoLeakCheck(expected, viewSql, "ts");
+                    "sample by 10y";
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewSql, "ts");
 
-            execute("create materialized view exchanges_100y as (" + viewSql + ") partition by year");
+            execute("create materialized view exchanges_10y as (" + viewSql + ") partition by year");
             drainQueues();
 
-            assertQueryNoLeakCheck(expected, "exchanges_100y", "ts", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "exchanges_10y", "ts", true, true);
         });
     }
 
     @Test
     public void testRangeRefresh() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table x ( " +
-                            "sym varchar, price double, ts timestamp " +
+                            "sym varchar, price double, ts #TIMESTAMP " +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute("create table y (sym varchar)");
@@ -4166,9 +4430,10 @@ public class MatViewTest extends AbstractCairoTest {
             execute("refresh materialized view x_1h range from '2024-09-10T12:02' to '2024-09-11T12:02'");
             drainQueues();
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n"),
                     "x_1h order by sym, ts"
             );
             assertQueryNoLeakCheck(
@@ -4188,7 +4453,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                     "gbpusd\t1.32\t2024-09-13T13:00:00.000000Z\n" + // newer timestamp
                     "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n";
-            assertQueryNoLeakCheck(expected, "x_1h order by sym, ts");
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "x_1h order by sym, ts");
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn\n" +
                             "x_1h\timmediate\tx\tvalid\t\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\t2\t2\n",
@@ -4204,7 +4469,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute(insertOlderRows);
             drainQueues();
             execute("refresh materialized view x_1h range from '2024-09-10T12:02' to '2024-09-11T12:02';");
-            assertQueryNoLeakCheck(expected, "x_1h order by sym, ts");
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "x_1h order by sym, ts");
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn\n" +
                             "x_1h\timmediate\tx\tinvalid\ttruncate operation\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\t2\t4\n",
@@ -4220,9 +4485,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testRangeRefreshIgnoresRefreshLimitHours() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price ( " +
-                            "sym varchar, price double, ts timestamp " +
+                            "sym varchar, price double, ts #TIMESTAMP " +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -4235,11 +4500,11 @@ public class MatViewTest extends AbstractCairoTest {
             );
             currentMicros = parseFloorPartialTimestamp("2024-09-13T00:00:00.000000Z");
             drainQueues();
-            final String ogExpected = "sym\tprice\tts\n" +
+            final String ogExpected = replaceExpectedTimestamp("sym\tprice\tts\n" +
                     "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                     "gbpusd\t1.321\t2024-09-12T13:00:00.000000Z\n" +
-                    "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n";
+                    "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n");
             assertQueryNoLeakCheck(ogExpected, "price_1h order by sym, ts");
             final String matViewsSql = "select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
                     "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -4272,13 +4537,14 @@ public class MatViewTest extends AbstractCairoTest {
             execute("refresh materialized view price_1h range from '2024-09-09' to '2024-09-12';");
             drainQueues();
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t2.431\t2024-09-09T00:00:00.000000Z\n" + // new row
-                            "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-12T13:00:00.000000Z\n" +
-                            "jpyusd\t214.32\t2024-09-11T00:00:00.000000Z\n" + // new row
-                            "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t2.431\t2024-09-09T00:00:00.000000Z\n" + // new row
+                                    "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-12T13:00:00.000000Z\n" +
+                                    "jpyusd\t214.32\t2024-09-11T00:00:00.000000Z\n" + // new row
+                                    "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n"),
                     "price_1h order by sym, ts"
             );
             assertQueryNoLeakCheck(
@@ -4293,9 +4559,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testRangeRefreshIgnoresRefreshLimitMonths() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price ( " +
-                            "sym varchar, price double, ts timestamp " +
+                            "sym varchar, price double, ts #TIMESTAMP " +
                             ") timestamp(ts) partition by DAY WAL"
             );
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -4309,11 +4575,12 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-09-13T00:00:00.000000Z");
             drainQueues();
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-12T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-12T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n"),
                     "price_1h order by sym, ts"
             );
             assertQueryNoLeakCheck(
@@ -4337,13 +4604,14 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t2.432\t2024-09-12T01:00:00.000000Z\n" + // newer row
-                            "gbpusd\t1.321\t2024-09-12T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n" +
-                            "jpyusd\t214.32\t2024-09-12T01:00:00.000000Z\n", // newer row
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t2.432\t2024-09-12T01:00:00.000000Z\n" + // newer row
+                                    "gbpusd\t1.321\t2024-09-12T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n" +
+                                    "jpyusd\t214.32\t2024-09-12T01:00:00.000000Z\n"), // newer row
                     "price_1h order by sym, ts"
             );
             assertQueryNoLeakCheck(
@@ -4360,15 +4628,16 @@ public class MatViewTest extends AbstractCairoTest {
             execute("refresh materialized view price_1h range from '2024-08-01' to '2024-09-12';");
             drainQueues();
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t2.431\t2024-08-01T00:00:00.000000Z\n" + // older row
-                            "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t2.432\t2024-09-12T01:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-12T13:00:00.000000Z\n" +
-                            "jpyusd\t214.32\t2024-08-01T00:00:00.000000Z\n" + // older row
-                            "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n" +
-                            "jpyusd\t214.32\t2024-09-12T01:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t2.431\t2024-08-01T00:00:00.000000Z\n" + // older row
+                                    "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t2.432\t2024-09-12T01:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-12T13:00:00.000000Z\n" +
+                                    "jpyusd\t214.32\t2024-08-01T00:00:00.000000Z\n" + // older row
+                                    "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n" +
+                                    "jpyusd\t214.32\t2024-09-12T01:00:00.000000Z\n"),
                     "price_1h order by sym, ts"
             );
             assertQueryNoLeakCheck(
@@ -4386,8 +4655,8 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testRecursiveInvalidation() throws Exception {
         assertMemoryLeak(() -> {
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2025-02-18T00:00:00.000000Z");
-            long step = 100000000L;
+            long startTs = timestampType.getDriver().parseFloorLiteral("2025-02-18T00:00:00.000000Z");
+            long step = timestampType.getDriver().fromMicros(100000000L);
             final int N = 100;
 
             String tableName = "base";
@@ -4428,7 +4697,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             execute("truncate table " + tableName);
-            long ts = TimestampFormatUtils.parseUTCTimestamp("2025-05-17T00:00:00.000000Z");
+            long ts = timestampType.getDriver().parseFloorLiteral("2025-05-17T00:00:00.000000Z");
             execute("insert into " + tableName + " " + generateSelectSql(columns, ts, step, N, N));
 
             drainQueues();
@@ -4483,8 +4752,8 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testRecursiveInvalidationOnDropMatView() throws Exception {
         assertMemoryLeak(() -> {
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2025-02-18T00:00:00.000000Z");
-            long step = 100000000L;
+            long startTs = timestampType.getDriver().parseFloorLiteral("2025-02-18T00:00:00.000000Z");
+            long step = timestampType.getDriver().fromMicros(10L);
             final int N = 100;
 
             String tableName = "base";
@@ -4543,9 +4812,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testRecursiveInvalidationOnFailedRefresh() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, amount int, ts timestamp" +
+                            "sym varchar, price double, amount int, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -4578,14 +4847,14 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testRefreshExecutionContextBansWrongInsertions() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table x (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
-            execute(
+            executeWithRewriteTimestamp(
                     "create table y (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -4611,9 +4880,9 @@ public class MatViewTest extends AbstractCairoTest {
     public void testRefreshIntervalsCachingSmoke() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
@@ -4653,23 +4922,24 @@ public class MatViewTest extends AbstractCairoTest {
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T03:01')" +
                             ",('jpyusd', 103.21, '2024-09-12T23:02')"
             );
-            currentMicros += 6 * Timestamps.SECOND_MICROS;
+            currentMicros += 6 * Micros.SECOND_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
             // the newly inserted intervals should be in the cache
             Assert.assertEquals(4, viewState.getRefreshIntervalsBaseTxn());
             final LongList expectedIntervals = new LongList();
-            expectedIntervals.add(parseFloorPartialTimestamp("2024-09-11T12:01"), parseFloorPartialTimestamp("2024-09-11T12:02"));
-            expectedIntervals.add(parseFloorPartialTimestamp("2024-09-12T03:01"), parseFloorPartialTimestamp("2024-09-12T23:02"));
+            expectedIntervals.add(timestampType.getDriver().parseFloorLiteral("2024-09-11T12:01"), timestampType.getDriver().parseFloorLiteral("2024-09-11T12:02"));
+            expectedIntervals.add(timestampType.getDriver().parseFloorLiteral("2024-09-12T03:01"), timestampType.getDriver().parseFloorLiteral("2024-09-12T23:02"));
             TestUtils.assertEquals(expectedIntervals, viewState.getRefreshIntervals());
 
             // at this point, new rows shouldn't be reflected in the view
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -4711,16 +4981,17 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "gbpusd\t1.32\t2024-09-11T12:00:00.000000Z\n" +
-                            "gbpusd\t1.32\t2024-09-12T03:00:00.000000Z\n" +
-                            "gbpusd\t1.32\t2024-09-12T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-12T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-12T23:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "gbpusd\t1.32\t2024-09-11T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.32\t2024-09-12T03:00:00.000000Z\n" +
+                                    "gbpusd\t1.32\t2024-09-12T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-12T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-12T23:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
         });
@@ -4732,9 +5003,9 @@ public class MatViewTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, capacity);
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "10s");
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
@@ -4761,7 +5032,7 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
             Assert.assertEquals(0, viewState.getRefreshIntervals().size());
 
-            currentMicros += 11 * Timestamps.SECOND_MICROS;
+            currentMicros += 11 * Micros.SECOND_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -4770,17 +5041,18 @@ public class MatViewTest extends AbstractCairoTest {
             final int intervalsSize = viewState.getRefreshIntervals().size();
             Assert.assertEquals(2 * capacity, intervalsSize);
             for (int i = 0; i < capacity - 1; i++) {
-                Assert.assertEquals(Timestamps.SECOND_MICROS * i, viewState.getRefreshIntervals().getQuick(2 * i));
-                Assert.assertEquals(Timestamps.SECOND_MICROS * i, viewState.getRefreshIntervals().getQuick(2 * i + 1));
+                Assert.assertEquals(timestampType.getDriver().fromSeconds(i), viewState.getRefreshIntervals().getQuick(2 * i));
+                Assert.assertEquals(timestampType.getDriver().fromSeconds(i), viewState.getRefreshIntervals().getQuick(2 * i + 1));
             }
             // The latest intervals should be squashed into the last one.
-            Assert.assertEquals(Timestamps.SECOND_MICROS * (capacity - 1), viewState.getRefreshIntervals().getQuick(intervalsSize - 2));
-            Assert.assertEquals(Timestamps.SECOND_MICROS * (3 * capacity - 1), viewState.getRefreshIntervals().getQuick(intervalsSize - 1));
+            Assert.assertEquals(timestampType.getDriver().fromSeconds(capacity - 1), viewState.getRefreshIntervals().getQuick(intervalsSize - 2));
+            Assert.assertEquals(timestampType.getDriver().fromSeconds(3 * capacity - 1), viewState.getRefreshIntervals().getQuick(intervalsSize - 1));
 
             // at this point, new rows shouldn't be reflected in the view
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -4822,9 +5094,10 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t29.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t29.0\t1970-01-01T00:00:00.000000Z\n" +
+                                    "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
         });
@@ -4836,9 +5109,9 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             TestTimestampCounterFactory.COUNTER.set(0);
 
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  price double, ts timestamp" +
+                            "  price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL;"
             );
 
@@ -4865,17 +5138,17 @@ public class MatViewTest extends AbstractCairoTest {
             final String expected = "ts\tts0\tmax_price\n" +
                     "2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.32\n" +
                     "2024-01-30T00:00:00.000000Z\t2024-01-30T00:00:00.000000Z\t1.321\n";
-            assertQueryNoLeakCheck(expected, viewSql + " order by ts", "ts", true, true);
-            assertQueryNoLeakCheck(expected, "price_1h order by ts", "ts", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewSql + " order by ts", "ts", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "price_1h order by ts", "ts", true, true);
         });
     }
 
     @Test
     public void testResumeSuspendMatView() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp, extra_col long" +
+                            "sym varchar, price double, ts #TIMESTAMP, extra_col long" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -4901,10 +5174,11 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -4915,10 +5189,11 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -4936,11 +5211,12 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t103.14\t2024-09-10T13:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.14\t2024-09-10T13:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -4960,11 +5236,12 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t103.14\t2024-09-10T13:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.14\t2024-09-10T13:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -4982,11 +5259,12 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t103.17\t2024-09-10T13:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.17\t2024-09-10T13:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -5004,9 +5282,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testSampleByDST() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -5027,11 +5305,62 @@ public class MatViewTest extends AbstractCairoTest {
                     "gbpusd\t1.324\t1.326\t3\t2024-10-26T22:00:00.000000Z\n" +
                     "gbpusd\t1.327\t1.328\t2\t2024-10-27T23:00:00.000000Z\n";
             assertQueryNoLeakCheck(
-                    expected,
+                    replaceExpectedTimestamp(expected),
                     "select sym, first(price) as first, last(price) as last, count() count, ts " +
                             "from base_price " +
                             "sample by 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' " +
                             "order by ts, sym",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNanos() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1000000000n");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\timmediate\tbase_price\t2024-10-24T17:22:09.842574Z\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1000000000n\tvalid\t\t1\t1\n",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+
+            final String expected = timestampType == TestTimestampType.MICRO
+                    ? "sym\tprice\tts\n" +
+                    "gbpusd\t1.32\t2024-09-10T12:01:00.000000Z\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:02:00.000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-10T12:02:00.000000Z\n" +
+                    "gbpusd\t1.321\t2024-09-10T13:02:00.000000Z\n"
+                    : "sym\tprice\tts\n" +
+                    "gbpusd\t1.32\t2024-09-10T12:01:00.000000000Z\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:02:00.000000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-10T12:02:00.000000000Z\n" +
+                    "gbpusd\t1.321\t2024-09-10T13:02:00.000000000Z\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "price_1h",
                     "ts",
                     true,
                     true
@@ -5045,8 +5374,8 @@ public class MatViewTest extends AbstractCairoTest {
             final String viewName = "x_view";
             final String out = "select to_timezone(k, 'PST') k, c";
             final String viewQuery = "select k, count() c from x sample by 2h align to calendar time zone 'PST' with offset '00:42'";
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("1970-01-03T00:20:00.000000Z");
-            final long step = 300000000;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("1970-01-03T00:20:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(300000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5058,8 +5387,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "1970-01-02T20:42:00.000000Z\t24\n" +
                     "1970-01-02T22:42:00.000000Z\t23\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), null, true, true);
         });
     }
 
@@ -5069,8 +5398,8 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Iran'";
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:15:00.000000Z");
-            final long step = 6 * 60000000;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T00:15:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(6 * 60000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5089,8 +5418,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T14:00:00.000000Z\t7\n";
 
             final String out = "select to_timezone(k, 'Iran') k, c";
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), null, true, true);
         });
     }
 
@@ -5099,8 +5428,8 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin'";
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:15:00.000000Z");
-            final long step = 6 * 60000000;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T00:15:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(6 * 60000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5119,8 +5448,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T12:00:00.000000Z\t2\n";
 
             final String out = "select to_timezone(k, 'Europe/Berlin') k, c";
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), null, true, true);
         });
     }
 
@@ -5137,8 +5466,8 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin'";
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-10-31T00:15:00.000000Z");
-            final long step = 6 * 60000000;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-10-31T00:15:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(6 * 60000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5155,8 +5484,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-10-31T10:00:00.000000Z\t10\n" +
                     "2021-10-31T11:00:00.000000Z\t2\n";
             final String out = "select to_timezone(k, 'Europe/Berlin') k, c";
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery));
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery));
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName));
         });
     }
 
@@ -5168,8 +5497,8 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 30m align to calendar time zone 'Europe/Berlin'";
-            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-10-31T00:15:00.000000Z");
-            final long step = 6 * 60000000;
+            final long startTs = timestampType.getDriver().parseFloorLiteral("2021-10-31T00:15:00.000000Z");
+            final long step = timestampType.getDriver().fromMicros(6 * 60000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5196,8 +5525,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-10-31T11:00:00.000000Z\t2\n";
 
             final String out = "select to_timezone(k, 'Europe/Berlin') k, c";
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), null, true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewName), null, true, true);
         });
     }
 
@@ -5211,8 +5540,8 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 90m align to calendar";
-            final long startTs = 172800000000L;
-            final long step = 300000000;
+            final long startTs = timestampType.getDriver().fromMicros(172800000000L);
+            final long step = timestampType.getDriver().fromMicros(300000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5225,8 +5554,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "1970-01-03T06:00:00.000000Z\t18\n" +
                     "1970-01-03T07:30:00.000000Z\t10\n";
 
-            assertQueryNoLeakCheck(expected, viewQuery, "k", true, true);
-            assertQueryNoLeakCheck(expected, viewName, "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewQuery, "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewName, "k", true, true);
         });
     }
 
@@ -5235,8 +5564,8 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 90m align to calendar with offset '00:42'";
-            final long startTs = 172800000000L;
-            final long step = 300000000;
+            final long startTs = timestampType.getDriver().fromMicros(172800000000L);
+            final long step = timestampType.getDriver().fromMicros(300000000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -5250,8 +5579,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "1970-01-03T06:42:00.000000Z\t18\n" +
                     "1970-01-03T08:12:00.000000Z\t1\n";
 
-            assertQueryNoLeakCheck(expected, viewQuery, "k", true, true);
-            assertQueryNoLeakCheck(expected, viewName, "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewQuery, "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewName, "k", true, true);
         });
     }
 
@@ -5260,9 +5589,9 @@ public class MatViewTest extends AbstractCairoTest {
         // Verify that the detached base table reader used by the refresh job
         // can be safely used in the mat view query multiple times.
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym symbol index, sym2 symbol, price double, ts timestamp, extra_col long" +
+                            "sym symbol index, sym2 symbol, price double, ts #TIMESTAMP, extra_col long" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -5295,8 +5624,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "foobar\t\ts1\t\tnull\t2024-09-10T12:00:00.000000Z\n" +
                     "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                     "foobar\tbarbaz\ts1\ts1\t103.23\t2024-09-10T13:00:00.000000Z\n";
-            assertQueryNoLeakCheck(expected, viewSql + " order by ts, sym_a, sym_b", "ts", true);
-            assertQueryNoLeakCheck(expected, "price_1h order by ts, sym_a, sym_b", "ts", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewSql + " order by ts, sym_a, sym_b", "ts", true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "price_1h order by ts, sym_a, sym_b", "ts", true, true);
         });
     }
 
@@ -5307,9 +5636,9 @@ public class MatViewTest extends AbstractCairoTest {
             final SOCountDownLatch stopped = new SOCountDownLatch(1);
             final AtomicBoolean refreshed = new AtomicBoolean(true);
 
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -5365,8 +5694,10 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    "view_name\tview_status\n" +
-                            "price_1h\tinvalid\n",
+                    """
+                            view_name\tview_status
+                            price_1h\tinvalid
+                            """,
                     "select view_name, view_status from materialized_views",
                     null,
                     false
@@ -5377,9 +5708,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testSimpleRefresh() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -5394,10 +5725,11 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                     "price_1h order by ts, sym",
                     "ts",
                     true,
@@ -5415,17 +5747,17 @@ public class MatViewTest extends AbstractCairoTest {
                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                     "gbpusd\t1.325\t2024-09-10T13:00:00.000000Z\n";
 
-            assertQueryNoLeakCheck(expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym", "ts", true, true);
-            assertQueryNoLeakCheck(expected, "price_1h order by ts, sym", "ts", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym", "ts", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "price_1h order by ts, sym", "ts", true, true);
         });
     }
 
     @Test
     public void testSubQuery() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym varchar, price double, ts timestamp" +
+                            "  sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -5458,7 +5790,7 @@ public class MatViewTest extends AbstractCairoTest {
                 null,
                 "2024-12-12T12:00:01.000000Z",
                 "2024-12-12T13:00:01.000000Z",
-                2 * Timestamps.HOUR_MICROS
+                2 * Micros.HOUR_MICROS
         );
     }
 
@@ -5468,7 +5800,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "Europe/London",
                 "2024-12-12T12:00:01.000000Z",
                 "2024-12-12T13:00:01.000000Z",
-                2 * Timestamps.HOUR_MICROS
+                2 * Micros.HOUR_MICROS
         );
     }
 
@@ -5478,7 +5810,7 @@ public class MatViewTest extends AbstractCairoTest {
                 null,
                 "2024-12-12T12:00:00.000000Z",
                 "2024-12-12T12:00:00.000000Z",
-                Timestamps.HOUR_MICROS
+                Micros.HOUR_MICROS
         );
     }
 
@@ -5488,7 +5820,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "Europe/London",
                 "2024-12-12T12:00:00.000000Z",
                 "2024-12-12T12:00:00.000000Z",
-                Timestamps.HOUR_MICROS
+                Micros.HOUR_MICROS
         );
     }
 
@@ -5497,13 +5829,13 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final long start = parseFloorPartialTimestamp("2024-12-12T00:00:00.000000Z");
 
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            createNthTimerMatView(start, 0);
+            createNthTimerMatView(timestampType.getDriver(), timestampType.getDriver().fromMicros(start), 0);
 
             execute(
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
@@ -5512,7 +5844,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = start + 61 * Timestamps.SECOND_MICROS;
+            currentMicros = start + 61 * Micros.SECOND_MICROS;
             final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
             drainMatViewTimerQueue(timerJob);
             drainQueues();
@@ -5523,16 +5855,17 @@ public class MatViewTest extends AbstractCairoTest {
                     "price_1h_0 order by sym"
             );
 
-            currentMicros = start + Timestamps.HOUR_MICROS;
+            currentMicros = start + Micros.HOUR_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
             // It's the next hourly interval now, so the view should refresh.
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h_0 order by sym"
             );
         });
@@ -5541,9 +5874,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testTimerMatViewRefreshAfterCreation() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -5569,10 +5902,11 @@ public class MatViewTest extends AbstractCairoTest {
 
             // the view should still get refreshed since it's non-deferred
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
         });
@@ -5585,7 +5919,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "2024-12-12T00:00:00.000000Z",
                 "2d",
                 "2024-12-11T00:00:00.000000Z",
-                Timestamps.HOUR_MICROS,
+                Micros.HOUR_MICROS,
                 23
         );
     }
@@ -5597,7 +5931,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "2024-12-12T00:00:00.000000Z",
                 "2d",
                 "2024-12-11T00:00:00.000000Z",
-                Timestamps.HOUR_MICROS,
+                Micros.HOUR_MICROS,
                 23
         );
     }
@@ -5609,7 +5943,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "2024-12-12T01:30:00.000000Z",
                 "30m",
                 "2024-12-12T01:00:00.000000Z",
-                Timestamps.MINUTE_MICROS,
+                Micros.MINUTE_MICROS,
                 29
         );
     }
@@ -5621,7 +5955,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "2024-12-12T01:30:00.000000Z",
                 "30m",
                 "2024-12-12T01:45:00.000000Z",
-                Timestamps.MINUTE_MICROS,
+                Micros.MINUTE_MICROS,
                 14
         );
     }
@@ -5633,7 +5967,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "2024-12-12T01:30:00.000000Z",
                 "30m",
                 "2024-12-12T01:00:00.000000Z",
-                Timestamps.MINUTE_MICROS,
+                Micros.MINUTE_MICROS,
                 29
         );
     }
@@ -5645,7 +5979,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "2024-12-12T01:30:00.000000Z",
                 "30m",
                 "2024-12-12T01:45:00.000000Z",
-                Timestamps.MINUTE_MICROS,
+                Micros.MINUTE_MICROS,
                 14
         );
     }
@@ -5655,13 +5989,13 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final long start = parseFloorPartialTimestamp("2024-12-12T00:00:00.000000Z");
 
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            createNthTimerMatView(start, 0);
+            createNthTimerMatView(timestampType.getDriver(), timestampType.getDriver().fromMicros(start), 0);
 
             execute(
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
@@ -5676,15 +6010,16 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h_0 order by sym"
             );
 
             // Tick the timer once again, this time with no new transaction.
-            currentMicros += 2 * Timestamps.HOUR_MICROS;
+            currentMicros += 2 * Micros.HOUR_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -5695,17 +6030,18 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             // Do more timer ticks.
-            currentMicros += 2 * Timestamps.HOUR_MICROS;
+            currentMicros += 2 * Micros.HOUR_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T14:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t103.22\t2024-09-10T14:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T14:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.22\t2024-09-10T14:00:00.000000Z\n"),
                     "price_1h_0 order by sym"
             );
         });
@@ -5744,9 +6080,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testTimestampGetsRefreshedOnInvalidation() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, amount int, ts timestamp" +
+                            "sym varchar, price double, amount int, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -5764,8 +6100,8 @@ public class MatViewTest extends AbstractCairoTest {
             final String expected = "sym\tprice\tts\n" +
                     "gbpusd\t1.321\t2024-09-10T00:00:00.000000Z\n" +
                     "jpyusd\t103.21\t2024-09-10T00:00:00.000000Z\n";
-            assertQueryNoLeakCheck(expected, viewQuery, "ts", true, true);
-            assertQueryNoLeakCheck(expected, "price_1h", "ts", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewQuery, "ts", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "price_1h", "ts", true, true);
 
             currentMicros = parseFloorPartialTimestamp("2020-01-01T01:01:01.000000Z");
             execute("drop table base_price;");
@@ -5785,9 +6121,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testTtl() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -5803,10 +6139,11 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.312\t2024-09-12T13:00:00.000000Z\n" +
-                            "gbpusd\t1.313\t2024-09-13T13:00:00.000000Z\n" +
-                            "gbpusd\t1.314\t2024-09-14T13:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.312\t2024-09-12T13:00:00.000000Z\n" +
+                                    "gbpusd\t1.313\t2024-09-13T13:00:00.000000Z\n" +
+                                    "gbpusd\t1.314\t2024-09-14T13:00:00.000000Z\n"),
                     "price_1h order by ts, sym",
                     "ts",
                     true,
@@ -5850,7 +6187,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-11T12:01')" +
                             ",('jpyusd', 103.21, '2024-09-11T12:02')"
             );
-            currentMicros += 6 * Timestamps.SECOND_MICROS;
+            currentMicros += 6 * Micros.SECOND_MICROS;
 
             drainMatViewTimerQueue(timerJob);
             drainQueues();
@@ -5909,7 +6246,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-11T12:01')" +
                             ",('jpyusd', 103.21, '2024-09-11T12:02')"
             );
-            currentMicros += 6 * Timestamps.SECOND_MICROS;
+            currentMicros += 6 * Micros.SECOND_MICROS;
 
             drainMatViewTimerQueue(timerJob);
 
@@ -5926,6 +6263,86 @@ public class MatViewTest extends AbstractCairoTest {
                             "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
                             "from materialized_views",
                     null
+            );
+        });
+    }
+
+    @Test
+    public void testWeeklySampleTimestampOutOfRangeIssue6089() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE historical_prices (" +
+                            "  symbol SYMBOL," +
+                            "  market SYMBOL," +
+                            "  timestamp #TIMESTAMP," +
+                            "  price DOUBLE," +
+                            "  volume LONG" +
+                            ") timestamp(timestamp) PARTITION BY DAY WAL"
+            );
+
+            execute(
+                    "CREATE MATERIALIZED VIEW 'historical_prices_1week' AS (" +
+                            "  SELECT timestamp, symbol, market, " +
+                            "  first(price) AS open, max(price) AS high, " +
+                            "  min(price) AS low, last(price) AS close, " +
+                            "  sum(volume) AS volume" +
+                            "  FROM historical_prices" +
+                            "  SAMPLE BY 1w" +
+                            ") PARTITION BY MONTH TTL 5 YEARS"
+            );
+
+            execute(
+                    "INSERT INTO historical_prices VALUES" +
+                            "('HP', 'NYSE', '2025-08-31T15:49:00.309937Z', 28.50, 100)," +
+                            "('HP', 'NYSE', '2025-08-31T15:49:00.309937Z', 28.55, 120)," +
+                            "('HP', 'NYSE', '2025-08-31T15:49:00.309937Z', 28.52, 80)"
+            );
+
+            drainQueues();
+
+            assertSql(
+                    timestampType == TestTimestampType.MICRO
+                            ? "symbol\tmarket\ttimestamp\tprice\tvolume\n" +
+                            "HP\tNYSE\t2025-08-31T15:49:00.309937Z\t28.5\t100\n" +
+                            "HP\tNYSE\t2025-08-31T15:49:00.309937Z\t28.55\t120\n" +
+                            "HP\tNYSE\t2025-08-31T15:49:00.309937Z\t28.52\t80\n"
+                            : "symbol\tmarket\ttimestamp\tprice\tvolume\n" +
+                            "HP\tNYSE\t2025-08-31T15:49:00.309937000Z\t28.5\t100\n" +
+                            "HP\tNYSE\t2025-08-31T15:49:00.309937000Z\t28.55\t120\n" +
+                            "HP\tNYSE\t2025-08-31T15:49:00.309937000Z\t28.52\t80\n",
+                    "select * from historical_prices"
+            );
+
+            final String expected = timestampType == TestTimestampType.MICRO
+                    ? "timestamp\tsymbol\tmarket\topen\thigh\tlow\tclose\tvolume\n" +
+                    "2025-08-25T00:00:00.000000Z\tHP\tNYSE\t28.5\t28.55\t28.5\t28.52\t300\n"
+                    : "timestamp\tsymbol\tmarket\topen\thigh\tlow\tclose\tvolume\n" +
+                    "2025-08-25T00:00:00.000000000Z\tHP\tNYSE\t28.5\t28.55\t28.5\t28.52\t300\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "SELECT timestamp, symbol, market, " +
+                            "first(price) AS open, max(price) AS high, min(price) AS low, last(price) AS close, sum(volume) AS volume " +
+                            "FROM historical_prices " +
+                            "SAMPLE BY 1w",
+                    "timestamp",
+                    true,
+                    true
+            );
+
+            // Assert that materialized view status is valid
+            assertSql(
+                    "view_name\tview_status\n" +
+                            "historical_prices_1week\tvalid\n",
+                    "select view_name, view_status from materialized_views where view_name = 'historical_prices_1week'"
+            );
+
+            // Assert that view returns aggregated data
+            assertQueryNoLeakCheck(
+                    expected,
+                    "historical_prices_1week",
+                    "timestamp",
+                    true,
+                    true
             );
         });
     }
@@ -5957,9 +6374,9 @@ public class MatViewTest extends AbstractCairoTest {
         execute("create materialized view " + viewName + " as (" + viewSql + ") partition by DAY");
     }
 
-    private static void createNthTimerMatView(long start, int n) throws SqlException {
+    private static void createNthTimerMatView(TimestampDriver driver, long start, int n) throws SqlException {
         sink.clear();
-        TimestampFormatUtils.appendDateTimeUSec(sink, start + n * Timestamps.SECOND_MICROS);
+        driver.append(sink, start + driver.fromSeconds(n));
         execute(
                 "create materialized view price_1h_" + n + " refresh every 1m deferred start '" + sink + "' as (" +
                         "select sym, last(price) as price, ts from base_price sample by 1h" +
@@ -5993,11 +6410,18 @@ public class MatViewTest extends AbstractCairoTest {
         execute("drop materialized view price_1h;");
     }
 
+    private void executeWithRewriteTimestamp(CharSequence sqlText) throws SqlException {
+        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType.getTypeName());
+        engine.execute(sqlText, sqlExecutionContext);
+    }
+
     private String generateSelectSql(String columns, long startTs, long step, int init, int count) {
         return "select" +
                 " x + " + init + " as n," +
                 columns +
-                " timestamp_sequence(" + startTs + ", " + step + ") k" +
+                (ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                        " timestamp_sequence(" + startTs + ", " + step + ") k" :
+                        " timestamp_sequence_ns(" + startTs + ", " + step + ") k") +
                 " from" +
                 " long_sequence(" + count + ")";
     }
@@ -6006,11 +6430,15 @@ public class MatViewTest extends AbstractCairoTest {
         return out + " from (" + in + ")";
     }
 
+    private String replaceExpectedTimestamp(String expected) {
+        return ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+    }
+
     private void testAlignToCalendarTimezoneOffset(final String timezone) throws Exception {
         final String viewName = "x_view";
         final String viewQuery = "select k, count() c from x sample by 90m align to calendar time zone '" + timezone + "' with offset '00:42'";
-        final long startTs = 172800000000L;
-        final long step = 300000000;
+        final long startTs = timestampType.getDriver().fromMicros(172800000000L);
+        final long step = timestampType.getDriver().fromMicros(300000000);
         final int N = 100;
         final int K = 5;
         updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -6023,15 +6451,15 @@ public class MatViewTest extends AbstractCairoTest {
                 "1970-01-03T05:42:00.000000Z\t18\n" +
                 "1970-01-03T07:12:00.000000Z\t13\n";
 
-        assertQueryNoLeakCheck(expected, viewQuery, "k", true, true);
-        assertQueryNoLeakCheck(expected, viewName, "k", true, true);
+        assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewQuery, "k", true, true);
+        assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewName, "k", true, true);
     }
 
     private void testAlterRefreshParamsToManual(String initialRefreshType) throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             currentMicros = parseFloorPartialTimestamp("2020-12-12T00:00:00.000000Z");
@@ -6060,7 +6488,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             // no refresh should happen even if we move the clock one day ahead
-            currentMicros += Timestamps.DAY_MICROS;
+            currentMicros += Micros.DAY_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -6073,10 +6501,11 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-12-12T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-12-13T12:00:00.000000Z\n" +
-                            "jpyusd\t1.321\t2024-12-13T13:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-12-12T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-12-13T12:00:00.000000Z\n" +
+                                    "jpyusd\t1.321\t2024-12-13T13:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
             assertQueryNoLeakCheck(
@@ -6093,9 +6522,9 @@ public class MatViewTest extends AbstractCairoTest {
 
     private void testAlterRefreshParamsToTarget(String targetRefreshType, TestRefreshParams targetRefreshParams) throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             currentMicros = parseFloorPartialTimestamp("2020-12-12T00:00:00.000000Z");
@@ -6121,15 +6550,16 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2020-12-12T12:02')" +
                             ",('jpyusd', 1.321, '2020-12-12T13:02')"
             );
-            currentMicros += 2 * Timestamps.DAY_MICROS;
+            currentMicros += 2 * Micros.DAY_MICROS;
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.32\t2020-12-12T12:00:00.000000Z\n" +
-                            "gbpusd\t1.323\t2020-12-12T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2020-12-12T12:00:00.000000Z\n" +
-                            "jpyusd\t1.321\t2020-12-12T13:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.32\t2020-12-12T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.323\t2020-12-12T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2020-12-12T12:00:00.000000Z\n" +
+                                    "jpyusd\t1.321\t2020-12-12T13:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
             assertQueryNoLeakCheck(
@@ -6155,7 +6585,7 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertEquals(targetRefreshParams.periodLengthUnit, viewDefinition.getPeriodLengthUnit());
             Assert.assertEquals(targetRefreshParams.timerInterval, viewDefinition.getTimerInterval());
             Assert.assertEquals(targetRefreshParams.timerUnit, viewDefinition.getTimerUnit());
-            Assert.assertEquals(targetRefreshParams.timerStart, viewDefinition.getTimerStart());
+            Assert.assertEquals(targetRefreshParams.timerStartUs, viewDefinition.getTimerStartUs());
             Assert.assertEquals(targetRefreshParams.timerTimeZone, viewDefinition.getTimerTimeZone());
         });
     }
@@ -6213,7 +6643,7 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void testEnableDedupWithSubsetKeys(String enableDedupSql, boolean expectInvalid) throws Exception {
+    private void testEnableDedupWithSubsetKeys(String enableDedupSql) throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE base_price (" +
@@ -6247,12 +6677,17 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\tbase_table_name\tview_status\n" +
-                            "price_1h\tbase_price\t" + (expectInvalid ? "invalid" : "valid") + "\n",
+                            "price_1h\tbase_price\t" + ("valid") + "\n",
                     "select view_name, base_table_name, view_status from materialized_views",
                     null,
                     false
             );
         });
+    }
+
+    private void testEstimateRowsPerBucket(long tableRows, long bucket, long partitionDuration, int partitionCount, long expectedLo, long expectedHi) {
+        long result = MatViewRefreshJob.estimateRowsPerBucket(tableRows, bucket, partitionDuration, partitionCount);
+        Assert.assertTrue("Expected from " + expectedLo + " to " + expectedHi + ", got " + result, result >= expectedLo && result < expectedHi);
     }
 
     private void testIncrementalRefreshTransactionLogV2(String viewSql) throws Exception {
@@ -6303,9 +6738,9 @@ public class MatViewTest extends AbstractCairoTest {
 
     private void testPeriodRefresh(@NotNull String viewType, @Nullable String refreshType, boolean runTimerJob) throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
@@ -6336,8 +6771,9 @@ public class MatViewTest extends AbstractCairoTest {
             }
             drainQueues();
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.32\t1999-12-31T00:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.32\t1999-12-31T00:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
             final String matViewsSql = "select view_name, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -6361,8 +6797,9 @@ public class MatViewTest extends AbstractCairoTest {
             }
             drainQueues();
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.32\t1999-12-31T00:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.32\t1999-12-31T00:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -6376,10 +6813,11 @@ public class MatViewTest extends AbstractCairoTest {
             }
             drainQueues();
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.32\t1999-12-31T00:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2000-01-01T00:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2000-01-01T00:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.32\t1999-12-31T00:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2000-01-01T00:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2000-01-01T00:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -6394,12 +6832,13 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.32\t1999-12-31T00:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2000-01-01T00:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2000-01-02T00:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2000-01-01T00:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2000-01-02T00:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.32\t1999-12-31T00:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2000-01-01T00:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2000-01-02T00:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2000-01-01T00:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2000-01-02T00:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -6414,9 +6853,9 @@ public class MatViewTest extends AbstractCairoTest {
 
     private void testPeriodWithTzRefresh(@NotNull String viewType, @Nullable String refreshType, boolean runTimerJob) throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             currentMicros = parseFloorPartialTimestamp("2020-01-01T00:00:00.000000Z");
@@ -6483,9 +6922,10 @@ public class MatViewTest extends AbstractCairoTest {
             }
             drainQueues();
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.321\t2020-01-01T00:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2020-01-01T00:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.321\t2020-01-01T00:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2020-01-01T00:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -6500,11 +6940,12 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.321\t2020-01-01T00:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2020-01-02T00:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2020-01-01T00:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2020-01-02T00:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.321\t2020-01-01T00:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2020-01-02T00:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2020-01-01T00:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2020-01-02T00:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
 
@@ -6519,11 +6960,11 @@ public class MatViewTest extends AbstractCairoTest {
 
     private void testTimerMatViewBigJumps(String timeZone, String start, String initialClock, long clockJump) throws Exception {
         assertMemoryLeak(() -> {
-            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone) : null;
+            final TimeZoneRules tzRules = timeZone != null ? Micros.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone) : null;
 
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -6558,14 +6999,15 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
             final StringSink tsSink = new StringSink();
-            TimestampFormatUtils.appendDateTimeUSec(tsSink, currentMicros);
+            MicrosFormatUtils.appendDateTimeUSec(tsSink, currentMicros);
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\n" +
                             "price_1h\ttimer\tbase_price\t" + tsSink + "\t" + tsSink + "\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t1\t1\t" + (timeZone != null ? timeZone : "") + "\t" + start + "\t1\tHOUR\n",
@@ -6583,11 +7025,12 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t104.57\t2024-09-10T13:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t104.57\t2024-09-10T13:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
         });
@@ -6595,14 +7038,14 @@ public class MatViewTest extends AbstractCairoTest {
 
     private void testTimerMatViewSmallJumps(String timeZone, String start, String every, String initialClock, long clockJump, int ticksBeforeRefresh) throws Exception {
         assertMemoryLeak(() -> {
-            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone) : null;
-            final int interval = Timestamps.getStrideMultiple(every, -1);
-            final char unit = Timestamps.getStrideUnit(every, -1);
+            final TimeZoneRules tzRules = timeZone != null ? Micros.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone) : null;
+            final int interval = CommonUtils.getStrideMultiple(every, 0);
+            final char unit = CommonUtils.getStrideUnit(every, -1);
             final String unitStr = MatViewsFunctionFactory.getIntervalUnit(unit);
 
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -6657,14 +7100,15 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    replaceExpectedTimestamp(
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n"),
                     "price_1h order by sym"
             );
             final StringSink tsSink = new StringSink();
-            TimestampFormatUtils.appendDateTimeUSec(tsSink, currentMicros);
+            MicrosTimestampDriver.INSTANCE.append(tsSink, currentMicros);
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\n" +
                             "price_1h\ttimer\tbase_price\t" + tsSink + "\t" + tsSink + "\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t1\t1\t" + (timeZone != null ? timeZone : "") + "\t" + start + "\t" + interval + "\t" + unitStr + "\n",
@@ -6720,7 +7164,7 @@ public class MatViewTest extends AbstractCairoTest {
         char periodLengthUnit;
         int refreshType;
         int timerInterval;
-        long timerStart = Numbers.LONG_NULL;
+        long timerStartUs = Numbers.LONG_NULL;
         String timerTimeZone;
         char timerUnit;
 
@@ -6745,7 +7189,7 @@ public class MatViewTest extends AbstractCairoTest {
             this.periodLengthUnit = 'h';
             this.periodDelay = 1;
             this.periodDelayUnit = 'h';
-            this.timerStart = parseFloorPartialTimestamp("2020-12-12T00:00:00.000000Z");
+            this.timerStartUs = MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2020-12-12T00:00:00.000000Z");
             this.timerTimeZone = "Europe/London";
             return this;
         }
@@ -6754,7 +7198,7 @@ public class MatViewTest extends AbstractCairoTest {
             refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
             this.timerInterval = 42;
             this.timerUnit = 'm';
-            this.timerStart = 0;
+            this.timerStartUs = 0;
             this.timerTimeZone = "Europe/Sofia";
             return this;
         }

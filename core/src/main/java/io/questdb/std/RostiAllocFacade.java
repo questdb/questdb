@@ -26,7 +26,7 @@ package io.questdb.std;
 
 import io.questdb.cairo.ColumnTypes;
 
-//Facade that makes it possible to inject behavior during test
+// Facade that makes it possible to inject behavior during test
 public interface RostiAllocFacade {
 
     long alloc(ColumnTypes types, long capacity);

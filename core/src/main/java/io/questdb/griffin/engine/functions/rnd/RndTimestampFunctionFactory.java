@@ -25,6 +25,9 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -39,9 +42,12 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
 public class RndTimestampFunctionFactory implements FunctionFactory {
+    private static final String NAME = "rnd_timestamp";
+    private static final String SIGNATURE = NAME + "(nni)";
+
     @Override
     public String getSignature() {
-        return "rnd_timestamp(nni)";
+        return SIGNATURE;
     }
 
     @Override
@@ -52,8 +58,11 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final long lo = args.getQuick(0).getTimestamp(null);
-        final long hi = args.getQuick(1).getTimestamp(null);
+        Function arg = args.getQuick(0);
+        Function arg2 = args.getQuick(1);
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        final long lo = driver.from(arg.getTimestamp(null), arg.getType());
+        final long hi = driver.from(arg2.getTimestamp(null), arg2.getType());
         final int nanRate = args.getQuick(2).getInt(null);
 
         if (nanRate < 0) {
@@ -61,20 +70,23 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (lo < hi) {
-            return new Func(lo, hi, nanRate);
+            return new RndTimestampFunctionFactory.Func(NAME, lo, hi, nanRate, ColumnType.TIMESTAMP_MICRO);
         }
 
         throw SqlException.$(position, "invalid range");
     }
 
-    private static class Func extends TimestampFunction implements Function {
+    public static class Func extends TimestampFunction implements Function {
         private final long lo;
+        private final CharSequence name;
         private final int nanRate;
         private final long range;
         private Rnd rnd;
 
-        public Func(long lo, long hi, int nanRate) {
+        public Func(CharSequence name, long lo, long hi, int nanRate, int timestampType) {
+            super(timestampType);
             this.lo = lo;
+            this.name = name;
             this.range = hi - lo + 1;
             this.nanRate = nanRate + 1;
         }
@@ -109,7 +121,7 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("rnd_timestamp(").val(lo).val(',').val(range + lo - 1).val(',').val(nanRate - 1).val(')');
+            sink.val(name).val("(").val(lo).val(',').val(range + lo - 1).val(',').val(nanRate - 1).val(')');
         }
     }
 }

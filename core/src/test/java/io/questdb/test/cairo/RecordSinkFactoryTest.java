@@ -291,7 +291,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         TestRecord testRecord = new TestRecord();
         TestRecordSink testRecordSink = new TestRecordSink();
 
-        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, writeSymbolAsString, null);
+        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, writeSymbolAsString, null, null);
         sink.copy(testRecord, testRecordSink);
 
         Assert.assertEquals(expectedGetIndexes, testRecord.recordedIndexes);

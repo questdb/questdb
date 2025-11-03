@@ -28,11 +28,16 @@ import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.ServerMain;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import org.influxdb.InfluxDB;
@@ -48,6 +53,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 
 public class InfluxDBClientFailureTest extends AbstractTest {
+
     @Test
     public void testAppendErrors() {
         final FilesFacade filesFacade = new FilesFacadeImpl() {
@@ -163,7 +169,11 @@ public class InfluxDBClientFailureTest extends AbstractTest {
                         influxDB,
                         points,
                         "failed_table,tag1=value1 f1=1i,y=12i",
-                        "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol:errors encountered on line(s):write error: failed_table, errno: 2, error: could not open read-write"
+                        // the expected error message is split into 2 to avoid asserting the exact errno.
+                        // why? test artificially fails at `openRW()`. Upon failure QuestDB fetches errno(), but this will get
+                        // whatever errno was set at the last actual failure. thus is not determistic, on Windows it occasionally
+                        // gets 0. 
+                        "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol:errors encountered on line(s):write error: failed_table, errno: ", "error: could not open read-write"
                 );
 
                 // Retry is ok
@@ -238,7 +248,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         }, Bootstrap.getServerMainArgs(root));
 
-        long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
+        long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
             server.set(serverMain);
@@ -262,7 +272,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
     }
 
     @Test
-    public void testGzipNotSupported() {
+    public void testGzipSupported() {
         try (final ServerMain serverMain = ServerMain.create(root)) {
             serverMain.start();
 
@@ -270,9 +280,29 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
                 influxDB.enableGzip();
-                InfluxDBUtils.assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
-                        "\"message\":\"gzip encoding is not supported\","
-                );
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
+
+                // Retry is ok
+                influxDB.disableGzip();
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
+            }
+        }
+    }
+
+    @Test
+    public void testGzipSupportedLotsOfData() {
+        try (final ServerMain serverMain = ServerMain.create(root)) {
+            serverMain.start();
+
+            final List<String> points = new ArrayList<>();
+            try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
+                influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
+                influxDB.enableGzip();
+
+                for (int i = 0; i < 1_000_000; i++) {
+                    points.add("m1,tag1=value1 f1=1i,x=12i");
+                }
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
 
                 // Retry is ok
                 influxDB.disableGzip();
