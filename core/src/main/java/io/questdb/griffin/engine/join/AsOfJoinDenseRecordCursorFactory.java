@@ -153,9 +153,9 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
         private final Map bwdScanKeyToRowId;
         private final Map fwdScanKeyToRowId;
         private long backwardRowId = -1;
-        private boolean backwardScanDone;
+        private boolean backwardScanExhausted;
         private long forwardRowId = -1;
-        private boolean forwardScanDone;
+        private boolean forwardScanExhausted;
         private boolean slaveCursorReadyForForwardScan;
 
         public AsOfJoinDenseRecordCursor(
@@ -224,7 +224,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
 
             MapKey key;
             MapValue value;
-            if (!forwardScanDone) {
+            if (!forwardScanExhausted) {
                 scanForward(masterTimestamp, minSlaveTimestamp);
             }
 
@@ -242,7 +242,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
             if (value != null) {
                 return setupSlaveRec(value.getLong(0), minSlaveTimestamp);
             }
-            if (backwardScanDone) {
+            if (backwardScanExhausted) {
                 // Symbol not found in backward scan, and the scan already reached the end, report no match
                 record.hasSlave(false);
                 isMasterHasNextPending = true;
@@ -258,8 +258,8 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
                 slaveTimeFrameCursor.recordAt(slaveRecB, backwardRowId);
                 long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 if (slaveTimestamp < minSlaveTimestamp) {
-                    backwardScanDone = true;
                     // minSlaveTimestamp will only get larger in later calls, it's safe to conclude backward scan now
+                    backwardScanExhausted = true;
                     break;
                 }
                 key = bwdScanKeyToRowId.withKey();
@@ -276,7 +276,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
                     backwardRowId--;
                 } else {
                     if (!slaveTimeFrameCursor.prev()) {
-                        backwardScanDone = true;
+                        backwardScanExhausted = true;
                         break;
                     }
                     slaveTimeFrameCursor.open();
@@ -311,7 +311,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
             }
             isMasterHasNextPending = true;
             slaveCursorReadyForForwardScan = false;
-            forwardScanDone = false;
+            forwardScanExhausted = false;
             backwardRowId = -1;
             forwardRowId = -1;
         }
@@ -335,7 +335,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
                 forwardRowId++;
                 if (forwardRowId == frameRowHi) {
                     if (!slaveTimeFrameCursor.next()) {
-                        forwardScanDone = true;
+                        forwardScanExhausted = true;
                         break;
                     }
                     slaveTimeFrameCursor.open();
