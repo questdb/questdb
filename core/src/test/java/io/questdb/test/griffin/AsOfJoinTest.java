@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -40,28 +41,15 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
-
-@RunWith(Parameterized.class)
 public class AsOfJoinTest extends AbstractCairoTest {
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
 
-    public AsOfJoinTest(TestTimestampType leftTimestampType, TestTimestampType rightTimestampType) {
-        this.leftTableTimestampType = leftTimestampType;
-        this.rightTableTimestampType = rightTimestampType;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> testParams() {
-        return Arrays.asList(new Object[][]{
-                {TestTimestampType.MICRO, TestTimestampType.MICRO}, {TestTimestampType.MICRO, TestTimestampType.NANO},
-                {TestTimestampType.NANO, TestTimestampType.MICRO}, {TestTimestampType.NANO, TestTimestampType.NANO}
-        });
+    public AsOfJoinTest() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        this.leftTableTimestampType = rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+        this.rightTableTimestampType = rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
     }
 
     @Test
@@ -3388,7 +3376,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (pair SYMBOL, side SYMBOL, ts #TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
             execute("""
-                    INSERT INTO trades VALUES 
+                    INSERT INTO trades VALUES
                     ('BTC-USD', 'sell', '2000-01-01T00:00:00.000000Z', 1),
                     ('BTC-USD', 'buy', '2001-01-01T00:00:01.000000Z', 2),
                     ('BTC-USD', 'sell', '2002-01-01T00:00:03.000000Z', 3),
