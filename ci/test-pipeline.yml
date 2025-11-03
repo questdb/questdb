@@ -14,7 +14,7 @@ variables:
   excludeTests: ""
   includeTests: "%regex[.*[^o].class]"
   MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
-  MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g"
+  MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
   MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 "
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
@@ -54,12 +54,12 @@ stages:
     jobs:
       - template: templates/hosted-jobs.yml
 
-  - stage: HostedRunTestsCoverageBranches
-    displayName: "Hosted Running tests with cover"
+  - stage: SelfHostedRunTestsCoverageBranches
+    displayName: "SelfHosted Running tests with cover"
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/hosted-cover-jobs.yml
+      - template: templates/self-hosted-cover-jobs.yml
 
   - stage: JavaAndRustLint
     displayName: "Rust Test and Lint"
@@ -72,7 +72,7 @@ stages:
     displayName: "Coverage Report"
     dependsOn:
       - CheckChanges
-      - HostedRunTestsCoverageBranches
+      - SelfHostedRunTestsCoverageBranches
     jobs:
       - job: CoverageReport
         displayName: "Coverage Report"

@@ -1307,6 +1307,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     SelectedRecord
                                         AsOf Join Memoized Scan
                                           condition: t2.s=t1.s
+                                          driveByCache: false
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
@@ -1348,6 +1349,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     SelectedRecord
                                         AsOf Join Memoized Scan
                                           condition: t2.s=t1.s
+                                          driveByCache: false
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
@@ -1389,6 +1391,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     SelectedRecord
                                         AsOf Join Memoized Scan
                                           condition: t2.s=t1.s
+                                          driveByCache: false
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
@@ -1431,6 +1434,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     SelectedRecord
                                         AsOf Join Memoized Scan
                                           condition: t2.s=t1.s
+                                          driveByCache: false
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
@@ -1472,6 +1476,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     SelectedRecord
                                         AsOf Join Memoized Scan
                                           condition: t2.s=t1.s
+                                          driveByCache: false
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1

@@ -2512,6 +2512,20 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinUseNonExistColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders ( id LONG, order_ts TIMESTAMP, sym SYMBOL CAPACITY 1024, volume DOUBLE ) TIMESTAMP(order_ts) PARTITION BY DAY;");
+            execute("CREATE TABLE prices ( ts TIMESTAMP, sym SYMBOL CAPACITY 1024, bid DOUBLE, ask DOUBLE ) timestamp(ts) PARTITION BY DAY;");
+            assertExceptionNoLeakCheck(
+                    "SELECT o.*, avg(p.bid) avg_big, avg(p.ask) avg_ask FROM orders o LEFT OUTER JOIN prices p ON p.sym = o.sym and p.ts >= dateadd('s', -1, o.ts) and p.ts <= dateadd('s', 1, o.ts);",
+                    136,
+                    "Invalid column: ts",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
     public void testJoinWhereExecutionOrder() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table l as( select x from long_sequence(100) )");

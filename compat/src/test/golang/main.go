@@ -3,16 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
+	"gorunner/drivers"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	pgxdecimal "github.com/jackc/pgx-shopspring-decimal"
-	"github.com/jackc/pgx/v5"
-	"github.com/shopspring/decimal"
 	"gopkg.in/yaml.v3"
+
+	pgxdecimal "github.com/jackc/pgx-shopspring-decimal"
+	"github.com/shopspring/decimal"
 )
 
 func init() {
@@ -20,7 +21,9 @@ func init() {
 	time.Local = time.UTC
 }
 
-type TestRunner struct{}
+type TestRunner struct {
+	driver drivers.DatabaseDriver
+}
 
 // Parameter represents a typed parameter for SQL queries
 type Parameter struct {
@@ -86,15 +89,14 @@ func (tr *TestRunner) substituteVariables(text string, variables map[string]inte
 	})
 }
 
-// adjustPlaceholderSyntax converts $[n] to $n for pgx
+// adjustPlaceholderSyntax converts $[n] to $n for all
 func (tr *TestRunner) adjustPlaceholderSyntax(query string) string {
 	re := regexp.MustCompile(`\$\[(\d+)\]`)
 	return re.ReplaceAllString(query, "$$$1")
 }
 
-// executeQuery executes a SQL query and returns the result
-func (tr *TestRunner) executeQuery(ctx context.Context, conn *pgx.Conn, query string, parameters []interface{}) (interface{}, error) {
-	rows, err := conn.Query(ctx, query, parameters...)
+func (tr *TestRunner) executeQuery(ctx context.Context, query string, parameters []interface{}) (interface{}, error) {
+	rows, err := tr.driver.Query(ctx, query, parameters...)
 	if err != nil {
 		return err.Error(), nil
 	}
@@ -115,10 +117,11 @@ func (tr *TestRunner) executeQuery(ctx context.Context, conn *pgx.Conn, query st
 		return err.Error(), nil
 	}
 
-	// For non-SELECT queries, return row count
+	// For non-SELECT queries (like INSERT/UPDATE/DELETE)
+	// return the rows affected if we got no result rows
 	if len(result) == 0 {
-		commandTag := rows.CommandTag()
-		return [][]interface{}{{commandTag.RowsAffected()}}, nil
+		rowsAffected := rows.RowsAffected()
+		return [][]interface{}{{rowsAffected}}, nil
 	}
 
 	return result, nil
@@ -160,6 +163,7 @@ func (tr *TestRunner) parseArrayString(arrayStr string) ([]interface{}, error) {
 }
 
 // resolveParameters converts and types parameters for query execution
+// resolveParameters converts and types parameters for query execution
 func (tr *TestRunner) resolveParameters(typedParameters []Parameter, variables map[string]interface{}) ([]interface{}, error) {
 	resolvedParameters := make([]interface{}, 0, len(typedParameters))
 
@@ -188,6 +192,7 @@ func (tr *TestRunner) resolveParameters(typedParameters []Parameter, variables m
 			default:
 				resolvedParameters = append(resolvedParameters, v)
 			}
+
 		case "float4", "float8":
 			switch v := value.(type) {
 			case float64:
@@ -201,6 +206,7 @@ func (tr *TestRunner) resolveParameters(typedParameters []Parameter, variables m
 			default:
 				resolvedParameters = append(resolvedParameters, v)
 			}
+
 		case "boolean":
 			switch v := value.(type) {
 			case bool:
@@ -217,52 +223,86 @@ func (tr *TestRunner) resolveParameters(typedParameters []Parameter, variables m
 			default:
 				resolvedParameters = append(resolvedParameters, v)
 			}
+
 		case "varchar", "char":
 			resolvedParameters = append(resolvedParameters, fmt.Sprintf("%v", value))
+
 		case "timestamp", "date":
 			resolvedParameters = append(resolvedParameters, value)
+
 		case "array_float8":
-			// Handle float array type
+			// Convert value to []float64 first, then let the driver handle wrapping
+			var floatArr []float64
+
 			switch v := value.(type) {
 			case string:
-				// Parse PostgreSQL array string format
+				// Parse PostgreSQL array string format like "{1.0,2.0,3.0}"
 				arr, err := tr.parseArrayString(v)
 				if err != nil {
 					return nil, fmt.Errorf("invalid array_float8 value: %v - %w", v, err)
 				}
-				resolvedParameters = append(resolvedParameters, arr)
+
+				floatArr = make([]float64, 0, len(arr))
+				for _, item := range arr {
+					if item == nil {
+						// Check if driver supports nulls
+						if tr.driver.DriverName() == drivers.DriverNamePq {
+							return nil, fmt.Errorf("pq driver does not support null values in arrays")
+						}
+						// For pgx, skip nulls (they're handled differently)
+						continue
+					}
+					if f, ok := item.(float64); ok {
+						floatArr = append(floatArr, f)
+					} else {
+						return nil, fmt.Errorf("expected float64 in array, got %T", item)
+					}
+				}
+
 			case []interface{}:
-				// Convert each element to float
-				floatArray := make([]interface{}, 0, len(v))
+				// Convert each element to float64
+				floatArr = make([]float64, 0, len(v))
 				for _, item := range v {
 					if item == nil {
-						floatArray = append(floatArray, nil)
+						if tr.driver.DriverName() == drivers.DriverNamePq {
+							return nil, fmt.Errorf("pq driver does not support null values in arrays")
+						}
 						continue
 					}
 
 					switch itemVal := item.(type) {
 					case float64:
-						floatArray = append(floatArray, itemVal)
+						floatArr = append(floatArr, itemVal)
 					case int:
-						floatArray = append(floatArray, float64(itemVal))
+						floatArr = append(floatArr, float64(itemVal))
 					case string:
 						if strings.EqualFold(strings.TrimSpace(itemVal), "null") {
-							floatArray = append(floatArray, nil)
-						} else {
-							floatVal, err := strconv.ParseFloat(itemVal, 64)
-							if err != nil {
-								return nil, fmt.Errorf("invalid float in array: %v", itemVal)
+							if tr.driver.DriverName() == drivers.DriverNamePq {
+								return nil, fmt.Errorf("pq driver does not support null values in arrays")
 							}
-							floatArray = append(floatArray, floatVal)
+							continue
 						}
+						floatVal, err := strconv.ParseFloat(itemVal, 64)
+						if err != nil {
+							return nil, fmt.Errorf("invalid float in array: %v", itemVal)
+						}
+						floatArr = append(floatArr, floatVal)
 					default:
 						return nil, fmt.Errorf("unsupported type in array_float8: %T", item)
 					}
 				}
-				resolvedParameters = append(resolvedParameters, floatArray)
+
 			default:
 				return nil, fmt.Errorf("invalid array_float8 value type: %T", value)
 			}
+
+			// Let the driver handle the final conversion (pq.Array wrapping for pq, []interface{} for pgx)
+			parsedArray, err := tr.driver.ParseArrayFloat8(floatArr)
+			if err != nil {
+				return nil, err
+			}
+			resolvedParameters = append(resolvedParameters, parsedArray)
+
 		default:
 			resolvedParameters = append(resolvedParameters, value)
 		}
@@ -421,7 +461,7 @@ func (tr *TestRunner) assertResult(expect ExpectClause, actual interface{}) erro
 }
 
 // executeLoop executes a loop construct in the test
-func (tr *TestRunner) executeLoop(ctx context.Context, loopDef *Loop, variables map[string]interface{}, conn *pgx.Conn) error {
+func (tr *TestRunner) executeLoop(ctx context.Context, loopDef *Loop, variables map[string]interface{}) error {
 	loopVarName := loopDef.As
 	loopVariables := make(map[string]interface{})
 	for k, v := range variables {
@@ -443,7 +483,7 @@ func (tr *TestRunner) executeLoop(ctx context.Context, loopDef *Loop, variables 
 
 	for _, item := range iterable {
 		loopVariables[loopVarName] = item
-		if err := tr.executeSteps(ctx, loopDef.Steps, loopVariables, conn); err != nil {
+		if err := tr.executeSteps(ctx, loopDef.Steps, loopVariables); err != nil {
 			return err
 		}
 	}
@@ -452,7 +492,7 @@ func (tr *TestRunner) executeLoop(ctx context.Context, loopDef *Loop, variables 
 }
 
 // executeStep executes a single test step
-func (tr *TestRunner) executeStep(ctx context.Context, step Step, variables map[string]interface{}, conn *pgx.Conn) error {
+func (tr *TestRunner) executeStep(ctx context.Context, step Step, variables map[string]interface{}) error {
 	queryTemplate := step.Query
 	parameters := step.Parameters
 	expect := step.Expect
@@ -465,7 +505,7 @@ func (tr *TestRunner) executeStep(ctx context.Context, step Step, variables map[
 		return err
 	}
 
-	result, err := tr.executeQuery(ctx, conn, query, resolvedParameters)
+	result, err := tr.executeQuery(ctx, query, resolvedParameters)
 	if err != nil {
 		return err
 	}
@@ -479,14 +519,14 @@ func (tr *TestRunner) executeStep(ctx context.Context, step Step, variables map[
 }
 
 // executeSteps executes a sequence of test steps
-func (tr *TestRunner) executeSteps(ctx context.Context, steps []Step, variables map[string]interface{}, conn *pgx.Conn) error {
+func (tr *TestRunner) executeSteps(ctx context.Context, steps []Step, variables map[string]interface{}) error {
 	for _, step := range steps {
 		if step.Loop != nil {
-			if err := tr.executeLoop(ctx, step.Loop, variables, conn); err != nil {
+			if err := tr.executeLoop(ctx, step.Loop, variables); err != nil {
 				return err
 			}
 		} else {
-			if err := tr.executeStep(ctx, step, variables, conn); err != nil {
+			if err := tr.executeStep(ctx, step, variables); err != nil {
 				return err
 			}
 		}
@@ -495,7 +535,7 @@ func (tr *TestRunner) executeSteps(ctx context.Context, steps []Step, variables 
 }
 
 // runTest executes a complete test including preparation and teardown
-func (tr *TestRunner) runTest(ctx context.Context, test Test, globalVariables map[string]interface{}, conn *pgx.Conn) error {
+func (tr *TestRunner) runTest(ctx context.Context, test Test, globalVariables map[string]interface{}) error {
 	// Merge global variables with test-specific variables
 	variables := make(map[string]interface{})
 	for k, v := range globalVariables {
@@ -509,7 +549,7 @@ func (tr *TestRunner) runTest(ctx context.Context, test Test, globalVariables ma
 	var testErr error
 
 	// Prepare phase
-	if err := tr.executeSteps(ctx, test.Prepare, variables, conn); err != nil {
+	if err := tr.executeSteps(ctx, test.Prepare, variables); err != nil {
 		fmt.Printf("Test '%s' preparation failed: %v\n", test.Name, err)
 		testFailed = true
 		testErr = err
@@ -517,7 +557,7 @@ func (tr *TestRunner) runTest(ctx context.Context, test Test, globalVariables ma
 
 	// Test steps (only if preparation succeeded)
 	if !testFailed {
-		if err := tr.executeSteps(ctx, test.Steps, variables, conn); err != nil {
+		if err := tr.executeSteps(ctx, test.Steps, variables); err != nil {
 			fmt.Printf("Test '%s' failed: %v\n", test.Name, err)
 			testFailed = true
 			testErr = err
@@ -527,7 +567,7 @@ func (tr *TestRunner) runTest(ctx context.Context, test Test, globalVariables ma
 	}
 
 	// Teardown phase (always attempt teardown)
-	if err := tr.executeSteps(ctx, test.Teardown, variables, conn); err != nil {
+	if err := tr.executeSteps(ctx, test.Teardown, variables); err != nil {
 		fmt.Printf("Teardown for test '%s' failed: %v\n", test.Name, err)
 		if !testFailed {
 			testFailed = true
@@ -569,8 +609,29 @@ func (tr *TestRunner) main(yamlFile string) error {
 	if port == "" {
 		port = "8812"
 	}
+	sslMode := os.Getenv("PGSSLMODE")
+	if sslMode == "" {
+		sslMode = "disable"
+	}
+	dbName := os.Getenv("PGDATABASE")
+	if dbName == "" {
+		dbName = "qdb"
+	}
 
 	ctx := context.Background()
+	connString := fmt.Sprintf("postgres://admin:quest@localhost:%s/%s?sslmode=%s", port, dbName, sslMode)
+
+	// Get driver from environment or default to pgx
+	driverName := os.Getenv("DB_DRIVER")
+	if driverName == "" {
+		driverName = drivers.DriverNamePgx
+	}
+	// Create appropriate driver
+	driver, err := drivers.NewDriver(driverName)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Using driver: %s\n", driver.DriverName())
 
 	// Run each test
 	for _, test := range config.Tests {
@@ -589,15 +650,14 @@ func (tr *TestRunner) main(yamlFile string) error {
 			fmt.Printf("Running test '%s' iteration %d...\n", test.Name, i+1)
 
 			// Create a new connection for each test iteration
-			connString := fmt.Sprintf("postgres://admin:quest@localhost:%s/qdb", port)
-			conn, err := pgx.Connect(ctx, connString)
-			if err != nil {
+			if err := driver.Connect(ctx, connString); err != nil {
 				return fmt.Errorf("unable to connect to database: %v", err)
 			}
 			pgxdecimal.Register(conn.TypeMap())
 
-			err = tr.runTest(ctx, test, config.Variables, conn)
-			conn.Close(ctx)
+			tr.driver = driver
+			err = tr.runTest(ctx, test, config.Variables)
+			driver.Close(ctx)
 
 			if err != nil {
 				return err // Exit on first test failure
