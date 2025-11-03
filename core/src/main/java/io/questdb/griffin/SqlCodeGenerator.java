@@ -186,11 +186,11 @@ import io.questdb.griffin.engine.groupby.vect.SumLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
-import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinSingleSymbolRecordCursorFactory;
@@ -2730,9 +2730,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, selfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 long asOfToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
-                                boolean hasIndexHint = SqlHints.hasAsOfIndexSearchHint(model, masterAlias, slaveModel.getName());
-                                boolean hasLinearHint = SqlHints.hasAsOfLinearSearchHint(model, masterAlias, slaveModel.getName());
-                                boolean hasFastHint = SqlHints.hasAsOfFastSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveModel.getName());
+                                boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveModel.getName());
+                                boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveModel.getName());
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         RecordSink masterSink = RecordSinkFactory.getInstance(
@@ -2772,8 +2772,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slaveContext,
                                                             asOfToleranceInterval
                                                     );
-                                                } else if (isOptimizable && !hasFastHint && isSingleSymbolJoin(slaveMetadata)) {
-                                                    master = new AsOfJoinDenseRecordCursorFactory(
+                                                } else if (isOptimizable && hasMemoizedHint && isSingleSymbolJoin(slaveMetadata)) {
+                                                    master = new AsOfJoinMemoizedRecordCursorFactory(
                                                             configuration,
                                                             joinMetadata,
                                                             master,
@@ -2782,7 +2782,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slaveSymbolColumnIndex,
                                                             columnAccessHelper,
                                                             slaveContext,
-                                                            asOfToleranceInterval
+                                                            asOfToleranceInterval,
+                                                            SqlHints.hasAsOfDrivebyCacheHint(model, masterAlias, slaveModel.getName())
                                                     );
                                                 } else {
                                                     master = new AsOfJoinFastRecordCursorFactory(
@@ -3026,7 +3027,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 long ltToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
-                                boolean ltLinearSearch = SqlHints.hasAsOfLinearSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean ltLinearSearch = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveModel.getName());
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
