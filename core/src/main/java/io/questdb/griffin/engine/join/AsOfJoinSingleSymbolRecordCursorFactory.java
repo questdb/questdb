@@ -24,9 +24,9 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -42,11 +42,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.Transient;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
 public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
+    private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
     private final AsofJoinColumnAccessHelper columnAccessHelper;
     private final AsOfSingleSymbolJoinRecordCursor cursor;
     private final int slaveSymbolColumnIndex;
@@ -57,8 +58,6 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
-            @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store row ids in map
             int columnSplit,
             int slaveSymbolColumnIndex,
             AsofJoinColumnAccessHelper columnAccessHelper,
@@ -71,7 +70,7 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
         this.toleranceInterval = toleranceInterval;
         Map joinKeyMap = null;
         try {
-            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
             this.cursor = new AsOfSingleSymbolJoinRecordCursor(
                     columnSplit,
                     joinKeyMap,
@@ -298,5 +297,10 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
             columnAccessHelper.of(slaveCursor);
             isMasterHasNextPending = true;
         }
+    }
+
+    static {
+        TYPES_KEY.add(ColumnType.INT);
+        TYPES_VALUE.add(ColumnType.LONG);
     }
 }

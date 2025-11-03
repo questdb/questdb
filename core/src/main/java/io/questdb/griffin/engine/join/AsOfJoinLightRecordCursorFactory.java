@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -48,6 +49,8 @@ import io.questdb.std.Transient;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
 public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
+
     private final AsOfLightJoinRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
@@ -59,7 +62,6 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store row ids in map
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
@@ -73,7 +75,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             this.slaveKeySink = slaveKeySink;
             this.toleranceInterval = toleranceInterval;
 
-            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, TYPES_VALUE);
             this.cursor = new AsOfLightJoinRecordCursor(
                     columnSplit,
                     joinKeyMap,
@@ -296,5 +298,9 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             record.of(masterRecord, slaveRecord);
             isMasterHasNextPending = true;
         }
+    }
+
+    static {
+        TYPES_VALUE.add(ColumnType.LONG);
     }
 }

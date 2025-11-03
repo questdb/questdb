@@ -2875,22 +2875,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
                                             int joinColumnSplit = masterMetadata.getColumnCount();
                                             JoinContext slaveContext = slaveModel.getJoinContext();
-                                            valueTypes.clear();
-                                            valueTypes.add(LONG);
                                             if (hasLinearHint && isSingleSymbolJoin(slaveMetadata)) {
                                                 AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, selfJoin);
-                                                boolean isOptimizable = columnAccessHelper != NoopColumnAccessHelper.INSTANCE;
-                                                if (isOptimizable) {
+                                                if (columnAccessHelper != NoopColumnAccessHelper.INSTANCE) {
                                                     int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-                                                    keyTypes.clear();
-                                                    keyTypes.add(ColumnType.INT);
                                                     master = new AsOfJoinSingleSymbolRecordCursorFactory(
                                                             configuration,
                                                             joinMetadata,
                                                             master,
                                                             slave,
-                                                            keyTypes,
-                                                            valueTypes,
                                                             joinColumnSplit,
                                                             slaveSymbolColumnIndex,
                                                             columnAccessHelper,
@@ -2907,7 +2900,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         master,
                                                         slave,
                                                         keyTypes,
-                                                        valueTypes,
                                                         masterSink,
                                                         slaveSink,
                                                         joinColumnSplit,
