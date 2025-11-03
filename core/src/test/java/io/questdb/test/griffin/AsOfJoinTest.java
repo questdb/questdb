@@ -890,21 +890,20 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "                        Frame forward scan on: market_data\n",
                     "EXPLAIN " + queryWithLinearHint, null, false, true);
 
-            String expectedPlan =
-                    "QUERY PLAN\n" +
-                            "SelectedRecord\n" +
-                            "    Filter filter: oRdERS.price<MD.bid\n" +
-                            "        Filtered AsOf Join Fast Scan\n" +
-                            "          filter: market_Data_symbol='sym_1'\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Interval forward scan on: orders\n" +
-                            (leftTableTimestampType == TestTimestampType.MICRO ?
-                                    "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" :
-                                    "                  intervals: [(\"2025-01-01T00:00:00.000000001Z\",\"MAX\")]\n") +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: market_data\n";
+            String expectedPlan = "QUERY PLAN\n" +
+                    "SelectedRecord\n" +
+                    "    Filter filter: oRdERS.price<MD.bid\n" +
+                    "        Filtered AsOf Join Fast Scan\n" +
+                    "          filter: market_Data_symbol='sym_1'\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: orders\n" +
+                    (leftTableTimestampType == TestTimestampType.MICRO ?
+                            "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" :
+                            "                  intervals: [(\"2025-01-01T00:00:00.000000001Z\",\"MAX\")]\n") +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: market_data\n";
             // query without Linear hint should use the fast asof join
             assertQueryNoLeakCheck(expectedPlan,
                     "EXPLAIN " + queryWithoutHint, null, false, true);
@@ -913,12 +912,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
 
-            String expectedResult =
-                    "ts\tbid\tmarket_data_symbol\torder_symbol\torder_ts\tprice\n" +
-                            "2025-01-01T00:03:20.003570" + leftSuffix + "\t0.18646912884414946\tsym_1\tsym_4\t2025-01-01T00:03:19.407091" + rightSuffix + "\t0.08486964232560668\n" +
-                            "2025-01-01T00:06:40.006304" + leftSuffix + "\t0.9130994629783138\tsym_1\tsym_2\t2025-01-01T00:06:37.303610" + rightSuffix + "\t0.8423410920883345\n" +
-                            "2025-01-01T00:13:20.002056" + leftSuffix + "\t0.24872951622414008\tsym_1\tsym_4\t2025-01-01T00:13:19.909382" + rightSuffix + "\t0.0367581207471136\n" +
-                            "2025-01-01T00:16:40.009947" + leftSuffix + "\t0.5071618579762882\tsym_1\tsym_6\t2025-01-01T00:16:39.800653" + rightSuffix + "\t0.3100545983862456\n";
+            String expectedResult = "ts\tbid\tmarket_data_symbol\torder_symbol\torder_ts\tprice\n" +
+                    "2025-01-01T00:03:20.003570" + leftSuffix + "\t0.18646912884414946\tsym_1\tsym_4\t2025-01-01T00:03:19.407091" + rightSuffix + "\t0.08486964232560668\n" +
+                    "2025-01-01T00:06:40.006304" + leftSuffix + "\t0.9130994629783138\tsym_1\tsym_2\t2025-01-01T00:06:37.303610" + rightSuffix + "\t0.8423410920883345\n" +
+                    "2025-01-01T00:13:20.002056" + leftSuffix + "\t0.24872951622414008\tsym_1\tsym_4\t2025-01-01T00:13:19.909382" + rightSuffix + "\t0.0367581207471136\n" +
+                    "2025-01-01T00:16:40.009947" + leftSuffix + "\t0.5071618579762882\tsym_1\tsym_6\t2025-01-01T00:16:39.800653" + rightSuffix + "\t0.3100545983862456\n";
 
             assertQueryNoLeakCheck(expectedResult, queryWithLinearHint, "ts", false, false);
             assertQueryNoLeakCheck(expectedResult, queryWithoutHint, "ts", false, false);
@@ -961,11 +959,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
 
-            String expected =
-                    "timebid\ttimeask\tb\ta\n" +
-                            "1970-01-01T00:00:00.000001" + rightSuffix + "\t1970-01-01T00:00:00.000000" + leftSuffix + "\t101\t100\n" +
-                            "1970-01-01T00:00:00.000003" + rightSuffix + "\t1970-01-01T00:00:00.000002" + leftSuffix + "\t102\t101\n" +
-                            "1970-01-01T00:00:00.000005" + rightSuffix + "\t1970-01-01T00:00:00.000004" + leftSuffix + "\t103\t102\n";
+            String expected = "timebid\ttimeask\tb\ta\n" +
+                    "1970-01-01T00:00:00.000001" + rightSuffix + "\t1970-01-01T00:00:00.000000" + leftSuffix + "\t101\t100\n" +
+                    "1970-01-01T00:00:00.000003" + rightSuffix + "\t1970-01-01T00:00:00.000002" + leftSuffix + "\t102\t101\n" +
+                    "1970-01-01T00:00:00.000005" + rightSuffix + "\t1970-01-01T00:00:00.000004" + leftSuffix + "\t103\t102\n";
 
             printSqlResult(expected, query, "timebid", false, false);
         });
@@ -1104,21 +1101,20 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 String query = "SELECT * FROM bids ASOF JOIN asks ON (stock, exchange, market)";
                 String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
                 String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
-                String expected =
-                        "stock\texchange\tmarket\tts\ti\trating\tstock1\texchange1\tmarket1\tts1\ti1\trating1\n" +
-                                "AAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tGOOD\tAAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000" + rightSuffix + "\t1\tGOOD\n" +
-                                "AAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000" + leftSuffix + "\t4\tSCAM\tAAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000" + rightSuffix + "\t4\tEXCELLENT\n" +
-                                "AAPL\tLSE\tUK\t2000-01-01T00:00:00.000000" + leftSuffix + "\t6\tSCAM\tAAPL\tLSE\tUK\t2000-01-01T00:00:00.000000" + rightSuffix + "\t6\tSCAM\n" +
-                                "MSFT\tNASDAQ\tUS\t2000-01-01T00:00:00.000000" + leftSuffix + "\t9\tGOOD\tMSFT\tNASDAQ\tUS\t2000-01-01T00:00:00.000000" + rightSuffix + "\t9\tEXCELLENT\n" +
-                                "MSFT\tLSE\tUK\t2000-01-01T00:00:00.000000" + leftSuffix + "\t12\tUNKNOWN\tMSFT\tLSE\tUK\t2000-01-01T00:00:00.000000" + rightSuffix + "\t12\tGOOD\n" +
-                                "AAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + leftSuffix + "\t2\tGOOD\tAAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + rightSuffix + "\t2\tEXCELLENT\n" +
-                                "AAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000" + leftSuffix + "\t5\tEXCELLENT\tAAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000" + rightSuffix + "\t5\tEXCELLENT\n" +
-                                "AAPL\tLSE\tUK\t2001-01-01T00:00:00.000000" + leftSuffix + "\t7\tGOOD\tAAPL\tLSE\tUK\t2001-01-01T00:00:00.000000" + rightSuffix + "\t7\tEXCELLENT\n" +
-                                "MSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + leftSuffix + "\t10\tGOOD\tMSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + rightSuffix + "\t10\tGOOD\n" +
-                                "MSFT\tLSE\tUK\t2001-01-01T00:00:00.000000" + leftSuffix + "\t13\tGOOD\tMSFT\tLSE\tUK\t2001-01-01T00:00:00.000000" + rightSuffix + "\t13\tSCAM\n" +
-                                "AAPL\tLSE\tUK\t2002-01-01T00:00:00.000000" + leftSuffix + "\t8\tGOOD\tAAPL\tLSE\tUK\t2002-01-01T00:00:00.000000" + rightSuffix + "\t8\tGOOD\n" +
-                                "MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000" + leftSuffix + "\t11\tSCAM\tMSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000" + rightSuffix + "\t11\tEXCELLENT\n" +
-                                "AAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000" + leftSuffix + "\t3\tSCAM\tAAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000" + rightSuffix + "\t3\tEXCELLENT\n";
+                String expected = "stock\texchange\tmarket\tts\ti\trating\tstock1\texchange1\tmarket1\tts1\ti1\trating1\n" +
+                        "AAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tGOOD\tAAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000" + rightSuffix + "\t1\tGOOD\n" +
+                        "AAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000" + leftSuffix + "\t4\tSCAM\tAAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000" + rightSuffix + "\t4\tEXCELLENT\n" +
+                        "AAPL\tLSE\tUK\t2000-01-01T00:00:00.000000" + leftSuffix + "\t6\tSCAM\tAAPL\tLSE\tUK\t2000-01-01T00:00:00.000000" + rightSuffix + "\t6\tSCAM\n" +
+                        "MSFT\tNASDAQ\tUS\t2000-01-01T00:00:00.000000" + leftSuffix + "\t9\tGOOD\tMSFT\tNASDAQ\tUS\t2000-01-01T00:00:00.000000" + rightSuffix + "\t9\tEXCELLENT\n" +
+                        "MSFT\tLSE\tUK\t2000-01-01T00:00:00.000000" + leftSuffix + "\t12\tUNKNOWN\tMSFT\tLSE\tUK\t2000-01-01T00:00:00.000000" + rightSuffix + "\t12\tGOOD\n" +
+                        "AAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + leftSuffix + "\t2\tGOOD\tAAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + rightSuffix + "\t2\tEXCELLENT\n" +
+                        "AAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000" + leftSuffix + "\t5\tEXCELLENT\tAAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000" + rightSuffix + "\t5\tEXCELLENT\n" +
+                        "AAPL\tLSE\tUK\t2001-01-01T00:00:00.000000" + leftSuffix + "\t7\tGOOD\tAAPL\tLSE\tUK\t2001-01-01T00:00:00.000000" + rightSuffix + "\t7\tEXCELLENT\n" +
+                        "MSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + leftSuffix + "\t10\tGOOD\tMSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + rightSuffix + "\t10\tGOOD\n" +
+                        "MSFT\tLSE\tUK\t2001-01-01T00:00:00.000000" + leftSuffix + "\t13\tGOOD\tMSFT\tLSE\tUK\t2001-01-01T00:00:00.000000" + rightSuffix + "\t13\tSCAM\n" +
+                        "AAPL\tLSE\tUK\t2002-01-01T00:00:00.000000" + leftSuffix + "\t8\tGOOD\tAAPL\tLSE\tUK\t2002-01-01T00:00:00.000000" + rightSuffix + "\t8\tGOOD\n" +
+                        "MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000" + leftSuffix + "\t11\tSCAM\tMSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000" + rightSuffix + "\t11\tEXCELLENT\n" +
+                        "AAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000" + leftSuffix + "\t3\tSCAM\tAAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000" + rightSuffix + "\t3\tEXCELLENT\n";
                 assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
@@ -1170,21 +1166,20 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 );
 
                 String query = "SELECT * FROM bids ASOF JOIN asks ON (stock, rating, exchange, market)";
-                String expected =
-                        "stock\texchange\tmarket\tts\ti\trating\tstock1\texchange1\tmarket1\tts1\ti1\trating1\n" +
-                                "AAPL\tNASDAQ\tASIA\t2000-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t1\tGOOD\t\t\t\t\tnull\t\n" +
-                                "AAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t4\tSCAM\t\t\t\t\tnull\t\n" +
-                                "AAPL\tLSE\tUK\t2000-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t6\tSCAM\tAAPL\tLSE\tUK\t2000-01-01T00:00:00.000000" + getTimestampSuffix(rightTableTimestampType.getTypeName()) + "\t6\tSCAM\n" +
-                                "MSFT\tFRA\tUS\t2000-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t9\tGOOD\t\t\t\t\tnull\t\n" +
-                                "QDB\tLSE\tUK\t2000-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t12\tUNKNOWN\t\t\t\t\tnull\t\n" +
-                                "AAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t2\tGOOD\tAAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000" + getTimestampSuffix(rightTableTimestampType.getTypeName()) + "\t1\tGOOD\n" +
-                                "AAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t5\tEXCELLENT\tAAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000" + getTimestampSuffix(rightTableTimestampType.getTypeName()) + "\t5\tEXCELLENT\n" +
-                                "AAPL\tLSE\tUK\t2001-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t7\tGOOD\t\t\t\t\tnull\t\n" +
-                                "MSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t10\tGOOD\tMSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + getTimestampSuffix(rightTableTimestampType.getTypeName()) + "\t10\tGOOD\n" +
-                                "MSFT\tLSE\t\t2001-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t13\tGOOD\t\t\t\t\tnull\t\n" +
-                                "AAPL\tLSE\tUK\t2002-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t8\tGOOD\tAAPL\tLSE\tUK\t2002-01-01T00:00:00.000000" + getTimestampSuffix(rightTableTimestampType.getTypeName()) + "\t8\tGOOD\n" +
-                                "MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t11\tSCAM\t\t\t\t\tnull\t\n" +
-                                "\tNASDAQ\tUS\t2002-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t3\tSCAM\t\t\t\t\tnull\t\n";
+                String expected = "stock\texchange\tmarket\tts\ti\trating\tstock1\texchange1\tmarket1\tts1\ti1\trating1\n" +
+                        "AAPL\tNASDAQ\tASIA\t2000-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t1\tGOOD\t\t\t\t\tnull\t\n" +
+                        "AAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t4\tSCAM\t\t\t\t\tnull\t\n" +
+                        "AAPL\tLSE\tUK\t2000-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t6\tSCAM\tAAPL\tLSE\tUK\t2000-01-01T00:00:00.000000" + getTimestampSuffix(rightTableTimestampType.getTypeName()) + "\t6\tSCAM\n" +
+                        "MSFT\tFRA\tUS\t2000-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t9\tGOOD\t\t\t\t\tnull\t\n" +
+                        "QDB\tLSE\tUK\t2000-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t12\tUNKNOWN\t\t\t\t\tnull\t\n" +
+                        "AAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t2\tGOOD\tAAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000" + getTimestampSuffix(rightTableTimestampType.getTypeName()) + "\t1\tGOOD\n" +
+                        "AAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t5\tEXCELLENT\tAAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000" + getTimestampSuffix(rightTableTimestampType.getTypeName()) + "\t5\tEXCELLENT\n" +
+                        "AAPL\tLSE\tUK\t2001-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t7\tGOOD\t\t\t\t\tnull\t\n" +
+                        "MSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t10\tGOOD\tMSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000" + getTimestampSuffix(rightTableTimestampType.getTypeName()) + "\t10\tGOOD\n" +
+                        "MSFT\tLSE\t\t2001-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t13\tGOOD\t\t\t\t\tnull\t\n" +
+                        "AAPL\tLSE\tUK\t2002-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t8\tGOOD\tAAPL\tLSE\tUK\t2002-01-01T00:00:00.000000" + getTimestampSuffix(rightTableTimestampType.getTypeName()) + "\t8\tGOOD\n" +
+                        "MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t11\tSCAM\t\t\t\t\tnull\t\n" +
+                        "\tNASDAQ\tUS\t2002-01-01T00:00:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\t3\tSCAM\t\t\t\t\tnull\t\n";
                 assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
@@ -1217,18 +1212,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
-            String expected =
-                    "id\tts\tid1\tts1\n" +
-                            "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\t1\t1970-01-01T00:00:00.000001" + rightSuffix + "\n" +
-                            "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\t2\t1970-01-01T00:00:00.000002" + rightSuffix + "\n" +
-                            "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
-                            "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
-                            "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
-                            "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
-                            "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
-                            "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
-                            "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
-                            "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n";
+            String expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\t1\t1970-01-01T00:00:00.000001" + rightSuffix + "\n" +
+                    "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\t2\t1970-01-01T00:00:00.000002" + rightSuffix + "\n" +
+                    "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             // keyed join and slave has a stealable filter -> should use FilteredAsOfJoinFastRecordCursorFactory
@@ -1244,18 +1238,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // non-keyed join and slave supports timeframe -> should use AsOfJoinNoKeyFastRecordCursorFactory
             query = "SELECT * FROM t1 ASOF JOIN t2 TOLERANCE 2s;";
 
-            expected =
-                    "id\tts\tid1\tts1\n" +
-                            "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\t5\t1970-01-01T00:00:00.000005" + rightSuffix + "\n" +
-                            "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\t5\t1970-01-01T00:00:00.000005" + rightSuffix + "\n" +
-                            "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
-                            "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
-                            "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
-                            "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
-                            "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
-                            "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
-                            "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
-                            "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n";
+            expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\t5\t1970-01-01T00:00:00.000005" + rightSuffix + "\n" +
+                    "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\t5\t1970-01-01T00:00:00.000005" + rightSuffix + "\n" +
+                    "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
@@ -1318,18 +1311,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
 
-            String expected =
-                    "id\tts\tid1\tts1\n" +
-                            "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\t1\t1970-01-01T00:00:00.000001" + rightSuffix + "\n" +
-                            "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\tnull\t\n" +
-                            "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
-                            "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
-                            "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
-                            "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
-                            "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
-                            "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
-                            "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
-                            "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n";
+            String expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\t1\t1970-01-01T00:00:00.000001" + rightSuffix + "\n" +
+                    "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\tnull\t\n" +
+                    "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n";
 
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000U;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
@@ -1344,32 +1336,30 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1n;";
-            assertQueryNoLeakCheck(
-                    "id\tts\tid1\tts1\n" +
-                            "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\tnull\t\n" +
-                            "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\tnull\t\n" +
-                            "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
-                            "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
-                            "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
-                            "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
-                            "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
-                            "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
-                            "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
-                            "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n", query, null, "ts", false, true);
+            assertQueryNoLeakCheck("id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\tnull\t\n" +
+                    "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\tnull\t\n" +
+                    "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n", query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1m;";
-            expected =
-                    "id\tts\tid1\tts1\n" +
-                            "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\t1\t1970-01-01T00:00:00.000001" + rightSuffix + "\n" +
-                            "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\t2\t1970-01-01T00:00:00.000002" + rightSuffix + "\n" +
-                            "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\t3\t1970-01-01T00:00:00.000003" + rightSuffix + "\n" +
-                            "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\t4\t1970-01-01T00:00:00.000004" + rightSuffix + "\n" +
-                            "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\t5\t1970-01-01T00:00:00.000005" + rightSuffix + "\n" +
-                            "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
-                            "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
-                            "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
-                            "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
-                            "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n";
+            expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\t1\t1970-01-01T00:00:00.000001" + rightSuffix + "\n" +
+                    "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\t2\t1970-01-01T00:00:00.000002" + rightSuffix + "\n" +
+                    "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\t3\t1970-01-01T00:00:00.000003" + rightSuffix + "\n" +
+                    "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\t4\t1970-01-01T00:00:00.000004" + rightSuffix + "\n" +
+                    "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\t5\t1970-01-01T00:00:00.000005" + rightSuffix + "\n" +
+                    "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1h;";
@@ -1432,32 +1422,30 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1n;";
-            assertQueryNoLeakCheck(
-                    "id\tts\tid1\tts1\n" +
-                            "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\tnull\t\n" +
-                            "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\tnull\t\n" +
-                            "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
-                            "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
-                            "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
-                            "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
-                            "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
-                            "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
-                            "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
-                            "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n", query, null, "ts", false, true);
+            assertQueryNoLeakCheck("id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\tnull\t\n" +
+                    "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\tnull\t\n" +
+                    "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n", query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1m;";
-            expected =
-                    "id\tts\tid1\tts1\n" +
-                            "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\t1\t1970-01-01T00:00:00.000001" + rightSuffix + "\n" +
-                            "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\t2\t1970-01-01T00:00:00.000002" + rightSuffix + "\n" +
-                            "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\t3\t1970-01-01T00:00:00.000003" + rightSuffix + "\n" +
-                            "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\t4\t1970-01-01T00:00:00.000004" + rightSuffix + "\n" +
-                            "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\t5\t1970-01-01T00:00:00.000005" + rightSuffix + "\n" +
-                            "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
-                            "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
-                            "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
-                            "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
-                            "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n";
+            expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\t1\t1970-01-01T00:00:00.000001" + rightSuffix + "\n" +
+                    "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\t2\t1970-01-01T00:00:00.000002" + rightSuffix + "\n" +
+                    "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\t3\t1970-01-01T00:00:00.000003" + rightSuffix + "\n" +
+                    "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\t4\t1970-01-01T00:00:00.000004" + rightSuffix + "\n" +
+                    "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\t5\t1970-01-01T00:00:00.000005" + rightSuffix + "\n" +
+                    "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1h;";
@@ -1829,14 +1817,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ) ON (Ticker)
                         """;
                 String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-                String expected =
-                        "Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111\n" +
-                                "AAPL\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\t\t\t\t\n" +
-                                "AAPL\t2001-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\t\t\n" +
-                                "AAPL\t2002-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2001-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
-                                "AAPL\t2003-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2002-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2001-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2000-01-01T00:00:00.000000" + leftSuffix + "\n" +
-                                "AAPL\t2004-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2003-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2002-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2001-01-01T00:00:00.000000" + leftSuffix + "\n" +
-                                "AAPL\t2005-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2004-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2003-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2002-01-01T00:00:00.000000" + leftSuffix + "\n";
+                String expected = "Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111\n" +
+                        "AAPL\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\t\t\t\t\n" +
+                        "AAPL\t2001-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\t\t\n" +
+                        "AAPL\t2002-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2001-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
+                        "AAPL\t2003-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2002-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2001-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2000-01-01T00:00:00.000000" + leftSuffix + "\n" +
+                        "AAPL\t2004-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2003-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2002-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2001-01-01T00:00:00.000000" + leftSuffix + "\n" +
+                        "AAPL\t2005-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2004-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2003-01-01T00:00:00.000000" + leftSuffix + "\tAAPL\t2002-01-01T00:00:00.000000" + leftSuffix + "\n";
                 assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
@@ -1871,37 +1858,34 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // ASOF JOIN
             String query = "SELECT * FROM (select sym, ts from x) x " +
                     "ASOF JOIN (select sym, ts from y) y ON(sym)";
-            String expected =
-                    "sym\tts\tsym1\tts1\n" +
-                            "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
-                            "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
-                            "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t1\t2000-01-01T00:00:02.000000" + rightSuffix + "\n" +
-                            "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:03.000000" + rightSuffix + "\n" +
-                            "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
+            String expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t1\t2000-01-01T00:00:02.000000" + rightSuffix + "\n" +
+                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:03.000000" + rightSuffix + "\n" +
+                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
             // LT JOIN
             query = "SELECT * FROM (select sym, ts from x) x " +
                     "LT JOIN (select sym, ts from y) y ON(sym)";
-            expected =
-                    "sym\tts\tsym1\tts1\n" +
-                            "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
-                            "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
-                            "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t\t\n" +
-                            "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + rightSuffix + "\n" +
-                            "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
+            expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + rightSuffix + "\n" +
+                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
             // SPLICE JOIN
             query = "SELECT * FROM (select sym, ts from x) x " +
                     "SPLICE JOIN (select sym, ts from y) y ON(sym)";
-            expected =
-                    "sym\tts\tsym1\tts1\n" +
-                            "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
-                            "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
-                            "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t1\t2000-01-01T00:00:02.000000" + rightSuffix + "\n" +
-                            "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:03.000000" + rightSuffix + "\n" +
-                            "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t\t\n";
+            expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t1\t2000-01-01T00:00:02.000000" + rightSuffix + "\n" +
+                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:03.000000" + rightSuffix + "\n" +
+                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t\t\n";
             assertQueryNoLeakCheck(expected, query, null, false, false);
         });
     }
@@ -1936,29 +1920,27 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             // LT JOIN
             String query = "SELECT * FROM x LT JOIN y ON(sym)";
-            String expected =
-                    "sym\tts\tsym1\tts1\n" +
-                            "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
-                            "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
-                            "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t\t\n" +
-                            "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                            "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                            "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + rightSuffix + "\n" +
-                            "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
+            String expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t\t\n" +
+                    "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + rightSuffix + "\n" +
+                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
             // ASOF JOIN
             String queryBody = "* FROM x ASOF JOIN y ON(sym)";
             query = "SELECT " + queryBody;
-            expected =
-                    "sym\tts\tsym1\tts1\n" +
-                            "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
-                            "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
-                            "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t1\t2000-01-01T00:00:02.000000" + rightSuffix + "\n" +
-                            "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                            "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                            "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:03.000000" + rightSuffix + "\n" +
-                            "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
+            expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t1\t2000-01-01T00:00:02.000000" + rightSuffix + "\n" +
+                    "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:03.000000" + rightSuffix + "\n" +
+                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
             String hintedQuery = "SELECT /*+ asof_index_search(x y) */ " + queryBody;
@@ -2054,23 +2036,21 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
 
             //check tables
-            String ex =
-                    "tag\tx\tts\n" +
-                            "A\t1\t1970-01-01T00:00:00.010000" + leftSuffix + "\n" +
-                            "A\t2\t1970-01-01T00:00:00.020000" + leftSuffix + "\n" +
-                            "A\t3\t1970-01-01T00:00:00.030000" + leftSuffix + "\n" +
-                            "B\t1\t1970-01-01T00:00:00.030000" + leftSuffix + "\n" +
-                            "B\t2\t1970-01-01T00:00:00.040000" + leftSuffix + "\n" +
-                            "B\t3\t1970-01-01T00:00:00.050000" + leftSuffix + "\n";
+            String ex = "tag\tx\tts\n" +
+                    "A\t1\t1970-01-01T00:00:00.010000" + leftSuffix + "\n" +
+                    "A\t2\t1970-01-01T00:00:00.020000" + leftSuffix + "\n" +
+                    "A\t3\t1970-01-01T00:00:00.030000" + leftSuffix + "\n" +
+                    "B\t1\t1970-01-01T00:00:00.030000" + leftSuffix + "\n" +
+                    "B\t2\t1970-01-01T00:00:00.040000" + leftSuffix + "\n" +
+                    "B\t3\t1970-01-01T00:00:00.050000" + leftSuffix + "\n";
             printSqlResult(ex, "tabY", "ts", true, true);
-            ex =
-                    "tag\tx\tts\n" +
-                            "B\t1\t1970-01-01T00:00:00.010000" + rightSuffix + "\n" +
-                            "B\t2\t1970-01-01T00:00:00.020000" + rightSuffix + "\n" +
-                            "B\t3\t1970-01-01T00:00:00.030000" + rightSuffix + "\n" +
-                            "A\t3\t1970-01-01T00:00:00.030000" + rightSuffix + "\n" +
-                            "A\t6\t1970-01-01T00:00:00.040000" + rightSuffix + "\n" +
-                            "A\t7\t1970-01-01T00:00:00.050000" + rightSuffix + "\n";
+            ex = "tag\tx\tts\n" +
+                    "B\t1\t1970-01-01T00:00:00.010000" + rightSuffix + "\n" +
+                    "B\t2\t1970-01-01T00:00:00.020000" + rightSuffix + "\n" +
+                    "B\t3\t1970-01-01T00:00:00.030000" + rightSuffix + "\n" +
+                    "A\t3\t1970-01-01T00:00:00.030000" + rightSuffix + "\n" +
+                    "A\t6\t1970-01-01T00:00:00.040000" + rightSuffix + "\n" +
+                    "A\t7\t1970-01-01T00:00:00.050000" + rightSuffix + "\n";
             printSqlResult(ex, "tabZ", "ts", true, true);
             // test
             ex = """
@@ -2376,11 +2356,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
 
-            String expected =
-                    "timebid\ttimeask\tb\ta\n" +
-                            "1970-01-01T00:00:00.000000" + rightSuffix + "\t\t101\tnull\n" +
-                            "1970-01-01T00:00:00.000003" + rightSuffix + "\t1970-01-01T00:00:00.000000" + leftSuffix + "\t102\t100\n" +
-                            "1970-01-01T00:00:00.000005" + rightSuffix + "\t1970-01-01T00:00:00.000004" + leftSuffix + "\t103\t102\n";
+            String expected = "timebid\ttimeask\tb\ta\n" +
+                    "1970-01-01T00:00:00.000000" + rightSuffix + "\t\t101\tnull\n" +
+                    "1970-01-01T00:00:00.000003" + rightSuffix + "\t1970-01-01T00:00:00.000000" + leftSuffix + "\t102\t100\n" +
+                    "1970-01-01T00:00:00.000005" + rightSuffix + "\t1970-01-01T00:00:00.000004" + leftSuffix + "\t103\t102\n";
 
             printSqlResult(expected, query, "timebid", false, false);
         });
@@ -3330,14 +3309,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             // LT JOIN
             query = "SELECT * FROM trades t1 LT JOIN trades t2 ON (pair)";
-            expected =
-                    "pair\tts\tprice\tpair1\tts1\tprice1\n" +
-                            "BTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\t\t\tnull\n" +
-                            "ETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\t\t\tnull\n" +
-                            "BTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\tBTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\n" +
-                            "ETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\tETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\n" +
-                            "ETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\tETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\n" +
-                            "BTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\tBTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\n";
+            expected = "pair\tts\tprice\tpair1\tts1\tprice1\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\t\t\tnull\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\t\t\tnull\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\tBTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\tETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\n" +
+                    "ETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\tETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\tBTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
             // SPLICE JOIN
