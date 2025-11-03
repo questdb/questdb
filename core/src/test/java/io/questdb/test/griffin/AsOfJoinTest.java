@@ -833,8 +833,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinLinearSearchHint() throws Exception {
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "create table orders as (\n" +
+            executeWithRewriteTimestamp("create table orders as (\n" +
                             "  select \n" +
                             "    concat('sym_', rnd_int(0, 10, 0))::symbol as order_symbol,\n" +
                             "    rnd_double() price,\n" +
