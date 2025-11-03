@@ -186,6 +186,7 @@ import io.questdb.griffin.engine.groupby.vect.SumLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
+import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
@@ -2733,6 +2734,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveModel.getName());
                                 boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveModel.getName());
                                 boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveModel.getName());
+                                boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         RecordSink masterSink = RecordSinkFactory.getInstance(
@@ -2772,20 +2774,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slaveContext,
                                                             asOfToleranceInterval
                                                     );
-                                                } else if (isOptimizable && hasMemoizedHint && isSingleSymbolJoin(slaveMetadata)) {
-                                                    master = new AsOfJoinMemoizedRecordCursorFactory(
-                                                            configuration,
-                                                            joinMetadata,
-                                                            master,
-                                                            slave,
-                                                            joinColumnSplit,
-                                                            slaveSymbolColumnIndex,
-                                                            columnAccessHelper,
-                                                            slaveContext,
-                                                            asOfToleranceInterval,
-                                                            SqlHints.hasAsOfDrivebyCacheHint(model, masterAlias, slaveModel.getName())
-                                                    );
-                                                } else {
+                                                    created = true;
+                                                } else if (isOptimizable && isSingleSymbolJoin(slaveMetadata)) {
+                                                    if (hasMemoizedHint) {
+                                                        master = new AsOfJoinMemoizedRecordCursorFactory(
+                                                                configuration,
+                                                                joinMetadata,
+                                                                master,
+                                                                slave,
+                                                                joinColumnSplit,
+                                                                slaveSymbolColumnIndex,
+                                                                columnAccessHelper,
+                                                                slaveContext,
+                                                                asOfToleranceInterval,
+                                                                SqlHints.hasAsOfDrivebyCacheHint(model, masterAlias, slaveModel.getName())
+                                                        );
+                                                        created = true;
+                                                    } else if (hasDenseHint) {
+                                                        master = new AsOfJoinDenseRecordCursorFactory(
+                                                                configuration,
+                                                                joinMetadata,
+                                                                master,
+                                                                slave,
+                                                                joinColumnSplit,
+                                                                slaveSymbolColumnIndex,
+                                                                columnAccessHelper,
+                                                                slaveContext,
+                                                                asOfToleranceInterval
+                                                        );
+                                                        created = true;
+                                                    }
+                                                }
+                                                if (!created) {
                                                     master = new AsOfJoinFastRecordCursorFactory(
                                                             configuration,
                                                             joinMetadata,
@@ -2798,8 +2818,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slaveContext,
                                                             asOfToleranceInterval
                                                     );
+                                                    created = true;
                                                 }
-                                                created = true;
                                             } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
                                                 RecordCursorFactory slaveBase = slave.getBaseFactory();
                                                 int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);

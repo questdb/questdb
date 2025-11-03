@@ -444,6 +444,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -486,6 +487,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -527,6 +529,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -568,6 +571,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -616,6 +620,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -670,6 +675,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -713,6 +719,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -762,6 +769,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody1, "", "Fast", expected1);
             assertAlgoAndResult(queryBody1, "asof_index_search(t q)", "Indexed", expected1);
             assertAlgoAndResult(queryBody1, "asof_memoized(t q)", "Memoized", expected1);
+            assertAlgoAndResult(queryBody1, "asof_dense(t q)", "Dense", expected1);
 
             // With 15-minute tolerance: both trades should match
             String expected2 = """
@@ -776,6 +784,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody2, "", "Fast", expected2);
             assertAlgoAndResult(queryBody2, "asof_index_search(t q)", "Indexed", expected2);
             assertAlgoAndResult(queryBody2, "asof_memoized(t q)", "Memoized", expected2);
+            assertAlgoAndResult(queryBody2, "asof_dense(t q)", "Dense", expected2);
         });
     }
 
@@ -827,6 +836,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -1259,9 +1269,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // non-keyed join, slave has a filter, linear hint -> should also use AsOfJoinNoKeyRecordCursorFactory
             query = "SELECT /*+ asof_linear(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join");
-            TestUtils.assertNotContains(sink, "Filtered");
-            TestUtils.assertNotContains(sink, "Memoized");
+            TestUtils.assertContains(sink, "AsOf Join\n");
         });
     }
 
@@ -1524,11 +1532,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String query = "SELECT /*+ asof_linear(t1 t2) */ * FROM t1 " +
                     "ASOF JOIN t2 ON (sym)";
 
-            // Verify the query plan does NOT show Fast Scan
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join");
-            TestUtils.assertNotContains(sink, "Memoized");
-            TestUtils.assertNotContains(sink, "Indexed");
+            TestUtils.assertContains(sink, "AsOf Join Single Symbol");
 
             // Execute and verify results
             printSql(query);
@@ -1568,9 +1573,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             printSql("EXPLAIN " + query);
             // Linear search should take precedence
-            TestUtils.assertContains(sink, "AsOf Join");
-            TestUtils.assertNotContains(sink, "Indexed");
-            TestUtils.assertNotContains(sink, "Memoized");
+            TestUtils.assertContains(sink, "AsOf Join Single Symbol");
         });
     }
 
