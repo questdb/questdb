@@ -437,6 +437,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_driveby_cache(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_fast_search(t q)", "Fast", expected);
         });
@@ -479,6 +480,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_driveby_cache(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_fast_search(t q)", "Fast", expected);
         });
@@ -520,6 +522,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_driveby_cache(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_fast_search(t q)", "Fast", expected);
         });
@@ -561,6 +564,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_driveby_cache(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_fast_search(t q)", "Fast", expected);
         });
@@ -609,6 +613,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_driveby_cache(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_fast_search(t q)", "Fast", expected);
         });
@@ -663,6 +668,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_driveby_cache(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_fast_search(t q)", "Fast", expected);
         });
@@ -706,6 +712,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_driveby_cache(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_fast_search(t q)", "Fast", expected);
         });
@@ -755,6 +762,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "TOLERANCE 1m";
 
             assertAlgoAndResult(queryBody1, "", "Memoized", expected1);
+            assertAlgoAndResult(queryBody1, "asof_driveby_cache(t q)", "Memoized", expected1);
             assertAlgoAndResult(queryBody1, "asof_index_search(t q)", "Indexed", expected1);
             assertAlgoAndResult(queryBody1, "asof_fast_search(t q)", "Fast", expected1);
 
@@ -769,6 +777,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "ASOF JOIN quotes q ON t.symbol = q.symbol " +
                     "TOLERANCE 15m";
             assertAlgoAndResult(queryBody2, "", "Memoized", expected2);
+            assertAlgoAndResult(queryBody2, "asof_driveby_cache(t q)", "Memoized", expected2);
             assertAlgoAndResult(queryBody2, "asof_index_search(t q)", "Indexed", expected2);
             assertAlgoAndResult(queryBody2, "asof_fast_search(t q)", "Fast", expected2);
         });
@@ -820,6 +829,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "WHERE t.ts BETWEEN '2024-01-02T00:00:00.000000Z' AND '2024-01-02T23:59:59.999999Z'";
 
             assertAlgoAndResult(queryBody, "", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_driveby_cache(t q)", "Memoized", expected);
             assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_fast_search(t q)", "Fast", expected);
         });
@@ -3532,6 +3542,162 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSingleSymbolAsOf() throws Exception {
+        assertMemoryLeak(
+                (TestUtils.LeakProneCode) () -> {
+                    executeWithRewriteTimestamp(
+                            """
+                                    create table t1 as (
+                                    SELECT
+                                        rnd_symbol_zipf(1_000, 2.0) AS symbol,
+                                        rnd_symbol('buy', 'sell') as side,
+                                        rnd_double() * 20 + 10 AS price,
+                                        rnd_double() * 20 + 10 AS amount,
+                                        generate_series as timestamp
+                                      FROM generate_series('2025-01-01'::#TIMESTAMP, '2025-01-02', '172898983u')
+                                      ) timestamp(timestamp) partition by day
+                                    """,
+                            leftTableTimestampType.getTypeName()
+                    );
+
+                    executeWithRewriteTimestamp(
+                            """
+                                    create table t2 as (
+                                    SELECT
+                                          '2024-12-31T23'::#TIMESTAMP + (60*x) + rnd_long(-20, 20, 0) as ts,
+                                          rnd_symbol_zipf(1_000, 2.0) sym,
+                                          rnd_double() * 10.0 + 5.0 bid,
+                                          rnd_double() * 10.0 + 5.0 ask
+                                          FROM long_sequence(10_000)
+                                    ) timestamp(ts) partition by day
+                                    """,
+                            rightTableTimestampType.getTypeName()
+                    );
+
+                    var asofSQL = """
+                                    SELECT /*+ ASOF_LINEAR_SEARCH(t p) */ avg(bid)\s
+                                    FROM t1 t\s
+                                    ASOF JOIN t2 p on (t.symbol=p.sym);
+                            """;
+
+                    assertQueryNoLeakCheck(
+                            """
+                                    avg
+                                    10.82018197104726
+                                    """,
+                            asofSQL,
+                            null,
+                            false,
+                            true
+                    );
+
+                    assertSql(
+                            """
+                                    QUERY PLAN
+                                    GroupBy vectorized: false
+                                      values: [avg(bid)]
+                                        SelectedRecord
+                                            AsOf Join Single Symbol
+                                              condition: p.sym=t.symbol
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t2
+                                    """,
+                            "explain " + asofSQL
+
+                    );
+
+                    // ensure algo is not triggered without hint
+                    assertSql(
+                            """
+                                    QUERY PLAN
+                                    GroupBy vectorized: false
+                                      values: [avg(bid)]
+                                        SelectedRecord
+                                            AsOf Join Memoized Scan
+                                              condition: p.sym=t.symbol
+                                              driveByCache: false
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t2
+                                    """,
+                            """
+                                    EXPLAIN SELECT avg(bid)\s
+                                    FROM t1 t\s
+                                    ASOF JOIN t2 p on (t.symbol=p.sym);
+                                    """
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testSingleSymbolAsOfWithDynamicSlaveSymbolThrows() throws Exception {
+        assertMemoryLeak(
+                (TestUtils.LeakProneCode) () -> {
+                    executeWithRewriteTimestamp(
+                            """
+                                    create table dyn_master as (
+                                    select
+                                        rnd_symbol('A', 'B', 'C') as sym,
+                                        rnd_double() as val,
+                                        generate_series as timestamp
+                                    from generate_series('2025-01-01'::#TIMESTAMP, '2025-01-01T00:30', '300000000u')
+                                    ) timestamp(timestamp) partition by day
+                                    """,
+                            leftTableTimestampType.getTypeName()
+                    );
+
+                    executeWithRewriteTimestamp(
+                            """
+                                    create table dyn_slave_src as (
+                                    select
+                                        cast(sym as string) as sym_str,
+                                        cast(timestamp as #TIMESTAMP) as ts
+                                    from dyn_master
+                                    ) timestamp(ts) partition by day
+                                    """,
+                            rightTableTimestampType.getTypeName()
+                    );
+
+                    final String sql = """
+                            SELECT /*+ ASOF_LINEAR_SEARCH(m s) */m.sym, ts
+                            FROM dyn_master m
+                            ASOF JOIN (
+                                SELECT cast(sym_str as symbol) AS sym, ts
+                                FROM dyn_slave_src
+                            ) s ON m.sym = s.sym
+                            """;
+
+                    assertQueryNoLeakCheck(
+                            replaceTimestampSuffix1("""
+                                            sym	ts
+                                            A	2025-01-01T00:00:00.000000Z
+                                            C	2025-01-01T00:05:00.000000Z
+                                            C	2025-01-01T00:10:00.000000Z
+                                            B	2025-01-01T00:15:00.000000Z
+                                            B	2025-01-01T00:20:00.000000Z
+                                            A	2025-01-01T00:25:00.000000Z
+                                            A	2025-01-01T00:30:00.000000Z
+                                            """,
+                                    rightTableTimestampType.getTypeName()
+                            ),
+                            sql,
+                            null,
+                            false,
+                            true
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testWithIntrisifiedTimestampFilter() throws Exception {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
@@ -3582,6 +3748,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
         }
         printSql("EXPLAIN " + hintedQuery);
         TestUtils.assertContains(sink, "AsOf Join " + expectedAlgo);
+        if (hint.contains("asof_driveby_cache(t q)")) {
+            TestUtils.assertContains(sink, "driveByCache: true");
+        }
         assertSql(expectedResult, hintedQuery);
     }
 

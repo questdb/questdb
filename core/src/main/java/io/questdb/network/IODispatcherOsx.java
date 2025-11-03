@@ -399,10 +399,8 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
     @Override
     protected boolean runSerially() {
-        boolean useful = false;
-
         final long timestamp = clock.getTicks();
-        processDisconnects(timestamp);
+        boolean useful = processDisconnects(timestamp);
         alreadyHandledFds.clear();
         final int n = kqueue.poll(0);
         int watermark = pending.size();
