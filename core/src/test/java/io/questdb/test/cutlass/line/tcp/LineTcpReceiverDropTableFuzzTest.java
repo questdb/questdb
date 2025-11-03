@@ -36,6 +36,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -49,6 +50,7 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
 
     @Test
     public void testInsertDropParallel() throws Exception {
+        Assume.assumeTrue(walEnabled);
         maintenanceInterval = random.nextLong(200);
         minIdleMsBeforeWriterRelease = random.nextLong(200);
         initLoadParameters(
