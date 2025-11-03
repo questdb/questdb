@@ -72,27 +72,10 @@ public class HttpServer implements Closeable {
     private final int workerCount;
     private final ActiveConnectionTracker activeConnectionTracker;
 
-    // used for min http server only
-    public HttpServer(
-            HttpServerConfiguration configuration,
-            WorkerPool pool,
-            SocketFactory socketFactory
-    ) {
-        this(
-                configuration,
-                pool,
-                socketFactory,
-                DefaultHttpCookieHandler.INSTANCE,
-                DefaultHttpHeaderParserFactory.INSTANCE
-        );
-    }
-
     public HttpServer(
             HttpServerConfiguration configuration,
             WorkerPool networkSharedPool,
-            SocketFactory socketFactory,
-            HttpCookieHandler cookieHandler,
-            HttpHeaderParserFactory headerParserFactory
+            SocketFactory socketFactory
     ) {
         this.workerCount = networkSharedPool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
@@ -114,7 +97,7 @@ public class HttpServer implements Closeable {
         }
 
         this.activeConnectionTracker = new ActiveConnectionTracker(configuration.getHttpContextConfiguration());
-        this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, cookieHandler, headerParserFactory, selectCache, activeConnectionTracker);
+        this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, selectCache, activeConnectionTracker);
         this.dispatcher = IODispatchers.create(configuration, httpContextFactory);
         networkSharedPool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
@@ -368,13 +351,11 @@ public class HttpServer implements Closeable {
         public HttpContextFactory(
                 HttpServerConfiguration configuration,
                 SocketFactory socketFactory,
-                HttpCookieHandler cookieHandler,
-                HttpHeaderParserFactory headerParserFactory,
                 AssociativeCache<RecordCursorFactory> selectCache,
                 ActiveConnectionTracker activeConnectionTracker
         ) {
             super(
-                    () -> new HttpConnectionContext(configuration, socketFactory, cookieHandler, headerParserFactory, selectCache, activeConnectionTracker),
+                    () -> new HttpConnectionContext(configuration, socketFactory, selectCache, activeConnectionTracker),
                     configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity()
             );
         }

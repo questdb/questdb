@@ -93,6 +93,11 @@ public class LineProtocolException extends CairoException {
                 .put(" does not exist, creating new columns is disabled");
     }
 
+    public static LineProtocolException timestampValueOverflow(long timestamp) {
+        return instance()
+                .put("long overflow, timestamp: ").put(timestamp);
+    }
+
     public LineProtocolException put(@Nullable Utf8Sequence us) {
         message.put(us);
         return this;

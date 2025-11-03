@@ -46,12 +46,25 @@ void freeConfig(CONFIG *config) {
     }
 }
 
-void pathCopy(char *dest, const char *file) {
+int pathCopy(char *dest, size_t destSize, const char *file) {
+    if (dest == NULL || file == NULL || destSize == 0) {
+        return -1;
+    }
+
     char *next;
     char *slash = (char *) file;
 
     while ((next = strpbrk(slash + 1, "\\/"))) slash = next;
-    strncpy(dest, file, slash - file);
+    size_t len = slash - file;
+
+    if (len >= destSize) {
+        eprintf("Path too long for buffer (need %zu, have %zu)\n", len + 1, destSize);
+        return -1;
+    }
+
+    strncpy(dest, file, len);
+    dest[len] = '\0';
+    return 0;
 }
 
 int makeDir(const char *dir) {
@@ -90,7 +103,11 @@ void buildJavaArgs(CONFIG *config) {
     memset(classpath, 0, sizeof(classpath));
 
     if (!config->localRuntime) {
-        pathCopy(classpath, config->exeName);
+        if (pathCopy(classpath, sizeof(classpath), config->exeName) != 0) {
+            eprintf("Failed to extract classpath from executable path\n");
+            config->errorCode = ECONFIG_PATH_ERROR;
+            return;
+        }
         strcat(classpath, "\\questdb.jar");
     }
 
@@ -218,7 +235,7 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
     config->serviceName = lpServiceName;
 
     char buf[2048];
-    sprintf(buf, "JAVA_HOME %s ", config->javaExec);
+    snprintf(buf, sizeof(buf), "JAVA_HOME %s ", config->javaExec);
     log_event(EVENTLOG_INFORMATION_TYPE, config->serviceName, buf);
 
     // Service display name
@@ -244,21 +261,30 @@ void buildJavaExec(CONFIG *config, const char *javaExecOpt) {
     memset(config->javaExec, 0, MAX_PATH);
 
     if (javaExecOpt) {
-        strcpy(config->javaExec, javaExecOpt);
+        strncpy(config->javaExec, javaExecOpt, MAX_PATH - 1);
+        config->javaExec[MAX_PATH - 1] = '\0';
         config->localRuntime = FALSE;
         return;
     } else {
         // check if we are being executed from runtime location
-        pathCopy(config->javaExec, config->exeName);
-        strcat(config->javaExec, "\\java.exe");
-        if (fileExists(config->javaExec)) {
-            config->localRuntime = TRUE;
-            return;
-        } else {
-            // fallback to JAVA_HOME
-            char *javaHome = getenv("JAVA_HOME");
-            if (javaHome) {
-                strcpy(config->javaExec, javaHome);
+        if (pathCopy(config->javaExec, MAX_PATH, config->exeName) == 0) {
+            size_t len = strlen(config->javaExec);
+            if (len + strlen("\\java.exe") < MAX_PATH) {
+                strcat(config->javaExec, "\\java.exe");
+                if (fileExists(config->javaExec)) {
+                    config->localRuntime = TRUE;
+                    return;
+                }
+            }
+        }
+
+        // fallback to JAVA_HOME
+        char *javaHome = getenv("JAVA_HOME");
+        if (javaHome) {
+            strncpy(config->javaExec, javaHome, MAX_PATH - 1);
+            config->javaExec[MAX_PATH - 1] = '\0';
+            size_t len = strlen(config->javaExec);
+            if (len + strlen("\\bin\\java.exe") < MAX_PATH) {
                 strcat(config->javaExec, "\\bin\\java.exe");
                 if (fileExists(config->javaExec)) {
                     config->localRuntime = FALSE;
@@ -277,8 +303,12 @@ void buildJavaExec(CONFIG *config, const char *javaExecOpt) {
 FILE *createStdoutLog(CONFIG *config) {
     // create log dir
     char log[MAX_PATH];
-    strcpy(log, config->dir);
-    strcat(log, "\\log");
+    int len = snprintf(log, MAX_PATH, "%s\\log", config->dir);
+
+    if (len < 0 || len >= MAX_PATH) {
+        eprintf("Log directory path too long\n");
+        return NULL;
+    }
 
     if (!makeDir(log)) {
         return NULL;
@@ -286,9 +316,13 @@ FILE *createStdoutLog(CONFIG *config) {
 
     time_t now = time(NULL);
     struct tm *t = localtime(&now);
-    strcat(log, "\\stdout-stderr-");
-    strftime(log + strlen(log), MAX_PATH - strlen(log) - 4, "%Y-%m-%dT%H-%M-%S", t);
-    strcat(log, ".txt");
+    len = snprintf(log, MAX_PATH, "%s\\log\\stdout-stderr-", config->dir);
+    if (len > 0 && len < MAX_PATH) {
+        strftime(log + len, MAX_PATH - len, "%Y-%m-%dT%H-%M-%S.txt", t);
+    } else {
+        eprintf("Log file path too long\n");
+        return NULL;
+    }
 
     SECURITY_ATTRIBUTES sa;
     ZeroMemory(&sa, sizeof(sa));
@@ -353,8 +387,7 @@ int qdbConsole(CONFIG *config) {
     }
 
     char hello_txt[MAX_PATH];
-    strcpy(hello_txt, config->dir);
-    strcat(hello_txt, "\\hello.txt");
+    snprintf(hello_txt, MAX_PATH, "%s\\hello.txt", config->dir);
     for (int i = 0; i < 80; i++) {
         DWORD exit_code = 0;
         if (GetExitCodeProcess(pi.hProcess, &exit_code) && exit_code != STILL_ACTIVE) {
@@ -408,13 +441,17 @@ void logConfigError(CONFIG *config) {
             text = "Too many commands. Only one command is allowed.";
             break;
 
+        case ECONFIG_PATH_ERROR:
+            text = "Failed to extract path from executable.";
+            break;
+
         default:
             text = NULL;
     }
 
     if (text != NULL) {
         char buf[128];
-        sprintf(buf, "Failed to start service: %s\n", text);
+        snprintf(buf, sizeof(buf), "Failed to start service: %s\n", text);
         log_event(EVENTLOG_ERROR_TYPE, SVC_NAME_PREFIX, buf);
     }
 }

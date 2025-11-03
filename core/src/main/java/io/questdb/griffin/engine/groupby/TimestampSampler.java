@@ -46,5 +46,7 @@ public interface TimestampSampler extends Sinkable {
 
     long round(long timestamp);
 
+    void setOffset(long timestamp);
+
     void setStart(long timestamp);
 }

@@ -190,11 +190,13 @@ import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
+import io.questdb.griffin.engine.join.AsOfJoinSingleSymbolRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsofJoinColumnAccessHelper;
+import io.questdb.griffin.engine.join.ChainedSymbolColumnAccessHelper;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.DisabledSymbolShortCircuit;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
@@ -211,13 +213,13 @@ import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.NoopColumnAccessHelper;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
-import io.questdb.griffin.engine.join.SingleStringSymbolShortCircuit;
-import io.questdb.griffin.engine.join.SingleSymbolSymbolShortCircuit;
-import io.questdb.griffin.engine.join.SingleVarcharSymbolShortCircuit;
+import io.questdb.griffin.engine.join.SingleStringColumnAccessHelper;
+import io.questdb.griffin.engine.join.SingleSymbolColumnAccessHelper;
+import io.questdb.griffin.engine.join.SingleVarcharColumnAccessHelper;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
-import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
@@ -309,8 +311,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -866,6 +868,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return toleranceInterval;
     }
 
+    private static int validateAndGetSlaveTimestampIndex(RecordMetadata slaveMetadata, RecordCursorFactory slaveBase) {
+        int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+
+        // slave.supportsFilterStealing() means slave is nothing but a filter.
+        // if slave is just a filter, then it must have the same metadata as its base,
+        // that includes the timestamp index.
+        assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
+        return slaveTimestampIndex;
+    }
+
     private static RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) throws SqlException {
         int columnCount = typesA.getColumnCount();
         assert columnCount == typesB.getColumnCount();
@@ -1115,32 +1127,63 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
-    private RecordCursorFactory createAsOfJoin(
-            RecordMetadata metadata,
-            RecordCursorFactory master,
-            RecordSink masterKeySink,
-            RecordCursorFactory slave,
-            RecordSink slaveKeySink,
-            int columnSplit,
-            JoinContext joinContext,
-            long toleranceInterval
-    ) {
-        valueTypes.clear();
-        valueTypes.add(ColumnType.LONG);
-
-        return new AsOfJoinLightRecordCursorFactory(
-                configuration,
-                metadata,
-                master,
-                slave,
-                keyTypes,
-                valueTypes,
-                masterKeySink,
-                slaveKeySink,
-                columnSplit,
-                joinContext,
-                toleranceInterval
-        );
+    private @NotNull AsofJoinColumnAccessHelper createAsofColumnAccessHelper(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, boolean selfJoin) {
+        AsofJoinColumnAccessHelper columnAccessHelper = NoopColumnAccessHelper.INSTANCE;
+        assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
+        AsofJoinColumnAccessHelper[] symbolShortCircuits = null;
+        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+            int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
+            int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
+            if (slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
+                int masterColType = masterMetadata.getColumnType(masterIndex);
+                AsofJoinColumnAccessHelper newSymbolShortCircuit;
+                switch (masterColType) {
+                    case SYMBOL:
+                        if (selfJoin && masterIndex == slaveIndex) {
+                            // self join on the same column -> there is no point in attempting short-circuiting
+                            // NOTE: This check is naive, it can generate false positives
+                            //       For example 'select t1.s, t2.s2 from t as t1 asof join t as t2 on t1.s = t2.s2'
+                            //       This is deemed as a self-join (which it is), and due to the way columns are projected
+                            //       it will take this branch (even when it fact it's comparing different columns)
+                            //       and won't create a short circuit. This is OK from correctness perspective,
+                            //       but it is a missed opportunity for performance optimization. Doing a perfect check
+                            //       would require a more complex logic, which is not worth it for now
+                            continue;
+                        }
+                        newSymbolShortCircuit = new SingleSymbolColumnAccessHelper(configuration, masterIndex, slaveIndex);
+                        break;
+                    case VARCHAR:
+                        newSymbolShortCircuit = new SingleVarcharColumnAccessHelper(masterIndex, slaveIndex);
+                        break;
+                    case STRING:
+                        newSymbolShortCircuit = new SingleStringColumnAccessHelper(masterIndex, slaveIndex);
+                        break;
+                    default:
+                        // unsupported type for short circuit
+                        continue;
+                }
+                if (columnAccessHelper == NoopColumnAccessHelper.INSTANCE) {
+                    // ok, a single symbol short circuit
+                    columnAccessHelper = newSymbolShortCircuit;
+                } else if (symbolShortCircuits == null) {
+                    // 2 symbol short circuits, we need to chain them
+                    symbolShortCircuits = new AsofJoinColumnAccessHelper[2];
+                    symbolShortCircuits[0] = columnAccessHelper;
+                    symbolShortCircuits[1] = newSymbolShortCircuit;
+                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(symbolShortCircuits);
+                } else {
+                    // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
+                    // this allocates arrays, but it should be very rare
+                    int size = symbolShortCircuits.length;
+                    AsofJoinColumnAccessHelper[] newSymbolShortCircuits = new AsofJoinColumnAccessHelper[size + 1];
+                    System.arraycopy(symbolShortCircuits, 0, newSymbolShortCircuits, 0, size);
+                    newSymbolShortCircuits[size] = newSymbolShortCircuit;
+                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(newSymbolShortCircuits);
+                    symbolShortCircuits = newSymbolShortCircuits;
+                }
+            }
+        }
+        return columnAccessHelper;
     }
 
     @NotNull
@@ -1538,65 +1581,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 columnSplit,
                 context
         );
-    }
-
-    private @NotNull SymbolShortCircuit createSymbolShortCircuit(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, boolean selfJoin) {
-        SymbolShortCircuit symbolShortCircuit = DisabledSymbolShortCircuit.INSTANCE;
-        assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
-        SymbolShortCircuit[] symbolShortCircuits = null;
-        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-            int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
-            int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
-            if (slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
-                int masterColType = masterMetadata.getColumnType(masterIndex);
-                SymbolShortCircuit newSymbolShortCircuit;
-                switch (masterColType) {
-                    case SYMBOL:
-                        if (selfJoin && masterIndex == slaveIndex) {
-                            // self join on the same column -> there is no point in attempting short-circuiting
-                            // NOTE: This check is naive, it can generate false positives
-                            //       For example 'select t1.s, t2.s2 from t as t1 asof join t as t2 on t1.s = t2.s2'
-                            //       This is deemed as a self-join (which it is), and due to the way columns are projected
-                            //       it will take this branch (even when it fact it's comparing different columns)
-                            //       and won't create a short circuit. This is OK from correctness perspective,
-                            //       but it is a missed opportunity for performance optimization. doing a perfect check
-                            //       would require a more complex logic, which is not worth it for now
-                            continue;
-                        }
-                        newSymbolShortCircuit = new SingleSymbolSymbolShortCircuit(configuration, masterIndex, slaveIndex);
-                        break;
-                    case VARCHAR:
-                        newSymbolShortCircuit = new SingleVarcharSymbolShortCircuit(masterIndex, slaveIndex);
-                        break;
-                    case STRING:
-                        newSymbolShortCircuit = new SingleStringSymbolShortCircuit(masterIndex, slaveIndex);
-                        break;
-                    default:
-                        // unsupported type for short circuit
-                        continue;
-                }
-                if (symbolShortCircuit == DisabledSymbolShortCircuit.INSTANCE) {
-                    // ok, a single symbol short circuit
-                    symbolShortCircuit = newSymbolShortCircuit;
-                } else if (symbolShortCircuits == null) {
-                    // 2 symbol short circuits, we need to chain them
-                    symbolShortCircuits = new SymbolShortCircuit[2];
-                    symbolShortCircuits[0] = symbolShortCircuit;
-                    symbolShortCircuits[1] = newSymbolShortCircuit;
-                    symbolShortCircuit = new ChainedSymbolShortCircuit(symbolShortCircuits);
-                } else {
-                    // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
-                    // this allocates arrays, but it should be very rare
-                    int size = symbolShortCircuits.length;
-                    SymbolShortCircuit[] newSymbolShortCircuits = new SymbolShortCircuit[size + 1];
-                    System.arraycopy(symbolShortCircuits, 0, newSymbolShortCircuits, 0, size);
-                    newSymbolShortCircuits[size] = newSymbolShortCircuit;
-                    symbolShortCircuit = new ChainedSymbolShortCircuit(newSymbolShortCircuits);
-                    symbolShortCircuits = newSymbolShortCircuits;
-                }
-            }
-        }
-        return symbolShortCircuit;
     }
 
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
@@ -2695,40 +2679,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 assert slaveModel.getOuterJoinExpressionClause() != null;
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1);
                                 filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
-                                switch (joinType) {
-                                    case JOIN_CROSS_LEFT:
-                                        master = new NestedLoopLeftJoinRecordCursorFactory(
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                masterMetadata.getColumnCount(),
-                                                filter,
-                                                NullRecordFactory.getInstance(slaveMetadata)
-                                        );
-                                        break;
-                                    case JOIN_CROSS_RIGHT:
-                                        master = new NestedLoopRightJoinRecordCursorFactory(
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                masterMetadata.getColumnCount(),
-                                                filter,
-                                                NullRecordFactory.getInstance(masterMetadata)
-                                        );
-                                        break;
-                                    case JOIN_CROSS_FULL:
-                                        master = new NestedLoopFullJoinRecordCursorFactory(
-                                                configuration,
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                masterMetadata.getColumnCount(),
-                                                filter,
-                                                NullRecordFactory.getInstance(masterMetadata),
-                                                NullRecordFactory.getInstance(slaveMetadata)
-                                        );
-                                        break;
-                                }
+                                master = switch (joinType) {
+                                    case JOIN_CROSS_LEFT -> new NestedLoopLeftJoinRecordCursorFactory(
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            filter,
+                                            NullRecordFactory.getInstance(slaveMetadata)
+                                    );
+                                    case JOIN_CROSS_RIGHT -> new NestedLoopRightJoinRecordCursorFactory(
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            filter,
+                                            NullRecordFactory.getInstance(masterMetadata)
+                                    );
+                                    case JOIN_CROSS_FULL -> new NestedLoopFullJoinRecordCursorFactory(
+                                            configuration,
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            filter,
+                                            NullRecordFactory.getInstance(masterMetadata),
+                                            NullRecordFactory.getInstance(slaveMetadata)
+                                    );
+                                    default -> master;
+                                };
                                 masterAlias = null;
                                 break;
                             case JOIN_CROSS:
@@ -2745,15 +2724,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "ASOF");
                                 // note: the self-join is imperfect and might generate false negatives when using subqueries
-                                // rules: 1. when it returns `true` it means that the join is self-join for sure
-                                //        2. when it returns `false` it means that the join may or may not be self-join
+                                // rules: 1. when it returns `true`, the join is a self-join for sure
+                                //        2. when it returns `false`, the join may or may not be self-join
                                 boolean selfJoin = isSameTable(master, slave);
                                 processJoinContext(index == 1, selfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 long asOfToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
-                                boolean asOfAvoidBinarySearch = SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
-                                boolean asOfLinearSearch = SqlHints.hasAsOfLinearSearchHint(model, masterAlias, slaveModel.getName());
-                                boolean asOfIndexSearch = SqlHints.hasAsOfIndexSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveModel.getName());
+                                boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveModel.getName());
+                                boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveModel.getName());
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         RecordSink masterSink = RecordSinkFactory.getInstance(
@@ -2773,49 +2752,57 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 writeTimestampAsNanosA
                                         );
                                         boolean created = false;
-                                        if (!asOfAvoidBinarySearch && !asOfLinearSearch) {
+                                        if (!hasLinearHint) {
                                             if (slave.supportsTimeFrameCursor()) {
-                                                SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
-                                                if (asOfIndexSearch && isSingleSymbolJoinWithIndex(slaveMetadata)) {
-                                                    int masterSymbolColumnIndex = listColumnFilterB.getColumnIndexFactored(0);
-                                                    int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                                                int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                                                AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, selfJoin);
+                                                boolean isOptimizable = columnAccessHelper != NoopColumnAccessHelper.INSTANCE;
+                                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
+                                                int joinColumnSplit = masterMetadata.getColumnCount();
+                                                JoinContext slaveContext = slaveModel.getJoinContext();
+                                                if (isOptimizable && hasIndexHint && isSingleSymbolJoinWithIndex(slaveMetadata)) {
                                                     master = new AsOfJoinIndexedRecordCursorFactory(
                                                             configuration,
-                                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                            joinMetadata,
                                                             master,
                                                             slave,
-                                                            masterMetadata.getColumnCount(),
-                                                            masterSymbolColumnIndex,
+                                                            joinColumnSplit,
                                                             slaveSymbolColumnIndex,
-                                                            symbolShortCircuit,
-                                                            slaveModel.getJoinContext(),
+                                                            columnAccessHelper,
+                                                            slaveContext,
                                                             asOfToleranceInterval
+                                                    );
+                                                } else if (isOptimizable && hasMemoizedHint && isSingleSymbolJoin(slaveMetadata)) {
+                                                    master = new AsOfJoinMemoizedRecordCursorFactory(
+                                                            configuration,
+                                                            joinMetadata,
+                                                            master,
+                                                            slave,
+                                                            joinColumnSplit,
+                                                            slaveSymbolColumnIndex,
+                                                            columnAccessHelper,
+                                                            slaveContext,
+                                                            asOfToleranceInterval,
+                                                            SqlHints.hasAsOfDrivebyCacheHint(model, masterAlias, slaveModel.getName())
                                                     );
                                                 } else {
                                                     master = new AsOfJoinFastRecordCursorFactory(
                                                             configuration,
-                                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                            joinMetadata,
                                                             master,
                                                             masterSink,
                                                             slave,
                                                             slaveSink,
-                                                            masterMetadata.getColumnCount(),
-                                                            symbolShortCircuit,
-                                                            slaveModel.getJoinContext(),
+                                                            joinColumnSplit,
+                                                            columnAccessHelper,
+                                                            slaveContext,
                                                             asOfToleranceInterval
                                                     );
                                                 }
                                                 created = true;
-                                            }
-
-                                            if (!created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                            } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
                                                 RecordCursorFactory slaveBase = slave.getBaseFactory();
-                                                int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-
-                                                // slave.supportsFilterStealing() means slave is nothing but a filter.
-                                                // if slave is just a filter, then it must have the same metadata as its base,
-                                                // that includes the timestamp index.
-                                                assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
+                                                int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
 
                                                 Function stolenFilter = slave.getFilter();
                                                 assert stolenFilter != null;
@@ -2840,9 +2827,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asOfToleranceInterval
                                                 );
                                                 created = true;
-                                            }
-
-                                            if (!created && slave.isProjection()) {
+                                            } else if (slave.isProjection()) {
                                                 RecordCursorFactory projectionBase = slave.getBaseFactory();
                                                 // We know projectionBase does not support supportsTimeFrameCursor, because
                                                 // Projections forward this call to its base factory and if we are in this branch
@@ -2888,21 +2873,56 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         }
 
                                         if (!created) {
-                                            master = createAsOfJoin(
-                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                    master,
-                                                    masterSink,
-                                                    slave,
-                                                    slaveSink,
-                                                    masterMetadata.getColumnCount(),
-                                                    slaveModel.getJoinContext(),
-                                                    asOfToleranceInterval
-                                            );
+                                            joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
+                                            int joinColumnSplit = masterMetadata.getColumnCount();
+                                            JoinContext slaveContext = slaveModel.getJoinContext();
+                                            valueTypes.clear();
+                                            valueTypes.add(LONG);
+                                            if (hasLinearHint && isSingleSymbolJoin(slaveMetadata)) {
+                                                AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, selfJoin);
+                                                boolean isOptimizable = columnAccessHelper != NoopColumnAccessHelper.INSTANCE;
+                                                if (isOptimizable) {
+                                                    int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                                                    keyTypes.clear();
+                                                    keyTypes.add(ColumnType.INT);
+
+                                                    master = new AsOfJoinSingleSymbolRecordCursorFactory(
+                                                            configuration,
+                                                            joinMetadata,
+                                                            master,
+                                                            slave,
+                                                            keyTypes,
+                                                            valueTypes,
+                                                            joinColumnSplit,
+                                                            slaveSymbolColumnIndex,
+                                                            columnAccessHelper,
+                                                            slaveContext,
+                                                            asOfToleranceInterval
+                                                    );
+
+                                                    created = true;
+                                                }
+                                            }
+
+                                            if (!created) {
+                                                master = new AsOfJoinLightRecordCursorFactory(
+                                                        configuration,
+                                                        joinMetadata,
+                                                        master,
+                                                        slave,
+                                                        keyTypes,
+                                                        valueTypes,
+                                                        masterSink,
+                                                        slaveSink,
+                                                        joinColumnSplit,
+                                                        slaveContext,
+                                                        asOfToleranceInterval
+                                                );
+                                            }
                                         }
                                     } else {
                                         boolean created = false;
-                                        if (!asOfAvoidBinarySearch) {
-                                            // when slave directly supports time frame cursor then it's strictly better to use it, even without any hint
+                                        if (!hasLinearHint) {
                                             if (slave.supportsTimeFrameCursor()) {
                                                 master = new AsOfJoinNoKeyFastRecordCursorFactory(
                                                         configuration,
@@ -2913,20 +2933,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asOfToleranceInterval
                                                 );
                                                 created = true;
-                                            }
-
-                                            // if we have a hint, we can try to steal the filter from the slave.
-                                            // this downgrades to single-threaded Java-level filtering, so it's only worth it if
-                                            // the filter selectivity is low. we don't have statistics to tell selectivity, so
-                                            // we rely on the user to provide an explicit hint.
-                                            if (!created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                            } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                                // Try to steal the filter from the slave. This downgrades to
+                                                // single-threaded Java-level filtering, so it's only worth it if the filter
+                                                // selectivity is low. We don't have statistics to tell selectivity, so
+                                                // we allow the user to disable this with the asof_linear_search hint.
                                                 RecordCursorFactory slaveBase = slave.getBaseFactory();
-                                                int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-
-                                                // slave.supportsFilterStealing() means slave is nothing but a filter.
-                                                // if slave is just a filter, then it must have the same metadata as its base,
-                                                // that includes the timestamp index.
-                                                assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
+                                                int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
 
                                                 Function stolenFilter = slave.getFilter();
                                                 assert stolenFilter != null;
@@ -2949,17 +2962,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asOfToleranceInterval
                                                 );
                                                 created = true;
-                                            }
-
-                                            if (!created && slave.isProjection()) {
+                                            } else if (slave.isProjection()) {
                                                 RecordCursorFactory projectionBase = slave.getBaseFactory();
                                                 // We know projectionBase does not support supportsTimeFrameCursor, because
-                                                // Projections forward this call to its base factory and if we are in this branch
-                                                // then slave.supportsTimeFrameCursor() returned false in one the previous branches.
+                                                // projections forward this call to its base factory, and if we are in this branch,
+                                                // slave.supportsTimeFrameCursor() returned false in a previous branch.
                                                 // There is still chance that projectionBase is just a filter
-                                                // and its own base supports timeFrameCursor. let's see.
+                                                // and its own base supports timeFrameCursor. Let's see.
                                                 if (projectionBase.supportsFilterStealing()) {
-                                                    // ok, cool, is used only as a filter.
+                                                    // ok, cool, it's used only as a filter
                                                     RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
                                                     if (filterStealingBase.supportsTimeFrameCursor()) {
                                                         IntList stolenCrossIndex = slave.getColumnCrossIndex();
@@ -2994,7 +3005,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             }
                                         }
 
-                                        // slow path: this always works, but can be quite slow, especially with large slave tables
+                                        // slow path: this always works but can be quite slow, especially with large slave tables
                                         if (!created) {
                                             master = new AsOfJoinLightNoKeyRecordCursorFactory(
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
@@ -3027,8 +3038,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 long ltToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
-                                boolean ltAvoidBinarySearch = SqlHints.hasAvoidLtJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
-                                boolean ltLinearSearch = SqlHints.hasAsOfLinearSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean ltLinearSearch = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveModel.getName());
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
@@ -3057,7 +3067,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 ltToleranceInterval
                                         );
                                     } else {
-                                        if (!ltAvoidBinarySearch && !ltLinearSearch && slave.supportsTimeFrameCursor()) {
+                                        if (!ltLinearSearch && slave.supportsTimeFrameCursor()) {
                                             master = new LtJoinNoKeyFastRecordCursorFactory(
                                                     configuration,
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
@@ -4382,27 +4392,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext,
             boolean processJoins
     ) throws SqlException {
-        switch (model.getSelectModelType()) {
-            case SELECT_MODEL_CHOOSE:
-                return generateSelectChoose(model, executionContext);
-            case SELECT_MODEL_GROUP_BY:
-                return generateSelectGroupBy(model, executionContext);
-            case SELECT_MODEL_VIRTUAL:
-                return generateSelectVirtual(model, executionContext);
-            case SELECT_MODEL_WINDOW:
-                return generateSelectWindow(model, executionContext);
-            case SELECT_MODEL_DISTINCT:
-                return generateSelectDistinct(model, executionContext);
-            case SELECT_MODEL_CURSOR:
-                return generateSelectCursor(model, executionContext);
-            case SELECT_MODEL_SHOW:
-                return model.getTableNameFunction();
-            default:
+        return switch (model.getSelectModelType()) {
+            case SELECT_MODEL_CHOOSE -> generateSelectChoose(model, executionContext);
+            case SELECT_MODEL_GROUP_BY -> generateSelectGroupBy(model, executionContext);
+            case SELECT_MODEL_VIRTUAL -> generateSelectVirtual(model, executionContext);
+            case SELECT_MODEL_WINDOW -> generateSelectWindow(model, executionContext);
+            case SELECT_MODEL_DISTINCT -> generateSelectDistinct(model, executionContext);
+            case SELECT_MODEL_CURSOR -> generateSelectCursor(model, executionContext);
+            case SELECT_MODEL_SHOW -> model.getTableNameFunction();
+            default -> {
                 if (model.getJoinModels().size() > 1 && processJoins) {
-                    return generateJoins(model, executionContext);
+                    yield generateJoins(model, executionContext);
                 }
-                return generateNoSelect(model, executionContext);
-        }
+                yield generateNoSelect(model, executionContext);
+            }
+        };
     }
 
     private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -4490,8 +4494,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw e;
         }
 
+        CharSequence timestampName = null;
+        int timestampNameDot = -1;
+        if (timestampIndex != -1) {
+            timestampName = factory.getMetadata().getColumnName(timestampIndex);
+            timestampNameDot = Chars.indexOfLastUnquoted(timestampName, '.');
+        }
+        final CharSequence firstOrderByColumn = model.getOrderBy().size() > 0 && model.getOrderBy().getQuick(0).type == LITERAL
+                ? model.getOrderBy().getQuick(0).token
+                : null;
+
         final IntList columnCrossIndex = new IntList(selectColumnCount);
-        final GenericRecordMetadata selectMetadata = new GenericRecordMetadata();
+        final GenericRecordMetadata queryMetadata = new GenericRecordMetadata();
         boolean timestampSet = false;
         for (int i = 0; i < selectColumnCount; i++) {
             final QueryColumn queryColumn = columns.getQuick(i);
@@ -4500,9 +4514,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             columnCrossIndex.add(index);
 
             if (queryColumn.getAlias() == null) {
-                selectMetadata.add(metadata.getColumnMetadata(index));
+                queryMetadata.add(metadata.getColumnMetadata(index));
             } else {
-                selectMetadata.add(
+                queryMetadata.add(
                         new TableColumnMetadata(
                                 Chars.toString(queryColumn.getAlias()),
                                 metadata.getColumnType(index),
@@ -4515,14 +4529,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (index == timestampIndex) {
-                selectMetadata.setTimestampIndex(i);
-                timestampSet = true;
+                // Always prefer the column matching the first ORDER BY column as the designated
+                // timestamp in case of multiple timestamp aliases, e.g. `select ts, ts as ts1, ...`.
+                // That's to choose the optimal plan in generateOrderBy().
+                // Otherwise, prefer columns with aliases matching the base column name, e.g.
+                // prefer `t1.ts as ts` over `t1.ts as ts2`.
+                if (Chars.equalsIgnoreCaseNc(queryColumn.getAlias(), firstOrderByColumn)
+                        || Chars.equalsIgnoreCase(queryColumn.getAlias(), timestampName, timestampNameDot + 1, timestampName.length())
+                        || !timestampSet) {
+                    queryMetadata.setTimestampIndex(i);
+                    timestampSet = true;
+                }
             }
         }
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            selectMetadata.add(
+            queryMetadata.add(
                     new TableColumnMetadata(
                             "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
                             colMetadata.getColumnType(),
@@ -4532,11 +4555,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             metadata
                     )
             );
-            selectMetadata.setTimestampIndex(selectMetadata.getColumnCount() - 1);
+            queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
         }
 
-        return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
+        return new SelectedRecordCursorFactory(queryMetadata, columnCrossIndex, factory);
     }
 
     private RecordCursorFactory generateSelectCursor(
@@ -5298,12 +5321,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function f;
                     try {
                         f = functionParser.parseFunction(ast, baseMetadata, executionContext);
-                        if (!(f instanceof WindowFunction)) {
+                        if (!(f instanceof WindowFunction af)) {
                             Misc.free(f);
                             throw SqlException.$(ast.position, "non-window function called in window context");
                         }
 
-                        WindowFunction af = (WindowFunction) f;
                         functions.extendAndSet(i, f);
 
                         // sorting and/or multiple passes are required, so fall back to old implementation
@@ -5862,7 +5884,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
-        final GenericRecordMetadata myMeta = new GenericRecordMetadata();
+        final GenericRecordMetadata queryMeta = new GenericRecordMetadata();
         try {
             if (requiresTimestamp) {
                 executionContext.pushTimestampRequiredFlag(true);
@@ -5873,15 +5895,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // for example "select count() from x sample by 1h" implicitly needs timestamp column selected
             if (topDownColumnCount > 0 || contextTimestampRequired || model.isUpdate()) {
                 for (int i = 0; i < topDownColumnCount; i++) {
-                    int columnIndex = metadata.getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
+                    QueryColumn column = topDownColumns.getQuick(i);
+                    int columnIndex = metadata.getColumnIndexQuiet(column.getName());
+                    if (columnIndex == -1) {
+                        throw SqlException.invalidColumn(column.getAst().position, column.getName());
+                    }
                     int type = metadata.getColumnType(columnIndex);
                     int typeSize = ColumnType.sizeOf(type);
 
                     columnIndexes.add(columnIndex);
                     columnSizeShifts.add(Numbers.msb(typeSize));
 
-                    myMeta.add(new TableColumnMetadata(
-                            Chars.toString(topDownColumns.getQuick(i).getName()),
+                    queryMeta.add(new TableColumnMetadata(
+                            Chars.toString(column.getName()),
                             type,
                             metadata.isColumnIndexed(columnIndex),
                             metadata.getIndexValueBlockCapacity(columnIndex),
@@ -5895,18 +5921,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ));
 
                     if (columnIndex == readerTimestampIndex) {
-                        myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
+                        queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
                     }
                 }
 
                 // select timestamp when it is required but not already selected
-                if (readerTimestampIndex != -1 && myMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
-                    myMeta.add(new TableColumnMetadata(
+                if (readerTimestampIndex != -1 && queryMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
+                    queryMeta.add(new TableColumnMetadata(
                             metadata.getColumnName(readerTimestampIndex),
                             metadata.getColumnType(readerTimestampIndex),
                             metadata.getMetadata(readerTimestampIndex)
                     ));
-                    myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
+                    queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
 
                     columnIndexes.add(readerTimestampIndex);
                     columnSizeShifts.add(Numbers.msb(ColumnType.TIMESTAMP));
@@ -5921,7 +5947,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (reader == null) {
             // This is WAL serialisation compilation. We don't need to read data from table
             // and don't need optimisation for query validation.
-            return new AbstractRecordCursorFactory(myMeta) {
+            return new AbstractRecordCursorFactory(queryMeta) {
                 @Override
                 public boolean recordCursorSupportsRandomAccess() {
                     return false;
@@ -5935,7 +5961,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.deepCopyOf(metadata);
-        final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, myMeta);
+        final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, queryMeta);
         final TableToken tableToken = metadata.getTableToken();
         ExpressionNode withinExtracted;
 
@@ -5943,7 +5969,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             withinExtracted = whereClauseParser.extractWithin(
                     model,
                     model.getWhereClause(),
-                    myMeta,
+                    queryMeta,
                     functionParser,
                     executionContext,
                     prefixes
@@ -5953,7 +5979,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (prefixes.size() > 0) {
                 for (int i = 0; i < latestByColumnCount; i++) {
                     int idx = listColumnFilterA.getColumnIndexFactored(i);
-                    if (!ColumnType.isSymbol(myMeta.getColumnType(idx)) || !myMeta.isColumnIndexed(idx)) {
+                    if (!ColumnType.isSymbol(queryMeta.getColumnType(idx)) || !queryMeta.isColumnIndexed(idx)) {
                         allSymbolsAreIndexed = false;
                     }
                 }
@@ -5972,7 +5998,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 CharSequence preferredKeyColumn = null;
                 if (latestByColumnCount == 1) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
-                    if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
+                    if (ColumnType.isSymbol(queryMeta.getColumnType(latestByIndex))) {
                         preferredKeyColumn = latestBy.getQuick(0).token;
                     }
                 }
@@ -5984,7 +6010,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         preferredKeyColumn,
                         metadata.getTimestampIndex(),
                         functionParser,
-                        myMeta,
+                        queryMeta,
                         executionContext,
                         latestByColumnCount > 1,
                         reader
@@ -6009,28 +6035,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             model.setWhereClause(null);
 
             if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
-                return new EmptyTableRecordCursorFactory(myMeta);
+                return new EmptyTableRecordCursorFactory(queryMeta);
             }
 
             PartitionFrameCursorFactory dfcFactory;
 
             if (latestByColumnCount > 0) {
-                Function filter = compileFilter(intrinsicModel, myMeta, executionContext);
+                Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
                 if (filter != null && filter.isConstant() && !filter.getBool(null)) {
                     // 'latest by' clause takes over the latest by nodes, so that the later generateLatestBy() is no-op
                     model.getLatestBy().clear();
                     Misc.free(filter);
-                    return new EmptyTableRecordCursorFactory(myMeta);
+                    return new EmptyTableRecordCursorFactory(queryMeta);
                 }
 
                 // a sub-query present in the filter may have used the latest by
                 // column index lists, so we need to regenerate them
-                prepareLatestByColumnIndexes(latestBy, myMeta);
+                prepareLatestByColumnIndexes(latestBy, queryMeta);
 
                 return generateLatestByTableQuery(
                         model,
                         reader,
-                        myMeta,
+                        queryMeta,
                         tableToken,
                         intrinsicModel,
                         filter,
@@ -6063,7 +6089,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (intrinsicModel.keyColumn != null) {
                 // existence of column would have been already validated
-                final int keyColumnIndex = myMeta.getColumnIndexQuiet(intrinsicModel.keyColumn);
+                final int keyColumnIndex = queryMeta.getColumnIndexQuiet(intrinsicModel.keyColumn);
                 final int nKeyValues = intrinsicModel.keyValueFuncs.size();
                 final int nKeyExcludedValues = intrinsicModel.keyExcludedValueFuncs.size();
 
@@ -6074,7 +6100,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     try {
                         rcf = generate(intrinsicModel.keySubQuery, executionContext);
                         func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
-                        filter = compileFilter(intrinsicModel, myMeta, executionContext);
+                        filter = compileFilter(intrinsicModel, queryMeta, executionContext);
                     } catch (Throwable th) {
                         Misc.free(dfcFactory);
                         Misc.free(rcf);
@@ -6083,11 +6109,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     if (filter != null && filter.isConstant() && !filter.getBool(null)) {
                         Misc.free(dfcFactory);
-                        return new EmptyTableRecordCursorFactory(myMeta);
+                        return new EmptyTableRecordCursorFactory(queryMeta);
                     }
                     return new FilterOnSubQueryRecordCursorFactory(
                             configuration,
-                            myMeta,
+                            queryMeta,
                             dfcFactory,
                             rcf,
                             keyColumnIndex,
@@ -6110,7 +6136,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         //    ordering in the code that returns rows from index rather than having an
                         //    "overhead" order by implementation, which would be trying to oder already ordered symbols
                         if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
-                            myMeta.setTimestampIndex(-1);
+                            queryMeta.setTimestampIndex(-1);
                             if (orderByAdviceSize == 1) {
                                 orderByKeyColumn = true;
                             } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
@@ -6143,7 +6169,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (nKeyExcludedValues == 0) {
                     Function filter;
                     try {
-                        filter = compileFilter(intrinsicModel, myMeta, executionContext);
+                        filter = compileFilter(intrinsicModel, queryMeta, executionContext);
                     } catch (Throwable th) {
                         Misc.free(dfcFactory);
                         throw th;
@@ -6152,7 +6178,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         try {
                             if (!filter.getBool(null)) {
                                 Misc.free(dfcFactory);
-                                return new EmptyTableRecordCursorFactory(myMeta);
+                                return new EmptyTableRecordCursorFactory(queryMeta);
                             }
                         } finally {
                             filter = Misc.free(filter);
@@ -6213,7 +6239,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     keyColumnIndex,
                                     symbolFunc,
                                     rcf,
-                                    myMeta,
+                                    queryMeta,
                                     dfcFactory,
                                     orderByKeyColumn || orderByTimestamp,
                                     columnIndexes,
@@ -6223,7 +6249,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         return new PageFrameRecordCursorFactory(
                                 configuration,
-                                myMeta,
+                                queryMeta,
                                 dfcFactory,
                                 rcf,
                                 orderByKeyColumn || orderByTimestamp,
@@ -6237,12 +6263,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     if (orderByKeyColumn) {
-                        myMeta.setTimestampIndex(-1);
+                        queryMeta.setTimestampIndex(-1);
                     }
 
                     return new FilterOnValuesRecordCursorFactory(
                             configuration,
-                            myMeta,
+                            queryMeta,
                             dfcFactory,
                             intrinsicModel.keyValueFuncs,
                             keyColumnIndex,
@@ -6260,7 +6286,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex)).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
                         Function filter;
                         try {
-                            filter = compileFilter(intrinsicModel, myMeta, executionContext);
+                            filter = compileFilter(intrinsicModel, queryMeta, executionContext);
                         } catch (Throwable th) {
                             Misc.free(dfcFactory);
                             throw th;
@@ -6269,7 +6295,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             try {
                                 if (!filter.getBool(null)) {
                                     Misc.free(dfcFactory);
-                                    return new EmptyTableRecordCursorFactory(myMeta);
+                                    return new EmptyTableRecordCursorFactory(queryMeta);
                                 }
                             } finally {
                                 filter = Misc.free(filter);
@@ -6278,7 +6304,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         return new FilterOnExcludedValuesRecordCursorFactory(
                                 configuration,
-                                myMeta,
+                                queryMeta,
                                 dfcFactory,
                                 intrinsicModel.keyExcludedValueFuncs,
                                 keyColumnIndex,
@@ -6331,11 +6357,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     // we can only deal with 'order by symbol, timestamp' at best
                     // skip this optimisation if order by is more extensive
-                    final int columnIndex = myMeta.getColumnIndexQuiet(model.getOrderByAdvice().getQuick(0).token);
+                    final int columnIndex = queryMeta.getColumnIndexQuiet(model.getOrderByAdvice().getQuick(0).token);
                     assert columnIndex > -1;
 
                     // this is our kind of column
-                    if (myMeta.isColumnIndexed(columnIndex)) {
+                    if (queryMeta.isColumnIndexed(columnIndex)) {
                         boolean orderByKeyColumn = false;
                         int indexDirection = BitmapIndexReader.DIR_FORWARD;
                         if (orderByAdviceSize == 1) {
@@ -6349,10 +6375,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         if (orderByKeyColumn) {
                             // check that intrinsicModel.intervals hit only one partition
-                            myMeta.setTimestampIndex(-1);
+                            queryMeta.setTimestampIndex(-1);
                             return new SortedSymbolIndexRecordCursorFactory(
                                     configuration,
-                                    myMeta,
+                                    queryMeta,
                                     dfcFactory,
                                     columnIndex,
                                     getOrderByDirectionOrDefault(model, 0) == ORDER_DIRECTION_ASCENDING,
@@ -6370,7 +6396,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             model.setWhereClause(intrinsicModel.filter);
             return new PageFrameRecordCursorFactory(
                     configuration,
-                    myMeta,
+                    queryMeta,
                     dfcFactory,
                     rowFactory,
                     false,
@@ -6395,7 +6421,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             return new PageFrameRecordCursorFactory(
                     configuration,
-                    myMeta,
+                    queryMeta,
                     cursorFactory,
                     rowCursorFactory,
                     model.isOrderDescendingByDesignatedTimestampOnly(),
@@ -6414,11 +6440,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // listColumnFilterA = latest by column indexes
         if (latestByColumnCount == 1) {
             int latestByColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-            if (myMeta.isColumnIndexed(latestByColumnIndex)) {
+            if (queryMeta.isColumnIndexed(latestByColumnIndex)) {
                 return new LatestByAllIndexedRecordCursorFactory(
                         executionContext.getCairoEngine(),
                         configuration,
-                        myMeta,
+                        queryMeta,
                         new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, ORDER_DESC),
                         listColumnFilterA.getColumnIndexFactored(0),
                         columnIndexes,
@@ -6427,12 +6453,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            if (ColumnType.isSymbol(myMeta.getColumnType(latestByColumnIndex))
-                    && myMeta.isSymbolTableStatic(latestByColumnIndex)) {
+            if (ColumnType.isSymbol(queryMeta.getColumnType(latestByColumnIndex))
+                    && queryMeta.isSymbolTableStatic(latestByColumnIndex)) {
                 // we have "latest by" symbol column values, but no index
                 return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                         configuration,
-                        myMeta,
+                        queryMeta,
                         new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, ORDER_DESC),
                         latestByColumnIndex,
                         null,
@@ -6453,9 +6479,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             return new LatestByAllSymbolsFilteredRecordCursorFactory(
                     configuration,
-                    myMeta,
+                    queryMeta,
                     new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, ORDER_DESC),
-                    RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA),
+                    RecordSinkFactory.getInstance(asm, queryMeta, listColumnFilterA),
                     keyTypes,
                     partitionByColumnIndexes,
                     null,
@@ -6467,9 +6493,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         return new LatestByAllFilteredRecordCursorFactory(
                 configuration,
-                myMeta,
+                queryMeta,
                 new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, ORDER_DESC),
-                RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA),
+                RecordSinkFactory.getInstance(asm, queryMeta, listColumnFilterA),
                 keyTypes,
                 null,
                 columnIndexes,
@@ -6664,17 +6690,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
     }
 
+    private boolean isSingleSymbolJoin(RecordMetadata slaveMetadata) {
+        return isSingleSymbolJoin(slaveMetadata, false);
+    }
+
     /**
-     * Checks if the ASOF JOIN is on a single symbol column that has a bitmap index.
-     * This enables using the indexed ASOF JOIN implementation.
+     * Checks if the ASOF JOIN is on a single symbol column, and optionally requires the slave column is indexed.
+     * This is a precondition to enable some optimized ASOF JOIN implementations.
      */
-    private boolean isSingleSymbolJoinWithIndex(RecordMetadata slaveMetadata) {
+    private boolean isSingleSymbolJoin(RecordMetadata slaveMetadata, boolean requireSlaveIndex) {
         // Must be joining on exactly one column (besides timestamps)
         if (listColumnFilterA.size() != 1 || listColumnFilterB.size() != 1) {
             return false;
         }
         int slaveIndex = listColumnFilterA.getColumnIndexFactored(0);
-        return slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isColumnIndexed(slaveIndex);
+        return slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL &&
+                (!requireSlaveIndex || slaveMetadata.isColumnIndexed(slaveIndex));
+    }
+
+    private boolean isSingleSymbolJoinWithIndex(RecordMetadata slaveMetadata) {
+        return isSingleSymbolJoin(slaveMetadata, true);
     }
 
     // skips skipped models until finding a WHERE clause

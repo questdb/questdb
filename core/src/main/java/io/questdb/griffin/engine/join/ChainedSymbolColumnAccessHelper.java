@@ -29,22 +29,22 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import org.jetbrains.annotations.NotNull;
 
-public final class ChainedSymbolShortCircuit implements SymbolShortCircuit {
-
-    private final SymbolShortCircuit[] shortCircuits;
-
-    public ChainedSymbolShortCircuit(SymbolShortCircuit[] shortCircuits) {
-        this.shortCircuits = shortCircuits;
-    }
+public record ChainedSymbolColumnAccessHelper(
+        AsofJoinColumnAccessHelper[] shortCircuits) implements AsofJoinColumnAccessHelper {
 
     @Override
     public CharSequence getMasterValue(Record masterRecord) {
-        throw new UnsupportedOperationException("ChainedSymbolShortCircuit can't be used to return the master value");
+        throw new UnsupportedOperationException("ChainedSymbolColumnAccessHelper can't be used to return the master value");
+    }
+
+    @Override
+    public int getSlaveKey(Record masterRecord) {
+        throw new UnsupportedOperationException("ChainedSymbolColumnAccessHelper doesn't have a symbol table");
     }
 
     @Override
     public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        throw new UnsupportedOperationException("ChainedSymbolShortCircuit doesn't have a symbol table");
+        throw new UnsupportedOperationException("ChainedSymbolColumnAccessHelper doesn't have a symbol table");
     }
 
     @Override

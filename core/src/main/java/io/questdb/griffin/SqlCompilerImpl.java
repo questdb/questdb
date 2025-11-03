@@ -167,8 +167,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     };
     private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
-    @SuppressWarnings("FieldMayBeFinal")
-    private static Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
+    private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
@@ -3551,7 +3550,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     try {
                         final RecordMetadata metadata = newFactory.getMetadata();
                         try (TableReader baseReader = engine.getReader(createMatViewOp.getBaseTableName())) {
-                            createMatViewOp.validateAndUpdateMetadataFromSelect(metadata, baseReader.getMetadata());
+                            createMatViewOp.validateAndUpdateMetadataFromSelect(metadata, baseReader.getMetadata(), newFactory.getScanDirection());
                         }
 
                         matViewDefinition = engine.createMatView(
@@ -3664,7 +3663,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             RecordCursor cursor = newCursor
                     ) {
                         final RecordMetadata metadata = factory.getMetadata();
-                        createTableOp.validateAndUpdateMetadataFromSelect(metadata);
+                        createTableOp.validateAndUpdateMetadataFromSelect(metadata, factory.getScanDirection());
                         boolean keepLock = !createTableOp.isWalEnabled();
 
                         // todo: test create table if exists with select
