@@ -19,6 +19,7 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/**"
+          # Exclude cairo fuzz tests: run in mac-cairo-fuzz
           excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -46,6 +47,10 @@ jobs:
           os: macOS
           jdk: "1.17"
           testset: "all"
+          # Exclude griffin: run in mac-griffin
+          # Exclude cairo: run in mac-cairo and mac-cairo-fuzz
+          # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
+          # Exclude pgwire: run in mac-pgwire
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -56,6 +61,8 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/griffin/**"
+          # TODO: Remove O3*Test** exclusion - O3 tests should run on Windows
+          # Exclude Fuzz tests: run in windows-fuzz1 (cairo) and windows-fuzz2 (non-cairo)
           excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -75,6 +82,7 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/**Fuzz**"
+          # Exclude cairo fuzz tests: run in windows-fuzz1
           excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -85,6 +93,9 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/**"
+          # TODO: Remove O3*Test** exclusion - O3 tests should run on Windows
+          # Exclude Fuzz tests: run in windows-fuzz1 (cairo/fuzz) and windows-fuzz2 (other fuzz)
+          # Exclude mv/o3 subdirs: run in windows-cairo-2
           excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/mv/**,**/cairo/o3/**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -95,6 +106,8 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/mv/**,**/cairo/o3/**"
+          # Exclude Fuzz tests: run in windows-fuzz2
+          excludeTests: "**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-pgwire:
@@ -112,7 +125,13 @@ jobs:
           os: Windows
           jdk: "1.17"
           testset: "all"
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/http/**"
+          # Exclude griffin: run in windows-griffin
+          # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-fuzz1
+          # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
+          # Exclude pgwire: run in windows-pgwire
+          # Exclude cutlass/http: run in windows-other-2
+          # Exclude Fuzz tests: run in windows-fuzz1 and windows-fuzz2
+          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/http/**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-other-2:
@@ -122,6 +141,8 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cutlass/http/**"
+          # Exclude Fuzz tests: run in windows-fuzz2
+          excludeTests: "**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
 
