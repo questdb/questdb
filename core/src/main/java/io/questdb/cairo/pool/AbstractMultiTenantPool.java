@@ -265,6 +265,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                         tenant.goodbye();
                         LOG.info().$("born free [table=").$(tableToken).I$();
                         tenant.updateTableToken(tableToken);
+                        supervisor = tenant.getSupervisor();
                         if (supervisor != null) {
                             supervisor.onResourceBorrowed(tenant);
                         }
@@ -275,6 +276,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                             .$(", thread=").$(thread)
                             .I$();
                     tenant.updateTableToken(tableToken);
+                    supervisor = tenant.getSupervisor();
                     if (supervisor != null) {
                         supervisor.onResourceBorrowed(tenant);
                     }
