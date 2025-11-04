@@ -35,7 +35,7 @@ import java.util.Arrays;
  * The algorithm divides a dividend u by a divisor v, producing quotient q and remainder r
  * such that u = q * v + r, where 0 <= r < v.
  */
-class DecimalKnuthDivider {
+public class DecimalKnuthDivider {
     private final int[] q = new int[8];
     private final int[] u = new int[9];
     private final int[] v = new int[8];

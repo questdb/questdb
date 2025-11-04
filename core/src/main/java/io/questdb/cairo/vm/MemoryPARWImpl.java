@@ -582,8 +582,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putDecimal128(long offset, long high, long low) {
         if (roOffsetLo < offset && offset < roOffsetHi - 2 * Long.BYTES) {
-            Unsafe.getUnsafe().putLong(absolutePointer + offset, high);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES, low);
+            Decimal128.put(high, low, absolutePointer + offset);
         } else {
             putLong(offset, high);
             putLong(offset + Long.BYTES, low);
@@ -593,8 +592,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putDecimal128(long high, long low) {
         if (pageHi - appendPointer > 2 * Long.BYTES - 1) {
-            Unsafe.getUnsafe().putLong(appendPointer, high);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, low);
+            Decimal128.put(high, low, appendPointer);
             appendPointer += 2 * Long.BYTES;
         } else {
             putLong(high);
@@ -605,10 +603,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putDecimal256(long offset, long hh, long hl, long lh, long ll) {
         if (roOffsetLo < offset && offset < roOffsetHi - Decimal256.BYTES) {
-            Unsafe.getUnsafe().putLong(absolutePointer + offset, hh);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES, hl);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 2, lh);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 3, ll);
+            Decimal256.put(hh, hl, lh, ll, appendPointer + offset);
         } else {
             putLong(offset, hh);
             putLong(offset + Long.BYTES, hl);
@@ -620,10 +615,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putDecimal256(long hh, long hl, long lh, long ll) {
         if (pageHi - appendPointer > Decimal256.BYTES - 1) {
-            Unsafe.getUnsafe().putLong(appendPointer, hh);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, hl);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 2, lh);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 3, ll);
+            Decimal256.put(hh, hl, lh, ll, appendPointer);
             appendPointer += Decimal256.BYTES;
         } else {
             putLong(hh);

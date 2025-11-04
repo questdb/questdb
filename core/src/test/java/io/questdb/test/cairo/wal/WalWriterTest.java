@@ -152,8 +152,10 @@ public class WalWriterTest extends AbstractCairoTest {
 
             assertSqlCursors("sm", "select * from sm order by id");
             assertSql(
-                    "count\tmin\tmax\n" +
-                            "2\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:00.000000Z\n", "select count(*), min(ts), max(ts) from sm"
+                    """
+                            count\tmin\tmax
+                            2\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:00.000000Z
+                            """, "select count(*), min(ts), max(ts) from sm"
             );
         });
     }
@@ -423,16 +425,10 @@ public class WalWriterTest extends AbstractCairoTest {
                                         String columnName = rnd.nextBoolean() ? "d" : "D" + (columnNum++);
                                         try {
                                             int typeRnd = rnd.nextInt(3);
-                                            int columnType;
-                                            switch (typeRnd) {
-                                                case 0:
-                                                case 1:
-                                                    columnType = ColumnType.DOUBLE;
-                                                    break;
-                                                default:
-                                                    columnType = ColumnType.STRING;
-                                                    break;
-                                            }
+                                            int columnType = switch (typeRnd) {
+                                                case 0, 1 -> ColumnType.DOUBLE;
+                                                default -> ColumnType.STRING;
+                                            };
                                             addColumn(writer, columnName, columnType);
                                             break;
                                         } catch (CairoException e) {
@@ -925,8 +921,10 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
-                    "a\tb\tts\ti2\n" +
-                            "0\t\t2022-02-24T00:00:00.000000Z\t2\n", tableToken.getTableName()
+                    """
+                            a\tb\tts\ti2
+                            0\t\t2022-02-24T00:00:00.000000Z\t2
+                            """, tableToken.getTableName()
             );
         });
     }
@@ -942,8 +940,10 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
-                    "a\tb\tts\ti2\n" +
-                            "0\t\t2022-02-24T00:00:00.000000Z\t2\n", tableToken.getTableName()
+                    """
+                            a\tb\tts\ti2
+                            0\t\t2022-02-24T00:00:00.000000Z\t2
+                            """, tableToken.getTableName()
             );
         });
     }
@@ -964,8 +964,10 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
-                    "a\tb\tts\tsym2\ti2\n" +
-                            "0\t\t2022-02-24T00:00:00.000000Z\t\t2\n", tableToken.getTableName()
+                    """
+                            a\tb\tts\tsym2\ti2
+                            0\t\t2022-02-24T00:00:00.000000Z\t\t2
+                            """, tableToken.getTableName()
             );
         });
     }
@@ -988,8 +990,10 @@ public class WalWriterTest extends AbstractCairoTest {
 
 
             assertSql(
-                    "a\tb\tts\tc\n" +
-                            "1\t\t1970-01-01T00:00:00.000000Z\tnull\n", tableToken.getTableName()
+                    """
+                            a\tb\tts\tc
+                            1\t\t1970-01-01T00:00:00.000000Z\tnull
+                            """, tableToken.getTableName()
             );
         });
     }
@@ -1727,17 +1731,19 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void testExtractNewWalEvents() throws Exception {
         assertMemoryLeak(() -> {
-            String expected = "a\tb\n" +
-                    "0\tsym0\n" +
-                    "1\tsym1\n" +
-                    "2\tsym2\n" +
-                    "3\tsym3\n" +
-                    "4\tsym4\n" +
-                    "5\tsym5\n" +
-                    "6\tsym6\n" +
-                    "7\tsym7\n" +
-                    "8\tsym8\n" +
-                    "9\tsym9\n";
+            String expected = """
+                    a\tb
+                    0\tsym0
+                    1\tsym1
+                    2\tsym2
+                    3\tsym3
+                    4\tsym4
+                    5\tsym5
+                    6\tsym6
+                    7\tsym7
+                    8\tsym8
+                    9\tsym9
+                    """;
             // old format only
             final String tableName = "testExtractNoNewWalEvents";
             final long refreshTxn = 42;
@@ -1975,8 +1981,10 @@ public class WalWriterTest extends AbstractCairoTest {
             tickWalQueue(1);
 
             assertSql(
-                    "a\tb\tts\n" +
-                            "0\t\t2023-08-04T23:00:00.000000Z\n",
+                    """
+                            a\tb\tts
+                            0\t\t2023-08-04T23:00:00.000000Z
+                            """,
                     tableToken.getTableName()
             );
 
@@ -1995,21 +2003,25 @@ public class WalWriterTest extends AbstractCairoTest {
 
             // We expect all, but the last row to be visible.
             assertSql(
-                    "a\tb\tts\n" +
-                            "0\t\t2023-08-04T21:00:00.000000Z\n" +
-                            "0\t\t2023-08-04T22:00:00.000000Z\n" +
-                            "0\t\t2023-08-04T23:00:00.000000Z\n",
+                    """
+                            a\tb\tts
+                            0\t\t2023-08-04T21:00:00.000000Z
+                            0\t\t2023-08-04T22:00:00.000000Z
+                            0\t\t2023-08-04T23:00:00.000000Z
+                            """,
                     tableToken.getTableName()
             );
 
             drainWalQueue();
 
             assertSql(
-                    "a\tb\tts\n" +
-                            "0\t\t2023-08-04T20:00:00.000000Z\n" +
-                            "0\t\t2023-08-04T21:00:00.000000Z\n" +
-                            "0\t\t2023-08-04T22:00:00.000000Z\n" +
-                            "0\t\t2023-08-04T23:00:00.000000Z\n",
+                    """
+                            a\tb\tts
+                            0\t\t2023-08-04T20:00:00.000000Z
+                            0\t\t2023-08-04T21:00:00.000000Z
+                            0\t\t2023-08-04T22:00:00.000000Z
+                            0\t\t2023-08-04T23:00:00.000000Z
+                            """,
                     tableToken.getTableName()
             );
         });
@@ -2440,7 +2452,6 @@ public class WalWriterTest extends AbstractCairoTest {
                     .wal();
             tableToken = createTable(model);
 
-            FilesFacade ff = configuration.getFilesFacade();
             try (Path path = new Path();
                  MemoryCMR txnMem = Vm.getCMRInstance();
                  MemoryCMARW txnLogMem = Vm.getCMARWInstance();
@@ -3929,8 +3940,10 @@ public class WalWriterTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     assertSql(
-                            "a\tb\tts\n" +
-                                    "1\t\t1970-01-01T00:00:00.000000Z\n", tableName
+                            """
+                                    a\tb\tts
+                                    1\t\t1970-01-01T00:00:00.000000Z
+                                    """, tableName
                     );
                 }
         );
@@ -4026,8 +4039,10 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "a\tb\tts\n" +
-                            "1\t\t1970-01-01T00:00:00.000000Z\n", tableName
+                    """
+                            a\tb\tts
+                            1\t\t1970-01-01T00:00:00.000000Z
+                            """, tableName
             );
         });
     }

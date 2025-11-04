@@ -677,6 +677,24 @@ public class Decimal256 implements Sinkable, Decimal {
         result.multiply(b);
     }
 
+    public static void put(Decimal256 d, long addr) {
+        put(d.getHh(), d.getHl(), d.getLh(), d.getLl(), addr);
+    }
+
+    public static void put(long hh, long hl, long lh, long ll, long addr) {
+        Unsafe.getUnsafe().putLong(addr, hh);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES, hl);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 2, lh);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 3, ll);
+    }
+
+    public static void putNull(long addr) {
+        Unsafe.getUnsafe().putLong(addr, Decimals.DECIMAL256_HH_NULL);
+        Unsafe.getUnsafe().putLong(addr + 8L, Decimals.DECIMAL256_HL_NULL);
+        Unsafe.getUnsafe().putLong(addr + 16L, Decimals.DECIMAL256_LH_NULL);
+        Unsafe.getUnsafe().putLong(addr + 24L, Decimals.DECIMAL256_LL_NULL);
+    }
+
     /**
      * Static subtraction method.
      *

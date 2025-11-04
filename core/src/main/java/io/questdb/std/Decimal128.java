@@ -529,6 +529,20 @@ public class Decimal128 implements Sinkable, Decimal {
         sink.negate();
     }
 
+    public static void put(Decimal128 d, long addr) {
+        put(d.high, d.low, addr);
+    }
+
+    public static void put(long high, long low, long addr) {
+        Unsafe.getUnsafe().putLong(addr, high);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES, low);
+    }
+
+    public static void putNull(long addr) {
+        Unsafe.getUnsafe().putLong(addr, Decimals.DECIMAL128_HI_NULL);
+        Unsafe.getUnsafe().putLong(addr + 8L, Decimals.DECIMAL128_LO_NULL);
+    }
+
     /**
      * Subtract two Decimal128 numbers and store the result in sink (a - b -> sink)
      *

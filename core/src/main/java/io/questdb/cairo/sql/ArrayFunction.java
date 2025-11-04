@@ -232,5 +232,4 @@ public abstract class ArrayFunction implements Function {
     public int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
     }
-
 }

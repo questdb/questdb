@@ -30,6 +30,8 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
@@ -116,34 +118,22 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
     default void putDecimal128(long high, long low) {
-        final long addr = appendAddressFor(16);
-        Unsafe.getUnsafe().putLong(addr, high);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES, low);
+        Decimal128.put(high, low, appendAddressFor(16));
     }
 
     @Override
     default void putDecimal256(long hh, long hl, long lh, long ll) {
-        final long addr = appendAddressFor(32);
-        Unsafe.getUnsafe().putLong(addr, hh);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES, hl);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 2, lh);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 3, ll);
+        Decimal256.put(hh, hl, lh, ll, appendAddressFor(32));
     }
 
     @Override
     default void putDecimal128(long offset, long high, long low) {
-        final long addr = appendAddressFor(offset, 16);
-        Unsafe.getUnsafe().putLong(addr, high);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES, low);
+        Decimal128.put(high, low, appendAddressFor(offset, 16));
     }
 
     @Override
     default void putDecimal256(long offset, long hh, long hl, long lh, long ll) {
-        final long addr = appendAddressFor(offset, 32);
-        Unsafe.getUnsafe().putLong(addr, hh);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES, hl);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 2, lh);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 3, ll);
+        Decimal256.put(hh, hl, lh, ll, appendAddressFor(offset, 32));
     }
 
     @Override
