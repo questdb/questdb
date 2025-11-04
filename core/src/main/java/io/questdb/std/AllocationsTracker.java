@@ -62,16 +62,10 @@ public final class AllocationsTracker {
      * @param size   size of the memory block
      */
     public static void assertAllocatedMemory(long address, long size) {
-        //#if track.alloc!=true
-        /*
-        //#endif
         if (!TRACK_ALLOCATIONS) {
             return;
         }
         assertAllocatedMemory0(address, size);
-        //#if track.alloc!=true
-        */
-        //#endif
     }
 
     /**
@@ -81,16 +75,10 @@ public final class AllocationsTracker {
      * @param prefix optional prefix
      */
     public static void dumpAllocations(Log log, CharSequence prefix) {
-        //#if track.alloc!=true
-        /*
-        //#endif
         if (!TRACK_ALLOCATIONS) {
             return;
         }
         dumpAllocations0(log, prefix);
-        //#if track.alloc!=true
-        */
-        //#endif
     }
 
     /**
@@ -99,16 +87,10 @@ public final class AllocationsTracker {
      * @param log log to print to, can be null to print to stdout
      */
     public static void dumpNewAllocationsStacktraces(Log log) {
-        //#if track.alloc!=true
-        /*
-        //#endif
         if (!TRACK_ALLOCATIONS) {
             return;
         }
         dumpNewAllocationsStacktraces0(log);
-        //#if track.alloc!=true
-        */
-        //#endif
     }
 
     /**
@@ -118,16 +100,10 @@ public final class AllocationsTracker {
      * @throws AssertionError if address is not found in the tracker - this likely indicates a double free
      */
     public static void onFree(long address) {
-        //#if track.alloc!=true
-        /*
-        //#endif
         if (!TRACK_ALLOCATIONS) {
             return;
         }
         onFree0(address);
-        //#if track.alloc!=true
-        */
-        //#endif
     }
 
     /**
@@ -138,16 +114,10 @@ public final class AllocationsTracker {
      * @throws AssertionError if address is already allocated - this indicates a bug in tracking logic
      */
     public static void onMalloc(long address, long size) {
-        //#if track.alloc!=true
-        /*
-        //#endif
         if (!TRACK_ALLOCATIONS) {
             return;
         }
         onMalloc0(address, size);
-        //#if track.alloc!=true
-        */
-        //#endif
     }
 
     private static void assertAllocatedMemory0(long address, long size) {

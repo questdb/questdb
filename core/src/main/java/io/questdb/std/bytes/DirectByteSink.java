@@ -247,13 +247,13 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     public DirectByteSink putLong(long value) {
-        Unsafe.getUnsafe().putLong(ensureCapacity(Long.BYTES), value);
+        Unsafe.putLong(ensureCapacity(Long.BYTES), value);
         advance(Long.BYTES);
         return this;
     }
 
     public DirectByteSink putShort(short value) {
-        Unsafe.getUnsafe().putShort(ensureCapacity(Short.BYTES), value);
+        Unsafe.putShort(ensureCapacity(Short.BYTES), value);
         advance(Short.BYTES);
         return this;
     }

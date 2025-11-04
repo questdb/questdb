@@ -331,7 +331,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -426,7 +426,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), getLong(null));
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), getLong(null));
         }
 
         @Override
