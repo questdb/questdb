@@ -53,7 +53,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     private static Path triggerFilePath;
 
     public CheckpointFuzzTest() throws Exception {
-        int scoreboardFormat = TestUtils.generateRandom(LOG).nextBoolean() ? 1 : 2;
+        int scoreboardFormat = TestUtils.generateRandomForTestParams(LOG).nextBoolean() ? 1 : 2;
         if (scoreboardFormat != SCOREBOARD_FORMAT) {
             SCOREBOARD_FORMAT = scoreboardFormat;
             tearDownStatic();
