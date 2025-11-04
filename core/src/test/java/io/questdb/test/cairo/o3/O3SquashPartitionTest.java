@@ -51,7 +51,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     private final TestTimestampType timestampType;
 
     public O3SquashPartitionTest() {
-        this.timestampType = TestUtils.generateRandom(LOG).nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+        this.timestampType = TestUtils.getTimestampType();
     }
 
     @Before

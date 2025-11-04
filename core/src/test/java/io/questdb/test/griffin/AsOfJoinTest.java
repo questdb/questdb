@@ -48,8 +48,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     public AsOfJoinTest() {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        this.leftTableTimestampType = rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
-        this.rightTableTimestampType = rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+        this.leftTableTimestampType = TestUtils.getTimestampType(rnd);
+        this.rightTableTimestampType = TestUtils.getTimestampType(rnd);
     }
 
     @Test

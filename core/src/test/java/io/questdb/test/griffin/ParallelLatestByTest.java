@@ -58,7 +58,7 @@ public class ParallelLatestByTest extends AbstractTest {
     public ParallelLatestByTest() {
         Rnd rnd = TestUtils.generateRandom(LOG);
         this.convertToParquet = rnd.nextBoolean();
-        this.timestampType = rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+        this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
     @Before

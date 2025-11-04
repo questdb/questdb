@@ -48,7 +48,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     private final TestTimestampType timestampType;
 
     public AlterTableConvertPartitionTest() {
-        this.timestampType = TestUtils.generateRandom(LOG).nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+        this.timestampType = TestUtils.getTimestampType();
     }
 
     @Test

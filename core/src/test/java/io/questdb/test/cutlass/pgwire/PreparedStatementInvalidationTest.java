@@ -59,7 +59,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     private final boolean walEnabled;
 
     public PreparedStatementInvalidationTest() {
-        this.walEnabled = TestUtils.generateRandom(LOG).nextBoolean();
+        this.walEnabled = TestUtils.isWal();
     }
 
     @Before

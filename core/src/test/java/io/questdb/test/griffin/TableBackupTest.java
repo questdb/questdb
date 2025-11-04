@@ -87,7 +87,7 @@ public class TableBackupTest extends AbstractTest {
 
     public TableBackupTest() {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        isWal = rnd.nextBoolean();
+        isWal = TestUtils.isWal(rnd);
         if (!isWal) {
             switch (rnd.nextInt(6)) {
                 case 0 -> this.partitionBy = PartitionBy.HOUR;

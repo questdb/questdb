@@ -62,7 +62,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     public AlterTableChangeColumnTypeTest() {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        this.walEnabled = rnd.nextBoolean();
+        this.walEnabled = TestUtils.isWal(rnd);
         if (!walEnabled) {
             this.partitioned = rnd.nextBoolean();
         } else {

@@ -53,7 +53,7 @@ public class PGArraysTest extends BasePGTest {
     private final boolean walEnabled;
 
     public PGArraysTest() {
-        this.walEnabled = bufferSizeRnd.nextBoolean();
+        this.walEnabled = TestUtils.isWal(bufferSizeRnd);
     }
 
     @Before

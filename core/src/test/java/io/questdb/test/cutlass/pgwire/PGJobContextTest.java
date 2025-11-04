@@ -187,7 +187,7 @@ public class PGJobContextTest extends BasePGTest {
     private final boolean walEnabled;
 
     public PGJobContextTest() {
-        this.walEnabled = TestUtils.generateRandom(LOG).nextBoolean();
+        this.walEnabled = TestUtils.isWal();
     }
 
     public static void drainWalAndAssertTableExists(CharSequence tableName) {

@@ -68,7 +68,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
     private WorkerPoolConfiguration sharedWorkerPoolConfiguration;
 
     public LineTcpO3Test() {
-        this.walEnabled = TestUtils.generateRandom(LOG).nextBoolean();
+        this.walEnabled = TestUtils.isWal();
     }
 
     @BeforeClass
