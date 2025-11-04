@@ -232,8 +232,8 @@ public final class AllocationsTracker {
             prop = System.getenv("QUESTDB_TRACK_ALLOCATIONS");
         }
         if (prop == null) {
-            TRACK_ALLOCATIONS = false;
-            ALLOCATIONS = null;
+            TRACK_ALLOCATIONS = true;
+            ALLOCATIONS = new ConcurrentSkipListMap<>();
         } else {
             if ("true".equals(prop)) {
                 TRACK_ALLOCATIONS = true;

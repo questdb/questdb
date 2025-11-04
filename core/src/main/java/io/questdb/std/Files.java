@@ -69,7 +69,7 @@ public final class Files {
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private final static FdCache fdCache = new FdCache();
     private static final MmapCache mmapCache = new MmapCache();
-    public static boolean FS_CACHE_ENABLED = true;
+    public static boolean FS_CACHE_ENABLED = false;
     // To be set in tests to check every call for using OPEN file descriptor
     public static boolean VIRTIO_FS_DETECTED = false;
 

@@ -147,10 +147,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 // remember, single key for now
                 switch (ColumnType.tagOf(columnTypes.getColumnType(0))) {
                     case ColumnType.INT:
-                        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti[i], 0), Numbers.INT_NULL);
+                        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), Numbers.INT_NULL);
                         break;
                     case ColumnType.SYMBOL:
-                        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti[i], 0), SymbolTable.VALUE_IS_NULL);
+                        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), SymbolTable.VALUE_IS_NULL);
                         break;
                     default:
                 }
