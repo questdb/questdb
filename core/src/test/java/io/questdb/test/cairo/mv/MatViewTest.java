@@ -1253,15 +1253,14 @@ public class MatViewTest extends AbstractCairoTest {
                     ts #TIMESTAMP
                     ) timestamp(ts) PARTITION BY DAY WAL""");
 
-            execute(
+            execute("""
+                    insert into trades
+                      select\s
+                        rnd_double() price,
+                        rnd_double() volume,
+                        ('2025'::timestamp + x * 200_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,
+                      from long_sequence(5_000)
                     """
-                            insert into trades
-                              select\s
-                                rnd_double() price,
-                                rnd_double() volume,
-                                ('2025'::timestamp + x * 200_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,
-                              from long_sequence(5_000)
-                            """
             );
             executeWithRewriteTimestamp("""
                     CREATE TABLE 'prices' (\s
@@ -1269,45 +1268,47 @@ public class MatViewTest extends AbstractCairoTest {
                     ask DOUBLE,
                     valid BOOLEAN,
                     ts #TIMESTAMP
-                    ) timestamp(ts) PARTITION BY DAY WAL""");
+                    ) timestamp(ts) PARTITION BY DAY WAL
+                    """);
 
-            execute(
+            execute("""
+                    insert into prices\s
+                      select\s
+                        rnd_double() bid,
+                        rnd_double() ask,
+                        rnd_boolean() valid,
+                        ('2025'::timestamp + x * 1_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,
+                      from long_sequence(1_000_000)
                     """
-                            insert into prices\s
-                              select\s
-                                rnd_double() bid,
-                                rnd_double() ask,
-                                rnd_boolean() valid,
-                                ('2025'::timestamp + x * 1_000_000L + rnd_int(0, 10_000, 0))::timestamp as ts,
-                              from long_sequence(1_000_000)
-                            """
             );
 
-            final String mvWithoutHint = "create materialized view daily_summary \n" +
-                    "WITH BASE trades\n" +
-                    "as (\n" +
-                    "select trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
-                    "FROM trades\n" +
-                    "asof join (select * from prices where valid) prices\n" +
-                    "sample by 1d\n" +
-                    ");";
-            final String mvWithAvoidHint = "create materialized view daily_summary \n" +
-                    "WITH BASE trades\n" +
-                    "as (\n" +
-                    "select /*+ ASOF_LINEAR_SEARCH(trades prices) */ trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
-                    "FROM trades\n" +
-                    "asof join (select * from prices where valid) prices\n" +
-                    "sample by 1d\n" +
-                    ");";
+            final String mvWithoutHint = """
+                    create materialized view daily_summary\s
+                    WITH BASE trades
+                    as (
+                    select trades.ts, count(*), sum(volume), min(price), max(price), avg(price)
+                    FROM trades
+                    asof join (select * from prices where valid) prices
+                    sample by 1d
+                    );""";
+            final String mvWithLinearHint = """
+                    create materialized view daily_summary\s
+                    WITH BASE trades
+                    as (
+                    select /*+ ASOF_LINEAR(trades prices) */ trades.ts, count(*), sum(volume), min(price), max(price), avg(price)
+                    FROM trades
+                    asof join (select * from prices where valid) prices
+                    sample by 1d
+                    );""";
 
-            // without the hint it does use binary search (=default)
+            // without the hint it does use Fast Scan (=default)
             sink.clear();
             printSql("EXPLAIN " + mvWithoutHint);
             TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
 
-            // avoid hint -> does NOT use binary search
+            // LINEAR hint -> does NOT use Fast Scan
             sink.clear();
-            printSql("EXPLAIN " + mvWithAvoidHint);
+            printSql("EXPLAIN " + mvWithLinearHint);
             TestUtils.assertContains(sink, "AsOf Join");
             TestUtils.assertNotContains(sink, "Fast Scan");
 
@@ -1333,7 +1334,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // now, recreate the view with avoid hint
             execute("drop materialized view daily_summary");
-            execute(mvWithAvoidHint);
+            execute(mvWithLinearHint);
             drainQueues();
 
             // it must result in the same data
