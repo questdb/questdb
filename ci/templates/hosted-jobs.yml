@@ -54,16 +54,29 @@ jobs:
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-griffin:
+        windows-griffin-base:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.17"
           testset: "all"
-          includeTests: "**/griffin/**"
+          includeTests: "**/griffin/*"
           # TODO: Remove O3*Test** exclusion - O3 tests should run on Windows
           # Exclude Fuzz tests: run in windows-fuzz1 (cairo) and windows-fuzz2 (non-cairo)
           excludeTests: "**/O3*Test**,**/**Fuzz**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-griffin-sub:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/griffin/**/*"
+          # TODO: Remove O3*Test** exclusion - O3 tests should run on Windows
+          # Exclude Fuzz tests: run in windows-fuzz1 (cairo) and windows-fuzz2 (non-cairo)
+          # Exclude base package: run in windows-griffin-base
+          excludeTests: "**/griffin/*,**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-fuzz1:
@@ -125,7 +138,7 @@ jobs:
           os: Windows
           jdk: "1.17"
           testset: "all"
-          # Exclude griffin: run in windows-griffin
+          # Exclude griffin: run in windows-griffin-base and windows-griffin-sub
           # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-fuzz1
           # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
           # Exclude pgwire: run in windows-pgwire
