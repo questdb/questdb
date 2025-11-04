@@ -442,7 +442,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
         });
     }
@@ -484,7 +484,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
         });
     }
@@ -525,7 +525,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
         });
     }
@@ -566,7 +566,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
         });
     }
@@ -614,7 +614,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
         });
     }
@@ -668,7 +668,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
         });
     }
@@ -711,7 +711,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
             assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
         });
     }
@@ -760,7 +760,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "TOLERANCE 1m";
 
             assertAlgoAndResult(queryBody1, "", "Fast", expected1);
-            assertAlgoAndResult(queryBody1, "asof_index_search(t q)", "Indexed", expected1);
+            assertAlgoAndResult(queryBody1, "asof_index(t q)", "Indexed", expected1);
             assertAlgoAndResult(queryBody1, "asof_memoized(t q)", "Memoized", expected1);
 
             // With 15-minute tolerance: both trades should match
@@ -774,7 +774,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "ASOF JOIN quotes q ON t.symbol = q.symbol " +
                     "TOLERANCE 15m";
             assertAlgoAndResult(queryBody2, "", "Fast", expected2);
-            assertAlgoAndResult(queryBody2, "asof_index_search(t q)", "Indexed", expected2);
+            assertAlgoAndResult(queryBody2, "asof_index(t q)", "Indexed", expected2);
             assertAlgoAndResult(queryBody2, "asof_memoized(t q)", "Memoized", expected2);
         });
     }
@@ -825,7 +825,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "WHERE t.ts BETWEEN '2024-01-02T00:00:00.000000Z' AND '2024-01-02T23:59:59.999999Z'";
 
             assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
         });
     }
@@ -1481,8 +1481,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     rightTableTimestampType.getTypeName()
             );
 
-            // Query with asof_index_search hint
-            String query = "SELECT /*+ asof_index_search(orders trades) */ * FROM orders " +
+            // Query with asof_index hint
+            String query = "SELECT /*+ asof_index(orders trades) */ * FROM orders " +
                     "ASOF JOIN trades ON (sym)";
 
             // Verify the query plan shows indexed search
@@ -1563,7 +1563,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             );
 
             // Test that linear search hint takes precedence over index search
-            String query = "SELECT /*+ asof_linear(events responses) asof_index_search(events responses) */ * " +
+            String query = "SELECT /*+ asof_linear(events responses) asof_index(events responses) */ * " +
                     "FROM events ASOF JOIN responses ON (event_type)";
 
             printSql("EXPLAIN " + query);
@@ -1939,7 +1939,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
-            String hintedQuery = "SELECT /*+ asof_index_search(x y) */ " + queryBody;
+            String hintedQuery = "SELECT /*+ asof_index(x y) */ " + queryBody;
             printSql("EXPLAIN " + hintedQuery);
             TestUtils.assertContains(sink, "AsOf Join Indexed");
             assertSql(expected, hintedQuery);
@@ -2000,7 +2000,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
-            String hintedQuery = "SELECT /*+ asof_index_search(x y) */ " + queryBody;
+            String hintedQuery = "SELECT /*+ asof_index(x y) */ " + queryBody;
             printSql("EXPLAIN " + hintedQuery);
             TestUtils.assertContains(sink, "AsOf Join Indexed");
             assertSql(expected, hintedQuery);
