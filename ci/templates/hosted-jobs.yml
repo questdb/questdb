@@ -118,6 +118,6 @@ jobs:
       CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
       DIFF_COVER_THRESHOLD_PCT: 50
       ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
-      MAVEN_OPTS: "-Xmx2g"
+      MAVEN_OPTS: "-Xmx2g -XX:+UseParallelGC"
     steps:
       - template: steps.yml
