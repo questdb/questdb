@@ -74,7 +74,7 @@ jobs:
           os: Windows
           jdk: "1.17"
           testset: "all"
-          includeTests: "**/O3*Test**,**/**Fuzz**"
+          includeTests: "**/**Fuzz**"
           excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
