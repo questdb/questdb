@@ -57,8 +57,11 @@ import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectIntIntHashMap;
+import io.questdb.std.DirectIntLongHashMap;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -67,8 +70,6 @@ import io.questdb.std.Transient;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import java.util.Arrays;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -266,26 +267,31 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
         joinRecord.of(record, slaveRecord);
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
-
-        final int[] slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
-
+        final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
         // Clean up the in-memory index.
-        final LongList[] slaveRowIds = atom.getSlaveRowIds(slotId);
-        for (LongList list : slaveRowIds) {
-            Misc.clear(list);
+        final IntObjHashMap<LongList> slaveRowIds = atom.getSlaveRowIds(slotId);
+        Object[] values = slaveRowIds.getValues();
+        for (int i = 0, n = values.length; i < n; i++) {
+            if (values[i] != null) {
+                ((LongList) values[i]).clear();
+            }
         }
-        final LongList[] slaveTimestamps = atom.getSlaveTimestamps(slotId);
-        for (LongList list : slaveTimestamps) {
-            Misc.clear(list);
+
+        final IntObjHashMap<LongList> slaveTimestamps = atom.getSlaveTimestamps(slotId);
+        values = slaveTimestamps.getValues();
+        for (int i = 0, n = values.length; i < n; i++) {
+            if (values[i] != null) {
+                ((LongList) values[i]).clear();
+            }
         }
-        final int[] slaveRowLos = atom.getSlaveRowLos(slotId);
-        Arrays.fill(slaveRowLos, 0);
+
+        final DirectIntIntHashMap slaveRowLos = atom.getSlaveRowLos(slotId);
+        slaveRowLos.clear();
 
         try {
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
             final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
-
             // First, build the in-memory index. For every master key in this page frame,
             // it stores rowids and timestamps of the matching slave rows.
             record.setRowIndex(0);
@@ -316,18 +322,18 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                         break;
                     }
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                    final int matchingMasterKey = slaveSymbolLookupTable[Math.max(slaveKey + 1, 0)];
+                    final int matchingMasterKey = slaveSymbolLookupTable.get(Math.max(slaveKey + 1, 0));
                     if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                         final int idx = Math.max(matchingMasterKey + 1, 0);
-                        LongList rowIds = slaveRowIds[idx];
+                        LongList rowIds = slaveRowIds.get(idx);
                         if (rowIds == null) {
                             rowIds = new LongList();
-                            slaveRowIds[idx] = rowIds;
+                            slaveRowIds.put(idx, rowIds);
                         }
-                        LongList timestamps = slaveTimestamps[idx];
+                        LongList timestamps = slaveTimestamps.get(idx);
                         if (timestamps == null) {
                             timestamps = new LongList();
-                            slaveTimestamps[idx] = timestamps;
+                            slaveTimestamps.put(idx, timestamps);
                         }
                         rowIds.add(baseSlaveRowId + slaveRowId);
                         timestamps.add(slaveTimestamp);
@@ -345,7 +351,6 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
             // Next, iterate through the master rows looking into the index we've built.
             for (long r = 0; r < frameRowCount; r++) {
                 record.setRowIndex(r);
-
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
                 value.setNew(true);
@@ -367,14 +372,14 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = Math.max(masterKey + 1, 0);
-                LongList rowIds = slaveRowIds[idx];
-                LongList timestamps = slaveTimestamps[idx];
-                int rowLo = slaveRowLos[idx];
+                LongList rowIds = slaveRowIds.get(idx);
+                LongList timestamps = slaveTimestamps.get(idx);
+                int rowLo = slaveRowLos.get(idx);
 
                 if (rowIds != null && rowIds.size() > 0) {
                     rowLo = timestamps.binarySearch(rowLo, timestamps.size() - 1, slaveTimestampLo, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                    slaveRowLos[idx] = rowLo;
+                    slaveRowLos.put(idx, rowLo);
                     int rowHi = timestamps.binarySearch(rowLo, timestamps.size() - 1, slaveTimestampHi, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                     if (rowLo < rowHi) {
@@ -434,35 +439,31 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
         allocator.close();
         final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
         columnSink.resetPtr();
-        final long[] columnSinkPtrs = atom.getColumnSinkPtrs(slotId);
-        Arrays.fill(columnSinkPtrs, 0);
-        final var columnIndexes = atom.getGroupByColumnIndexes();
+        final DirectIntLongHashMap columnSinkPtrs = atom.getColumnSinkPtrs(slotId);
+        columnSinkPtrs.clear();
+        final IntList columnIndexes = atom.getGroupByColumnIndexes();
+        final int columnCount = columnIndexes.size();
         final var columnTags = atom.getGroupByColumnTags();
-        final int columnCount = columnIndexes.length;
-
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
-
-        final int[] slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+        final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
 
         // Clean up the in-memory index.
-        final LongList[] slaveTimestamps = atom.getSlaveTimestamps(slotId);
-        for (LongList list : slaveTimestamps) {
-            Misc.clear(list);
+        final IntObjHashMap<LongList> slaveTimestamps = atom.getSlaveTimestamps(slotId);
+        Object[] values = slaveTimestamps.getValues();
+        for (int i = 0, n = values.length; i < n; i++) {
+            if (values[i] != null) {
+                ((LongList) values[i]).clear();
+            }
         }
-        final int[] slaveRowLos = atom.getSlaveRowLos(slotId);
-        Arrays.fill(slaveRowLos, 0);
+
+        final DirectIntIntHashMap slaveRowLos = atom.getSlaveRowLos(slotId);
+        slaveRowLos.clear();
 
         try {
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
             final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
-
-            // TODO(puzpuzpuz): scan master's page frame and collect a hash table
-            //  with the symbols that we actually need. Currently we build the index for
-            //  all slave's symbols that have a pair in master. Then we can get rid of
-            //  slaveSymbolLookupTable
-
             // First, build the in-memory index. For every master key in this page frame,
             // it stores rowids and timestamps of the matching slave rows.
             record.setRowIndex(0);
@@ -492,22 +493,22 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                         break;
                     }
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                    final int matchingMasterKey = slaveSymbolLookupTable[Math.max(slaveKey + 1, 0)];
+                    final int matchingMasterKey = slaveSymbolLookupTable.get(Math.max(slaveKey + 1, 0));
                     if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                         final int idx = Math.max(matchingMasterKey + 1, 0);
-                        LongList timestamps = slaveTimestamps[idx];
+                        LongList timestamps = slaveTimestamps.get(idx);
                         if (timestamps == null) {
                             timestamps = new LongList();
-                            slaveTimestamps[idx] = timestamps;
+                            slaveTimestamps.put(idx, timestamps);
                         }
                         timestamps.add(slaveTimestamp);
 
                         // now let's copy the column values to be aggregated
                         for (int i = 0; i < columnCount; i++) {
                             final int ptrIdx = idx * columnCount + i;
-                            long ptr = columnSinkPtrs[ptrIdx];
-                            columnSink.of(ptr).put(joinRecord, columnIndexes[i], columnTags[i]);
-                            columnSinkPtrs[ptrIdx] = columnSink.ptr();
+                            long ptr = columnSinkPtrs.get(ptrIdx);
+                            columnSink.of(ptr).put(joinRecord, columnIndexes.getQuick(i), columnTags[i]);
+                            columnSinkPtrs.put(ptrIdx, columnSink.ptr());
                         }
                     }
                     if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
@@ -545,18 +546,18 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = Math.max(masterKey + 1, 0);
-                LongList timestamps = slaveTimestamps[idx];
-                int rowLo = slaveRowLos[idx];
+                LongList timestamps = slaveTimestamps.get(idx);
+                int rowLo = slaveRowLos.get(idx);
 
                 if (timestamps != null && timestamps.size() > 0) {
                     rowLo = timestamps.binarySearch(rowLo, timestamps.size() - 1, slaveTimestampLo, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                    slaveRowLos[idx] = rowLo;
+                    slaveRowLos.put(idx, rowLo);
                     int rowHi = timestamps.binarySearch(rowLo, timestamps.size() - 1, slaveTimestampHi, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                     for (int i = 0; i < columnCount; i++) {
                         final int ptrIdx = idx * columnCount + i;
-                        final long ptr = columnSinkPtrs[ptrIdx];
+                        final long ptr = columnSinkPtrs.get(ptrIdx);
                         final long typeSize = ColumnType.sizeOfTag(columnTags[i]);
                         groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, rowHi - rowLo);
                     }

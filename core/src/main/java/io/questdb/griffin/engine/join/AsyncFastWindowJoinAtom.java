@@ -54,24 +54,21 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectIntIntHashMap;
+import io.questdb.std.DirectIntLongHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Arrays;
-
 import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
 
 // TODO:
-// * Lookup tables assume up to LOOKUP_TABLE_SIZE symbols in master and slave. We should
-//   try using hash tables instead and see if it doesn't affect the performance (likely
-//   that it won't affect).
-//   These are slaveSymbolLookupTable, ownerSlaveTimestamps, ownerSlaveRowIds, ownerSlaveRowLos,
-//   ownerColumnSinkPtrs, and the corresponding perWorker* fields
 // * On-heap IntObjHashMaps and LongLists should be swapped with off-heap data structs:
 //   ownerSlaveTimestamps, ownerSlaveRowIds, ownerSlaveRowLos, ownerColumnSinkPtrs
 //   Our options here are the following:
@@ -86,11 +83,10 @@ import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactor
 //     to GroupByLongList.
 public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
-    private static final int LOOKUP_TABLE_SIZE = 1024;
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledMasterFilter;
-    private final int[] groupByColumnIndexes;
+    private final IntList groupByColumnIndexes;
     private final short[] groupByColumnTags;
     private final JoinSymbolTableSource joinSymbolTableSource;
     private final long joinWindowHi;
@@ -100,7 +96,7 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final long masterTsScale;
     private final GroupByAllocator ownerAllocator;
     private final GroupByColumnSink ownerColumnSink;
-    private final long[] ownerColumnSinkPtrs;
+    private final DirectIntLongHashMap ownerColumnSinkPtrs;
     // Note: all function updaters should be used through a getFunctionUpdater() call
     // to properly initialize group by functions' allocator.
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
@@ -108,12 +104,12 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final DirectMapValue ownerGroupByValue;
     private final JoinRecord ownerJoinRecord;
     private final Function ownerMasterFilter;
-    private final LongList[] ownerSlaveRowIds;
-    private final int[] ownerSlaveRowLos;
+    private final IntObjHashMap<LongList> ownerSlaveRowIds;
+    private final DirectIntIntHashMap ownerSlaveRowLos;
     private final AsyncTimeFrameHelper ownerSlaveTimeFrameHelper;
-    private final LongList[] ownerSlaveTimestamps;
+    private final IntObjHashMap<LongList> ownerSlaveTimestamps;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
-    private final ObjList<long[]> perWorkerColumnSinkPtrs;
+    private final ObjList<DirectIntLongHashMap> perWorkerColumnSinkPtrs;
     private final ObjList<GroupByColumnSink> perWorkerColumnSinks;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
@@ -121,13 +117,13 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final ObjList<JoinRecord> perWorkerJoinRecords;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<Function> perWorkerMasterFilters;
-    private final ObjList<LongList[]> perWorkerSlaveRowIds;
-    private final ObjList<int[]> perWorkerSlaveRowLos;
+    private final ObjList<IntObjHashMap<LongList>> perWorkerSlaveRowIds;
+    private final ObjList<DirectIntIntHashMap> perWorkerSlaveRowLos;
     private final ObjList<AsyncTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
-    private final ObjList<LongList[]> perWorkerSlaveTimestamps;
+    private final ObjList<IntObjHashMap<LongList>> perWorkerSlaveTimestamps;
     private final int slaveSymbolIndex;
     // slave-to-master symbol key LUT
-    private final int[] slaveSymbolLookupTable;
+    private final DirectIntIntHashMap slaveSymbolLookupTable;
     private final long slaveTsScale;
     private final long valueSizeInBytes;
     private final boolean vectorized;
@@ -174,20 +170,20 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             this.masterTsScale = masterTsScale;
             this.slaveTsScale = slaveTsScale;
 
-            this.slaveSymbolLookupTable = new int[LOOKUP_TABLE_SIZE];
-            this.ownerSlaveRowIds = new LongList[LOOKUP_TABLE_SIZE];
-            this.ownerSlaveTimestamps = new LongList[LOOKUP_TABLE_SIZE];
+            this.slaveSymbolLookupTable = new DirectIntIntHashMap(16, 0.5, StaticSymbolTable.VALUE_NOT_FOUND, MemoryTag.NATIVE_UNORDERED_MAP);
+            this.ownerSlaveRowIds = new IntObjHashMap<>();
+            this.ownerSlaveTimestamps = new IntObjHashMap<>();
             this.perWorkerSlaveRowIds = new ObjList<>(slotCount);
             this.perWorkerSlaveTimestamps = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerSlaveRowIds.extendAndSet(i, new LongList[LOOKUP_TABLE_SIZE]);
-                perWorkerSlaveTimestamps.extendAndSet(i, new LongList[LOOKUP_TABLE_SIZE]);
+                perWorkerSlaveRowIds.extendAndSet(i, new IntObjHashMap<>());
+                perWorkerSlaveTimestamps.extendAndSet(i, new IntObjHashMap<>());
             }
 
-            this.ownerSlaveRowLos = new int[LOOKUP_TABLE_SIZE];
+            this.ownerSlaveRowLos = new DirectIntIntHashMap(16, 0.5, 0, MemoryTag.NATIVE_UNORDERED_MAP);
             this.perWorkerSlaveRowLos = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerSlaveRowLos.extendAndSet(i, new int[LOOKUP_TABLE_SIZE]);
+                perWorkerSlaveRowLos.extendAndSet(i, new DirectIntIntHashMap(16, 0.5, 0, MemoryTag.NATIVE_UNORDERED_MAP));
             }
 
             this.ownerSlaveTimeFrameHelper = new AsyncTimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
@@ -242,11 +238,11 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
                 final int groupByFunctionSize = ownerGroupByFunctions.size();
                 // TODO: deduplicate columns we have to copy, i.e. for min(int_col), max(int_col),
                 //  we should do a single copy of the int_col
-                this.groupByColumnIndexes = new int[groupByFunctionSize];
+                this.groupByColumnIndexes = new IntList(ownerGroupByFunctions.size());
                 this.groupByColumnTags = new short[groupByFunctionSize];
-                for (int i = 0; i < groupByFunctionSize; i++) {
+                for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
                     var func = ownerGroupByFunctions.getQuick(i);
-                    groupByColumnIndexes[i] = func.getColumnIndex();
+                    groupByColumnIndexes.add(func.getColumnIndex());
                     var unary = (UnaryFunction) func;
                     groupByColumnTags[i] = ColumnType.tagOf(unary.getArg().getType());
                 }
@@ -259,10 +255,10 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
                     perWorkerColumnSinks.extendAndSet(i, sink);
                 }
 
-                this.ownerColumnSinkPtrs = new long[LOOKUP_TABLE_SIZE * groupByFunctionSize];
+                this.ownerColumnSinkPtrs = new DirectIntLongHashMap(16, 0.5, 0, 0L, MemoryTag.NATIVE_UNORDERED_MAP);
                 this.perWorkerColumnSinkPtrs = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerColumnSinkPtrs.extendAndSet(i, new long[LOOKUP_TABLE_SIZE * groupByFunctionSize]);
+                    perWorkerColumnSinkPtrs.extendAndSet(i, new DirectIntLongHashMap(16, 0.5, 0, 0L, MemoryTag.NATIVE_UNORDERED_MAP));
                 }
             } else {
                 this.groupByColumnIndexes = null;
@@ -292,6 +288,9 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
 
     @Override
     public void close() {
+        Misc.free(slaveSymbolLookupTable);
+        Misc.free(ownerSlaveRowLos);
+        Misc.free(ownerColumnSinkPtrs);
         Misc.free(ownerSlaveTimeFrameHelper);
         Misc.freeObjList(perWorkerSlaveTimeFrameHelpers);
         Misc.free(compiledMasterFilter);
@@ -302,11 +301,13 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
         Misc.freeObjList(ownerGroupByFunctions);
+        Misc.freeObjList(perWorkerColumnSinkPtrs);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+        Misc.freeObjList(perWorkerSlaveRowLos);
     }
 
     public GroupByAllocator getAllocator(int slotId) {
@@ -331,7 +332,7 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
         return perWorkerColumnSinks.getQuick(slotId);
     }
 
-    public long[] getColumnSinkPtrs(int slotId) {
+    public DirectIntLongHashMap getColumnSinkPtrs(int slotId) {
         if (slotId == -1) {
             return ownerColumnSinkPtrs;
         }
@@ -349,7 +350,7 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
         return perWorkerFunctionUpdaters.getQuick(slotId);
     }
 
-    public int[] getGroupByColumnIndexes() {
+    public IntList getGroupByColumnIndexes() {
         return groupByColumnIndexes;
     }
 
@@ -410,14 +411,14 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
         return ownerGroupByValue;
     }
 
-    public LongList[] getSlaveRowIds(int slotId) {
+    public IntObjHashMap<LongList> getSlaveRowIds(int slotId) {
         if (slotId == -1) {
             return ownerSlaveRowIds;
         }
         return perWorkerSlaveRowIds.getQuick(slotId);
     }
 
-    public int[] getSlaveRowLos(int slotId) {
+    public DirectIntIntHashMap getSlaveRowLos(int slotId) {
         if (slotId == -1) {
             return ownerSlaveRowLos;
         }
@@ -428,7 +429,7 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
         return slaveSymbolIndex;
     }
 
-    public int[] getSlaveSymbolLookupTable() {
+    public DirectIntIntHashMap getSlaveSymbolLookupTable() {
         return slaveSymbolLookupTable;
     }
 
@@ -439,7 +440,7 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
         return perWorkerSlaveTimeFrameHelpers.getQuick(slotId);
     }
 
-    public LongList[] getSlaveTimestamps(int slotId) {
+    public IntObjHashMap<LongList> getSlaveTimestamps(int slotId) {
         if (slotId == -1) {
             return ownerSlaveTimestamps;
         }
@@ -525,16 +526,16 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
 
         StaticSymbolTable masterSymbolTable = (StaticSymbolTable) masterSymbolTableSource.getSymbolTable(masterSymbolIndex);
         StaticSymbolTable slaveSymbolTable = (StaticSymbolTable) slaveSymbolTableSource.getSymbolTable(slaveSymbolIndex);
-        Arrays.fill(slaveSymbolLookupTable, StaticSymbolTable.VALUE_NOT_FOUND);
+        slaveSymbolLookupTable.clear();
         for (int masterKey = 0, n = masterSymbolTable.getSymbolCount(); masterKey < n; masterKey++) {
             final CharSequence masterSym = masterSymbolTable.valueOf(masterKey);
             final int slaveKey = slaveSymbolTable.keyOf(masterSym);
             if (slaveKey != StaticSymbolTable.VALUE_NOT_FOUND) {
-                slaveSymbolLookupTable[slaveKey + 1] = masterKey;
+                slaveSymbolLookupTable.put(slaveKey + 1, masterKey);
             }
         }
         if (masterSymbolTable.containsNullValue() && slaveSymbolTable.containsNullValue()) {
-            slaveSymbolLookupTable[0] = StaticSymbolTable.VALUE_IS_NULL;
+            slaveSymbolLookupTable.put(0, StaticSymbolTable.VALUE_IS_NULL);
         }
     }
 
