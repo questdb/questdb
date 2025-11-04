@@ -61,7 +61,7 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/griffin/*"
-          # TODO: Remove O3*Test** exclusion - O3 tests should run on Windows
+          # Exclude O3 tests: run in windows-other-2
           # Exclude Fuzz tests: run in windows-fuzz1 (cairo) and windows-fuzz2 (non-cairo)
           excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
@@ -73,7 +73,7 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/griffin/**/*"
-          # TODO: Remove O3*Test** exclusion - O3 tests should run on Windows
+          # Exclude O3 tests: run in windows-other-2
           # Exclude Fuzz tests: run in windows-fuzz1 (cairo) and windows-fuzz2 (non-cairo)
           # Exclude base package: run in windows-griffin-base
           excludeTests: "**/griffin/*,**/O3*Test**,**/**Fuzz**"
@@ -106,7 +106,7 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/**"
-          # TODO: Remove O3*Test** exclusion - O3 tests should run on Windows
+          # Exclude O3 tests: run in windows-other-2
           # Exclude Fuzz tests: run in windows-fuzz1 (cairo/fuzz) and windows-fuzz2 (other fuzz)
           # Exclude mv/o3 subdirs: run in windows-cairo-2
           excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/mv/**,**/cairo/o3/**"
@@ -130,6 +130,9 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/pgwire/**/*.java"
+          # Exclude O3 tests: run in windows-other-2
+          # Exclude Fuzz tests: run in windows-fuzz2
+          excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-other-1:
@@ -144,7 +147,8 @@ jobs:
           # Exclude pgwire: run in windows-pgwire
           # Exclude cutlass/http: run in windows-other-2
           # Exclude Fuzz tests: run in windows-fuzz1 and windows-fuzz2
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/http/**,**/**Fuzz**"
+          # Exclude O3 tests: run in windows-other-2
+          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/http/**,**/**Fuzz**,**/O3*Test**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-other-2:
@@ -153,9 +157,10 @@ jobs:
           os: Windows
           jdk: "1.17"
           testset: "all"
-          includeTests: "**/cutlass/http/**"
+          includeTests: "**/cutlass/http/**,**/O3*Test**"
           # Exclude Fuzz tests: run in windows-fuzz2
-          excludeTests: "**/**Fuzz**"
+          # Exclude cairo/o3 and cairo/mv: run in windows-cairo-2
+          excludeTests: "**/**Fuzz**,**/cairo/o3/**,**/cairo/mv/**"
           javadoc_step: ""
           javadoc_profile: ""
 
