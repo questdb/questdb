@@ -75,7 +75,7 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     public void clear() {
         if (ptr != 0) {
             Unsafe.putInt(ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
+            Unsafe.putBoolean(ptr + IS_ASCII_OFFSET, true);
         }
     }
 
@@ -105,7 +105,7 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
         long lo = ptr + HEADER_SIZE + thisSize;
         seq.writeTo(lo, 0, thatSize);
         Unsafe.putInt(ptr + SIZE_OFFSET, thisSize + thatSize);
-        Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, seq.isAscii() && isAscii());
+        Unsafe.putBoolean(ptr + IS_ASCII_OFFSET, seq.isAscii() && isAscii());
         return this;
     }
 
@@ -114,7 +114,7 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
         checkCapacity(1);
         Unsafe.putByte(ptr + HEADER_SIZE + size(), b);
         Unsafe.putInt(ptr + SIZE_OFFSET, size() + 1);
-        Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, false);
+        Unsafe.putBoolean(ptr + IS_ASCII_OFFSET, false);
         return this;
     }
 
@@ -156,7 +156,7 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
             ptr = allocator.malloc(newSize);
             Unsafe.putInt(ptr, newCapacity);
             Unsafe.putInt(ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
+            Unsafe.putBoolean(ptr + IS_ASCII_OFFSET, true);
         } else {
             ptr = allocator.realloc(ptr, capacity + HEADER_SIZE, newSize);
             Unsafe.putInt(ptr, newCapacity);

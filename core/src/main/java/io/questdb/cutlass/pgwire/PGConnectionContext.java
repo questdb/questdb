@@ -1702,14 +1702,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         @Override
         public void putDirectInt(int xValue) {
             checkCapacity(Integer.BYTES);
-            Unsafe.getUnsafe().putInt(sendBufferPtr, xValue);
+            Unsafe.putInt(sendBufferPtr, xValue);
             sendBufferPtr += Integer.BYTES;
         }
 
         @Override
         public void putDirectShort(short xValue) {
             checkCapacity(Short.BYTES);
-            Unsafe.getUnsafe().putShort(sendBufferPtr, xValue);
+            Unsafe.putShort(sendBufferPtr, xValue);
             sendBufferPtr += Short.BYTES;
         }
 

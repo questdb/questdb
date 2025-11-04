@@ -710,8 +710,8 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void putInterval(Interval interval) {
-            Unsafe.getUnsafe().putLong(appendAddress, interval.getLo());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, interval.getHi());
+            Unsafe.putLong(appendAddress, interval.getLo());
+            Unsafe.putLong(appendAddress + Long.BYTES, interval.getHi());
             appendAddress += 16L;
         }
 
@@ -993,8 +993,8 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void putInterval(Interval interval) {
             checkCapacity(16L);
-            Unsafe.getUnsafe().putLong(appendAddress, interval.getLo());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, interval.getHi());
+            Unsafe.putLong(appendAddress, interval.getLo());
+            Unsafe.putLong(appendAddress + Long.BYTES, interval.getHi());
             appendAddress += 16L;
         }
 

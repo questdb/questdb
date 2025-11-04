@@ -95,14 +95,14 @@ public class StableAwareUtf8StringHolder implements Utf8Sequence {
             checkCapacity(8); // pointer is 8 bytes
             Unsafe.putLong(ptr + HEADER_SIZE, us.ptr());
             Unsafe.putInt(ptr + SIZE_OFFSET, us.size());
-            Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, us.isAscii());
+            Unsafe.putBoolean(ptr + IS_ASCII_OFFSET, us.isAscii());
         } else {
             int thatSize = us.size();
             checkCapacity(thatSize);
             long lo = ptr + HEADER_SIZE;
             us.writeTo(lo, 0, thatSize);
             Unsafe.putInt(ptr + SIZE_OFFSET, thatSize);
-            Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, us.isAscii());
+            Unsafe.putBoolean(ptr + IS_ASCII_OFFSET, us.isAscii());
         }
     }
 
@@ -157,7 +157,7 @@ public class StableAwareUtf8StringHolder implements Utf8Sequence {
             ptr = allocator.malloc(newSize);
             Unsafe.putInt(ptr, newCapacity);
             Unsafe.putInt(ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
+            Unsafe.putBoolean(ptr + IS_ASCII_OFFSET, true);
         } else {
             ptr = allocator.realloc(ptr, capacity + HEADER_SIZE, newSize);
             Unsafe.putInt(ptr, newCapacity);
@@ -171,7 +171,7 @@ public class StableAwareUtf8StringHolder implements Utf8Sequence {
     private void clear() {
         if (ptr != 0) {
             Unsafe.putInt(ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
+            Unsafe.putBoolean(ptr + IS_ASCII_OFFSET, true);
             direct = false;
         }
     }

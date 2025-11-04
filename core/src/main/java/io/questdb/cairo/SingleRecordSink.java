@@ -102,7 +102,7 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     @Override
     public void putBool(boolean value) {
         checkCapacity(1);
-        Unsafe.getUnsafe().putBoolean(null, appendAddress, value);
+        Unsafe.putBoolean(appendAddress, value);
         appendAddress += 1;
     }
 
@@ -158,8 +158,8 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     @Override
     public void putInterval(Interval interval) {
         checkCapacity(16);
-        Unsafe.getUnsafe().putLong(appendAddress, interval.getLo());
-        Unsafe.getUnsafe().putLong(appendAddress + 8, interval.getHi());
+        Unsafe.putLong(appendAddress, interval.getLo());
+        Unsafe.putLong(appendAddress + 8, interval.getHi());
         appendAddress += 16;
     }
 

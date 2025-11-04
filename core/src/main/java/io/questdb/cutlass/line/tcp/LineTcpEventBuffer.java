@@ -76,14 +76,14 @@ public class LineTcpEventBuffer {
         int totalLength = Integer.BYTES + Integer.BYTES + dims * Integer.BYTES + values.size();
         // non-wal tables do not support large array ingestion.
         checkCapacity(address, totalLength + Byte.BYTES);
-        Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_ARRAY);
+        Unsafe.putByte(address, LineTcpParser.ENTITY_TYPE_ARRAY);
         address += Byte.BYTES;
-        Unsafe.getUnsafe().putInt(address, totalLength);
+        Unsafe.putInt(address, totalLength);
         address += Integer.BYTES;
-        Unsafe.getUnsafe().putInt(address, arrayView.getType());
+        Unsafe.putInt(address, arrayView.getType());
         address += Integer.BYTES;
         for (int i = 0; i < dims; i++) {
-            Unsafe.getUnsafe().putInt(address, arrayView.getDimLen(i));
+            Unsafe.putInt(address, arrayView.getDimLen(i));
             address += Integer.BYTES;
         }
         Vect.memcpy(address, values.ptr(), values.size());
@@ -192,8 +192,8 @@ public class LineTcpEventBuffer {
                 return address + Byte.BYTES + Byte.BYTES;
             default:
                 checkCapacity(address, Long.BYTES + Byte.BYTES);
-                Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_GEOLONG);
-                Unsafe.getUnsafe().putLong(address + Byte.BYTES, geohash);
+                Unsafe.putByte(address, LineTcpParser.ENTITY_TYPE_GEOLONG);
+                Unsafe.putLong(address + Byte.BYTES, geohash);
                 return address + Long.BYTES + Byte.BYTES;
         }
     }

@@ -204,7 +204,7 @@ public class BlockFileWriter implements Closeable {
             if (value != null) {
                 final long len = value.length();
                 long addr = memory.appendAddressFor(payloadOffset + offset, len + Long.BYTES);
-                Unsafe.getUnsafe().putLong(addr, len);
+                Unsafe.putLong(addr, len);
                 value.copyTo(addr + Long.BYTES, 0, len);
             } else {
                 memory.putNullBin();

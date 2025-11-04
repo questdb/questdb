@@ -100,7 +100,7 @@ public class IDGeneratorFactory {
         // It is useful for testing only
         @Override
         public void reset() {
-            Unsafe.getUnsafe().putLong(uniqueIdMem, 0);
+            Unsafe.putLong(uniqueIdMem, 0);
         }
     }
 
@@ -150,7 +150,7 @@ public class IDGeneratorFactory {
                     if (base.get() > end) {
                         // Allocate new batch
                         long newEnd = end + step;
-                        Unsafe.getUnsafe().putLong(uniqueIdMem, newEnd);
+                        Unsafe.putLong(uniqueIdMem, newEnd);
                         configuration.getFilesFacade().msync(uniqueIdMem, uniqueIdMemSize, configuration.getCommitMode() == CommitMode.ASYNC);
                         base.set(newEnd - step);
                         end = newEnd;

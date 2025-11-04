@@ -266,6 +266,11 @@ public final class Unsafe {
         }
     }
 
+    public  static void putBoolean(long address, boolean value) {
+        AllocationsTracker.assertAllocatedMemory(address, 1);
+        UNSAFE.putBoolean(null, address, value);
+    }
+
     public static void putByte(long address, byte value) {
         AllocationsTracker.assertAllocatedMemory(address, Byte.BYTES);
         UNSAFE.putByte(address, value);

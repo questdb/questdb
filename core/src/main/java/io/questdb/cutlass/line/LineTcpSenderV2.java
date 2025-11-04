@@ -128,7 +128,7 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
         if (ptr + Double.BYTES >= hi) {
             send00();
         }
-        Unsafe.getUnsafe().putDouble(ptr, value);
+        Unsafe.putDouble(ptr, value);
         ptr += Double.BYTES;
         return this;
     }
@@ -190,7 +190,7 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
         if (ptr + Double.BYTES >= hi) {
             send00();
         }
-        Unsafe.getUnsafe().putDouble(ptr, value);
+        Unsafe.putDouble(ptr, value);
         ptr += Double.BYTES;
     }
 
@@ -199,7 +199,7 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
         if (ptr + Integer.BYTES >= hi) {
             send00();
         }
-        Unsafe.getUnsafe().putInt(ptr, value);
+        Unsafe.putInt(ptr, value);
         ptr += Integer.BYTES;
     }
 
@@ -208,7 +208,7 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
         if (ptr + Long.BYTES >= hi) {
             send00();
         }
-        Unsafe.getUnsafe().putLong(ptr, value);
+        Unsafe.putLong(ptr, value);
         ptr += Long.BYTES;
     }
 
