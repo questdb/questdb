@@ -207,24 +207,23 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testBench() throws Exception {
         // On OSX, it's not trivial to increase the open file limit per process
-        if (Os.type != Os.DARWIN) {
-            executeVanilla((engine, compiler, context) -> testBench0(engine, compiler, context, timestampType.getTypeName()));
-        }
-    }
+        Assume.assumeFalse(Os.isOSX());
 
-    @Test
-    public void testBenchContended() throws Exception {
-        // On OSX, it's not trivial to increase the open file limit per process
-        if (Os.type != Os.DARWIN) {
-            executeWithPool(0, O3Test::testBench0);
-        }
-    }
-
-    @Test
-    public void testBenchParallel() throws Exception {
-        // On OSX, it's not trivial to increase the open file limit per process
-        if (Os.type != Os.DARWIN) {
-            executeWithPool(4, O3Test::testBench0);
+        switch (rnd.nextInt(3)) {
+            case 0:
+                LOG.info().$("executing vanilla bench").$();
+                executeVanilla((engine, compiler, context) -> testBench0(engine, compiler, context, timestampType.getTypeName()));
+                break;
+            case 1:
+                LOG.info().$("executing contended bench").$();
+                executeWithPool(0, O3Test::testBench0);
+                break;
+            case 2:
+                LOG.info().$("executing parallel bench").$();
+                executeWithPool(4, O3Test::testBench0);
+                break;
+            default:
+                throw new UnsupportedOperationException();
         }
     }
 
