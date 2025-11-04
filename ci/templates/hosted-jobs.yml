@@ -78,14 +78,23 @@ jobs:
           excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-cairo:
+        windows-cairo-1:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/**"
-          excludeTests: "**/O3*Test**,**/**Fuzz**"
+          excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/mv/**,**/cairo/o3/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-cairo-2:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/cairo/mv/**,**/cairo/o3/**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-pgwire:
