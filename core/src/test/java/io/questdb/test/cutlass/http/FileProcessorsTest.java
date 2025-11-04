@@ -469,7 +469,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                (Os.isWindows() ? "a3\r\n" : "a1\r\n") +
+                                                (Os.isWindows() ? "a5\r\n" : "a1\r\n") +
                                                 (Os.isWindows() ? "{\"data\":[{\"type\":\"file\",\"id\":\"dir\\\\dir1\\\\large_test.parquet\",\"attributes\":{\"filename\":\"dir\\\\dir1\\\\large_test.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":1}}\r\n" : "{\"data\":[{\"type\":\"file\",\"id\":\"dir/dir1/large_test.parquet\",\"attributes\":{\"filename\":\"dir/dir1/large_test.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":1}}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
@@ -606,7 +606,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                (Os.isWindows() ? "1b2\r\n" : "0223\r\n") +
+                                                (Os.isWindows() ? "022d\r\n" : "0223\r\n") +
                                                 (Os.isWindows() ? "{\"data\":[{\"type\":\"file\",\"id\":\"x1.parquet\",\"attributes\":{\"filename\":\"x1.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"x2.parquet\",\"attributes\":{\"filename\":\"x2.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1\\\\x3.parquet\",\"attributes\":{\"filename\":\"dir1\\\\x3.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1\\\\dir2\\\\x4.parquet\",\"attributes\":{\"filename\":\"dir1\\\\dir2\\\\x4.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir3\\\\special.parquet\",\"attributes\":{\"filename\":\"dir3\\\\special.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":5}}\r\n" : "{\"data\":[{\"type\":\"file\",\"id\":\"x1.parquet\",\"attributes\":{\"filename\":\"x1.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"x2.parquet\",\"attributes\":{\"filename\":\"x2.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1/x3.parquet\",\"attributes\":{\"filename\":\"dir1/x3.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1/dir2/x4.parquet\",\"attributes\":{\"filename\":\"dir1/dir2/x4.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir3/❤️.parquet\",\"attributes\":{\"filename\":\"dir3/❤️.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":5}}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
