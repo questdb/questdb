@@ -89,7 +89,7 @@ public class MatViewTest extends AbstractCairoTest {
     public MatViewTest() {
         final Rnd rnd = generateRandom(LOG);
         this.rowsPerQuery = rnd.nextInt(100) > 50 ? -1 : 1;
-        this.timestampType = rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+        this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
     @BeforeClass

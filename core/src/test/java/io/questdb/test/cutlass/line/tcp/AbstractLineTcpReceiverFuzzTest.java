@@ -102,7 +102,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     private long timestampMark = -1;
 
     public AbstractLineTcpReceiverFuzzTest() {
-        this.walEnabled = TestUtils.generateRandom(LOG).nextBoolean();
+        this.walEnabled = TestUtils.isWal();
     }
 
     public void runTest() throws Exception {

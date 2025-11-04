@@ -29,8 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.std.Rnd;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -44,8 +42,7 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     private final boolean walEnabled;
 
     public BaseLineTcpInsertGeoHashTest() {
-        Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
-        this.walEnabled = rnd.nextBoolean();
+        this.walEnabled = TestUtils.isWal();
     }
 
     @Before

@@ -75,7 +75,7 @@ public class UpdateTest extends AbstractCairoTest {
     private final boolean walEnabled;
 
     public UpdateTest() {
-        this.walEnabled = TestUtils.generateRandom(LOG).nextBoolean();
+        this.walEnabled = TestUtils.isWal();
     }
 
     @Override

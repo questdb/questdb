@@ -106,7 +106,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     private final TestTimestampType timestampType;
 
     public WindowFunctionTest() {
-        this.timestampType = TestUtils.generateRandom(LOG).nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+        this.timestampType = TestUtils.getTimestampType();
     }
 
     @Test

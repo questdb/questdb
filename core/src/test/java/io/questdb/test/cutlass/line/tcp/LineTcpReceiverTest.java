@@ -69,7 +69,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
@@ -104,8 +103,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     public LineTcpReceiverTest() {
         Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
-        this.walEnabled = rnd.nextBoolean();
-        this.timestampType = rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+        this.walEnabled = TestUtils.isWal(rnd);
+        this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
     @Test

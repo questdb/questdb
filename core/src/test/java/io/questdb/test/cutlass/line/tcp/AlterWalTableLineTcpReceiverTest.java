@@ -52,8 +52,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -75,7 +73,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     private SqlException sqlException;
 
     public AlterWalTableLineTcpReceiverTest() {
-        this.timestampType = TestUtils.generateRandom(AbstractCairoTest.LOG).nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+        this.timestampType = TestUtils.getTimestampType();
     }
 
     @Before

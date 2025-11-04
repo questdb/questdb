@@ -106,6 +106,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.QuestDBTestNode;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.griffin.CustomisableRunnable;
@@ -1649,6 +1650,14 @@ public final class TestUtils {
         }
     }
 
+    public static TestTimestampType getTimestampType() {
+        return getTimestampType(generateRandom(LOG));
+    }
+
+    public static TestTimestampType getTimestampType(Rnd rnd) {
+        return rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+    }
+
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
         return getWriter(engine, engine.verifyTableName(tableName));
     }
@@ -1755,6 +1764,19 @@ public final class TestUtils {
         sink.put('/');
         Numbers.intToIPv4Sink(sink, (int) (ipAndBroadcast));
         return sink.toString();
+    }
+
+    /**
+     * Helper method to bias probability of "wal" tests to 80%
+     *
+     * @return true when tests should run in WAL-enabled mode, false otherwise.
+     */
+    public static boolean isWal() {
+        return isWal(generateRandom(LOG));
+    }
+
+    public static boolean isWal(Rnd rnd) {
+        return rnd.nextInt(100) < 80;
     }
 
     public static int maxDayOfMonth(int month) {

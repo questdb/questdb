@@ -39,7 +39,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -60,8 +59,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     public LineTcpConnectionContextTest() {
         Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
-        this.walEnabled = rnd.nextBoolean();
-        this.timestampType = rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+        this.walEnabled = TestUtils.isWal(rnd);
+        this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
     @Before

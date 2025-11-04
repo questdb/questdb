@@ -53,7 +53,7 @@ public class CopyImportTest extends AbstractCairoTest {
     private final boolean walEnabled;
 
     public CopyImportTest() {
-        this.walEnabled = TestUtils.generateRandom(LOG).nextBoolean();
+        this.walEnabled = TestUtils.isWal();
     }
 
     @BeforeClass

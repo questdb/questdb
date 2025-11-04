@@ -93,7 +93,7 @@ public class AbstractO3Test extends AbstractTest {
 
     public AbstractO3Test() {
         this.rnd = TestUtils.generateRandom(LOG);
-        this.timestampType = rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+        this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
     @BeforeClass

@@ -90,8 +90,8 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     public LineTcpSenderTest() {
         Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
-        this.walEnabled = rnd.nextBoolean();
-        this.timestampType = rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+        this.walEnabled = TestUtils.isWal(rnd);
+        this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
     @Before

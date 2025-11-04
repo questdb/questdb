@@ -61,7 +61,7 @@ public class InsertTest extends AbstractCairoTest {
     private final boolean walEnabled;
 
     public InsertTest() {
-        this.walEnabled = TestUtils.generateRandom(LOG).nextBoolean();
+        this.walEnabled = TestUtils.isWal();
     }
 
     public void assertReaderCheckWal(String expected, CharSequence tableName) {

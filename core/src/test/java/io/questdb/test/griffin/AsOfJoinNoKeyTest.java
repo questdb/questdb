@@ -45,8 +45,8 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     public AsOfJoinNoKeyTest() {
         Rnd rnd = TestUtils.generateRandom(LOG);
         this.joinType = rnd.nextBoolean() ? JoinType.ASOF : JoinType.LT;
-        this.leftTableTimestampType = rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
-        this.rightTableTimestampType = rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+        this.leftTableTimestampType = TestUtils.getTimestampType(rnd);
+        this.rightTableTimestampType = TestUtils.getTimestampType(rnd);
     }
 
     @Override
