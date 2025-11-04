@@ -2065,7 +2065,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 """
                         min\tmax\tround\tsum\tfirst\tlast
                         -9220264229979566148\t9222440717001210457\t-9.223372036854776E18\t-8085484953408325183\t8416773233910814357\t6812734169481155056
-                        """
+                        """,
                 """
                         count_distinct\tapprox_count_distinct
                         4000\t4000
