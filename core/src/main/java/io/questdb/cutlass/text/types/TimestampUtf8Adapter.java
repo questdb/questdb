@@ -41,9 +41,10 @@ public class TimestampUtf8Adapter extends TimestampAdapter {
         this.utf16Sink = utf16Sink;
     }
 
-    public TimestampUtf8Adapter of(DateFormat format, DateLocale locale) {
+    public TimestampUtf8Adapter of(DateFormat format, DateLocale locale, String pattern) {
         this.format = format;
         this.locale = locale;
+        this.pattern = pattern;
         return this;
     }
 

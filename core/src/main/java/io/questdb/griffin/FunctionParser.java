@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.MillsTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.BindVariableService;
@@ -35,20 +36,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.CharFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.DateFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.DoubleFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.FloatFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.IPv4FunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.IntFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.Long256FunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIPv4ToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
@@ -110,12 +103,21 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.CharFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.DateFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.DoubleFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.FloatFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.IPv4FunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.IntFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.Long256FunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.ShortFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -128,7 +130,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -205,7 +206,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.DATE:
                 return DateColumn.newInstance(index);
             case ColumnType.TIMESTAMP:
-                return TimestampColumn.newInstance(index);
+                return TimestampColumn.newInstance(index, columnType);
             case ColumnType.RECORD:
                 return new RecordColumn(index, metadata.getMetadata(index));
             case ColumnType.GEOBYTE:
@@ -225,9 +226,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.UUID:
                 return UuidColumn.newInstance(index);
             case ColumnType.IPv4:
-                return new IPv4Column(index);
+                return IPv4Column.newInstance(index);
             case ColumnType.INTERVAL:
-                return IntervalColumn.newInstance(index);
+                return IntervalColumn.newInstance(index, columnType);
             case ColumnType.ARRAY:
                 return new ArrayColumn(index, columnType);
             default:
@@ -265,7 +266,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     public Function createImplicitCast(int position, Function function, int toType) throws SqlException {
-        Function cast = createImplicitCastOrNull(position, function, toType);
+        final Function cast = createImplicitCastOrNull(position, function, toType);
         if (cast != null && cast.isConstant()) {
             Function constant = functionToConstant(cast);
             // incoming function is now converted to a constant and can be closed here
@@ -354,7 +355,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // we don't wrap function in a memoizer if it is a group by or window function
             // otherwise SqlCodeGen would not recognize the function as a Window or GroupBy function
             if (function != null && !(function instanceof GroupByFunction) && !(function instanceof WindowFunction) && function.shouldMemoize()) {
-                switch (function.getType()) {
+                switch (ColumnType.tagOf(function.getType())) {
                     case ColumnType.LONG:
                         return new LongFunctionMemoizer(function);
                     case ColumnType.INT:
@@ -468,18 +469,32 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
                         final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
                         final int expectedType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
-                        final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
                         final int actualType = args.getQuick(i).getType();
+                        final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
                         final boolean actualConstant = args.getQuick(i).isConstant();
 
-                        if (expectedType != actualType || (expectedConstant && !actualConstant)) {
-                            ex.put(" expected: ").put(ColumnType.nameOf(expectedType));
-                            if (expectedType == actualType) {
+                        if (FunctionFactoryDescriptor.isArray(typeWithFlags)) {
+                            // we expect arg to be a compatible array
+                            if (ColumnType.isArray(actualType) && expectedType == ColumnType.decodeArrayElementType(actualType) && (!expectedConstant || actualConstant)) {
+                                continue;
+                            }
+                            ex.put(" expected: ").put(ColumnType.nameOf(expectedType)).put("[]");
+                            if (ColumnType.isArray(actualType) && expectedType == ColumnType.decodeArrayElementType(actualType)) {
                                 ex.put(" constant");
                             }
                             ex.put(", actual: ").put(ColumnType.nameOf(actualType));
                             ex.setPosition(argPositions.getQuick(i));
                             break;
+                        } else {
+                            if (expectedType != actualType || (expectedConstant && !actualConstant)) {
+                                ex.put(" expected: ").put(ColumnType.nameOf(expectedType));
+                                if (expectedType == actualType) {
+                                    ex.put(" constant");
+                                }
+                                ex.put(", actual: ").put(ColumnType.nameOf(actualType));
+                                ex.setPosition(argPositions.getQuick(i));
+                                break;
+                            }
                         }
                     }
                 } else {
@@ -531,7 +546,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         OperatorExpression op = OperatorExpression.getRegistry().getOperatorDefinition(node.token);
         if (op == null) {
-            // function, not an operator,  is  not found
+            // function, not an operator, is not found
             if (args != null) {
                 ex.put("there is no matching function `").put(node.token).put("` with the argument types: (");
                 for (int i = 0, n = args.size(); i < n; i++) {
@@ -550,7 +565,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         if (args != null && args.size() == 2) {
             // binary operator not found
-            // function, not an operator,  is  not found
+            // function, not an operator, is not found
             ex.put("there is no matching operator `").put(node.token).put("` with the argument types: ");
             putArgType(args, 0, ex);
             ex.put(' ');
@@ -561,11 +576,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             return ex;
         }
 
-
         assert args != null;
 
         // Unary operator with the specific argument types not found.
-        // function, not an operator,  is  not found
+        // function, not an operator, is not found
         ex.put("there is no matching operator `").put(node.token).put("` with the argument type: ");
         putArgType(args, 0, ex);
         Misc.freeObjList(args);
@@ -593,7 +607,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private static long parseDate(CharSequence str, int position) throws SqlException {
         try {
-            return DateFormatUtils.parseDate(str);
+            return MillsTimestampDriver.floor(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(str, position);
         }
@@ -790,7 +804,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // the bind variable to that type. This will then fail when an actual value is bound
             // to the variable, and it's most likely not that arbitrary type.
             Function arg0 = args.getQuick(0);
-            if (ColumnType.isUnderdefined(arg0.getType())) {
+            if (ColumnType.isUndefined(arg0.getType())) {
                 final int castToType = args.getQuick(1).getType();
                 short castToTypeTag = ColumnType.tagOf(castToType);
                 final int assignType;
@@ -882,8 +896,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     final boolean argIsStringArray = argTypeTag == ColumnType.ARRAY_STRING;
                     final boolean sigIsStringArray = sigArgTypeTag == ColumnType.ARRAY_STRING;
                     if (sigIsArray != argIsArray || sigIsStringArray != argIsStringArray) {
-                        match = MATCH_NO_MATCH;
-                        break;
+                        if (argType != ColumnType.UNDEFINED) {
+                            match = MATCH_NO_MATCH;
+                            break;
+                        }
                     }
                     if (argIsStringArray) { // give the above checks, implies that sigIsStringArray is also true
                         match = mergeWithExactMatch(match);
@@ -1030,8 +1046,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             final int pos = undefinedVariables.getQuick(i);
             if (pos < candidateSigArgCount) {
                 // assign arguments based on the candidate function descriptor
-                final int sigArgType = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeWithFlags(pos));
-                args.getQuick(pos).assignType(sigArgType, sqlExecutionContext.getBindVariableService());
+                int t = candidateDescriptor.getArgTypeWithFlags(pos);
+                final short sigArgType = FunctionFactoryDescriptor.toTypeTag(t);
+                final int argType;
+                if (FunctionFactoryDescriptor.isArray(t)) {
+                    argType = ColumnType.encodeArrayTypeWithWeakDims(sigArgType, true);
+                } else {
+                    argType = sigArgType;
+                }
+                args.getQuick(pos).assignType(argType, sqlExecutionContext.getBindVariableService());
             } else {
                 // in case of vararg it is possible that we have more undefined variables than args in the function descriptor,
                 // assign type to all remaining undefined variables based on the preference of the candidate function factory
@@ -1042,7 +1065,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         for (int k = 0; k < candidateSigArgCount; k++) {
             final Function arg = args.getQuick(k);
-            final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeWithFlags(k));
+            final int sigArgType = candidateDescriptor.getArgTypeWithFlags(k);
+            final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(sigArgType);
             final short argTypeTag = ColumnType.tagOf(arg.getType());
 
             if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
@@ -1055,8 +1079,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL || argTypeTag == ColumnType.VARCHAR) && arg.isConstant()) {
                 if (sigArgTypeTag == ColumnType.TIMESTAMP) {
                     int position = argPositions.getQuick(k);
-                    long timestamp = parseTimestamp(arg.getStrA(null), position);
-                    args.set(k, TimestampConstant.newInstance(timestamp));
+                    CharSequence timestampStr = arg.getStrA(null);
+                    // Adaptive precision: prefer nano if the string has nanosecond precision
+                    int adaptiveType = getAdaptiveTimestampType(timestampStr, sigArgType);
+                    long timestamp = parseTimestamp(adaptiveType, timestampStr, position);
+                    args.set(k, TimestampConstant.newInstance(timestamp, adaptiveType));
                 } else if (sigArgTypeTag == ColumnType.DATE) {
                     int position = argPositions.getQuick(k);
                     long millis = parseDate(arg.getStrA(null), position);
@@ -1079,8 +1106,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.SYMBOL:
                 if (toType == ColumnType.UUID) {
                     return new CastStrToUuidFunctionFactory.Func(function);
-                } else if (toType == ColumnType.TIMESTAMP) {
-                    return new CastStrToTimestampFunctionFactory.Func(function);
+                } else if (ColumnType.isTimestamp(toType)) {
+                    return new CastStrToTimestampFunctionFactory.Func(function, toType);
                 } else if (ColumnType.isArray(toType)) {
                     assert ColumnType.decodeArrayElementType(toType) == ColumnType.DOUBLE;
                     return new CastStrToDoubleArrayFunctionFactory.Func(function, toType);
@@ -1092,8 +1119,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (toType == ColumnType.UUID) {
                     return new CastVarcharToUuidFunctionFactory.Func(function);
                 }
-                if (toType == ColumnType.TIMESTAMP) {
-                    return new CastVarcharToTimestampFunctionFactory.Func(function);
+                if (ColumnType.isTimestamp(toType)) {
+                    return new CastVarcharToTimestampFunctionFactory.Func(function, toType);
                 }
                 if (ColumnType.isGeoHash(toType)) {
                     return CastVarcharToGeoHashFunctionFactory.newInstance(position, toType, function);
@@ -1110,6 +1137,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.CHAR:
                 if (toType == ColumnType.SYMBOL) {
                     return new CastCharToSymbolFunctionFactory.Func(function);
+                }
+                break;
+            case ColumnType.IPv4:
+                if (toType == ColumnType.STRING) {
+                    return new CastIPv4ToStrFunctionFactory.Func(function);
+                }
+                if (toType == ColumnType.VARCHAR) {
+                    return new CastIPv4ToVarcharFunctionFactory.Func(function);
                 }
                 break;
             default:
@@ -1140,6 +1175,45 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw SqlException.position(position).put("undefined bind variable: ").put(name);
         }
         return new NamedParameterLinkFunction(Chars.toString(name), function.getType());
+    }
+
+    /**
+     * Extracts the year from a timestamp string.
+     * Supports formats like "YYYY-MM-DD...", "YYYY/MM/DD...", etc.
+     *
+     * @param timestampStr the timestamp string
+     * @return the year, or -1 if cannot be extracted
+     */
+    private int extractYearFromTimestamp(CharSequence timestampStr) {
+        if (timestampStr == null || timestampStr.length() < 4) {
+            return -1;
+        }
+
+        // Look for the first 4 consecutive digits at the start
+        int yearStart = 0;
+        int digitCount = 0;
+
+        for (int i = 0; i < timestampStr.length() && i < 10; i++) { // Limit search to first 10 chars
+            char c = timestampStr.charAt(i);
+            if (c >= '0' && c <= '9') {
+                if (digitCount == 0) {
+                    yearStart = i;
+                }
+                digitCount++;
+                if (digitCount == 4) {
+                    // Found 4 consecutive digits, extract as year
+                    try {
+                        return Numbers.parseInt(timestampStr, yearStart, yearStart + 4);
+                    } catch (NumericException e) {
+                        return -1;
+                    }
+                }
+            } else {
+                digitCount = 0; // Reset if non-digit found
+            }
+        }
+
+        return -1; // Could not extract year
     }
 
     private Function functionToConstant(Function function) {
@@ -1266,7 +1340,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof TimestampConstant) {
                     return function;
                 } else {
-                    return TimestampConstant.newInstance(function.getTimestamp(null));
+                    return TimestampConstant.newInstance(function.getTimestamp(null), type);
                 }
             case ColumnType.UUID:
                 if (function instanceof UuidConstant) {
@@ -1292,6 +1366,63 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             default:
                 return function;
         }
+    }
+
+    /**
+     * Determines the appropriate timestamp type based on the string precision and year range.
+     * If the string contains nanosecond precision (more than 6 digits after seconds) and
+     * the year is within nano timestamp range (< 2262), returns nano type;
+     * otherwise returns the original signature type.
+     *
+     * @param timestampStr the timestamp string to analyze
+     * @param sigArgType   the original signature argument type
+     * @return adaptive timestamp type (nano if detected and within range, otherwise original)
+     */
+    private int getAdaptiveTimestampType(CharSequence timestampStr, int sigArgType) {
+        if (timestampStr == null || timestampStr.length() == 0) {
+            return FunctionFactoryDescriptor.toType(sigArgType);
+        }
+
+        // Extract year from timestamp string to check nano range
+        int year = extractYearFromTimestamp(timestampStr);
+        if (year >= 2262) {
+            // Year is beyond nano timestamp range, use original type
+            return FunctionFactoryDescriptor.toType(sigArgType);
+        }
+
+        // Look for fractional seconds part after last '.' or ':'
+        int lastDot = -1;
+        for (int i = timestampStr.length() - 1; i >= 0; i--) {
+            char c = timestampStr.charAt(i);
+            if (c == '.' || c == ':') {
+                lastDot = i;
+                break;
+            }
+            // Stop if we hit a space or non-digit (except for timezone indicators)
+            if (c == ' ' || c == 'T' || c == '+' || c == '-') {
+                break;
+            }
+        }
+
+        if (lastDot >= 0 && lastDot < timestampStr.length() - 1) {
+            // Count digits after the dot/colon until we hit non-digit
+            int digitCount = 0;
+            for (int i = lastDot + 1; i < timestampStr.length(); i++) {
+                char c = timestampStr.charAt(i);
+                if (c >= '0' && c <= '9') {
+                    digitCount++;
+                } else {
+                    break; // Stop at timezone or other non-digit characters
+                }
+            }
+
+            // If more than 6 digits (microsecond precision) and within nano range, use nanosecond type
+            if (digitCount > 6) {
+                return ColumnType.TIMESTAMP_NANO;
+            }
+        }
+
+        return FunctionFactoryDescriptor.toType(sigArgType); // Use original signature type
     }
 
     @NotNull
@@ -1322,9 +1453,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
     }
 
-    private long parseTimestamp(CharSequence str, int position) throws SqlException {
+    private long parseTimestamp(int timestampType, CharSequence str, int position) throws SqlException {
         try {
-            return IntervalUtils.parseFloorPartialTimestamp(str);
+            return ColumnType.getTimestampDriver(timestampType).parseFloorLiteral(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(str, position);
         }

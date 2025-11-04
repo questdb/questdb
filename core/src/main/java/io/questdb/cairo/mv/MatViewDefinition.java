@@ -24,12 +24,17 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.file.ReadableBlock;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
@@ -39,15 +44,12 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class MatViewDefinition implements Mutable {
     public static final String MAT_VIEW_DEFINITION_FILE_NAME = "_mv";
@@ -62,6 +64,8 @@ public class MatViewDefinition implements Mutable {
     public static final int REFRESH_TYPE_TIMER = 1;
     private static final Log LOG = LogFactory.getLog(MatViewDefinition.class);
     private String baseTableName;
+    private TimestampDriver baseTableTimestampDriver;
+    private int baseTableTimestampType = ColumnType.UNDEFINED;
     private boolean deferred;
     // Not persisted, parsed from timeZoneOffset.
     private long fixedOffset;
@@ -84,8 +88,8 @@ public class MatViewDefinition implements Mutable {
     private @Nullable String timeZoneOffset;
     private int timerInterval;
     // Not persisted, parsed from timerTimeZone.
-    private @Nullable TimeZoneRules timerRules;
-    private long timerStart = Numbers.LONG_NULL;
+    private @Nullable TimeZoneRules timerRulesUs;
+    private long timerStartUs = Numbers.LONG_NULL;
     private @Nullable String timerTimeZone;
     private char timerUnit;
     // Not persisted, parsed from samplingInterval and samplingIntervalUnit.
@@ -117,7 +121,7 @@ public class MatViewDefinition implements Mutable {
         block.putInt(matViewDefinition.refreshLimitHoursOrMonths);
         block.putInt(matViewDefinition.timerInterval);
         block.putChar(matViewDefinition.timerUnit);
-        block.putLong(matViewDefinition.timerStart);
+        block.putLong(matViewDefinition.timerStartUs);
         block.putStr(matViewDefinition.timerTimeZone);
         block.putInt(matViewDefinition.periodLength);
         block.putChar(matViewDefinition.periodLengthUnit);
@@ -126,6 +130,7 @@ public class MatViewDefinition implements Mutable {
     }
 
     public static void readFrom(
+            @NotNull CairoEngine engine,
             @NotNull MatViewDefinition destDefinition,
             @NotNull BlockFileReader reader,
             @NotNull Path path,
@@ -141,7 +146,7 @@ public class MatViewDefinition implements Mutable {
             final ReadableBlock block = cursor.next();
             if (block.type() == MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
                 definitionBlockFound = true;
-                readDefinitionBlock(destDefinition, block, viewToken);
+                readDefinitionBlock(engine, destDefinition, block, viewToken);
                 // keep going, because V2 block might follow
                 continue;
             }
@@ -183,17 +188,23 @@ public class MatViewDefinition implements Mutable {
         refreshLimitHoursOrMonths = 0;
         timerInterval = 0;
         timerUnit = 0;
-        timerStart = Numbers.LONG_NULL;
+        timerStartUs = Numbers.LONG_NULL;
         timerTimeZone = null;
-        timerRules = null;
+        timerRulesUs = null;
         periodLength = 0;
         periodLengthUnit = 0;
         periodDelay = 0;
         periodDelayUnit = 0;
+        baseTableTimestampDriver = null;
+        baseTableTimestampType = ColumnType.UNDEFINED;
     }
 
     public String getBaseTableName() {
         return baseTableName;
+    }
+
+    public TimestampDriver getBaseTableTimestampDriver() {
+        return baseTableTimestampDriver;
     }
 
     public long getFixedOffset() {
@@ -262,16 +273,16 @@ public class MatViewDefinition implements Mutable {
         return timerInterval;
     }
 
-    public long getTimerStart() {
-        return timerStart;
+    public long getTimerStartUs() {
+        return timerStartUs;
     }
 
     public @Nullable String getTimerTimeZone() {
         return timerTimeZone;
     }
 
-    public @Nullable TimeZoneRules getTimerTzRules() {
-        return timerRules;
+    public @Nullable TimeZoneRules getTimerTzRulesUs() {
+        return timerRulesUs;
     }
 
     public char getTimerUnit() {
@@ -289,6 +300,7 @@ public class MatViewDefinition implements Mutable {
     public void init(
             int refreshType,
             boolean deferred,
+            int timestampType,
             @NotNull TableToken matViewToken,
             @NotNull String matViewSql,
             @NotNull String baseTableName,
@@ -299,7 +311,7 @@ public class MatViewDefinition implements Mutable {
             int refreshLimitHoursOrMonths,
             int timerInterval,
             char timerUnit,
-            long timerStart,
+            long timerStartUs,
             @Nullable String timerTimeZone,
             int periodLength,
             char periodLengthUnit,
@@ -309,6 +321,7 @@ public class MatViewDefinition implements Mutable {
         initDefinition(
                 refreshType,
                 deferred,
+                timestampType,
                 matViewToken,
                 matViewSql,
                 baseTableName,
@@ -321,7 +334,7 @@ public class MatViewDefinition implements Mutable {
                 refreshLimitHoursOrMonths,
                 timerInterval,
                 timerUnit,
-                timerStart,
+                timerStartUs,
                 timerTimeZone,
                 periodLength,
                 periodLengthUnit,
@@ -343,6 +356,7 @@ public class MatViewDefinition implements Mutable {
         newDefinition.init(
                 refreshType,
                 deferred,
+                baseTableTimestampType,
                 matViewToken,
                 matViewSql,
                 baseTableName,
@@ -353,7 +367,7 @@ public class MatViewDefinition implements Mutable {
                 refreshLimitHoursOrMonths,
                 timerInterval,
                 timerUnit,
-                timerStart,
+                timerStartUs,
                 timerTimeZone,
                 periodLength,
                 periodLengthUnit,
@@ -367,7 +381,7 @@ public class MatViewDefinition implements Mutable {
             int refreshType,
             int timerInterval,
             char timerUnit,
-            long timerStart,
+            long timerStartUs,
             @Nullable CharSequence timerTimeZone,
             int periodLength,
             char periodLengthUnit,
@@ -378,6 +392,7 @@ public class MatViewDefinition implements Mutable {
         newDefinition.init(
                 refreshType,
                 deferred,
+                baseTableTimestampType,
                 matViewToken,
                 matViewSql,
                 baseTableName,
@@ -388,7 +403,7 @@ public class MatViewDefinition implements Mutable {
                 refreshLimitHoursOrMonths,
                 timerInterval,
                 timerUnit,
-                timerStart,
+                timerStartUs,
                 Chars.toString(timerTimeZone),
                 periodLength,
                 periodLengthUnit,
@@ -398,11 +413,12 @@ public class MatViewDefinition implements Mutable {
         return newDefinition;
     }
 
-    public MatViewDefinition updateTimer(int timerInterval, char timerUnit, long timerStart) {
+    public MatViewDefinition updateTimer(int timerInterval, char timerUnit, long timerStartUs) {
         final MatViewDefinition newDefinition = new MatViewDefinition();
         newDefinition.init(
                 refreshType,
                 deferred,
+                baseTableTimestampType,
                 matViewToken,
                 matViewSql,
                 baseTableName,
@@ -413,7 +429,7 @@ public class MatViewDefinition implements Mutable {
                 refreshLimitHoursOrMonths,
                 timerInterval,
                 timerUnit,
-                timerStart,
+                timerStartUs,
                 timerTimeZone,
                 periodLength,
                 periodLengthUnit,
@@ -441,6 +457,7 @@ public class MatViewDefinition implements Mutable {
     }
 
     private static void readDefinitionBlock(
+            CairoEngine engine,
             MatViewDefinition destDefinition,
             ReadableBlock block,
             TableToken matViewToken
@@ -493,9 +510,16 @@ public class MatViewDefinition implements Mutable {
                     .put(']');
         }
 
+        // Mat view's and base table's timestamp types must always match.
+        final int timestampType;
+        try (TableMetadata metadata = engine.getTableMetadata(matViewToken)) {
+            timestampType = metadata.getTimestampType();
+        }
+
         destDefinition.initDefinition(
                 refreshType,
                 deferred,
+                timestampType,
                 matViewToken,
                 Chars.toString(matViewSql),
                 baseTableNameStr,
@@ -522,7 +546,7 @@ public class MatViewDefinition implements Mutable {
         final char timerUnit = block.getChar(offset);
         offset += Character.BYTES;
 
-        final long timerStart = block.getLong(offset);
+        final long timerStartUs = block.getLong(offset);
         offset += Long.BYTES;
 
         final CharSequence timerTimeZone = block.getStr(offset);
@@ -543,7 +567,7 @@ public class MatViewDefinition implements Mutable {
                 refreshLimitHoursOrMonths,
                 timerInterval,
                 timerUnit,
-                timerStart,
+                timerStartUs,
                 Chars.toString(timerTimeZone),
                 periodLength,
                 periodLengthUnit,
@@ -555,6 +579,7 @@ public class MatViewDefinition implements Mutable {
     private void initDefinition(
             int refreshType,
             boolean deferred,
+            int timestampType,
             @NotNull TableToken matViewToken,
             @NotNull String matViewSql,
             @NotNull String baseTableName,
@@ -572,9 +597,12 @@ public class MatViewDefinition implements Mutable {
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
+        this.baseTableTimestampType = timestampType;
+        this.baseTableTimestampDriver = ColumnType.getTimestampDriver(baseTableTimestampType);
 
         try {
             this.timestampSampler = TimestampSamplerFactory.getInstance(
+                    baseTableTimestampDriver,
                     samplingInterval,
                     samplingIntervalUnit,
                     0
@@ -585,21 +613,17 @@ public class MatViewDefinition implements Mutable {
         }
 
         if (timeZone != null) {
-            try {
-                this.rules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone);
-            } catch (NumericException e) {
-                throw CairoException.critical(0).put("invalid timezone: ").put(timeZone);
-            }
+            this.rules = baseTableTimestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone);
         } else {
             this.rules = null;
         }
 
         if (timeZoneOffset != null) {
-            final long val = Timestamps.parseOffset(timeZoneOffset);
+            final long val = Dates.parseOffset(timeZoneOffset);
             if (val == Numbers.LONG_NULL) {
                 throw CairoException.critical(0).put("invalid offset: ").put(timeZoneOffset);
             }
-            this.fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
+            this.fixedOffset = baseTableTimestampDriver.fromMinutes(Numbers.decodeLowInt(val));
         } else {
             this.fixedOffset = 0;
         }
@@ -609,7 +633,7 @@ public class MatViewDefinition implements Mutable {
             int refreshLimitHoursOrMonths,
             int timerInterval,
             char timerUnit,
-            long timerStart,
+            long timerStartUs,
             @Nullable String timerTimeZone,
             int periodLength,
             char periodLengthUnit,
@@ -619,21 +643,16 @@ public class MatViewDefinition implements Mutable {
         this.refreshLimitHoursOrMonths = refreshLimitHoursOrMonths;
         this.timerInterval = timerInterval;
         this.timerUnit = timerUnit;
-        this.timerStart = timerStart;
+        this.timerStartUs = timerStartUs;
         this.timerTimeZone = timerTimeZone;
         this.periodLength = periodLength;
         this.periodLengthUnit = periodLengthUnit;
         this.periodDelay = periodDelay;
         this.periodDelayUnit = periodDelayUnit;
-
         if (timerTimeZone != null) {
-            try {
-                this.timerRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timerTimeZone);
-            } catch (NumericException e) {
-                throw CairoException.critical(0).put("invalid timer timezone: ").put(timerTimeZone);
-            }
+            this.timerRulesUs = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
         } else {
-            this.timerRules = null;
+            this.timerRulesUs = null;
         }
     }
 }

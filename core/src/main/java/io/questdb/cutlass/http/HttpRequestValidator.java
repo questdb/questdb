@@ -78,6 +78,11 @@ public class HttpRequestValidator {
     }
 
     HttpRequestProcessor validateRequestType(HttpRequestProcessor processor, RejectProcessor rejectProcessor) {
+        if (processor == null) {
+            rejectProcessor.getMessageSink().put("No request handler for URI: ").put(requestHeader.getUrl());
+            return rejectProcessor.reject(HTTP_BAD_REQUEST);
+        }
+
         if ((processor.getSupportedRequestTypes() & requestType) == requestType) {
             // request type is supported, check passed
             return processor;

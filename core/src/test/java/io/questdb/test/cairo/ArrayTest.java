@@ -148,7 +148,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SELECT arr1[1, true] FROM tango",
                     15, "invalid type for array access [type=1]");
             assertExceptionNoLeakCheck("SELECT arr1[1, 1, 1] FROM tango",
-                    18, "too many array access arguments [nDims=2, nArgs=3]");
+                    15, "too many array access arguments [nDims=2, nArgs=3]");
             assertExceptionNoLeakCheck("SELECT arr1[0] FROM tango",
                     12, "array index must be non-zero [dim=1, index=0]");
             assertExceptionNoLeakCheck("SELECT arr1[0, 1] FROM tango",
@@ -164,7 +164,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SELECT arr1[1, 0] FROM tango",
                     15, "array index must be non-zero [dim=2, index=0]");
             assertExceptionNoLeakCheck("SELECT arr1[1, 1, 1] FROM tango",
-                    18, "too many array access arguments [nDims=2, nArgs=3]");
+                    15, "too many array access arguments [nDims=2, nArgs=3]");
             assertExceptionNoLeakCheck("SELECT arr1[1][1, 1] FROM tango",
                     18, "too many array access arguments [nDims=2, nArgs=3]");
             assertExceptionNoLeakCheck("SELECT arr1[1][1][1] FROM tango",
@@ -469,7 +469,7 @@ public class ArrayTest extends AbstractCairoTest {
                     "40.0\n" +
                     "5.0\n", "SELECT dot_product(transpose(left), transpose(right)) AS product FROM tango");
             assertExceptionNoLeakCheck("SELECT dot_product(Array[1.0], Array[[1.0]]) AS product FROM tango",
-                    24, "arrays have different number of dimensions [nDimsLeft=1, nDimsRight=2]");
+                    24, "arrays have different number of dimensions [dimsLeft=1, dimsRight=2]");
             assertExceptionNoLeakCheck("SELECT dot_product(Array[1.0], Array[1.0, 2.0]) AS product FROM tango",
                     24, "arrays have different shapes [leftShape=[1], rightShape=[2]]");
         });
@@ -1765,11 +1765,11 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]] arr FROM long_sequence(1))");
             assertExceptionNoLeakCheck("SELECT dim_length(arr, 0) len FROM tango",
-                    23, "array dimension out of bounds [dim=0, nDims=2]");
+                    23, "array dimension out of bounds [dim=0]");
             assertExceptionNoLeakCheck("SELECT dim_length(arr, 3) len FROM tango",
-                    23, "array dimension out of bounds [dim=3, nDims=2]");
+                    23, "array dimension out of bounds [dim=3, dims=2]");
             assertExceptionNoLeakCheck("SELECT dim_length(arr, arr[2, 1]::int) len FROM tango",
-                    32, "array dimension out of bounds [dim=3, nDims=2]");
+                    32, "array dimension out of bounds [dim=3, dims=2]");
         });
     }
 
@@ -1844,7 +1844,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SELECT matmul(left1d, right1d) FROM tango",
                     14, "left array row length doesn't match right array column length [leftRowLen=1, rightColLen=2]");
             assertExceptionNoLeakCheck("SELECT matmul(left3d, right1d) FROM tango",
-                    22, "left array is not one or two-dimensional");
+                    14, "left array is not one or two-dimensional");
             assertExceptionNoLeakCheck("SELECT matmul(left1d, right3d) FROM tango",
                     22, "right array is not one or two-dimensional");
         });
@@ -2062,24 +2062,32 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPartitionConversionToParquetFailsGracefully() throws Exception {
+    public void testParquet() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts timestamp, i int, arr double[]) timestamp(ts) partition by DAY");
             execute("INSERT INTO tango VALUES ('2001-01', 1, '{1.0, 2.0}')");
             execute("INSERT INTO tango VALUES ('2001-02', 1, '{1.0, 2.0}')");
 
-            // with predicate
-            assertException(
-                    "ALTER TABLE tango CONVERT PARTITION TO PARQUET where ts in '2001-01';",
-                    39,
-                    "tables with array columns cannot be converted to Parquet partitions yet [table=tango, column=arr]"
+            final String expected = "ts\ti\tarr\n" +
+                    "2001-01-01T00:00:00.000000Z\t1\t[1.0,2.0]\n" +
+                    "2001-02-01T00:00:00.000000Z\t1\t[1.0,2.0]\n";
+
+            execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET where ts in '2001-01';");
+            assertQuery(
+                    expected,
+                    "tango",
+                    "ts",
+                    true,
+                    true
             );
 
-            // with list
-            assertException(
-                    "ALTER TABLE tango CONVERT PARTITION TO PARQUET list '2001-01';",
-                    39,
-                    "tables with array columns cannot be converted to Parquet partitions yet [table=tango, column=arr]"
+            execute("ALTER TABLE tango CONVERT PARTITION TO NATIVE where ts in '2001-01';");
+            assertQuery(
+                    expected,
+                    "tango",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -2092,7 +2100,8 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[2.0, 3.0], ARRAY[4.0, 5]), " +
                     "(ARRAY[6.0, 7], ARRAY[8.0, 9])");
 
-            assertQuery("a1\tb1\ta2\tb2\n" +
+            assertQuery(
+                    "a1\tb1\ta2\tb2\n" +
                             "[2.0,3.0]\t[4.0,5.0]\t[2.0,3.0]\t[4.0,5.0]\n" +
                             "[6.0,7.0]\t[8.0,9.0]\t[6.0,7.0]\t[8.0,9.0]\n",
                     "select a as a1, b as b1, a as a2, b as b2 from 'tango' ",
@@ -2502,7 +2511,7 @@ public class ArrayTest extends AbstractCairoTest {
                     12, "array slice bounds must be non-zero [dim=1, lowerBound=1, upperBound=0]"
             );
             assertExceptionNoLeakCheck("SELECT arr[1:2, 1:2, 1:2] FROM tango",
-                    22, "too many array access arguments [nDims=2, nArgs=3]"
+                    17, "too many array access arguments [nDims=2, nArgs=3]"
             );
             assertExceptionNoLeakCheck("SELECT arr[1:(arr[1, 1] - 1)::int] FROM tango",
                     12, "array slice bounds must be non-zero [dim=1, upperBound=0]"

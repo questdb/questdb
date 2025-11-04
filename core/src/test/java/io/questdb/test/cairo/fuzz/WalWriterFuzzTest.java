@@ -120,10 +120,11 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSize);
             chunkSize = node1.getConfiguration().getDefaultSeqPartTxnCount();
 
-            execute("create table chunk_seq (\n" +
-                    "  x long,\n" +
-                    "  ts timestamp\n" +
-                    ") timestamp(ts) PARTITION by day WAL");
+            execute("""
+                    create table chunk_seq (
+                      x long,
+                      ts timestamp
+                    ) timestamp(ts) PARTITION by day WAL""");
             execute("insert batch 2 into chunk_seq \n" +
                     "  select x, timestamp_sequence('2024-01-01', 312312) from long_sequence(1000)");
 

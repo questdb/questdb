@@ -92,8 +92,11 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (arr double[]);");
             execute("alter table x drop column arr;");
-            assertSql("column\ttype\n",
-                    "select \"column\", \"type\" from table_columns('x')");
+            assertSql("\n", "x;");
+            assertSql(
+                    "column\ttype\n",
+                    "select \"column\", \"type\" from table_columns('x')"
+            );
         });
     }
 

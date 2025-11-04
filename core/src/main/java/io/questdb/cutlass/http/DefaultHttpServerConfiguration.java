@@ -33,15 +33,15 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
@@ -182,6 +182,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     @Override
+    public boolean isAcceptingWrites() {
+        return true;
+    }
+
+    @Override
     public boolean isPessimisticHealthCheckEnabled() {
         return false;
     }
@@ -239,6 +244,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
+        public int getDefaultTimestampColumnType() {
+            return ColumnType.TIMESTAMP_MICRO;
+        }
+
+        @Override
         public CharSequence getInfluxPingVersion() {
             return "v2.7.4";
         }
@@ -259,8 +269,8 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
-        public LineTcpTimestampAdapter getTimestampAdapter() {
-            return LineTcpTimestampAdapter.DEFAULT_TS_INSTANCE;
+        public byte getTimestampUnit() {
+            return CommonUtils.TIMESTAMP_UNIT_NANOS;
         }
 
         @Override
@@ -289,6 +299,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         @Override
         public int getConnectionCheckFrequency() {
             return 1_000_000;
+        }
+
+        @Override
+        public long getExportTimeout() {
+            return Long.MAX_VALUE;
         }
 
         @Override

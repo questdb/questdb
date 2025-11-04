@@ -69,7 +69,7 @@ public final class Unsafe {
         try {
             implAddExports.invoke(from, packageName, to);
         } catch (ReflectiveOperationException e) {
-            e.printStackTrace();
+            e.printStackTrace(System.out);
         }
     }
 
@@ -476,7 +476,7 @@ public final class Unsafe {
                         (MethodHandles.Lookup) defineMethod.invoke(trustedLookup.in(hostClass), data, false, hiddenClassOptions);
                 return definedLookup.lookupClass();
             } catch (Exception e) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
                 return null;
             }
         }
@@ -518,7 +518,7 @@ public final class Unsafe {
             try {
                 return (Class<?>) defineMethod.invoke(UNSAFE, hostClass, data, null);
             } catch (Exception e) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
                 return null;
             }
         }

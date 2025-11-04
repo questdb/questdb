@@ -93,11 +93,31 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Zip_inflateInit
     z_streamp strm = calloc(1, sizeof(z_stream));
 
     if (strm == 0) {
-        return -1;
+        return -42; // avoid clashes with Z_*_ERROR consts
     }
 
     int ret;
     switch (ret = inflateInit2(strm, nowrap ? -MAX_WBITS : MAX_WBITS)) {
+        case Z_OK:
+            return (jlong) strm;
+        default:
+            free(strm);
+            return ret;
+    }
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Zip_inflateInitGzip
+        (JNIEnv *e, jclass cl) {
+
+    z_streamp strm = calloc(1, sizeof(z_stream));
+
+    if (strm == 0) {
+        return -1;
+    }
+
+    int ret;
+    // 16+MAX_WBITS => gzip-only (per zlib docs)
+    switch (ret = inflateInit2(strm, 16+MAX_WBITS)) {
         case Z_OK:
             return (jlong) strm;
         default:
@@ -111,12 +131,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Zip_inflate
     z_streamp strm = (z_streamp) ptr;
     strm->next_out = (Bytef *) address;
     strm->avail_out = (uInt) available;
-
-    int ret;
-    if ((ret = inflate(strm, flush ? Z_FINISH : Z_NO_FLUSH)) < 0) {
-        return ret;
-    }
-    return (jint) (available - strm->avail_out);
+    return inflate(strm, flush ? Z_FINISH : Z_NO_FLUSH);
 }
 
 JNIEXPORT void JNICALL Java_io_questdb_std_Zip_inflateEnd

@@ -33,9 +33,11 @@ import io.questdb.ServerMain;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.network.Socket;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -75,7 +77,7 @@ public class PGErrorHandlingTest extends AbstractBootstrapTest {
                                 new FilesFacadeImpl() {
                                     @Override
                                     public long openRW(LPSZ name, int opts) {
-                                        if (counter.incrementAndGet() > 78) {
+                                        if (Utf8s.endsWithAscii(name, "x" + Files.SEPARATOR + "_meta")) {
                                             throw new RuntimeException("Test error");
                                         }
                                         return super.openRW(name, opts);

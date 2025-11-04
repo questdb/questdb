@@ -27,12 +27,11 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration {
@@ -57,6 +56,8 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     short getDefaultColumnTypeForInteger();
 
+    int getDefaultCreateTimestampColumnType();
+
     int getDefaultPartitionBy();
 
     boolean getDisconnectOnError();
@@ -64,8 +65,6 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
     FactoryProvider getFactoryProvider();
 
     FilesFacade getFilesFacade();
-
-    WorkerPoolConfiguration getNetworkWorkerPoolConfiguration();
 
     /**
      * Interval in milliseconds to perform writer maintenance. Such maintenance can
@@ -89,9 +88,11 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     NetworkFacade getNetworkFacade();
 
+    WorkerPoolConfiguration getNetworkWorkerPoolConfiguration();
+
     long getSymbolCacheWaitBeforeReload();
 
-    LineTcpTimestampAdapter getTimestampAdapter();
+    byte getTimestampUnit();
 
     long getWriterIdleTimeout();
 

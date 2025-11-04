@@ -24,7 +24,7 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 
 public class TestMicroClock implements MicrosecondClock {
     private final long increment;

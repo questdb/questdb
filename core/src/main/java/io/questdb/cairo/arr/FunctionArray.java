@@ -38,15 +38,15 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
     private ObjList<Function> functions;
     private Record record;
 
-    public FunctionArray(short elementType, int nDims) {
-        setType(ColumnType.encodeArrayType(elementType, nDims));
+    public FunctionArray(int elementType, int nDims) {
+        setType(ColumnType.encodeArrayType(ColumnType.tagOf(elementType), nDims));
         this.flatView = this;
     }
 
     @Override
     public void appendToMemFlat(MemoryA mem, int offset, int length) {
         final short elemType = getElemType();
-        switch (elemType) {
+        switch (ColumnType.tagOf(elemType)) {
             case ColumnType.BYTE:
                 for (int i = 0; i < length; i++) {
                     mem.putByte(functions.getQuick(offset + i).getByte(record));

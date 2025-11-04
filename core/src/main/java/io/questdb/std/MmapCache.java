@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoException;
+
 /**
  * Thread-safe cache for memory-mapped file regions with reference counting.
  * Reuses existing mappings for the same file when possible to reduce system calls.
@@ -39,23 +41,32 @@ public class MmapCache {
      * Maps file region into memory, reusing existing mapping if available.
      *
      * @param fd           file descriptor to map
-     * @param fileCacheKey unique value that is safe to use as a key for caching the map. Same OS FD is not good enough
-     *                     since FD can be closed after the mapping is created and reused for a different file.
+     * @param mmapCacheKey unique value that is safe to use as a key for caching the map. FD is not good enough
+     *                     since a FD can be closed after the mapping is created and OS can re-use for a different file.
      * @param len          length of the mapping
      * @param offset       offset in the file to start mapping from
      * @param flags        memory mapping flags, e.g., Files.MAP_RO for read-only
      */
-    public long cacheMmap(int fd, long fileCacheKey, long len, long offset, int flags, int memoryTag) {
-        if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW || len == 0) {
+    public long cacheMmap(int fd, long mmapCacheKey, long len, long offset, int flags, int memoryTag) {
+        if (len < 1) {
+            throw CairoException.critical(0)
+                    .put("could not mmap file, invalid len [len=").put(len)
+                    .put(", offset=").put(offset)
+                    .put(", fd=").put(fd)
+                    .put(", memoryTag=").put(memoryTag)
+                    .put(']');
+        }
+        if (offset != 0 || mmapCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW) {
             return mmap0(fd, len, offset, flags, memoryTag);
         }
 
         synchronized (this) {
 
-            int fdMapIndex = mmapFileCache.keyIndex(fileCacheKey);
+            int fdMapIndex = mmapFileCache.keyIndex(mmapCacheKey);
             if (fdMapIndex < 0) {
                 MmapCacheRecord record = mmapFileCache.valueAt(fdMapIndex);
                 if (record.length >= len) {
+                    assert record.count > 0 : "found a record with zero reference count in mmap cache [fd=" + fd + "]";
                     record.count++;
                     mmapReuseCount++;
                     return record.address;
@@ -65,13 +76,12 @@ public class MmapCache {
             // Cache RO maps only.
             long address = mmap0(fd, len, 0, Files.MAP_RO, memoryTag);
 
-            if (address == -1) {
-                // mmap failed, return 0
+            if (address == FilesFacade.MAP_FAILED) {
                 return address;
             }
             // Cache the mmap record
-            MmapCacheRecord record = createMmapCacheRecord(fd, fileCacheKey, len, address, memoryTag);
-            mmapFileCache.putAt(fdMapIndex, fileCacheKey, record);
+            MmapCacheRecord record = createMmapCacheRecord(fd, mmapCacheKey, len, address, memoryTag);
+            mmapFileCache.putAt(fdMapIndex, mmapCacheKey, record);
 
             // Point the returned address to the correct offset
             mmapAddrCache.put(address, record);
@@ -98,13 +108,22 @@ public class MmapCache {
     /**
      * Resizes existing memory mapping, reusing or creating new mapping as needed.
      */
-    public long mremap(int fd, long fileCacheKey, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
-        if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW) {
+    public long mremap(int fd, long mmapCacheKey, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
+        if (newSize < 1) {
+            throw CairoException.critical(0)
+                    .put("could not remap file, invalid newSize [previousSize=").put(previousSize)
+                    .put(", newSize=").put(newSize)
+                    .put(", offset=").put(offset)
+                    .put(", fd=").put(fd)
+                    .put(", memoryTag=").put(memoryTag)
+                    .put(']');
+        }
+        if (offset != 0 || mmapCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW) {
             return mremap0(fd, address, previousSize, newSize, offset, flags, memoryTag, memoryTag);
         }
         if (previousSize == 0) {
             // If previous size is 0, we cannot remap, just mmap a new region
-            return cacheMmap(fd, fileCacheKey, newSize, offset, flags, memoryTag);
+            return cacheMmap(fd, mmapCacheKey, newSize, offset, flags, memoryTag);
         }
 
         long unmapPtr = 0, unmapLen = 0;
@@ -126,7 +145,7 @@ public class MmapCache {
                 }
 
                 // Check if someone else remapped this to a larger size
-                fdIndex = mmapFileCache.keyIndex(fileCacheKey);
+                fdIndex = mmapFileCache.keyIndex(mmapCacheKey);
                 if (fdIndex < 0) {
                     MmapCacheRecord updatedCacheRecord = mmapFileCache.valueAt(fdIndex);
                     if (updatedCacheRecord.length >= newSize) {
@@ -158,28 +177,36 @@ public class MmapCache {
 
             if (newAddress == 0) {
                 // We need to extend the mmap
-                record.count--;
-                if (record.count == 0) {
-                    // No one else uses the record, we can use mremap
+                if (record.count == 1) {
+                    // No one else uses the record, we can use mremap.
+                    // it mremap0() throws then we change nothing
                     newAddress = mremap0(fd, record.address, record.length, newSize, offset, Files.MAP_RO, record.memoryTag, memoryTag);
-                    if (newAddress != -1) {
+                    if (newAddress != FilesFacade.MAP_FAILED) {
                         record.address = newAddress;
                         record.length = newSize;
                         record.memoryTag = memoryTag;
                         mmapAddrCache.removeAt(addrMapIndex);
                         mmapAddrCache.put(newAddress, record);
                     }
-                    record.count = 1;
                 } else {
                     // Someone else is using the record, we need to create a new one
+                    assert record.count > 1 : "invalid reference count in mmap cache";
+                    // if mmap0() throws then we change nothing
                     newAddress = mmap0(fd, newSize, 0, Files.MAP_RO, memoryTag);
-                    if (newAddress != -1) {
+
+                    // yay, mmap0() did not throw! it could still return -1 though
+                    if (newAddress != FilesFacade.MAP_FAILED) {
+                        // we decrease reference count of the old record iff mmap0() succeeded.
+                        // Q: Why we don't decrease the reference count even in the presence of failures?
+                        // A: Because the semantic of mremap() failure is that the old mapping is still valid
+                        //    and callers are still expected to eventually close the old mapping
+                        record.count--;
                         // Cache the new mmap record
-                        MmapCacheRecord newRecord = createMmapCacheRecord(fd, fileCacheKey, newSize, newAddress, memoryTag);
+                        MmapCacheRecord newRecord = createMmapCacheRecord(fd, mmapCacheKey, newSize, newAddress, memoryTag);
                         if (fdIndex != Integer.MAX_VALUE) {
-                            mmapFileCache.putAt(fdIndex, fileCacheKey, newRecord);
+                            mmapFileCache.putAt(fdIndex, mmapCacheKey, newRecord);
                         } else {
-                            mmapFileCache.put(fileCacheKey, newRecord);
+                            mmapFileCache.put(mmapCacheKey, newRecord);
                         }
                         mmapAddrCache.put(newAddress, newRecord);
                     }
@@ -187,7 +214,7 @@ public class MmapCache {
             }
         }
 
-        // unmap is usually slow OS call, to not block everyone, move it out of synchronized section
+        // unmap is usually a slow OS call, to not block everyone, move it out of the synchronized section
         if (unmapPtr != 0) {
             // Unmap the old address if it was not used anymore
             unmap0(unmapPtr, unmapLen, unmapTag);
@@ -201,8 +228,9 @@ public class MmapCache {
      * Unmaps memory region, decrements reference count, and removes from cache if last reference.
      */
     public void unmap(long address, long len, int memoryTag) {
-        if (address == 0 || len <= 0) {
-            return;
+        if (address <= 0 || len <= 0) {
+            throw CairoException.critical(0)
+                    .put("unmap: invalid address or length [address=" + address + ", len=" + len + ']');
         }
 
         if (!Files.FS_CACHE_ENABLED) {
@@ -255,7 +283,7 @@ public class MmapCache {
 
     private static long mmap0(int fd, long len, long offset, int flags, int memoryTag) {
         long address = Files.mmap0(fd, len, offset, flags, 0);
-        if (address != -1) {
+        if (address != FilesFacade.MAP_FAILED) {
             Unsafe.recordMemAlloc(len, memoryTag);
         }
         return address;
@@ -275,8 +303,14 @@ public class MmapCache {
     }
 
     private static void unmap0(long address, long len, int memoryTag) {
-        if (address != 0 && Files.munmap0(address, len) != -1) {
+        int result = Files.munmap0(address, len);
+        if (result != -1) {
             Unsafe.recordMemAlloc(-len, memoryTag);
+        } else {
+            throw CairoException.critical(Os.errno())
+                    .put("munmap failed [address=").put(address)
+                    .put(", len=").put(len)
+                    .put(", memoryTag=").put(memoryTag).put(']');
         }
     }
 

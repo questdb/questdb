@@ -26,7 +26,7 @@ package io.questdb.log;
 
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 
 /**
  * Same as #Logger but does not lose messages.
@@ -34,7 +34,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 public final class GuaranteedLogger extends AbstractLogRecord {
 
     GuaranteedLogger(
-            MicrosecondClock clock,
+            Clock clock,
             CharSequence name,
             RingQueue<LogRecordUtf8Sink> debugRing,
             Sequence debugSeq,

@@ -25,16 +25,22 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
 
@@ -57,37 +63,37 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
             sink.put(func.getTimestamp(null));
             return new VarcharConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        return new Func(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType()));
     }
 
     public static class Func extends AbstractCastToVarcharFunction {
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
+        private final TimestampDriver timestampDriver;
 
-        public Func(Function arg) {
+        public Func(Function arg, int timestampType) {
             super(arg);
+            timestampDriver = ColumnType.getTimestampDriver(timestampType);
         }
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return null;
-            }
-            sinkA.clear();
-            TimestampFormatUtils.appendDateTimeUSec(sinkA, value);
-            return sinkA;
+            return toSink(rec, sinkA);
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
+            return toSink(rec, sinkB);
+        }
+
+        private @Nullable Utf8StringSink toSink(Record rec, Utf8StringSink sink) {
             final long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NULL) {
                 return null;
             }
-            sinkB.clear();
-            TimestampFormatUtils.appendDateTimeUSec(sinkB, value);
-            return sinkB;
+            sink.clear();
+            timestampDriver.append(sink, value);
+            return sink;
         }
     }
 }

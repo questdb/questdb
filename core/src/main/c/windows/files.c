@@ -700,6 +700,16 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_munmap0
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
         (JNIEnv *e, jclass cl, jint fd, jlong len, jlong offset, jint flags, jlong baseAddress) {
+    if (len == 0) {
+        // With len == 0, Windows will mmap the whole file. To be POSIX-compatible, return MAP_FAILED instead.
+        // docs: https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffileex
+        // dwNumberOfBytesToMap: "If this parameter is 0 (zero), the mapping extends from the
+        // specified offset to the end of the file mapping."
+        SetLastError(ERROR_INVALID_PARAMETER);
+        SaveLastError();
+        return -1;
+    }
+
     jlong maxsize = offset + len;
     DWORD flProtect;
     DWORD dwDesiredAccess;

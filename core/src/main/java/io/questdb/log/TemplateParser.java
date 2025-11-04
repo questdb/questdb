@@ -30,8 +30,8 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8StringSink;
@@ -44,7 +44,7 @@ public class TemplateParser implements Sinkable {
 
     private static final String DATE_FORMAT_KEY = "date:";
     private static final int NIL = -1;
-    private final TimestampFormatCompiler dateCompiler = new TimestampFormatCompiler();
+    private final MicrosFormatCompiler dateCompiler = new MicrosFormatCompiler();
     private final AtomicLong dateValue = new AtomicLong();
     private final CharSequenceIntHashMap envStartIdxs = new CharSequenceIntHashMap();
     private final Utf8StringSink resolveSink = new Utf8StringSink();
@@ -121,7 +121,7 @@ public class TemplateParser implements Sinkable {
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_DATE, DATE_FORMAT_KEY) {
             @Override
             public void toSink(@NotNull CharSink<?> sink) {
-                dateFormat.format(dateValue.get(), TimestampFormatUtils.EN_LOCALE, null, sink);
+                dateFormat.format(dateValue.get(), DateLocaleFactory.EN_LOCALE, null, sink);
             }
         });
     }

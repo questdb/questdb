@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -36,7 +38,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 public class TimestampCeilFunctionFactory implements FunctionFactory {
     @Override
@@ -51,21 +52,16 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         final char c = kind.getChar(null);
         switch (c) {
             case 'd':
-                return new TimestampCeilDDFunction(args.getQuick(1));
             case 'M':
-                return new TimestampCeilMMFunction(args.getQuick(1));
             case 'y':
-                return new TimestampCeilYYYYFunction(args.getQuick(1));
             case 'w':
-                return new TimestampCeilWWFunction(args.getQuick(1));
             case 'h':
-                return new TimestampCeilHHFunction(args.getQuick(1));
             case 'm':
-                return new TimestampCeilMIFunction(args.getQuick(1));
             case 's':
-                return new TimestampCeilSSFunction(args.getQuick(1));
             case 'T':
-                return new TimestampCeilMSFunction(args.getQuick(1));
+            case 'U':
+            case 'n':
+                return new TimestampCeilFunction(args.getQuick(1), c, ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(args.getQuick(1).getType()), ColumnType.TIMESTAMP_MICRO));
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:
@@ -73,11 +69,14 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         }
     }
 
-    private abstract static class AbstractTimestampCeilFunction extends TimestampFunction implements UnaryFunction {
+    static class TimestampCeilFunction extends TimestampFunction implements UnaryFunction {
         private final Function arg;
+        private final TimestampDriver.TimestampCeilMethod ceil;
         private final char symbol;
 
-        public AbstractTimestampCeilFunction(Function arg, char symbol) {
+        public TimestampCeilFunction(Function arg, char symbol, int timestampType) {
+            super(timestampType);
+            this.ceil = timestampDriver.getTimestampCeilMethod(symbol);
             this.arg = arg;
             this.symbol = symbol;
         }
@@ -89,104 +88,13 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
         @Override
         public final long getTimestamp(Record rec) {
-            long micros = arg.getTimestamp(rec);
-            return micros == Numbers.LONG_NULL ? Numbers.LONG_NULL : ceil(micros);
+            long ts = arg.getTimestamp(rec);
+            return ts == Numbers.LONG_NULL ? Numbers.LONG_NULL : ceil.ceil(ts);
         }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("timestamp_ceil('").val(symbol).val("',").val(arg).val(')');
-        }
-
-        abstract long ceil(long timestamp);
-    }
-
-    public static class TimestampCeilDDFunction extends AbstractTimestampCeilFunction {
-        public TimestampCeilDDFunction(Function arg) {
-            super(arg, 'd');
-        }
-
-        @Override
-        public long ceil(long timestamp) {
-            return Timestamps.ceilDD(timestamp);
-        }
-
-    }
-
-    public static class TimestampCeilHHFunction extends AbstractTimestampCeilFunction {
-        public TimestampCeilHHFunction(Function arg) {
-            super(arg, 'h');
-        }
-
-        @Override
-        public long ceil(long timestamp) {
-            return Timestamps.ceilHH(timestamp);
-        }
-    }
-
-    public static class TimestampCeilMIFunction extends AbstractTimestampCeilFunction {
-        public TimestampCeilMIFunction(Function arg) {
-            super(arg, 'm');
-        }
-
-        @Override
-        public long ceil(long timestamp) {
-            return Timestamps.ceilMI(timestamp);
-        }
-    }
-
-    public static class TimestampCeilMMFunction extends AbstractTimestampCeilFunction {
-        public TimestampCeilMMFunction(Function arg) {
-            super(arg, 'M');
-        }
-
-        @Override
-        public long ceil(long timestamp) {
-            return Timestamps.ceilMM(timestamp);
-        }
-    }
-
-    public static class TimestampCeilMSFunction extends AbstractTimestampCeilFunction {
-        public TimestampCeilMSFunction(Function arg) {
-            super(arg, 'T');
-        }
-
-        @Override
-        public long ceil(long timestamp) {
-            return Timestamps.ceilMS(timestamp);
-        }
-    }
-
-    public static class TimestampCeilSSFunction extends AbstractTimestampCeilFunction {
-        public TimestampCeilSSFunction(Function arg) {
-            super(arg, 's');
-        }
-
-        @Override
-        public long ceil(long timestamp) {
-            return Timestamps.ceilSS(timestamp);
-        }
-    }
-
-    public static class TimestampCeilWWFunction extends AbstractTimestampCeilFunction {
-        public TimestampCeilWWFunction(Function arg) {
-            super(arg, 'w');
-        }
-
-        @Override
-        public long ceil(long timestamp) {
-            return Timestamps.ceilWW(timestamp);
-        }
-    }
-
-    public static class TimestampCeilYYYYFunction extends AbstractTimestampCeilFunction {
-        public TimestampCeilYYYYFunction(Function arg) {
-            super(arg, 'y');
-        }
-
-        @Override
-        public long ceil(long timestamp) {
-            return Timestamps.ceilYYYY(timestamp);
         }
     }
 }

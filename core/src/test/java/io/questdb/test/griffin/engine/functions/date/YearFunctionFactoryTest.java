@@ -52,6 +52,16 @@ public class YearFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 true
         );
+
+        assertQuery(
+                "year\n" +
+                        "1901\n",
+                "select year('1901-07-11T22:00:30.555998113Z'::timestamp_ns)",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     @Test
@@ -60,6 +70,16 @@ public class YearFunctionFactoryTest extends AbstractCairoTest {
                 "year\n" +
                         "1997\n",
                 "select year('1997-04-11T22:00:30.555555Z'::timestamp)",
+                null,
+                null,
+                true,
+                true
+        );
+
+        assertQuery(
+                "year\n" +
+                        "1997\n",
+                "select year('1997-04-11T22:00:30.555555123Z'::timestamp_ns)",
                 null,
                 null,
                 true,

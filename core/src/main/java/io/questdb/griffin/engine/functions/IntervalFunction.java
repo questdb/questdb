@@ -26,9 +26,9 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.Function;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -36,6 +36,12 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class IntervalFunction implements Function {
+    protected int intervalType;
+
+    protected IntervalFunction(int intervalType) {
+        assert ColumnType.isInterval(intervalType);
+        this.intervalType = intervalType;
+    }
 
     @Override
     public ArrayView getArray(Record rec) {
@@ -184,7 +190,7 @@ public abstract class IntervalFunction implements Function {
 
     @Override
     public int getType() {
-        return ColumnType.INTERVAL;
+        return intervalType;
     }
 
     @Override
@@ -200,5 +206,9 @@ public abstract class IntervalFunction implements Function {
     @Override
     public int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    protected void setType(int intervalType) {
+        this.intervalType = intervalType;
     }
 }

@@ -35,6 +35,7 @@ import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SPSequence;
+import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -90,10 +91,13 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
     private final int testConnectionBufSize;
-    protected boolean closed = false;
+    protected volatile boolean closed = false;
     protected long heartbeatIntervalMs;
     protected long serverFd;
     private long closeListenFdEpochMs;
+    // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1);
+    // id 0 is reserved for operations on the server fd
+    private long idSeq = 1;
     private volatile boolean listening;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
     private int port;
@@ -177,8 +181,11 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 .$("scheduling disconnect [fd=").$(context.getFd())
                 .$(", reason=").$(reason)
                 .I$();
-        final long cursor = disconnectPubSeq.nextBully();
-        assert cursor > -1;
+        final long cursor = bullyUntilClosed(disconnectPubSeq);
+        if (cursor < 0) {
+            assert closed;
+            return;
+        }
         disconnectQueue.get(cursor).context = context;
         disconnectPubSeq.done(cursor);
     }
@@ -229,7 +236,11 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     @Override
     public void registerChannel(C context, int operation) {
-        long cursor = interestPubSeq.nextBully();
+        final long cursor = bullyUntilClosed(interestPubSeq);
+        if (cursor < 0) {
+            assert closed;
+            return;
+        }
         IOEvent<C> evt = interestQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
@@ -253,9 +264,20 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
         pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
         pending.set(r, OPM_FD, fd);
+        pending.set(r, OPM_ID, nextOpId());
         pending.set(r, OPM_OPERATION, -1);
         pending.set(r, context);
         pendingAdded(r);
+    }
+
+    private long bullyUntilClosed(Sequence sequence) {
+        // inlined version of sequence.nextBully() - we need to check for the 'closed' flag while looping
+        // if the queue is full and all other workers are closed, then a naive bully would block forever
+        long cursor;
+        while ((cursor = sequence.next()) < 0 && !closed) {
+            sequence.getBarrier().getWaitStrategy().signal();
+        }
+        return cursor;
     }
 
     private void checkConnectionLimitAndRestartListener() {
@@ -335,9 +357,21 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         return (readyForWrite ? Socket.WRITE_FLAG : 0) | (readyForRead ? Socket.READ_FLAG : 0);
     }
 
-    protected void accept(long timestamp) {
-        final long acceptEndTime = timestamp + configuration.getAcceptLoopTimeout();
+    /**
+     * Accepts pending connections in a greedy loop until the queue is drained (EAGAIN), timeout expires,
+     * or connection limit is reached.
+     *
+     * @param timestamp current time in milliseconds
+     * @return true if fully drained to EAGAIN, false if exited early (timeout/limit). When false,
+     * caller must retry on next iteration to avoid stranding connections with edge-triggered epoll.
+     */
+    protected boolean accept(long timestamp) {
+        // note: acceptEndTime intentionally uses current wall-clock time and not the passed timestamp
+        // why? we want to run the accept loop for up to the configured timeout, regardless of any time
+        // spent on activities before entering this loop
+        final long acceptEndTime = clock.getTicks() + configuration.getAcceptLoopTimeout();
         int tlConCount = connectionCount.get();
+        boolean drainedFully = false;
         while (tlConCount < configuration.getLimit() && acceptEndTime > clock.getTicks()) {
             // This 'accept' is greedy.
             // Rather than to rely on epoll (or similar) to fire accept requests at us one at
@@ -347,7 +381,9 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             long fd = nf.accept(serverFd);
 
             if (fd < 0) {
-                if (nf.errno() != Net.EWOULDBLOCK) {
+                if (nf.errno() == Net.EWOULDBLOCK) {
+                    drainedFully = true;
+                } else {
                     LOG.error().$("could not accept [ret=").$(fd).$(", errno=").$(nf.errno()).I$();
                 }
                 break;
@@ -415,6 +451,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 checkConnectionLimitAndRestartListener();
             }
         }
+        return drainedFully;
     }
 
     protected void doDisconnect(C context, int src) {
@@ -439,21 +476,44 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         connectionCountGauge.dec();
     }
 
-    protected abstract void pendingAdded(int index);
+    protected boolean isEventId(long id) {
+        return (id & 1) == 1;
+    }
 
-    protected void processDisconnects(long epochMs) {
-        disconnectSubSeq.consumeAll(disconnectQueue, disconnectContextRef);
+    // returns monotonically growing event identifier (odd number);
+    // may be used for suspend event identifiers
+    protected long nextEventId() {
+        return (idSeq++ << 1) + 1;
+    }
+
+    // returns monotonically growing operation identifier (even number)
+    protected long nextOpId() {
+        return idSeq++ << 1;
+    }
+
+    protected void pendingAdded(int index) {
+        // no-op
+    }
+
+    protected boolean processDisconnects(long epochMs) {
+        boolean useful = disconnectSubSeq.consumeAll(disconnectQueue, disconnectContextRef);
         if (!listening && serverFd >= 0 && epochMs >= closeListenFdEpochMs) {
             LOG.error().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs)
                     .$("ms, closing listener [serverFd=").$(serverFd)
                     .I$();
             nf.close(serverFd);
             serverFd = -1;
+            useful = true;
         }
+        return useful;
     }
 
     protected void publishOperation(int operation, C context) {
-        long cursor = ioEventPubSeq.nextBully();
+        final long cursor = bullyUntilClosed(ioEventPubSeq);
+        if (cursor < 0) {
+            assert closed;
+            return;
+        }
         IOEvent<C> evt = ioEventQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;

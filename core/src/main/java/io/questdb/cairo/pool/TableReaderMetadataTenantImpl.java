@@ -26,6 +26,7 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -36,7 +37,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -138,6 +141,11 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
         return rowCount;
     }
 
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.put("TableReaderMetadataTenantImpl{index=").put(index).put(", tableToken=").put(getTableToken()).put('}');
+    }
+
     private boolean acquireTxn() {
         // txFile can also be reloaded in goPassive->checkSchedulePurgeO3Partitions
         // if txFile txn doesn't much reader txn, reader has to be slow reloaded
@@ -154,8 +162,12 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
     private void initialize(CairoConfiguration configuration, TableToken tableToken) {
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(tableToken);
-            this.txFile = new TxReader(configuration.getFilesFacade()).ofRO(path.concat(TXN_FILE_NAME).$(), getPartitionBy());
-            load();
+            loadMetadata();
+            this.txFile = new TxReader(
+                    configuration.getFilesFacade()).ofRO(path.concat(TXN_FILE_NAME).$(),
+                    this.getTimestampType(),
+                    getPartitionBy()
+            );
             initialized = true;
         } catch (Throwable e) {
             close();
@@ -178,7 +190,7 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
                             .$("new transaction [txn=").$(txn)
                             .$(", transientRowCount=").$(txFile.getTransientRowCount())
                             .$(", fixedRowCount=").$(txFile.getFixedRowCount())
-                            .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
+                            .$(", maxTimestamp=").$ts(ColumnType.getTimestampDriver(getTimestampType()), txFile.getMaxTimestamp())
                             .$(", attempts=").$(count)
                             .$(", thread=").$(Thread.currentThread().getName())
                             .$(']').$();
@@ -211,7 +223,7 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other
-                TableUtils.handleMetadataLoadException(getTableToken().getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+                TableUtils.handleMetadataLoadException(getTableToken(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
                 continue;
             }
 

@@ -24,7 +24,11 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -48,7 +52,7 @@ public class LineUdpParserSupport {
         // method called for inbound ilp messages on each value.
         // returning UNDEFINED makes the whole line be skipped.
         // 0 len values, return null type.
-        // the goal of this method is to guess the potential type
+        // the goal of this method is to guess the potential type,
         // and then it will be parsed accordingly by 'putValue'.
         int valueLen = value.length();
         if (valueLen > 0) {
@@ -62,7 +66,7 @@ public class LineUdpParserSupport {
                     return valueLen == 1 ? ColumnType.SYMBOL : defaultIntegerColumnType;
                 case 't':
                     if (valueLen > 1 && ((first >= '0' && first <= '9') || first == '-')) {
-                        return ColumnType.TIMESTAMP;
+                        return ColumnType.TIMESTAMP_MICRO;
                     }
                     // fall through
                 case 'T':

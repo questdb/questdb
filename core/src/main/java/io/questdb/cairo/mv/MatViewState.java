@@ -77,8 +77,8 @@ public class MatViewState implements QuietCloseable {
     // Stands for last successful incremental refresh base table reader txn.
     // Increases monotonically as long as mat view stays valid.
     private volatile long lastRefreshBaseTxn = -1;
-    private volatile long lastRefreshFinishTimestamp = Numbers.LONG_NULL;
-    private volatile long lastRefreshStartTimestamp = Numbers.LONG_NULL;
+    private volatile long lastRefreshFinishTimestampUs = Numbers.LONG_NULL;
+    private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
     // Protected by this.latch.
     private long recordRowCopierMetadataVersion;
@@ -126,7 +126,7 @@ public class MatViewState implements QuietCloseable {
     public static void append(@Nullable MatViewStateReader refreshState, @NotNull BlockFileWriter writer) {
         if (refreshState != null) {
             append(
-                    refreshState.getLastRefreshTimestamp(),
+                    refreshState.getLastRefreshTimestampUs(),
                     refreshState.getLastRefreshBaseTxn(),
                     refreshState.isInvalid(),
                     refreshState.getInvalidationReason(),
@@ -224,12 +224,12 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshBaseTxn;
     }
 
-    public long getLastRefreshFinishTimestamp() {
-        return lastRefreshFinishTimestamp;
+    public long getLastRefreshFinishTimestampUs() {
+        return lastRefreshFinishTimestampUs;
     }
 
-    public long getLastRefreshStartTimestamp() {
-        return lastRefreshStartTimestamp;
+    public long getLastRefreshStartTimestampUs() {
+        return lastRefreshStartTimestampUs;
     }
 
     public long getRecordRowCopierMetadataVersion() {
@@ -277,7 +277,7 @@ public class MatViewState implements QuietCloseable {
     public void initFromReader(MatViewStateReader reader) {
         this.invalid = reader.isInvalid();
         this.lastRefreshBaseTxn = reader.getLastRefreshBaseTxn();
-        this.lastRefreshFinishTimestamp = reader.getLastRefreshTimestamp();
+        this.lastRefreshFinishTimestampUs = reader.getLastRefreshTimestampUs();
         this.lastPeriodHi = reader.getLastPeriodHi();
         this.refreshIntervalsBaseTxn = reader.getRefreshIntervalsBaseTxn();
         refreshIntervals.clear();
@@ -325,28 +325,28 @@ public class MatViewState implements QuietCloseable {
             RecordCursorFactory factory,
             RecordToRowCopier copier,
             long recordRowCopierMetadataVersion,
-            long refreshFinishedTimestamp,
-            long refreshTriggeredTimestamp,
+            long refreshFinishedTimestampUs,
+            long refreshTriggeredTimestampUs,
             long periodHi
     ) {
         assert latch.get();
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
-        this.lastRefreshFinishTimestamp = refreshFinishedTimestamp;
+        this.lastRefreshFinishTimestampUs = refreshFinishedTimestampUs;
         this.lastPeriodHi = periodHi;
         telemetryFacade.store(
                 MAT_VIEW_REFRESH_SUCCESS,
                 viewDefinition.getMatViewToken(),
                 -1,
                 null,
-                refreshFinishedTimestamp - refreshTriggeredTimestamp
+                refreshFinishedTimestampUs - refreshTriggeredTimestampUs
         );
     }
 
     public void refreshFail(long refreshTimestamp, CharSequence errorMessage) {
         assert latch.get();
-        this.lastRefreshFinishTimestamp = refreshTimestamp;
+        this.lastRefreshFinishTimestampUs = refreshTimestamp;
         markAsInvalid(errorMessage);
         telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
     }
@@ -364,7 +364,7 @@ public class MatViewState implements QuietCloseable {
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
-        this.lastRefreshFinishTimestamp = refreshFinishedTimestamp;
+        this.lastRefreshFinishTimestampUs = refreshFinishedTimestamp;
         this.lastRefreshBaseTxn = baseTableTxn;
         this.lastPeriodHi = periodHi;
         // Successful incremental refresh means that cached intervals were applied and should be evicted.
@@ -380,13 +380,13 @@ public class MatViewState implements QuietCloseable {
     }
 
     public void refreshSuccessNoRows(
-            long refreshFinishedTimestamp,
-            long refreshTriggeredTimestamp,
+            long refreshFinishedTimestampUs,
+            long refreshTriggeredTimestampUs,
             long baseTableTxn,
             long periodHi
     ) {
         assert latch.get();
-        this.lastRefreshFinishTimestamp = refreshFinishedTimestamp;
+        this.lastRefreshFinishTimestampUs = refreshFinishedTimestampUs;
         this.lastRefreshBaseTxn = baseTableTxn;
         this.lastPeriodHi = periodHi;
         // Successful incremental refresh means that cached intervals were applied and should be evicted.
@@ -397,7 +397,7 @@ public class MatViewState implements QuietCloseable {
                 viewDefinition.getMatViewToken(),
                 baseTableTxn,
                 null,
-                refreshFinishedTimestamp - refreshTriggeredTimestamp
+                refreshFinishedTimestampUs - refreshTriggeredTimestampUs
         );
     }
 
@@ -409,12 +409,12 @@ public class MatViewState implements QuietCloseable {
         lastRefreshBaseTxn = txn;
     }
 
-    public void setLastRefreshStartTimestamp(long ts) {
-        lastRefreshStartTimestamp = ts;
+    public void setLastRefreshStartTimestampUs(long timestampUs) {
+        lastRefreshStartTimestampUs = timestampUs;
     }
 
-    public void setLastRefreshTimestamp(long ts) {
-        this.lastRefreshFinishTimestamp = ts;
+    public void setLastRefreshTimestampUs(long timestampUs) {
+        this.lastRefreshFinishTimestampUs = timestampUs;
     }
 
     public void setRefreshIntervals(LongList refreshIntervals) {

@@ -38,6 +38,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -148,8 +149,8 @@ public class TableTransactionLog implements Closeable {
         return formatVersion;
     }
 
-    private static long openFileRO(final FilesFacade ff, final Path path, final String fileName) {
-        return TableUtils.openRO(ff, path, fileName, LOG);
+    private static long openFileRO(final FilesFacade ff, final Path path, final String fileName, boolean bypassFdCache) {
+        return bypassFdCache ? TableUtils.openRONoCache(ff, path, fileName, LOG) : TableUtils.openRO(ff, path, fileName, LOG);
     }
 
     private static TableTransactionLogFile openTxnFile(Path path, CairoConfiguration configuration) {
@@ -245,7 +246,7 @@ public class TableTransactionLog implements Closeable {
     @NotNull
     TableMetadataChangeLog getTableMetadataChangeLog(long structureVersionLo, MemorySerializer serializer) {
         final TableMetadataChangeLogImpl cursor = (TableMetadataChangeLogImpl) getTableMetadataChangeLog();
-        cursor.of(ff, structureVersionLo, serializer, Path.getThreadLocal(rootPath), maxMetadataVersion.get());
+        cursor.of(ff, structureVersionLo, serializer, Path.getThreadLocal(rootPath), maxMetadataVersion.get(), this.configuration.getBypassWalFdCache());
         return cursor;
     }
 
@@ -320,7 +321,8 @@ public class TableTransactionLog implements Closeable {
                 long structureVersionLo,
                 MemorySerializer serializer,
                 @Transient final Path path,
-                long maxStructureVersion
+                long maxStructureVersion,
+                boolean bypassFdCache
         ) {
             // deallocates current state
             close();
@@ -332,26 +334,30 @@ public class TableTransactionLog implements Closeable {
             long txnMetaIndexFd = -1;
             try {
                 if (maxStructureVersion > structureVersionLo) {
-                    txnMetaFd = openFileRO(ff, path, TXNLOG_FILE_NAME_META_VAR);
-                    txnMetaIndexFd = openFileRO(ff, path, TXNLOG_FILE_NAME_META_INX);
+                    txnMetaFd = openFileRO(ff, path, TXNLOG_FILE_NAME_META_VAR, bypassFdCache);
+                    txnMetaIndexFd = openFileRO(ff, path, TXNLOG_FILE_NAME_META_INX, bypassFdCache);
                     txnMetaOffset = ff.readNonNegativeLong(txnMetaIndexFd, structureVersionLo * Long.BYTES);
                     if (txnMetaOffset > -1L) {
                         txnMetaOffsetHi = ff.readNonNegativeLong(txnMetaIndexFd, maxStructureVersion * Long.BYTES);
 
                         if (txnMetaOffsetHi > txnMetaOffset) {
-                            txnMetaAddress = ff.mmap(
+                            long newAddr = ff.mmap(
                                     txnMetaFd,
                                     txnMetaOffsetHi,
                                     0L,
                                     Files.MAP_RO,
                                     MemoryTag.MMAP_TX_LOG_CURSOR
                             );
-                            if (txnMetaAddress < 0) {
-                                txnMetaAddress = 0;
-                                close();
-                            } else {
+                            if (newAddr != FilesFacade.MAP_FAILED) {
+                                txnMetaAddress = newAddr;
                                 txnMetaMem.of(txnMetaAddress, txnMetaOffsetHi);
                                 return;
+                            } else {
+                                close();
+                                throw CairoException.critical(Os.errno())
+                                        .put("cannot mmap table transaction log [path=").put(path)
+                                        .put(", txnMetaOffsetHi=").put(txnMetaOffsetHi)
+                                        .put(']');
                             }
                         }
                     }

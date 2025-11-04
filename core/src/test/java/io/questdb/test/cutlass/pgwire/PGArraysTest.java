@@ -26,7 +26,6 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -79,10 +78,13 @@ public class PGArraysTest extends BasePGTest {
         recvBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
         forceRecvFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, recvBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
 
+        acceptLoopTimeout = bufferSizeRnd.nextInt(500) + 10;
+
         LOG.info().$("fragmentation params [sendBufferSize=").$(sendBufferSize)
                 .$(", forceSendFragmentationChunkSize=").$(forceSendFragmentationChunkSize)
                 .$(", recvBufferSize=").$(recvBufferSize)
                 .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
+                .$(", acceptLoopTimeout=").$(acceptLoopTimeout)
                 .I$();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
@@ -99,7 +101,7 @@ public class PGArraysTest extends BasePGTest {
                 stmt.execute();
             }
             try (PreparedStatement stmt = connection.prepareStatement("insert into tango values (?, ?)")) {
-                Array arr = connection.createArrayOf("int8", new Double[]{1d, 2d, 3d, 4d, 5d});
+                Array arr = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d});
                 int pos = 1;
                 stmt.setArray(pos++, arr);
                 stmt.setTimestamp(pos, new java.sql.Timestamp(0));
@@ -117,7 +119,7 @@ public class PGArraysTest extends BasePGTest {
                 }
             }
             try (PreparedStatement stmt = connection.prepareStatement("update tango set arr = ?")) {
-                Array arr = connection.createArrayOf("int8", new Double[]{9d, 8d, 7d, 6d, 5d});
+                Array arr = connection.createArrayOf("float8", new Double[]{9d, 8d, 7d, 6d, 5d});
                 int pos = 1;
                 stmt.setArray(pos, arr);
                 stmt.execute();
@@ -133,6 +135,54 @@ public class PGArraysTest extends BasePGTest {
                     );
                 }
             }
+        });
+    }
+
+    @Test
+    public void testArrayBindVarEdgeCases() throws Exception {
+        skipOnWalRun();
+        // we want bind vars, hence extended mode
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT array[?, array[42.0]] arr;",
+                    "array bind variable argument is not supported"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT array[array[42.0], ?] arr;",
+                    "array bind variable argument is not supported"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT dim_length(?, 3) arr;",
+                    "array dimension out of bounds"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT (array[42.0] + ?)[1];",
+                    "array bind variable access is not supported"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT dot_product(array[42.0], ?);",
+                    "arrays have different number of dimensions"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT insertion_point(?, 2.0);",
+                    "array is not one-dimensional"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT insertion_point(?, 2.0, true);",
+                    "array is not one-dimensional"
+            );
+            assertArrayBindVarQueryFails(
+                    connection,
+                    "SELECT array_position(?, 2);",
+                    "array is not one-dimensional"
+            );
         });
     }
 
@@ -153,7 +203,7 @@ public class PGArraysTest extends BasePGTest {
             } catch (SQLException e) {
                 String msg = e.getMessage();
                 // why asserting 2 different messages?
-                // in some modes PG JDBC sends array as string and relies in implicit casting. in this case we get a more generic 'inconvertible value' error
+                // in some modes PG JDBC sends array as string and relies on implicit casting. in this case we get a more generic 'inconvertible value' error
                 // in other modes PG JDBC sends array as binary array and server does not do implicit casting. in this case we get a more specific 'nulls not supported in arrays' error
                 Assert.assertTrue("'" + msg + "' does not contain the expected error", msg.contains("null elements are not supported in arrays") || msg.contains("inconvertible value"));
             }
@@ -176,8 +226,12 @@ public class PGArraysTest extends BasePGTest {
                 stmt.execute();
                 Assert.fail("Wrong array dimension count should fail");
             } catch (SQLException ex) {
-                TestUtils.assertContainsEither(ex.getMessage(), "inconvertible value", // text mode: implicit cast from string
-                        "array type mismatch [expected=DOUBLE[][], actual=DOUBLE[]]" // binary array
+                TestUtils.assertContainsEither(
+                        ex.getMessage(),
+                        "inconvertible value: `{\"1.0\",\"2.0\",\"3.0\",\"4.0\",\"5.0\"}` [STRING -> DOUBLE[][]]\n" +
+                                "  Position: 1", // text mode: implicit cast from string
+                        "array type mismatch [expected=DOUBLE[][], actual=DOUBLE[]]\n" +
+                                "  Position: 1" // binary array
                 );
             }
 
@@ -188,8 +242,12 @@ public class PGArraysTest extends BasePGTest {
                 stmt.execute();
                 Assert.fail("Wrong array dimension count should fail");
             } catch (SQLException ex) {
-                TestUtils.assertContainsEither(ex.getMessage(), "inconvertible value", // text mode: implicit cast from string
-                        "array type mismatch [expected=DOUBLE[][], actual=DOUBLE[][][]]" // binary array
+                TestUtils.assertContainsEither(
+                        ex.getMessage(),
+                        "inconvertible value: `{{{\"1.0\",\"2.0\",\"3.0\",\"4.0\",\"5.0\"}}}` [STRING -> DOUBLE[][]]\n" +
+                                "  Position: 1", // text mode: implicit cast from string
+                        "array type mismatch [expected=DOUBLE[][], actual=DOUBLE[][][]]\n" +
+                                "  Position: 1" // binary array
                 );
             }
         });
@@ -302,21 +360,18 @@ public class PGArraysTest extends BasePGTest {
 
     @Test
     public void testArrayUpdateBind() throws Exception {
-        // todo: binding array vars in UPDATE statement does not work in WAL mode!
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[], i int, ts timestamp) timestamp(ts) partition by hour")) {
                 stmt.execute();
             }
 
             try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?, ?, ?)")) {
-                stmt.setArray(1, connection.createArrayOf("int8", new Double[]{1d, 2d, 3d, 4d, 5d}));
+                stmt.setArray(1, connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d}));
                 stmt.setInt(2, 0);
                 stmt.setTimestamp(3, new java.sql.Timestamp(0));
                 stmt.execute();
 
-                stmt.setArray(1, connection.createArrayOf("int8", new Double[]{6d, 7d, 8d, 9d, 10d}));
+                stmt.setArray(1, connection.createArrayOf("float8", new Double[]{6d, 7d, 8d, 9d, 10d}));
                 stmt.setInt(2, 1);
                 stmt.setTimestamp(3, new java.sql.Timestamp(1));
                 stmt.execute();
@@ -338,7 +393,7 @@ public class PGArraysTest extends BasePGTest {
             }
 
             try (PreparedStatement stmt = connection.prepareStatement("update x set al = ? where i = ?")) {
-                stmt.setArray(1, connection.createArrayOf("int8", new Double[]{11d, 12d, 13d, 14d, 15d}));
+                stmt.setArray(1, connection.createArrayOf("float8", new Double[]{11d, 12d, 13d, 14d, 15d}));
                 stmt.setInt(2, 1);
                 stmt.execute();
             }
@@ -417,7 +472,7 @@ public class PGArraysTest extends BasePGTest {
             }
 
             try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
-                Array arr = connection.createArrayOf("int8", new Double[]{});
+                Array arr = connection.createArrayOf("float8", new Double[]{});
                 stmt.setArray(1, arr);
                 stmt.execute();
             }
@@ -440,7 +495,6 @@ public class PGArraysTest extends BasePGTest {
         skipOnWalRun();
 
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-
             try (Statement statement = connection.createStatement()) {
                 statement.executeQuery("SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6, 7]] arr FROM long_sequence(1)");
                 fail("jagged array should not be allowed");
@@ -452,7 +506,6 @@ public class PGArraysTest extends BasePGTest {
             assertPgWireQuery(connection, "SELECT '{{1.0, 2}, {3, 4}, {5, 6, 7}}'::double[] arr FROM long_sequence(1)",
                     "arr[ARRAY]\n" +
                             "null\n");
-
 
             execute("create table tab (arr double[][])");
 
@@ -472,7 +525,6 @@ public class PGArraysTest extends BasePGTest {
                     "arr[ARRAY]\n" +
                             "null\n");
 
-
             // Issue: PostgreSQL JDBC driver doesn't validate jagged arrays (https://github.com/pgjdbc/pgjdbc/issues/3567)
             // when used as a bind variable in a prepared statement.
             // QuestDB server must validate and reject them instead.
@@ -490,25 +542,36 @@ public class PGArraysTest extends BasePGTest {
             // - No way to detect the original jaggedness :(
             // Conclusion: Clients should validate arrays before sending to server
             try (PreparedStatement stmt = connection.prepareStatement("insert into tab values (?)")) {
-                Array arr = connection.createArrayOf("double", new double[][]{{1.0, 2.0}, {3.0}, {3.0}});
+                Array arr = connection.createArrayOf("float8", new double[][]{{1.0, 2.0}, {3.0}, {3.0}});
                 stmt.setArray(1, arr);
                 try {
                     stmt.execute();
                     Assert.fail("jagged array should not be allowed");
                 } catch (SQLException e) {
-                    String msg = e.getMessage();
-                    Assert.assertTrue(Chars.contains(msg, "inconvertible value") || Chars.contains(msg, "unexpected array size"));
+                    TestUtils.assertContainsEither(
+                            e.getMessage(),
+                            "inconvertible value: `{{\"1.0\",\"2.0\"},{\"3.0\"},{\"3.0\"}}` [STRING -> DOUBLE[][]]\n" +
+                                    "  Position: 1",
+                            "unexpected array size [expected=72, actual=48]\n" +
+                                    "  Position: 1"
+                    );
                 }
             }
+
             try (PreparedStatement stmt = connection.prepareStatement("insert into tab values (?)")) {
-                Array arr = connection.createArrayOf("double", new double[][]{{1.0}, {2.0, 3.0}, {4.0, 5.0}});
+                Array arr = connection.createArrayOf("float8", new double[][]{{1.0}, {2.0, 3.0}, {4.0, 5.0}});
                 stmt.setArray(1, arr);
                 try {
                     stmt.execute();
                     Assert.fail("jagged array should not be allowed");
                 } catch (SQLException e) {
-                    String msg = e.getMessage();
-                    Assert.assertTrue(Chars.contains(msg, "inconvertible value") || Chars.contains(msg, "unexpected array size"));
+                    TestUtils.assertContainsEither(
+                            e.getMessage(),
+                            "inconvertible value: `{{\"1.0\"},{\"2.0\",\"3.0\"},{\"4.0\",\"5.0\"}}` [STRING -> DOUBLE[][]]\n" +
+                                    "  Position: 1",
+                            "unexpected array size [expected=36, actual=60]\n" +
+                                    "  Position: 1"
+                    );
                 }
             }
         });
@@ -769,6 +832,17 @@ public class PGArraysTest extends BasePGTest {
                     "arr[ARRAY]\n" +
                             "{{1.0},{2.0}}\n");
         });
+    }
+
+    private void assertArrayBindVarQueryFails(Connection connection, String query, String expectedError) {
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
+            Array arr = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}});
+            stmt.setArray(1, arr);
+            stmt.executeQuery();
+            Assert.fail();
+        } catch (SQLException ex) {
+            TestUtils.assertContains(ex.getMessage(), expectedError);
+        }
     }
 
     private void assertPgWireQuery(Connection conn, String query, CharSequence expected) throws Exception {

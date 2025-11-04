@@ -28,8 +28,10 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
 
@@ -40,9 +42,9 @@ import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
 public class FdCache {
     static final AtomicInteger OPEN_OS_FILE_COUNT = new AtomicInteger();
     private static final int MAX_RECORD_POOL_CAPACITY = 16 * 1024;
-    private static final int NON_CACHED = (2 << 30);
-    private static final int RO_MASK = 0;
+    private static final int NON_CACHED_MASK = 1 << 31;
     private final AtomicInteger fdCounter = new AtomicInteger(1);
+    private final AtomicLong mmapKeyGenerator = new AtomicLong(1);
     private final LongObjHashMap<FdCacheRecord> openFdMapByFd = new LongObjHashMap<>();
     private final Utf8SequenceObjHashMap<FdCacheRecord> openFdMapByPath = new Utf8SequenceObjHashMap<>();
     private final ObjStack<FdCacheRecord> recordPool = new ObjStack<>();
@@ -59,8 +61,7 @@ public class FdCache {
             throw new IllegalStateException("fd " + fd + " is already closed!");
         }
 
-        int fdKind = (Numbers.decodeLowInt(fd) >>> 30) & 3; // Extract bits 30-31
-        if (fdKind > 1) {
+        if ((Numbers.decodeLowInt(fd) & NON_CACHED_MASK) != 0) {
             // NON_CACHED. Simply close the underlying fd.
             int osFd = Numbers.decodeHighInt(fd);
             int res = Files.close0(osFd);
@@ -102,9 +103,16 @@ public class FdCache {
      */
     public synchronized long createUniqueFdNonCached(int fd) {
         if (fd > -1) {
-            int index = fdCounter.getAndIncrement();
-            long markedFd = Numbers.encodeLowHighInts(index | NON_CACHED, fd);
-            openFdMapByFd.put(markedFd, FdCacheRecord.EMPTY);
+            long markedFd;
+            int keyIndex;
+
+            // loop to avoid collisions when index wraps over
+            do {
+                markedFd = Numbers.encodeLowHighInts(nextIndex() | NON_CACHED_MASK, fd);
+                keyIndex = openFdMapByFd.keyIndex(markedFd);
+            } while (keyIndex < 0);
+
+            openFdMapByFd.putAt(keyIndex, markedFd, FdCacheRecord.EMPTY);
             OPEN_OS_FILE_COUNT.incrementAndGet();
             return markedFd;
         }
@@ -115,9 +123,16 @@ public class FdCache {
      * Creates unique file descriptor wrapper for stdout without validation checks.
      */
     public synchronized long createUniqueFdNonCachedStdOut(int fd) {
-        int index = fdCounter.getAndIncrement();
-        long markedFd = Numbers.encodeLowHighInts(index | NON_CACHED, fd);
-        openFdMapByFd.put(markedFd, FdCacheRecord.EMPTY);
+        long markedFd;
+        int keyIndex;
+
+        // loop to avoid collisions when the index generator wraps over
+        do {
+            markedFd = Numbers.encodeLowHighInts(nextIndex() | NON_CACHED_MASK, fd);
+            keyIndex = openFdMapByFd.keyIndex(markedFd);
+        } while (keyIndex < 0);
+
+        openFdMapByFd.putAt(keyIndex, markedFd, FdCacheRecord.EMPTY);
         return markedFd;
     }
 
@@ -177,8 +192,16 @@ public class FdCache {
         }
 
         holder.count++;
-        long uniqROFd = createUniqueFdRO(holder.osFd);
-        openFdMapByFd.put(uniqROFd, holder);
+
+        // find a unique key even if the index generator wrapped over
+        long uniqROFd;
+        int keyIndex;
+        do {
+            uniqROFd = Numbers.encodeLowHighInts(nextIndex(), holder.osFd);
+            keyIndex = openFdMapByFd.keyIndex(uniqROFd);
+        } while (keyIndex < 0);
+
+        openFdMapByFd.putAt(keyIndex, uniqROFd, holder);
 
         return uniqROFd;
     }
@@ -213,14 +236,14 @@ public class FdCache {
     }
 
     /**
-     * Retrieves memory map cache file descriptor for given file descriptor.
+     * Retrieves memory map cache key for given file descriptor.
      */
-    public synchronized long toMmapCacheFd(long fd) {
+    public synchronized long toMmapCacheKey(long fd) {
         var cacheRecord = openFdMapByFd.get(fd);
         if (cacheRecord == null) {
             return 0;
         }
-        return cacheRecord.mmapCacheFd;
+        return cacheRecord.mmapCacheKey;
     }
 
     /**
@@ -246,20 +269,15 @@ public class FdCache {
         return toOsFd(fd);
     }
 
-    private FdCacheRecord createFdCacheRecord(Utf8String path, long mmapCacheFd) {
+    private FdCacheRecord createFdCacheRecord(Utf8String path, long mmapCacheKey) {
         FdCacheRecord holder = recordPool.pop();
         if (holder == null) {
-            holder = new FdCacheRecord(path, mmapCacheFd);
+            holder = new FdCacheRecord(path, mmapCacheKey);
         } else {
             holder.path = path;
-            holder.mmapCacheFd = mmapCacheFd;
+            holder.mmapCacheKey = mmapCacheKey;
         }
         return holder;
-    }
-
-    private long createUniqueFdRO(int fd) {
-        int index = fdCounter.getAndIncrement();
-        return Numbers.encodeLowHighInts(index | RO_MASK, fd);
     }
 
     @Nullable
@@ -274,7 +292,7 @@ public class FdCache {
             } else {
                 OPEN_OS_FILE_COUNT.incrementAndGet();
                 Utf8String path = Utf8String.newInstance(lpsz);
-                holder = createFdCacheRecord(path, Numbers.encodeLowHighInts(fdCounter.incrementAndGet(), osFd));
+                holder = createFdCacheRecord(path, mmapKeyGenerator.getAndIncrement());
                 holder.osFd = osFd;
                 openFdMapByPath.putAt(keyIndex, lpsz, holder);
             }
@@ -285,19 +303,30 @@ public class FdCache {
         return holder;
     }
 
+    private int nextIndex() {
+        int raw = fdCounter.getAndIncrement();
+        // mask out the non-cached bit
+        return raw & ~NON_CACHED_MASK;
+    }
+
+    @TestOnly
+    void setFDCounter(int newValue) {
+        fdCounter.set(newValue);
+    }
+
     /**
      * Cache record holding file path, OS file descriptor, reference count, and mmap cache link.
      */
     private static class FdCacheRecord {
         private static final FdCacheRecord EMPTY = new FdCacheRecord(null, 0);
-        long mmapCacheFd;
+        long mmapCacheKey;
         private int count;
         private int osFd;
         private Utf8String path;
 
-        public FdCacheRecord(Utf8String path, long mmapCacheFd) {
+        public FdCacheRecord(Utf8String path, long mmapCacheKey) {
             this.path = path;
-            this.mmapCacheFd = mmapCacheFd;
+            this.mmapCacheKey = mmapCacheKey;
         }
     }
 }

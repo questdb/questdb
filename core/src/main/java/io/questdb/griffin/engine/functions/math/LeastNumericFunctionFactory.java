@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToFloatFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToByteFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory;
@@ -41,16 +42,15 @@ import io.questdb.griffin.engine.functions.cast.CastLongToIntFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToShortFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Arrays;
-
 public class LeastNumericFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<int[]> tlCounters = ThreadLocal.withInitial(() -> new int[ColumnType.NULL + 1]);
+    private static final ThreadLocal<IntHashSet> tlSet = ThreadLocal.withInitial(IntHashSet::new);
 
     @Override
     public String getSignature() {
@@ -65,14 +65,13 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final int[] counters = tlCounters.get();
-        Arrays.fill(counters, 0);
-
+        final IntHashSet counters = tlSet.get();
+        counters.clear();
         final int argCount;
         if (args == null || (argCount = args.size()) == 0) {
             throw SqlException.$(position, "at least one argument is required by LEAST(V)");
         }
-
+        boolean allNull = true;
         for (int i = 0; i < argCount; i++) {
             final Function arg = args.getQuick(i);
             final int type = arg.getType();
@@ -86,15 +85,15 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
                 case ColumnType.BYTE:
                 case ColumnType.DATE:
                 case ColumnType.TIMESTAMP:
+                    allNull = false;
                 case ColumnType.NULL:
-                    counters[type]++;
+                    counters.add(type);
                     continue;
                 default:
                     throw SqlException.position(argPositions.getQuick(i)).put("unsupported type: ").put(ColumnType.nameOf(type));
             }
         }
-
-        if (counters[ColumnType.NULL] == argCount) {
+        if (allNull) {
             return NullConstant.NULL;
         }
 
@@ -106,36 +105,46 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         throw SqlException.position(argPositions.getQuick(0)).put("unexpected argument types");
     }
 
-    private static @Nullable Function getLeastFunction(ObjList<Function> args, int[] counters) {
-        if (counters[ColumnType.DOUBLE] > 0) {
+    private static @Nullable Function getLeastFunction(ObjList<Function> args, IntHashSet set) {
+        if (set.contains(ColumnType.DOUBLE)) {
             return new LeastDoubleRecordFunction(args);
         }
 
-        if (counters[ColumnType.FLOAT] > 0) {
+        if (set.contains(ColumnType.FLOAT)) {
             return new CastDoubleToFloatFunctionFactory.CastDoubleToFloatFunction(new LeastDoubleRecordFunction(args));
         }
 
-        if (counters[ColumnType.LONG] > 0) {
-            return new LeastLongRecordFunction(args);
+        if (set.contains(ColumnType.TIMESTAMP_NANO)) {
+            if (set.contains(ColumnType.DATE) || set.contains(ColumnType.TIMESTAMP_MICRO)) {
+                return new LeastTimestampRecordFunction(args, ColumnType.TIMESTAMP_NANO);
+            }
+            return new CastLongToTimestampFunctionFactory.Func(new LeastLongRecordFunction(args), ColumnType.TIMESTAMP_NANO);
         }
 
-        if (counters[ColumnType.DATE] > 0) {
+        if (set.contains(ColumnType.TIMESTAMP_MICRO)) {
+            if (set.contains(ColumnType.DATE)) {
+                return new LeastTimestampRecordFunction(args, ColumnType.TIMESTAMP_MICRO);
+            }
+            return new CastLongToTimestampFunctionFactory.Func(new LeastLongRecordFunction(args), ColumnType.TIMESTAMP_MICRO);
+        }
+
+        if (set.contains(ColumnType.DATE)) {
             return new CastLongToDateFunctionFactory.CastLongToDateFunction(new LeastLongRecordFunction(args));
         }
 
-        if (counters[ColumnType.TIMESTAMP] > 0) {
-            return new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(new LeastLongRecordFunction(args));
+        if (set.contains(ColumnType.LONG)) {
+            return new LeastLongRecordFunction(args);
         }
 
-        if (counters[ColumnType.INT] > 0) {
+        if (set.contains(ColumnType.INT)) {
             return new CastLongToIntFunctionFactory.CastLongToIntFunction(new LeastLongRecordFunction(args));
         }
 
-        if (counters[ColumnType.SHORT] > 0) {
+        if (set.contains(ColumnType.SHORT)) {
             return new CastLongToShortFunctionFactory.CastLongToShortFunction(new LeastLongRecordFunction(args));
         }
 
-        if (counters[ColumnType.BYTE] > 0) {
+        if (set.contains(ColumnType.BYTE)) {
             return new CastLongToByteFunctionFactory.CastLongToByteFunction(new LeastLongRecordFunction(args));
         }
 
@@ -205,6 +214,47 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "least[LONG]";
+        }
+    }
+
+    private static class LeastTimestampRecordFunction extends TimestampFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+        private final int n;
+        private final IntList timestampTypes;
+
+        public LeastTimestampRecordFunction(ObjList<Function> args, int timestampType) {
+            super(timestampType);
+            this.args = args;
+            this.n = args.size();
+            timestampTypes = new IntList(n);
+            timestampTypes.setPos(n);
+            for (int i = 0; i < n; i++) {
+                timestampTypes.setQuick(i, ColumnType.getTimestampType(args.getQuick(i).getType()));
+            }
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public String getName() {
+            return "least[TIMESTAMP]";
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            long value = Long.MAX_VALUE;
+            boolean foundValidValue = false;
+            for (int i = 0; i < n; i++) {
+                final long v = timestampDriver.from(args.getQuick(i).getTimestamp(rec), timestampTypes.getQuick(i));
+                if (v != Numbers.LONG_NULL) {
+                    foundValidValue = true;
+                    value = Math.min(value, v);
+                }
+            }
+            return foundValidValue ? value : Numbers.LONG_NULL;
         }
     }
 }

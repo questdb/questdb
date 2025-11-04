@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -54,6 +55,7 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Worker;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -95,6 +97,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int workerCount;
 
     public GroupByRecordCursorFactory(
+            CairoEngine engine,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata metadata,
@@ -119,7 +122,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.base = base;
             this.frameAddressCache = new PageFrameAddressCache(configuration);
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
-            sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+            sharedCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, workerCount);
             workStealingStrategy.of(startedCounter);
             // first column is INT or SYMBOL
@@ -225,6 +228,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean recordCursorSupportsLongTopK(int columnIndex) {
+        final int columnType = getMetadata().getColumnType(columnIndex);
+        return columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -311,10 +320,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (!isRostiBuilt) {
-                buildRosti();
-                isRostiBuilt = true;
-            }
+            buildRostiConditionally();
 
             if (count < size) {
                 counter.add(size - count);
@@ -349,10 +355,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (!isRostiBuilt) {
-                buildRosti();
-                isRostiBuilt = true;
-            }
+            buildRostiConditionally();
             while (count < size) {
                 byte b = Unsafe.getUnsafe().getByte(ctrl);
                 if ((b & 0x80) != 0) {
@@ -365,6 +368,24 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 return true;
             }
             return false;
+        }
+
+        @Override
+        public void longTopK(DirectLongLongSortedList list, int columnIndex) {
+            buildRostiConditionally();
+            final long offset = columnSkewIndex.getQuick(columnIndex);
+            while (count < size) {
+                byte b = Unsafe.getUnsafe().getByte(ctrl);
+                if ((b & 0x80) != 0) {
+                    ctrl++;
+                    continue;
+                }
+                count++;
+                final long pRow = slots + ((ctrl - ctrlStart) << shift);
+                final long v = Unsafe.getUnsafe().getLong(pRow + offset);
+                list.add(pRow, v);
+                ctrl++;
+            }
         }
 
         @Override
@@ -381,7 +402,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.frameCursor = frameCursor;
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
-            frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
+            frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
             for (int i = 0; i < workerCount; i++) {
                 frameMemoryPools.getQuick(i).of(frameAddressCache);
             }
@@ -507,7 +528,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                 }
             } catch (DataUnavailableException e) {
-                // We're not yet done, so no need to cancel the circuit breaker. 
+                // We're not yet done, so no need to cancel the circuit breaker.
                 throw e;
             } catch (Throwable e) {
                 sharedCircuitBreaker.cancel();
@@ -629,6 +650,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     .$(", ownCount=").$(ownCount)
                     .$(", reclaimed=").$(reclaimed)
                     .$(", queuedCount=").$(queuedCount).I$();
+        }
+
+        private void buildRostiConditionally() {
+            if (!isRostiBuilt) {
+                buildRosti();
+                isRostiBuilt = true;
+            }
         }
 
         private class RostiRecord implements Record {

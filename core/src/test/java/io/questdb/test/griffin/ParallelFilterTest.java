@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
@@ -320,7 +321,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     engine.execute("insert into x select x::timestamp, x from long_sequence(" + (1000 * PAGE_FRAME_MAX_ROWS) + ")", sqlExecutionContext);
 
                     // A special CB is needed to be able to track NPEs since otherwise the exception will come unnoticed.
-                    final NpeCountingAtomicBooleanCircuitBreaker npeCountingCircuitBreaker = new NpeCountingAtomicBooleanCircuitBreaker();
+                    final NpeCountingAtomicBooleanCircuitBreaker npeCountingCircuitBreaker = new NpeCountingAtomicBooleanCircuitBreaker(engine);
                     ((SqlExecutionContextImpl) sqlExecutionContext).with(npeCountingCircuitBreaker);
 
                     try (RecordCursorFactory factory = compiler.compile("x where id != -1;", sqlExecutionContext).getRecordCursorFactory()) {
@@ -512,6 +513,24 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStressSymbolEnablePreTouch() throws Exception {
+        testParallelStressSymbol(
+                "select /*+ ENABLE_PRE_TOUCH(x) */ * from x where v > 3326086085493629941L and v < 4326086085493629941L and s ~ 'A' order by v",
+                "v\ts\n" +
+                        "3393210801760647293\tA\n" +
+                        "3433721896286859656\tA\n" +
+                        "3619114107112892010\tA\n" +
+                        "3669882909701240516\tA\n" +
+                        "3820631780839257855\tA\n" +
+                        "4039070554630775695\tA\n" +
+                        "4290477379978201771\tA\n",
+                4,
+                1,
+                SqlJitMode.JIT_MODE_DISABLED
+        );
+    }
+
+    @Test
     public void testParallelStressSymbolMultipleThreadsMultipleWorkersJitDisabled() throws Exception {
         testParallelStressSymbol(symbolQueryNoLimit, expectedSymbolNoLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
     }
@@ -670,6 +689,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                 path,
                                 ParquetCompression.COMPRESSION_UNCOMPRESSED,
                                 true,
+                                true,
                                 PAGE_FRAME_MAX_ROWS,
                                 0,
                                 ParquetVersion.PARQUET_VERSION_V1
@@ -805,7 +825,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-                        final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_DEFAULT);
+                        final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration, MemoryTag.NATIVE_DEFAULT);
                         try {
                             engine.execute(
                                     "create table x ( " +
@@ -1169,6 +1189,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     private static class NpeCountingAtomicBooleanCircuitBreaker extends AtomicBooleanCircuitBreaker {
         final AtomicInteger npeCounter = new AtomicInteger();
+
+        public NpeCountingAtomicBooleanCircuitBreaker(CairoEngine engine) {
+            super(engine);
+        }
 
         @Override
         public int getState() {

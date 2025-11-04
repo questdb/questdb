@@ -27,17 +27,18 @@ package io.questdb;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.StationaryNanosClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 
 class PropHttpContextConfiguration implements HttpContextConfiguration {
 
     private final int connectionPoolInitialCapacity;
     private final int connectionStringPoolCapacity;
+    private final int exportConnectionLimit;
     private final boolean httpAllowDeflateBeforeSend;
     private final int httpForceRecvFragmentationChunkSize;
     private final int httpForceSendFragmentationChunkSize;
@@ -47,6 +48,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     private final boolean httpReadOnlySecurityContext;
     private final boolean httpServerCookiesEnabled;
     private final boolean httpServerKeepAlive;
+    private final long httpSessionTimeout;
     private final String httpVersion;
     private final boolean isReadOnlyInstance;
     private final int multipartHeaderBufferSize;
@@ -64,6 +66,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             boolean httpFrozenClock,
             boolean httpReadOnlySecurityContext,
             boolean httpServerCookiesEnabled,
+            long httpSessionTimeout,
             boolean httpServerKeepAlive,
             String httpVersion,
             boolean isReadOnlyInstance,
@@ -81,12 +84,14 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
                 httpFrozenClock,
                 httpReadOnlySecurityContext,
                 httpServerCookiesEnabled,
+                httpSessionTimeout,
                 httpServerKeepAlive,
                 httpVersion,
                 isReadOnlyInstance,
                 multipartHeaderBufferSize,
                 multipartIdleSpinCount,
                 requestHeaderBufferSize,
+                -1,
                 -1,
                 -1
         );
@@ -102,6 +107,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             boolean httpFrozenClock,
             boolean httpReadOnlySecurityContext,
             boolean httpServerCookiesEnabled,
+            long httpSessionTimeout,
             boolean httpServerKeepAlive,
             String httpVersion,
             boolean isReadOnlyInstance,
@@ -109,7 +115,8 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             long multipartIdleSpinCount,
             int requestHeaderBufferSize,
             int httpJsonQueryConnectionLimit,
-            int httpIlpConnectionLimit
+            int httpIlpConnectionLimit,
+            int exportConnectionLimit
     ) {
         this.connectionPoolInitialCapacity = connectionPoolInitialCapacity;
         this.connectionStringPoolCapacity = connectionStringPoolCapacity;
@@ -120,6 +127,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
         this.httpFrozenClock = httpFrozenClock;
         this.httpReadOnlySecurityContext = httpReadOnlySecurityContext;
         this.httpServerCookiesEnabled = httpServerCookiesEnabled;
+        this.httpSessionTimeout = httpSessionTimeout;
         this.httpServerKeepAlive = httpServerKeepAlive;
         this.httpVersion = httpVersion;
         this.isReadOnlyInstance = isReadOnlyInstance;
@@ -128,6 +136,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
         this.requestHeaderBufferSize = requestHeaderBufferSize;
         this.httpJsonQueryConnectionLimit = httpJsonQueryConnectionLimit;
         this.httpIlpConnectionLimit = httpIlpConnectionLimit;
+        this.exportConnectionLimit = exportConnectionLimit;
     }
 
     @Override
@@ -153,6 +162,11 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     @Override
     public boolean getDumpNetworkTraffic() {
         return false;
+    }
+
+    @Override
+    public int getExportConnectionLimit() {
+        return exportConnectionLimit;
     }
 
     @Override
@@ -223,6 +237,11 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     @Override
     public boolean getServerKeepAlive() {
         return httpServerKeepAlive;
+    }
+
+    @Override
+    public long getSessionTimeout() {
+        return httpSessionTimeout;
     }
 
     @Override

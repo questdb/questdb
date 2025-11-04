@@ -24,18 +24,11 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.Numbers;
 
 public interface WindowTimestampFunction extends WindowFunction {
-    @Override
-    default long getDate(Record rec) {
-        final long value = getTimestamp(rec);
-        return value == Numbers.LONG_NULL ? value : value / 1000L;
-    }
-
     @Override
     default double getDouble(Record rec) {
         final long val = getTimestamp(rec);
@@ -51,10 +44,5 @@ public interface WindowTimestampFunction extends WindowFunction {
     @Override
     default long getLong(Record rec) {
         return getTimestamp(rec);
-    }
-
-    @Override
-    default int getType() {
-        return ColumnType.TIMESTAMP;
     }
 }

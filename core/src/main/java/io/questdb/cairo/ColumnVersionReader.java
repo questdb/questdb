@@ -38,7 +38,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -60,6 +59,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     public static final int OFFSET_OFFSET_B_64 = OFFSET_SIZE_A_64 + 8;
     public static final int OFFSET_SIZE_B_64 = OFFSET_OFFSET_B_64 + 8;
     public static final int HEADER_SIZE = OFFSET_SIZE_B_64 + 8;
+    public static final long SYMBOL_TABLE_VERSION_PARTITION = COL_TOP_DEFAULT_PARTITION + 1;
     static final int TIMESTAMP_ADDED_PARTITION_OFFSET = COLUMN_TOP_OFFSET;
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
     protected final LongList cachedColumnVersionList = new LongList();
@@ -218,6 +218,22 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return -1;
     }
 
+    /**
+     * Symbol table files name txn - this is name suffix used to version the file group.
+     * Whenever symbol table capacity changes, its version is increased. Separate column version
+     * entry is used to store this version. Thus, decoupled from version of the columns.
+     * <p>
+     * Separate column version is optional however, when it is not present, this method will fall back to
+     * {@link #getDefaultColumnNameTxn}.
+     *
+     * @param columnIndex symbol column index
+     * @return version suffix
+     */
+    public long getSymbolTableNameTxn(int columnIndex) {
+        int index = getRecordIndex(SYMBOL_TABLE_VERSION_PARTITION, columnIndex);
+        return index > -1 ? getColumnNameTxnByIndex(index) : getDefaultColumnNameTxn(columnIndex);
+    }
+
     public long getVersion() {
         return version;
     }
@@ -253,35 +269,8 @@ public class ColumnVersionReader implements Closeable, Mutable {
     public void readSafe(MillisecondClock microsecondClock, long spinLockTimeout) {
         final long tick = microsecondClock.getTicks();
         while (true) {
-            long version = unsafeGetVersion();
-            if (version == this.version) {
+            if (readSafe()) {
                 return;
-            }
-            Unsafe.getUnsafe().loadFence();
-
-            final long offset;
-            final long size;
-
-            final boolean areaA = (version & 1L) == 0;
-            if (areaA) {
-                offset = mem.getLong(OFFSET_OFFSET_A_64);
-                size = mem.getLong(OFFSET_SIZE_A_64);
-            } else {
-                offset = mem.getLong(OFFSET_OFFSET_B_64);
-                size = mem.getLong(OFFSET_SIZE_B_64);
-            }
-
-            Unsafe.getUnsafe().loadFence();
-            if (version == unsafeGetVersion()) {
-                mem.resize(offset + size);
-                readUnsafe(offset, size, cachedColumnVersionList, mem);
-
-                Unsafe.getUnsafe().loadFence();
-                if (version == unsafeGetVersion()) {
-                    this.version = version;
-                    LOG.debug().$("read clean version ").$(version).$(", offset ").$(offset).$(", size ").$(size).$();
-                    return;
-                }
             }
 
             if (microsecondClock.getTicks() - tick > spinLockTimeout) {
@@ -291,6 +280,40 @@ public class ColumnVersionReader implements Closeable, Mutable {
             Os.pause();
             LOG.debug().$("read dirty version ").$(version).$(", retrying").$();
         }
+    }
+
+    public boolean readSafe() {
+        long version = unsafeGetVersion();
+        if (version == this.version) {
+            return true;
+        }
+        Unsafe.getUnsafe().loadFence();
+
+        final long offset;
+        final long size;
+
+        final boolean areaA = (version & 1L) == 0;
+        if (areaA) {
+            offset = mem.getLong(OFFSET_OFFSET_A_64);
+            size = mem.getLong(OFFSET_SIZE_A_64);
+        } else {
+            offset = mem.getLong(OFFSET_OFFSET_B_64);
+            size = mem.getLong(OFFSET_SIZE_B_64);
+        }
+
+        Unsafe.getUnsafe().loadFence();
+        if (version == unsafeGetVersion()) {
+            mem.resize(offset + size);
+            readUnsafe(offset, size, cachedColumnVersionList, mem);
+
+            Unsafe.getUnsafe().loadFence();
+            if (version == unsafeGetVersion()) {
+                this.version = version;
+                LOG.debug().$("read clean version ").$(version).$(", offset ").$(offset).$(", size ").$(size).$();
+                return true;
+            }
+        }
+        return false;
     }
 
     public long readUnsafe() {
@@ -319,21 +342,22 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 sink.put(",");
             }
             sink.put("\n{columnIndex: ").put(columnIndex).put(", ");
-            boolean isDefaultPartition = timestamp == COL_TOP_DEFAULT_PARTITION;
-            if (isDefaultPartition) {
-                sink.put("defaultNameTxn: ").put(columnNameTxn).put(", ");
-                sink.put("addedPartition: '");
-                TimestampFormatUtils.appendDateTime(sink, columnTop);
-                sink.put("'}");
+            if (timestamp == COL_TOP_DEFAULT_PARTITION) {
+                sink.putAscii("defaultNameTxn: ").put(columnNameTxn).putAscii(", ");
+                sink.putAscii("addedPartition: ");
+                sink.put(columnTop);
+            } else if (timestamp == SYMBOL_TABLE_VERSION_PARTITION) {
+                sink.putAscii("symbolTableTxn: ").put(columnNameTxn);
             } else {
-                sink.put("nameTxn: ").put(columnNameTxn).put(", ");
-                sink.put("partition: '");
-                TimestampFormatUtils.appendDateTime(sink, timestamp);
-                sink.put("', ");
-                sink.put("columnTop: ").put(columnTop).put("}");
+                sink.putAscii("nameTxn: ").put(columnNameTxn).putAscii(", ");
+                sink.putAscii("partition: ");
+                sink.put(timestamp);
+                sink.putAscii(", ");
+                sink.putAscii("columnTop: ").put(columnTop);
             }
+            sink.putAscii('}');
         }
-        sink.put("\n]}");
+        sink.putAscii("\n]}");
         return sink.toString();
     }
 

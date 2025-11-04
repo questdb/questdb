@@ -29,10 +29,10 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 
 public class DefaultHttpContextConfiguration implements HttpContextConfiguration {
 
@@ -59,6 +59,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     @Override
     public boolean getDumpNetworkTraffic() {
         return false;
+    }
+
+    @Override
+    public int getExportConnectionLimit() {
+        return -1;
     }
 
     @Override
@@ -130,6 +135,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     @Override
     public boolean getServerKeepAlive() {
         return true;
+    }
+
+    @Override
+    public long getSessionTimeout() {
+        return 1_800_000_000L; // 30 minutes
     }
 
     @Override

@@ -32,8 +32,10 @@ public class StringDistinctAggVarcharGroupByFunctionFactoryTest extends Abstract
     @Test
     public void testConstantNull() throws Exception {
         assertQuery(
-                "string_distinct_agg\n" +
-                        "\n",
+                """
+                        string_distinct_agg
+                        
+                        """,
                 "select string_distinct_agg(null::varchar, ',') from x",
                 "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
@@ -45,8 +47,10 @@ public class StringDistinctAggVarcharGroupByFunctionFactoryTest extends Abstract
     @Test
     public void testConstantString() throws Exception {
         assertQuery(
-                "string_distinct_agg\n" +
-                        "aaa\n",
+                """
+                        string_distinct_agg
+                        aaa
+                        """,
                 "select string_distinct_agg('aaa'::varchar, ',') from x",
                 "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
@@ -58,13 +62,15 @@ public class StringDistinctAggVarcharGroupByFunctionFactoryTest extends Abstract
     @Test
     public void testGroupKeyed() throws Exception {
         assertQuery(
-                "a\tstring_distinct_agg\n" +
-                        "a\tbbb,abc,aaa\n" +
-                        "b\tccc,abc,bbb\n" +
-                        "c\tccc,abc,aaa\n" +
-                        "d\tbbb,abc\n" +
-                        "e\tabc,ccc\n" +
-                        "f\tccc,abc,bbb\n",
+                """
+                        a\tstring_distinct_agg
+                        a\tbbb,abc,aaa
+                        b\tccc,abc,bbb
+                        c\tccc,abc,aaa
+                        d\tbbb,abc
+                        e\tabc,ccc
+                        f\tccc,abc,bbb
+                        """,
                 "select a, string_distinct_agg(s, ',') from x order by a",
                 "create table x as (" +
                         "select * from (" +
@@ -83,10 +89,12 @@ public class StringDistinctAggVarcharGroupByFunctionFactoryTest extends Abstract
     @Test
     public void testGroupKeyedAllNulls() throws Exception {
         assertQuery(
-                "a\tstring_distinct_agg\n" +
-                        "a\t\n" +
-                        "b\t\n" +
-                        "c\t\n",
+                """
+                        a\tstring_distinct_agg
+                        a\t
+                        b\t
+                        c\t
+                        """,
                 "select a, string_distinct_agg(s, ',') from x order by a",
                 "create table x as (" +
                         "select * from (" +
@@ -105,8 +113,10 @@ public class StringDistinctAggVarcharGroupByFunctionFactoryTest extends Abstract
     @Test
     public void testGroupKeyedManyRows() throws Exception {
         assertQuery(
-                "max\n" +
-                        "15\n",
+                """
+                        max
+                        15
+                        """,
                 "select max(length(agg)) from (select a, string_distinct_agg(s, ',') agg from x)",
                 "create table x as (" +
                         "select * from (" +
@@ -125,9 +135,11 @@ public class StringDistinctAggVarcharGroupByFunctionFactoryTest extends Abstract
     @Test
     public void testGroupKeyedSomeNulls() throws Exception {
         assertQuery(
-                "a\tstring_distinct_agg\n" +
-                        "\taaa\n" +
-                        "a\taaa\n",
+                """
+                        a\tstring_distinct_agg
+                        \taaa
+                        a\taaa
+                        """,
                 "select a, string_distinct_agg(s, ',') from x",
                 "create table x as (" +
                         "select * from (" +
@@ -146,8 +158,10 @@ public class StringDistinctAggVarcharGroupByFunctionFactoryTest extends Abstract
     @Test
     public void testGroupNotKeyed() throws Exception {
         assertQuery(
-                "string_distinct_agg\n" +
-                        "abc,bbb,aaa,ccc\n",
+                """
+                        string_distinct_agg
+                        abc,bbb,aaa,ccc
+                        """,
                 "select string_distinct_agg(s, ',') from x",
                 "create table x as (select * from (select rnd_varchar('abc', 'aaa', 'bbb', 'ccc') s, timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
@@ -166,14 +180,18 @@ public class StringDistinctAggVarcharGroupByFunctionFactoryTest extends Abstract
     @Test
     public void testSkipNull() throws Exception {
         assertQuery(
-                "string_distinct_agg\n" +
-                        "\n",
+                """
+                        string_distinct_agg
+                        
+                        """,
                 "select string_distinct_agg(s, ',') from x",
                 "create table x as (select * from (select cast(null as varchar) s from long_sequence(5)))",
                 null,
                 "insert into x select 'abc' from long_sequence(1)",
-                "string_distinct_agg\n" +
-                        "abc\n",
+                """
+                        string_distinct_agg
+                        abc
+                        """,
                 false,
                 true,
                 false

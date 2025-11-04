@@ -29,9 +29,7 @@ import io.questdb.ServerConfiguration;
 import io.questdb.WorkerPoolManager;
 import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
-import io.questdb.cutlass.http.HttpHeaderParserFactory;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
@@ -80,7 +78,7 @@ public class Services {
         return createHttpServer(
                 serverConfiguration,
                 cairoEngine,
-                workerPoolManager.getSharedNetworkPool(httpServerConfiguration, Requester.HTTP_SERVER),
+                workerPoolManager.getSharedPoolNetwork(httpServerConfiguration, Requester.HTTP_SERVER),
                 workerPoolManager.getSharedQueryWorkerCount()
         );
     }
@@ -97,14 +95,10 @@ public class Services {
             return null;
         }
 
-        final HttpCookieHandler cookieHandler = serverConfiguration.getFactoryProvider().getHttpCookieHandler();
-        final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
         final HttpServer server = new HttpServer(
                 httpServerConfiguration,
                 networkSharedPool,
-                serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
-                cookieHandler,
-                headerParserFactory
+                httpServerConfiguration.getFactoryProvider().getHttpSocketFactory()
         );
         HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
@@ -114,9 +108,7 @@ public class Services {
 
         HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
                 cairoEngine,
-                httpServerConfiguration.getRecvBufferSize(),
-                httpServerConfiguration.getSendBufferSize(),
-                httpServerConfiguration.getLineHttpProcessorConfiguration()
+                httpServerConfiguration
         );
 
         HttpServer.addDefaultEndpoints(
@@ -146,20 +138,20 @@ public class Services {
         // - DEDICATED (6 worker) when ^ ^ is not set and host has > 16 cpus
         // - SHARED otherwise
 
-        // The writerPool is:
+        // The sharedPoolWrite is:
         // - DEDICATED when PropertyKey.LINE_TCP_WRITER_WORKER_COUNT is > 0
         // - DEDICATED (1 worker) when ^ ^ is not set
         // - SHARED otherwise
 
-        final WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(
+        final WorkerPool sharedPoolNetwork = workerPoolManager.getSharedPoolNetwork(
                 config.getNetworkWorkerPoolConfiguration(),
                 Requester.LINE_TCP_IO
         );
-        final WorkerPool writerPool = workerPoolManager.getInstanceWrite(
+        final WorkerPool sharedPoolWrite = workerPoolManager.getSharedPoolWrite(
                 config.getWriterWorkerPoolConfiguration(),
                 Requester.LINE_TCP_WRITER
         );
-        return new LineTcpReceiver(config, cairoEngine, networkSharedPool, writerPool);
+        return new LineTcpReceiver(config, cairoEngine, sharedPoolNetwork, sharedPoolWrite);
     }
 
     @Nullable
@@ -191,7 +183,7 @@ public class Services {
         // The pool is:
         // - SHARED if PropertyKey.HTTP_MIN_WORKER_COUNT (http.min.worker.count) <= 0
         // - DEDICATED (1 worker) otherwise
-        final WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(
+        final WorkerPool networkSharedPool = workerPoolManager.getSharedPoolNetwork(
                 configuration,
                 Requester.HTTP_MIN_SERVER
         );
@@ -204,7 +196,11 @@ public class Services {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
+        final HttpServer server = new HttpServer(
+                configuration,
+                workerPool,
+                configuration.getFactoryProvider().getHttpMinSocketFactory()
+        );
         Metrics metrics = configuration.getHttpContextConfiguration().getMetrics();
         server.bind(
                 new HttpRequestHandlerFactory() {
@@ -255,7 +251,7 @@ public class Services {
         // The pool is:
         // - DEDICATED when PropertyKey.PG_WORKER_COUNT is > 0
         // - SHARED otherwise
-        final WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(
+        final WorkerPool networkSharedPool = workerPoolManager.getSharedPoolNetwork(
                 configuration,
                 Requester.PG_WIRE_SERVER
         );

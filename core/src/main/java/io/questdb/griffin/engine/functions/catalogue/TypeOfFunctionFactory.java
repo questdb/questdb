@@ -78,7 +78,8 @@ public class TypeOfFunctionFactory implements FunctionFactory {
         TYPE_NAMES.put(INT, new StrConstant(nameOf(INT)));
         TYPE_NAMES.put(LONG, new StrConstant(nameOf(LONG)));
         TYPE_NAMES.put(DATE, new StrConstant(nameOf(DATE)));
-        TYPE_NAMES.put(TIMESTAMP, new StrConstant(nameOf(TIMESTAMP)));
+        TYPE_NAMES.put(TIMESTAMP_MICRO, new StrConstant(nameOf(TIMESTAMP_MICRO)));
+        TYPE_NAMES.put(TIMESTAMP_NANO, new StrConstant(nameOf(TIMESTAMP_NANO)));
         TYPE_NAMES.put(FLOAT, new StrConstant(nameOf(FLOAT)));
         TYPE_NAMES.put(DOUBLE, new StrConstant(nameOf(DOUBLE)));
         TYPE_NAMES.put(STRING, new StrConstant(nameOf(STRING)));
@@ -102,6 +103,8 @@ public class TypeOfFunctionFactory implements FunctionFactory {
 
         TYPE_NAMES.put(IPv4, new StrConstant(nameOf(IPv4)));
         TYPE_NAMES.put(VARCHAR, new VarcharConstant(nameOf(VARCHAR)));
-        TYPE_NAMES.put(INTERVAL, new StrConstant(nameOf(INTERVAL)));
+        TYPE_NAMES.put(INTERVAL_RAW, new StrConstant(nameOf(INTERVAL)));
+        TYPE_NAMES.put(INTERVAL_TIMESTAMP_MICRO, new StrConstant(nameOf(INTERVAL)));
+        TYPE_NAMES.put(INTERVAL_TIMESTAMP_NANO, new StrConstant(nameOf(INTERVAL)));
     }
 }

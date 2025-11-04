@@ -91,12 +91,12 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
+    public InsertMethod createMethod(SqlExecutionContext executionContext) {
         return createMethod(executionContext, engine);
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
+    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) {
         SecurityContext securityContext = executionContext.getSecurityContext();
         securityContext.authorizeInsert(tableToken);
 
@@ -171,7 +171,7 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
                         writer.rollback();
                     } catch (Throwable e2) {
                         // Writer is distressed, exception already logged, the pool will handle it when writer is returned
-                        LOG.error().$("could not rollback, writer must be distressed [table=").$(tableToken.getTableName()).I$();
+                        LOG.error().$("could not rollback, writer must be distressed [table=").$(tableToken).I$();
                     }
                     throw e;
                 } finally {

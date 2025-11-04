@@ -54,7 +54,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
     public void setUp() {
         super.setUp();
         nWriterThreads = 2;
-        microSecondTicks = -1;
+        timestampTicks = -1;
         recvBuffer = null;
         disconnected = true;
         maxRecvBufferSize.set(1024);
@@ -162,8 +162,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -179,8 +181,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -196,8 +200,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -213,8 +219,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -230,8 +238,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -247,8 +257,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -264,8 +276,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -290,8 +304,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -321,8 +337,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -344,8 +362,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             }
             Assert.assertFalse(disconnected);
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }

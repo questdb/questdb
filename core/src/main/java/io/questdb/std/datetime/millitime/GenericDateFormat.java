@@ -24,16 +24,20 @@
 
 package io.questdb.std.datetime.millitime;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.std.datetime.CommonUtils.HOUR_24;
+import static io.questdb.std.datetime.CommonUtils.HOUR_AM;
 
 public class GenericDateFormat extends AbstractDateFormat {
     private final IntList compiledOps;
@@ -322,7 +326,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                         year = Dates.getYear(datetime);
                         leap = Dates.isLeapYear(year);
                     }
-                    TimestampFormatUtils.appendYear000(sink, year);
+                    MicrosFormatUtils.appendYear000(sink, year);
                     break;
 
                 // ERA
@@ -354,6 +358,11 @@ public class GenericDateFormat extends AbstractDateFormat {
     }
 
     @Override
+    public int getColumnType() {
+        return ColumnType.DATE;
+    }
+
+    @Override
     public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
         int day = 1;
         int month = 1;
@@ -365,7 +374,7 @@ public class GenericDateFormat extends AbstractDateFormat {
         int era = 1;
         int timezone = -1;
         long offset = Long.MIN_VALUE;
-        int hourType = DateFormatUtils.HOUR_24;
+        int hourType = HOUR_24;
         int pos = lo;
         long l;
         int len;
@@ -449,8 +458,8 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
                     DateFormatUtils.assertRemaining(pos, hi);
                     hour = Numbers.parseInt(in, pos, ++pos);
-                    if (hourType == DateFormatUtils.HOUR_24) {
-                        hourType = DateFormatUtils.HOUR_AM;
+                    if (hourType == HOUR_24) {
+                        hourType = HOUR_AM;
                     }
                     break;
 
@@ -458,8 +467,8 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
                     DateFormatUtils.assertRemaining(pos + 1, hi);
                     hour = Numbers.parseInt(in, pos, pos += 2);
-                    if (hourType == DateFormatUtils.HOUR_24) {
-                        hourType = DateFormatUtils.HOUR_AM;
+                    if (hourType == HOUR_24) {
+                        hourType = HOUR_AM;
                     }
                     break;
 
@@ -468,8 +477,8 @@ public class GenericDateFormat extends AbstractDateFormat {
                     l = Numbers.parseIntSafely(in, pos, hi);
                     hour = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
-                    if (hourType == DateFormatUtils.HOUR_24) {
-                        hourType = DateFormatUtils.HOUR_AM;
+                    if (hourType == HOUR_24) {
+                        hourType = HOUR_AM;
                     }
                     break;
 

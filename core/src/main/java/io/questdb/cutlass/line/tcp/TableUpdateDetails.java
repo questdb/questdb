@@ -28,13 +28,16 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -51,6 +54,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Pool;
 import io.questdb.std.Utf8StringIntHashMap;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
@@ -66,7 +70,9 @@ import static io.questdb.cairo.TableUtils.ANY_TABLE_VERSION;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TableUpdateDetails implements Closeable {
-    private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
+    // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(TableUpdateDetails.class);
     private static final DirectUtf8SymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
     private final long commitInterval;
     private final boolean commitOnClose;
@@ -79,6 +85,7 @@ public class TableUpdateDetails implements Closeable {
     private final SecurityContext ownSecurityContext;
     private final Utf8String tableNameUtf8;
     private final TableToken tableToken;
+    private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final long writerTickRowsCountMod;
     protected TableWriterAPI writerAPI;
@@ -115,6 +122,7 @@ public class TableUpdateDetails implements Closeable {
         this.defaultMaxUncommittedRows = cairoConfiguration.getMaxUncommittedRows();
         this.writerAPI = writer;
         this.timestampIndex = writer.getMetadata().getTimestampIndex();
+        this.timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
         this.tableToken = writer.getTableToken();
         this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
         this.commitInterval = configuration.getCommitInterval();
@@ -153,6 +161,7 @@ public class TableUpdateDetails implements Closeable {
         this.defaultMaxUncommittedRows = maxUncommittedRows;
         this.writerAPI = writer;
         this.timestampIndex = writer.getMetadata().getTimestampIndex();
+        this.timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
         this.tableToken = writer.getTableToken();
         this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
         this.commitInterval = commitInterval;
@@ -399,6 +408,10 @@ public class TableUpdateDetails implements Closeable {
         return localDetailsArray[workerId];
     }
 
+    TimestampDriver getTimestampDriver() {
+        return timestampDriver;
+    }
+
     int getTimestampIndex() {
         return timestampIndex;
     }
@@ -451,6 +464,7 @@ public class TableUpdateDetails implements Closeable {
         private boolean clean = true;
         private String colNameUtf16;
         private Utf8String colNameUtf8;
+        private ColumnVersionReader columnVersionReader;
         private GenericRecordMetadata latestKnownMetadata;
         private String symbolNameTemp;
         private TxReader txReader;
@@ -488,6 +502,7 @@ public class TableUpdateDetails implements Closeable {
             Misc.freeObjList(symbolCacheByColumnIndex);
             Misc.free(path);
             txReader = Misc.free(txReader);
+            columnVersionReader = Misc.free(columnVersionReader);
         }
 
         private DirectUtf8SymbolLookup addSymbolCache(int colWriterIndex) {
@@ -506,24 +521,25 @@ public class TableUpdateDetails implements Closeable {
                 if (this.clean) {
                     if (this.txReader == null) {
                         this.txReader = new TxReader(cairoConfiguration.getFilesFacade());
+                        this.columnVersionReader = new ColumnVersionReader();
                     }
                     int pathLen = path.size();
-                    this.txReader.ofRO(path.concat(TXN_FILE_NAME).$(), reader.getPartitionedBy());
+                    this.txReader.ofRO(path.concat(TXN_FILE_NAME).$(), reader.getMetadata().getTimestampType(), reader.getPartitionedBy());
+                    this.columnVersionReader.ofRO(cairoConfiguration.getFilesFacade(), path.trimTo(pathLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
                     path.trimTo(pathLen);
                     this.clean = false;
                 }
 
-                long columnNameTxn = reader.getColumnVersionReader().getDefaultColumnNameTxn(colWriterIndex);
                 assert symIndex <= colWriterIndex;
                 symCache.of(
                         cairoConfiguration,
-                        writerAPI,
-                        colWriterIndex,
-                        path,
                         symbolNameTemp,
+                        colWriterIndex,
                         symIndex,
+                        path,
+                        writerAPI,
                         txReader,
-                        columnNameTxn
+                        columnVersionReader
                 );
                 symbolCacheByColumnIndex.extendAndSet(colWriterIndex, symCache);
                 return symCache;
@@ -650,6 +666,7 @@ public class TableUpdateDetails implements Closeable {
             columnTypeMeta.add(0);
             if (txReader != null) {
                 txReader.clear();
+                columnVersionReader.clear();
             }
             clean = true;
         }
@@ -687,9 +704,12 @@ public class TableUpdateDetails implements Closeable {
         int getColumnType(Utf8String colName, LineTcpParser.ProtoEntity entity) {
             int colType = columnTypeByNameUtf8.get(colName);
             if (colType < 0) {
-                colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entity.getType()];
+                colType = defaultColumnTypes.defaultColumnTypes[entity.getType()];
                 if (colType == ColumnType.ARRAY) {
                     colType = entity.getArray().getType();
+                }
+                if (colType == ColumnType.TIMESTAMP && entity.getUnit() == CommonUtils.TIMESTAMP_UNIT_NANOS) {
+                    colType = ColumnType.TIMESTAMP_NANO;
                 }
                 columnTypeByNameUtf8.put(colName, colType);
             }

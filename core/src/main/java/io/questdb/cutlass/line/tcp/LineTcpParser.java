@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
@@ -40,6 +39,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.std.datetime.CommonUtils.*;
 
 public class LineTcpParser implements QuietCloseable {
 
@@ -67,13 +68,6 @@ public class LineTcpParser implements QuietCloseable {
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
     public static final byte ENTITY_TYPE_UUID = 21;
     public static final byte ENTITY_TYPE_VARCHAR = 22;
-    public static final byte ENTITY_UNIT_NONE = 0;
-    public static final byte ENTITY_UNIT_NANO = ENTITY_UNIT_NONE + 1;
-    public static final byte ENTITY_UNIT_MICRO = ENTITY_UNIT_NANO + 1;
-    public static final byte ENTITY_UNIT_MILLI = ENTITY_UNIT_MICRO + 1;
-    public static final byte ENTITY_UNIT_SECOND = ENTITY_UNIT_MILLI + 1;
-    public static final byte ENTITY_UNIT_MINUTE = ENTITY_UNIT_SECOND + 1;
-    public static final byte ENTITY_UNIT_HOUR = ENTITY_UNIT_MINUTE + 1;
     public static final long NULL_TIMESTAMP = Numbers.LONG_NULL;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_ARRAY + 1;
     public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_VARCHAR + 1;
@@ -86,7 +80,6 @@ public class LineTcpParser implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
     private static final IntHashSet binaryFormatSupportType = new IntHashSet();
     private static final boolean[] controlBytes;
-    private final CairoConfiguration cairoConfiguration;
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private final DirectUtf8String measurementName = new DirectUtf8String();
@@ -107,8 +100,7 @@ public class LineTcpParser implements QuietCloseable {
     private long timestamp;
     private byte timestampUnit;
 
-    public LineTcpParser(CairoConfiguration configuration) {
-        this.cairoConfiguration = configuration;
+    public LineTcpParser() {
     }
 
     @Override
@@ -363,7 +355,7 @@ public class LineTcpParser implements QuietCloseable {
         currentEntity = null;
         entityHandler = ENTITY_HANDLER_TABLE;
         timestamp = NULL_TIMESTAMP;
-        timestampUnit = ENTITY_UNIT_NONE;
+        timestampUnit = TIMESTAMP_UNIT_UNSET;
         errorCode = ErrorCode.NONE;
         nQuoteCharacters = 0;
         scape = false;
@@ -373,24 +365,20 @@ public class LineTcpParser implements QuietCloseable {
     }
 
     private boolean completeEntity(byte endOfEntityByte, long bufHi) {
-        switch (entityHandler) {
-            case ENTITY_HANDLER_TABLE:
-                return expectTableName(endOfEntityByte);
-            case ENTITY_HANDLER_NAME:
-                return expectEntityName(endOfEntityByte, bufHi);
-            case ENTITY_HANDLER_VALUE:
-                return expectEntityValue(endOfEntityByte, bufHi);
-            case ENTITY_HANDLER_TIMESTAMP:
-                return expectTimestamp(endOfEntityByte);
-            case ENTITY_HANDLER_NEW_LINE:
-                return expectEndOfLine(endOfEntityByte);
-        }
-        return false;
+        return switch (entityHandler) {
+            case ENTITY_HANDLER_TABLE -> expectTableName(endOfEntityByte);
+            case ENTITY_HANDLER_NAME -> expectEntityName(endOfEntityByte, bufHi);
+            case ENTITY_HANDLER_VALUE -> expectEntityValue(endOfEntityByte, bufHi);
+            case ENTITY_HANDLER_TIMESTAMP -> expectTimestamp(endOfEntityByte);
+            case ENTITY_HANDLER_NEW_LINE -> expectEndOfLine(endOfEntityByte);
+            default -> false;
+        };
     }
 
     private boolean expectBinaryFormat(long bufHi) {
         assert binaryFormatStreamStep != BinaryFormatStreamStep.NotINBinaryFormat;
         if (binaryFormatStreamStep == BinaryFormatStreamStep.INBinaryFormat) {
+            currentEntity.binaryFormat = true;
             if (!currentEntity.parseBinaryFormat(bufHi)) {
                 return false;
             }
@@ -558,15 +546,15 @@ public class LineTcpParser implements QuietCloseable {
                     final byte last = charSeq.byteAt(charSeqLen - 1);
                     switch (last) {
                         case 'n':
-                            timestampUnit = ENTITY_UNIT_NANO;
+                            timestampUnit = TIMESTAMP_UNIT_NANOS;
                             timestamp = Numbers.parseLong(charSeq.decHi());
                             break;
                         case 't':
-                            timestampUnit = ENTITY_UNIT_MICRO;
+                            timestampUnit = TIMESTAMP_UNIT_MICROS;
                             timestamp = Numbers.parseLong(charSeq.decHi());
                             break;
                         case 'm':
-                            timestampUnit = ENTITY_UNIT_MILLI;
+                            timestampUnit = TIMESTAMP_UNIT_MILLIS;
                             timestamp = Numbers.parseLong(charSeq.decHi());
                             break;
                         // fall through
@@ -580,7 +568,7 @@ public class LineTcpParser implements QuietCloseable {
             errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
             return false;
         } catch (NumericException ex) {
-            timestampUnit = ENTITY_UNIT_NONE;
+            timestampUnit = TIMESTAMP_UNIT_UNSET;
             errorCode = ErrorCode.INVALID_TIMESTAMP;
             return false;
         }
@@ -713,11 +701,12 @@ public class LineTcpParser implements QuietCloseable {
         private final ArrayBinaryFormatParser arrayBinaryParser = new ArrayBinaryFormatParser();
         private final DirectUtf8String name = new DirectUtf8String();
         private final DirectUtf8String value = new DirectUtf8String();
+        private boolean binaryFormat;
         private boolean booleanValue;
         private double floatValue;
         private long longValue;
         private byte type = ENTITY_TYPE_NONE;
-        private byte unit = ENTITY_UNIT_NONE;
+        private byte unit = TIMESTAMP_UNIT_UNSET;
 
         @Override
         public void close() {
@@ -756,6 +745,10 @@ public class LineTcpParser implements QuietCloseable {
             return value;
         }
 
+        public boolean isBinaryFormat() {
+            return binaryFormat;
+        }
+
         public void shl(long shl) {
             name.shl(shl);
             value.shl(shl);
@@ -764,11 +757,13 @@ public class LineTcpParser implements QuietCloseable {
 
         private void clear() {
             type = ENTITY_TYPE_NONE;
-            unit = ENTITY_UNIT_NONE;
+            unit = TIMESTAMP_UNIT_UNSET;
+            value.clear();
         }
 
         private boolean parse(byte last, int valueLen) {
             // System.err.println("LineTcpParser.ProtoEntity.parse :: " + ((char) last) + ", valueLen: " + valueLen);
+            binaryFormat = false;
             switch (last) {
                 case 'i':
                     if (valueLen > 1 && value.byteAt(1) != 'x') {
@@ -783,12 +778,12 @@ public class LineTcpParser implements QuietCloseable {
                     return false;
                 case 'n':
                     if (valueLen > 1) {
-                        unit = ENTITY_UNIT_NANO;
+                        unit = TIMESTAMP_UNIT_NANOS;
                         return parseLong(ENTITY_TYPE_TIMESTAMP);
                     }
                 case 'm':
                     if (valueLen > 1) {
-                        unit = ENTITY_UNIT_MILLI;
+                        unit = TIMESTAMP_UNIT_MILLIS;
                         return parseLong(ENTITY_TYPE_TIMESTAMP);
                     }
                     // fall through
@@ -796,7 +791,7 @@ public class LineTcpParser implements QuietCloseable {
                     return false;
                 case 't':
                     if (valueLen > 1) {
-                        unit = ENTITY_UNIT_MICRO;
+                        unit = TIMESTAMP_UNIT_MICROS;
                         return parseLong(ENTITY_TYPE_TIMESTAMP);
                     }
                     // fall through
@@ -942,7 +937,7 @@ public class LineTcpParser implements QuietCloseable {
                 value.decHi(); // remove the suffix ('i', 'n', 't', 'm')
                 type = entityType;
             } catch (NumericException notANumber) {
-                unit = ENTITY_UNIT_NONE;
+                unit = TIMESTAMP_UNIT_UNSET;
                 type = ENTITY_TYPE_SYMBOL;
                 return false;
             }

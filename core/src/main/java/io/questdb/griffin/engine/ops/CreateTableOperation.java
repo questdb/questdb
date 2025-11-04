@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.griffin.CopyDataProgressReporter;
 import io.questdb.griffin.SqlException;
 import org.jetbrains.annotations.Nullable;
 
@@ -38,6 +39,8 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     long getBatchSize();
 
+    CopyDataProgressReporter getCopyDataProgressReporter();
+
     @Nullable
     CharSequence getLikeTableName();
 
@@ -45,11 +48,13 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     OperationFuture getOperationFuture();
 
-    CharSequence getSelectText();
+    String getSelectText();
 
     int getSelectTextPosition();
 
     CharSequence getSqlText();
+
+    int getTableKind();
 
     int getTableNamePosition();
 
@@ -59,11 +64,15 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     boolean ignoreIfExists();
 
+    boolean needRegister();
+
+    void setCopyDataProgressReporter(CopyDataProgressReporter reporter);
+
     void updateFromLikeTableMetadata(TableMetadata likeTableMetadata);
 
     void updateOperationFutureAffectedRowsCount(long insertCount);
 
     void updateOperationFutureTableToken(TableToken tableToken);
 
-    void validateAndUpdateMetadataFromSelect(RecordMetadata metadata) throws SqlException;
+    void validateAndUpdateMetadataFromSelect(RecordMetadata metadata, int scanDirection) throws SqlException;
 }

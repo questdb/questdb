@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MillsTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
@@ -76,7 +78,7 @@ public abstract class VarcharFunction implements Function {
 
     @Override
     public long getDate(Record rec) {
-        return SqlUtil.implicitCastStrAsDate(getStrA(rec));
+        return MillsTimestampDriver.INSTANCE.implicitCastVarchar(getVarcharA(rec));
     }
 
     @Override
@@ -210,7 +212,7 @@ public abstract class VarcharFunction implements Function {
 
     @Override
     public final long getTimestamp(Record rec) {
-        return SqlUtil.implicitCastVarcharAsTimestamp(getStrA(rec));
+        return NanosTimestampDriver.INSTANCE.implicitCastVarchar(getVarcharA(rec));
     }
 
     @Override

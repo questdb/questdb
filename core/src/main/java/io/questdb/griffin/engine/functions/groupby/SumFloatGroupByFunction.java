@@ -45,21 +45,19 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
-        if (Float.isFinite(value)) {
-            mapValue.putFloat(valueIndex, value);
-            mapValue.putLong(valueIndex + 1, 1);
-        } else {
-            mapValue.putFloat(valueIndex, 0f);
-            mapValue.putLong(valueIndex + 1, 0);
-        }
+        mapValue.putFloat(valueIndex, value);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
         if (Float.isFinite(value)) {
-            mapValue.addFloat(valueIndex, value);
-            mapValue.addLong(valueIndex + 1, 1);
+            final float sum = mapValue.getFloat(valueIndex);
+            if (Float.isFinite(sum)) {
+                mapValue.putFloat(valueIndex, sum + value);
+            } else {
+                mapValue.putFloat(valueIndex, value);
+            }
         }
     }
 
@@ -70,11 +68,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public float getFloat(Record rec) {
-        long valueCount = rec.getLong(valueIndex + 1);
-        if (valueCount > 0) {
-            return rec.getFloat(valueIndex);
-        }
-        return Float.NaN;
+        return rec.getFloat(valueIndex);
     }
 
     @Override
@@ -101,7 +95,6 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.FLOAT);
-        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -116,22 +109,25 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        float srcSum = srcValue.getFloat(valueIndex);
-        long srcCount = srcValue.getLong(valueIndex + 1);
-        destValue.addFloat(valueIndex, srcSum);
-        destValue.addLong(valueIndex + 1, srcCount);
+        final float srcSum = srcValue.getFloat(valueIndex);
+        if (Float.isFinite(srcSum)) {
+            final float destSum = destValue.getFloat(valueIndex);
+            if (Float.isFinite(destSum)) {
+                destValue.putFloat(valueIndex, destSum + srcSum);
+            } else {
+                destValue.putFloat(valueIndex, srcSum);
+            }
+        }
     }
 
     @Override
     public void setFloat(MapValue mapValue, float value) {
         mapValue.putFloat(valueIndex, value);
-        mapValue.putLong(valueIndex + 1, 1);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putFloat(valueIndex, Float.NaN);
-        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override

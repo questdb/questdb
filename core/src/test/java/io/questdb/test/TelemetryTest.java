@@ -75,15 +75,15 @@ public class TelemetryTest extends AbstractCairoTest {
             execute("INSERT INTO " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " values(CAST('0x01' AS LONG256), true)");
 
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
-                String expected = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                        "id\tLONG256\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                        "enabled\tBOOLEAN\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                        "version\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n" +
-                        "os\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n" +
-                        "package\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n" +
-                        "instance_name\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n" +
-                        "instance_type\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n" +
-                        "instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n";
+                String expected = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                        "id\tLONG256\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                        "enabled\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                        "version\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n" +
+                        "os\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n" +
+                        "package\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n" +
+                        "instance_name\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n" +
+                        "instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n" +
+                        "instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n";
                 assertSql(expected, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
                 expected = "id\tversion\n" +
                         "0x01\t\n" +

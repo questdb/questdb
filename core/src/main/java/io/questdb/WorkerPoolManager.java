@@ -51,29 +51,57 @@ public abstract class WorkerPoolManager implements Target {
     private final AtomicBoolean running = new AtomicBoolean();
 
     public WorkerPoolManager(ServerConfiguration config) {
-        sharedPoolNetwork = new WorkerPool(config.getNetworkWorkerPoolConfiguration());
-        sharedPoolQuery = config.getQueryWorkerPoolConfiguration().getWorkerCount() > 0 ? new WorkerPool(config.getQueryWorkerPoolConfiguration()) : null;
-        sharedPoolWrite = new WorkerPool(config.getWriteWorkerPoolConfiguration());
+        sharedPoolNetwork = new WorkerPool(config.getSharedWorkerPoolNetworkConfiguration());
+        sharedPoolQuery = config.getSharedWorkerPoolQueryConfiguration().getWorkerCount() > 0 ? new WorkerPool(config.getSharedWorkerPoolQueryConfiguration()) : null;
+        sharedPoolWrite = new WorkerPool(config.getSharedWorkerPoolWriteConfiguration());
 
         WorkerPool queryPool = sharedPoolQuery != null ? sharedPoolQuery : sharedPoolNetwork;
         configureWorkerPools(queryPool, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
         config.getMetrics().addScrapable(this);
     }
 
-    public WorkerPool getSharedNetworkPool(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
+    public WorkerPool getSharedPoolNetwork(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
         return getWorkerPool(config, requester, sharedPoolNetwork);
-    }
-
-    public WorkerPool getInstanceWrite(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
-        return getWorkerPool(config, requester, sharedPoolWrite);
     }
 
     public WorkerPool getSharedPoolNetwork() {
         return sharedPoolNetwork;
     }
 
+    public WorkerPool getSharedPoolWrite(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
+        return getWorkerPool(config, requester, sharedPoolWrite);
+    }
+
     public int getSharedQueryWorkerCount() {
         return sharedPoolQuery != null ? sharedPoolQuery.getWorkerCount() : 0;
+    }
+
+    @NotNull
+    public WorkerPool getWorkerPool(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester, WorkerPool sharedPool) {
+        if (running.get() || closed.get()) {
+            throw new IllegalStateException("can only get instance before start");
+        }
+
+        if (config.getWorkerCount() < 1) {
+            LOG.info().$("using SHARED pool [requester=").$(requester)
+                    .$(", workers=").$(sharedPool.getWorkerCount())
+                    .$(", pool=").$(sharedPool.getPoolName())
+                    .I$();
+            return sharedPool;
+        }
+
+        String poolName = config.getPoolName();
+        WorkerPool pool = dedicatedPools.get(poolName);
+        if (pool == null) {
+            pool = new WorkerPool(config);
+            dedicatedPools.put(poolName, pool);
+        }
+        LOG.info().$("new DEDICATED pool [name=").$(poolName)
+                .$(", requester=").$(requester)
+                .$(", workers=").$(pool.getWorkerCount())
+                .$(", priority=").$(config.workerPoolPriority())
+                .I$();
+        return pool;
     }
 
     public void halt() {
@@ -143,34 +171,6 @@ public abstract class WorkerPoolManager implements Target {
         }
     }
 
-    @NotNull
-    private WorkerPool getWorkerPool(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester, WorkerPool sharedPool) {
-        if (running.get() || closed.get()) {
-            throw new IllegalStateException("can only get instance before start");
-        }
-
-        if (config.getWorkerCount() < 1) {
-            LOG.info().$("using SHARED pool [requester=").$(requester)
-                    .$(", workers=").$(sharedPool.getWorkerCount())
-                    .$(", pool=").$(sharedPool.getPoolName())
-                    .I$();
-            return sharedPool;
-        }
-
-        String poolName = config.getPoolName();
-        WorkerPool pool = dedicatedPools.get(poolName);
-        if (pool == null) {
-            pool = new WorkerPool(config);
-            dedicatedPools.put(poolName, pool);
-        }
-        LOG.info().$("new DEDICATED pool [name=").$(poolName)
-                .$(", requester=").$(requester)
-                .$(", workers=").$(pool.getWorkerCount())
-                .$(", priority=").$(config.workerPoolPriority())
-                .I$();
-        return pool;
-    }
-
     /**
      * @param sharedPoolQuery A reference to the QUERY SHARED pool
      * @param sharedPoolWrite A reference to the WRITE SHARED pool
@@ -189,7 +189,8 @@ public abstract class WorkerPoolManager implements Target {
         LINE_TCP_WRITER("line-tcp-writer"),
         OTHER("other"),
         WAL_APPLY("wal-apply"),
-        MAT_VIEW_REFRESH("mat-view-refresh");
+        MAT_VIEW_REFRESH("mat-view-refresh"),
+        EXPORT("export");
 
         private final String requester;
 

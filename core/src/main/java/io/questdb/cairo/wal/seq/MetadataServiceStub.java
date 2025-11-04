@@ -113,7 +113,7 @@ public interface MetadataServiceStub extends MetadataService {
             int refreshType,
             int timerInterval,
             char timerUnit,
-            long timerStart,
+            long timerStartUs,
             @Nullable CharSequence timerTimeZone,
             int periodLength,
             char periodLengthUnit,
@@ -129,7 +129,7 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void setMatViewRefreshTimer(long start, int interval, char unit) {
+    default void setMatViewRefreshTimer(long startUs, int interval, char unit) {
         throw CairoException.critical(0).put("change of materialized view refresh timer does not update sequencer metadata");
     }
 

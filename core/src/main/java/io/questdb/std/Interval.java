@@ -24,15 +24,12 @@
 
 package io.questdb.std;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalOperation;
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
-public class Interval implements Sinkable, Mutable {
+public class Interval implements Mutable {
     public static final Interval NULL = new Interval(Numbers.LONG_NULL, Numbers.LONG_NULL);
 
     private long hi = Numbers.LONG_NULL;
@@ -82,22 +79,15 @@ public class Interval implements Sinkable, Mutable {
         return this;
     }
 
-    public void of(CharSequence seq, LongList list) throws NumericException, SqlException {
-        IntervalUtils.parseInterval(seq, 0, seq.length(), IntervalOperation.NONE, list);
-        assert list.size() != 0;
-        if (list.size() != 2) {
-            throw SqlException.$(-1, "only compatible with simple intervals");
-        }
-        lo = list.get(0);
-        hi = list.get(1);
-    }
-
-    @Override
-    public void toSink(@NotNull CharSink<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink, int intervalType) {
         sink.putAscii('(');
         if (lo != Long.MIN_VALUE) {
             sink.putAscii('\'');
-            sink.put(Timestamps.toString(lo));
+            if (intervalType == ColumnType.INTERVAL_RAW) {
+                sink.put(lo);
+            } else {
+                sink.put(IntervalUtils.getTimestampDriverByIntervalType(intervalType).toMSecString(lo));
+            }
             sink.putAscii('\'');
         } else {
             sink.putAscii("null");
@@ -105,7 +95,11 @@ public class Interval implements Sinkable, Mutable {
         sink.putAscii(", ");
         if (hi != Long.MIN_VALUE) {
             sink.putAscii('\'');
-            sink.put(Timestamps.toString(hi));
+            if (intervalType == ColumnType.INTERVAL_RAW) {
+                sink.put(hi);
+            } else {
+                sink.put(IntervalUtils.getTimestampDriverByIntervalType(intervalType).toMSecString(hi));
+            }
             sink.putAscii('\'');
         } else {
             sink.putAscii("null");

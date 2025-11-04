@@ -1,181 +1,249 @@
 <div align="center">
-   <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
+  <a href="https://questdb.com/" target="blank"><img alt="QuestDB Logo" src="https://questdb.com/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
 <p>&nbsp;</p>
 
 <p align="center">
-  <a href="https://slack.questdb.io">
-    <img
-      src="https://slack.questdb.io/badge.svg"
-      alt="QuestDB community Slack channel"
-    />
-  </a>
   <a href="#contribute">
-    <img
-      src="https://img.shields.io/github/all-contributors/questdb/questdb"
-      alt="QuestDB open source contributors"
-    />
-  </a>
-  <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img
-      src="https://img.shields.io/maven-central/v/org.questdb/questdb"
-      alt="QuestDB on Apache Maven"
-    />
+    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | 简体中文 | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](README.ja-ja.md) | [Türkçe](README.tr-tr.md) | [हिंदी](README.hn-in.md) | [Tiếng Việt](README.vi-vn.md)
+<p align="center">
+  <a href="https://github.com/questdb/questdb">English</a> |
+  简体中文 |
+  <a href="./README.zh-hk.md">繁體中文</a> |
+  <a href="./README.ar-dz.md">العربية</a> |
+  <a href="./README.it-it.md">Italiano</a> |
+  <a href="./README.ua-ua.md">Українська</a> |
+  <a href="./README.es-es.md">Español</a> |
+  <a href="./README.pt.md">Português</a> |
+  <a href="./README.fr-fr.md">Français</a> |
+  <a href="./README.de-de.md">Deutsch</a> |
+  <a href="./README.ja-ja.md">日本語</a> |
+  <a href="./README.ko-kr.md">한국어</a> |
+  <a href="./README.he-il.md">עברית</a> |
+  <a href="./README.nl-nl.md">Nederlands</a> |
+  <a href="./README.tr-tr.md">Türkçe</a> |
+  <a href="./README.hn-in.md">हिंदी</a> |
+  <a href="./README.vi-vn.md">Tiếng Việt</a> |
+  <a href="./README.ms-my.md">Bahasa Melayu</a>
+</p>
 
-# QuestDB
+---
 
-QuestDB 是一个开源的时序数据库，支持高吞吐数据获取和快速 SQL 查询，操作简单。
-它支持使用InfluxDB连接协议、PostgreSQL协议和REST API进行批量无模式导入和导出。
+QuestDB 是一个高性能开源时序数据库，提供**低延迟、高吞吐的数据写入**和**低延迟 SQL 查询**服务。
 
-QuestDB非常适用于金融市场数据、应用程序指标、传感器数据、实时分析、仪表板和系统基础设施监控。
+在存储上，QuestDB 提供多层引擎架构（WAL → 原生 → 对象存储上的 Parquet）。核心引擎基于零 GC 的 Java 和 C++ 实现；企业版还包含采用 Rust 编写的高性能组件。
 
-QuestDB使用原生时间序列SQL插件实现了ANSI SQL。这些 SQL 扩展语义能更简单的连接
-（JOIN）多个来源的关系型数据以及时间序列数据。我们通过列导向的存储模型、大规模
-并行的矢量执行、SIMD 指令和各种低延迟技术实现了高性能。整个代码库是用 Java 和
-C++从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾回收的影响。
+在查询上，QuestDB 通过列式存储模型、并行化向量执行、SIMD 指令及多种低延迟技术，实现了卓越地查询性能表现。此外，QuestDB
+还具备出色的硬件效率，支持快速部署与高效运维。
+
+> 准备好了吗？立即前往
+> [快速开始](#快速开始) 部分。
+
+<p>&nbsp;</p>
 
 <div align="center">
-  <a href="https://demo.questdb.io">
-    <img
-      alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart"
-      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png"
-      width="600"
-    />
+  <a href="https://demo.questdb.com/">
+    <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
+  <p><em>QuestDB Web 控制台 - 点击启动演示</em></p>
 </div>
 
-## 尝试 QuestDB
+<p>&nbsp;</p>
 
-我们提供了一个[在线演示](https://demo.questdb.io/)，其中包括最新的 QuestDB 版本
-和几个样本数据集：
+## QuestDB 的优势
 
-- Trips： 近 10 年的纽约市出租车行程轨迹数据集，含 1.6 亿行的数据。
-- Trades： 每月30M+的实时加密货币市场数据。
-- Pos： 含有 25 万艘船的时序地理数据集。
+核心功能亮点：
 
-| 查询                                                                          | 运行时间                                                                                                                                                                                            |
-| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
-| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
-| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
-| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
-| `SELECT * FROM trades LATEST ON time PARTITION BY symbol`                     | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
+- 低延迟、高吞吐数据写入 — 支持从单条数据到每秒百万条的处理能力
+- 具备时序扩展功能的高效 SQL 查询方言（ASOF JOIN、SAMPLE BY、LATEST ON）
+- SIMD 指令加速的并行执行引擎，在普通硬件上也能实现亚毫秒级查询响应时间
+- 多层存储架构：WAL → 原生列式存储 → Parquet（支持时间分区与时间排序）
+- Postgres 协议（PGwire）和 REST API 接入
+- 物化视图和 n 维数组（含适用于订单簿的二维数组）
+- 用于查询与数据管理的 Web 控制台
+- Apache 2.0 开源协议与开放格式——杜绝供应商绑定
+- 支持多种 [金融函数](https://questdb.com/docs/reference/function/finance/)
+  和 [订单簿分析](https://questdb.com/docs/guides/order-book/)
 
-我们的[在线演示](https://demo.questdb.io/)运行在 `c5.metal` 上且仅使用 96 个线程中的 24 个线程。
+QuestDB 尤其擅长处理：
 
-## 如何开始
+- 金融市场数据（Tick 数据、交易、订单簿、OHLC 数据）
+- 具有高基数特征的传感器/遥测数据
+- 实时仪表盘与监控场景
 
-### 安裝 QuestDB
+为什么要使用时序数据库？
 
-你可以使用 Docker 来快速启动一个 QuestDB 实例：
+除了优秀的性能与效率之外，专业的时序数据库能让您无需担忧以下问题：
+
+- 乱序数据的写入处理
+- 幂等与 exactly-once 保障
+- 高并发查询下的持续流式数据写入
+- 流式数据低延迟查询
+- 高波动与突发型数据写入负载变化
+- 动态添加新列——在数据持续写入时实时变更表结构
+
+## 体验 QuestDB 和仪表板
+
+我们提供了 [实时公共演示](https://demo.questdb.com/), 该环境基于最新版 QuestDB 并预置了以下示例数据集：
+
+- 交易数据：实时加密货币交易记录，每月新增超3000万条（OKX交易所数据）
+- 外汇订单簿：带有外汇交易对订单簿的实时图表
+- 出行数据：纽约市 10 年出租车行程记录，共 16 亿行数据
+
+我们还通过 [原生 Grafana](https://questdb.com/docs/third-party-tools/grafana/) 插件构建了一些公开的实时演示看板：
+
+- [实时加密货币交易看板：](https://questdb.com/dashboards/crypto/)实时展示OKX交易所20余种资产的成交情况
+- [外汇订单簿看板：](https://questdb.com/dashboards/FX-orderbook/)主流外汇交易对的实时深度/不平衡图表
+
+### QuestDB 与其他数据库的性能比较
+
+在多项性能基准测试中，QuestDB 相比其他替代方案表现优异。
+
+如需深入了解内部机制与性能表现，请参阅以下技术博客：
+
+- [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
+- [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
+- [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
+- [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
+
+我们推荐您亲自运行基准测试以获得最直观的性能体验。
+
+<div align="center">
+  <img alt="比较 QuestDB、InfluxDB 和 TimescaleDB 摄取速率的图表。" src="../.github/readme-benchmark.png" width="600"/>
+</div>
+
+## 快速开始
+
+使用 [Docker](https://www.docker.com/) 快速启动：
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-macOS 用户可以使用 Homebrew 来启动：
+macOS 用户可以使用 Homebrew：
 
 ```bash
 brew install questdb
 brew services start questdb
-
-questdb start // To start questdb
-questdb stop  // To stop questdb
 ```
 
-[QuestDB 下载页面](https://questdb.io/get-questdb/) 提供运行文件的直接下载，并
-提供其他安装和部署方式的详细信息。
+```bash
+questdb start
+questdb stop
+```
 
-### 连接到 QuestDB
+若需完整入门指引，建议从我们的简洁版 [快速入门指南](https://questdb.com/docs/quick-start/)开始。
 
-你可以使用以下接口与 QuestDB 进行交互。
+### 原生数据写入客户端
 
-- [web 控制台](https://questdb.io/docs/develop/web-console/): 将会启动一个 web
-  控制台，默认运行在 `9000` 端口
-- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/): 支
-  持高性能、高吞吐量单向数据插入，默认运行在 `9009` 端口
-- [REST API](https://questdb.io/docs/reference/api/rest/) : 默认运行在 `9000` 端口
-- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/):
-  默认运行在 `8812` 端口
+支持通过 InfluxDB Line Protocol（以下简称 ILP 协议） 进行数据写入的 QuestDB 客户端：
 
-### 写入数据
+- [Python](https://questdb.com/docs/clients/ingest-python/)
+- [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
+- [C/C++](https://questdb.com/docs/clients/ingest-c-and-cpp/)
+- [Go](https://questdb.com/docs/clients/ingest-go/)
+- [Java](https://questdb.com/docs/clients/java_ilp/)
+- [NodeJS](https://questdb.com/docs/clients/ingest-node/)
+- [Rust](https://questdb.com/docs/clients/ingest-rust/)
 
-以下是我们官方开发的questdb客户端，支持多种编程语言：
+### 连接 QuestDB
 
-- [.NET](https://github.com/questdb/net-questdb-client)
-- [C/C++](https://github.com/questdb/c-questdb-client)
-- [Go](https://pkg.go.dev/github.com/questdb/go-questdb-client)
-- [Java](https://questdb.io/docs/reference/clients/java_ilp/)
-- [NodeJS](https://questdb.github.io/nodejs-questdb-client)
-- [Python](https://py-questdb-client.readthedocs.io/en/latest/)
-- [Rust](https://docs.rs/crate/questdb-rs/latest)
+提供多种方式与 QuestDB 交互：
 
-## QuestDB 与其他开源 TSDB 的对比
+- [Web 控制台](https://questdb.com/docs/web-console/) 提供交互式 SQL 编辑器和 CSV 导入功能
+- [InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/) 支持 ILP 协议格式的流式数据写入
+- [PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/) 兼容 PG 协议，可使用任意 PG 的客户端对
+  QuestDB 进行连接
+- [REST API](https://questdb.com/docs/reference/api/rest/) 支持通过 HTTP(S) 进行 CSV 导入和运行 SQL 查询
 
-参考[我们的文章](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)，
-其中在功能、性能和成熟度上比较了 QuestDB 和其他的开源时序数据库。
+### 常用第三方工具
 
-以下是 高维度[时间序列基准测试套件](https://github.com/timescale/tsbs) 运行 `cpu-only`
-用例的测试结果，基于使用 6 到 16 个工作线程在 32 个 CPU 和 64 GB RAM上测试对比得到：
+可与 QuestDB 集成的流行工具包括：
 
-<div align="center">
-  <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img
-      alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
-      src="../.github/readme-benchmark.png"
-      width="600"
-    />
-  </a>
-</div>
+- [Kafka](https://questdb.com/docs/third-party-tools/kafka/)
+- [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
+- [Grafana](https://questdb.com/docs/third-party-tools/grafana/)
+- [Polars](https://questdb.com/docs/third-party-tools/polars/)
+- [Pandas](https://questdb.com/docs/third-party-tools/pandas/)
+- [PowerBI](https://questdb.com/docs/third-party-tools/powerbi/)
+- [Superset](https://questdb.com/docs/third-party-tools/superset/)
+- [Apache Flink](https://questdb.com/docs/third-party-tools/flink/)
+- [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
+- [MindsDB](https://questdb.com/docs/third-party-tools/mindsdb/)
 
-## 相关资源
+### 端到端代码示例
 
-### 📚 阅读文档
+从流式数据写入到 Grafana 可视化，请从我们的 [快速入门代码](https://github.com/questdb/questdb-quickstart) 获取脚手架代码。
 
-- [QuestDB 文档:](https://questdb.io/docs/introduction/) 描述了如何运行
-  和配置 QuestDB 的技术参考。
-- [教程](https://questdb.io/tutorial/) 逐步了解QuestDB的功能。
-- [产品路线图](https://github.com/questdb/questdb/projects) 了解我们下个产品发布的计划。
+### 生产环境配置指南
 
-### ❓ 寻求支持
+查阅我们的[容量规划推荐](https://questdb.com/docs/deployment/capacity-planning/) 针对生产环境负载优化 QuestDB 配置。
 
-- [Community Slack:](https://slack.questdb.io) 加入技术讨论，提问问题，与其他用户见面！
-- [GitHub issues:](https://github.com/questdb/questdb/issues) 报告 QuestDB bugs与问题
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) 寻找常见
-  问题的解决方法。
+### QuestDB 企业版
+
+为大规模部署或大型组织生产环境提供安全增强版。
+
+额外功能包括：
+
+- 高可用性与只读副本查询
+- 多主节点数据写入
+- 冷存储集成
+- 基于角色的访问控制（RBAC）
+- TLS 加密
+- 通过对象存储直接查询 Parquet 文件
+- 服务等级协议（SLA）保障、监控增强等
+
+访问[企业版页面](https://questdb.com/enterprise/)获取详细信息与联系方式。
+
+## 扩展资源
+
+### 📚 查阅文档
+
+- [QuestDB 文档：](https://questdb.com/docs/)开始您的探索之旅
+- [产品路线图：](https://github.com/orgs/questdb/projects/1/views/5)了解未来版本规划
+- [教程：](https://questdb.com/tutorial/)通过步骤化教学掌握 QuestDB 的各种应用场景
+
+### ❓ 获取支持
+
+- [社区论坛：](https://community.questdb.com/)参与技术讨论、提问交流、结识其他用户！
+- [公开 Slack：](https://slack.questdb.com/)与 QuestDB 团队和社区成员实时沟通
+- [GitHub issues：](https://github.com/questdb/questdb/issues)报告 QuestDB 使用中遇到的问题
+- [Stack Overflow：](https://stackoverflow.com/questions/tagged/questdb)查找常见问题解决方案
 
 ### 🚢 部署 QuestDB
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
-- [Official Docker image](https://questdb.io/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
-- [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
+- [AWS AMI 镜像](https://questdb.com/docs/guides/aws-official-ami)
+- [Google Cloud Platform](https://questdb.com/docs/guides/google-cloud-platform)
+- [官方 Docker 镜像](https://questdb.com/docs/get-started/docker)
+- [DigitalOcean 云服务器](https://questdb.com/docs/guides/digitalocean)
+- [Kubernetes Helm 图表](https://questdb.com/docs/guides/kubernetes)
 
-## 贡献
+## 参与贡献
 
-我们总是乐于接受对项目的贡献，无论是源代码、文档、错误报告、功能请求还是反馈。如
-果要开始贡献：
+欢迎贡献您的力量！
 
-- 请看一下 GitHub 上标有
-  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-  的问题。
-- 阅
-  读[贡献指南](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)。
-- 有关构建 QuestDB 的详细信息，请参
-  见[构建说明](https://github.com/questdb/questdb/blob/master/core/README.md)。
-- [创建 QuestDB 的一个分叉](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)，
-  并提交一个 pull request，说明你的修改建议。
+我们珍视以下形式的参与：
 
-✨ 为了表示感谢，我们将向贡献者发送一些我们的 QuestDB 礼品，如贴纸和 T 恤衫
-[在这里申领](https://questdb.io/community)
+- 源代码
+- 文档优化（参见 [文档代码库](https://github.com/questdb/documentation)）
+- Issue 报告
+- 功能建议或反馈
 
-衷心感谢以下为 QuestDB 作出贡献的优秀人士：
-（[表情符号键](https://allcontributors.org/docs/en/emoji-key)）：
+贡献指南：
+
+- 查看标有 "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)" 的 GitHub issues
+- Hacktoberfest 期间请关注 [标记 issues](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
+- 阅读[贡献指南](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
+- 构建说明请参见 [构建说明](https://github.com/questdb/questdb/blob/master/core/README.md)
+- [Fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) QuestDB 并提交包含改进方案的 PR
+- 遇到困难？加入我们的[公开 Slack](https://slack.questdb.com/) 获取帮助
+
+✨ 为表谢意，我们将向贡献者赠送 QuestDB 专属纪念品！
+
+特别感谢以下为 QuestDB 做出贡献的优秀人员 [emoji](https://allcontributors.org/docs/en/emoji-key)：
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -213,10 +281,10 @@ questdb stop  // To stop questdb
       <td align="center" valign="top" width="14.28%"><a href="https://borowski-software.de/"><img src="https://avatars.githubusercontent.com/u/8701341?v=4" width="100px;" alt=""/><br /><sub><b>TimBo93</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3ATimBo93" title="Bug reports">🐛</a> <a href="#userTesting-TimBo93" title="User Testing">📓</a></td>
       <td align="center" valign="top" width="14.28%"><a href="http://zikani.me"><img src="https://avatars.githubusercontent.com/u/1501387?v=4" width="100px;" alt=""/><br /><sub><b>zikani03</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=zikani03" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/jaugsburger"><img src="https://avatars.githubusercontent.com/u/10787042?v=4" width="100px;" alt=""/><br /><sub><b>jaugsburger</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=jaugsburger" title="Code">💻</a> <a href="#maintenance-jaugsburger" title="Maintenance">🚧</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="http://www.questdb.io"><img src="https://avatars.githubusercontent.com/u/52114895?v=4" width="100px;" alt=""/><br /><sub><b>TheTanc</b></sub></a><br /><a href="#projectManagement-TheTanc" title="Project Management">📆</a> <a href="#content-TheTanc" title="Content">🖋</a> <a href="#ideas-TheTanc" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://www.questdb.com"><img src="https://avatars.githubusercontent.com/u/52114895?v=4" width="100px;" alt=""/><br /><sub><b>TheTanc</b></sub></a><br /><a href="#projectManagement-TheTanc" title="Project Management">📆</a> <a href="#content-TheTanc" title="Content">🖋</a> <a href="#ideas-TheTanc" title="Ideas, Planning, & Feedback">🤔</a></td>
       <td align="center" valign="top" width="14.28%"><a href="http://davidgs.com"><img src="https://avatars.githubusercontent.com/u/2071898?v=4" width="100px;" alt=""/><br /><sub><b>davidgs</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Adavidgs" title="Bug reports">🐛</a> <a href="#content-davidgs" title="Content">🖋</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://redalemeden.com"><img src="https://avatars.githubusercontent.com/u/519433?v=4" width="100px;" alt=""/><br /><sub><b>kaishin</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=kaishin" title="Code">💻</a> <a href="#example-kaishin" title="Examples">💡</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://questdb.io"><img src="https://avatars.githubusercontent.com/u/7276403?v=4" width="100px;" alt=""/><br /><sub><b>bluestreak01</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Code">💻</a> <a href="#maintenance-bluestreak01" title="Maintenance">🚧</a> <a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://questdb.com"><img src="https://avatars.githubusercontent.com/u/7276403?v=4" width="100px;" alt=""/><br /><sub><b>bluestreak01</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Code">💻</a> <a href="#maintenance-bluestreak01" title="Maintenance">🚧</a> <a href="https://github.com/questdb/questdb/commits?author=bluestreak01" title="Tests">⚠️</a></td>
     </tr>
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="http://patrick.spacesurfer.com/"><img src="https://avatars.githubusercontent.com/u/29952889?v=4" width="100px;" alt=""/><br /><sub><b>patrickSpaceSurfer</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=patrickSpaceSurfer" title="Code">💻</a> <a href="#maintenance-patrickSpaceSurfer" title="Maintenance">🚧</a> <a href="https://github.com/questdb/questdb/commits?author=patrickSpaceSurfer" title="Tests">⚠️</a></td>
@@ -330,6 +398,4 @@ questdb stop  // To stop questdb
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-本项目遵循
-[all-contributors](https://github.com/all-contributors/all-contributors) 标准.
-欢迎任何形式的贡献！
+该项目遵循 [all-contributors](https://github.com/all-contributors/all-contributors) 规范。欢迎任何形式的贡献！

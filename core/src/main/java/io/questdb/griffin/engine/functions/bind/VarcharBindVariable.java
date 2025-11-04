@@ -24,13 +24,13 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
@@ -95,19 +95,17 @@ public class VarcharBindVariable extends VarcharFunction implements Mutable {
         return true;
     }
 
-    public void setTimestamp(long value) {
+    public void setTimestamp(long value, int timestampType) {
         isNull = value == Numbers.LONG_NULL;
         if (!isNull) {
             utf8Sink.clear();
-            TimestampFormatUtils.appendDateTimeUSec(utf8Sink, value);
+            ColumnType.getTimestampDriver(timestampType).append(utf8Sink, value);
         }
     }
 
     public void setUuidValue(long lo, long hi) {
         utf8Sink.clear();
-        if (SqlUtil.implicitCastUuidAsStr(lo, hi, utf8Sink)) {
-            isNull = false;
-        }
+        isNull = !SqlUtil.implicitCastUuidAsStr(lo, hi, utf8Sink);
     }
 
     public void setValue(boolean value) {

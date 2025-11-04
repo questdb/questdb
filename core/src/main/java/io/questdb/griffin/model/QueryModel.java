@@ -63,12 +63,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int JOIN_ASOF = 4;
     public static final int JOIN_CROSS = 3;
+    public static final int JOIN_CROSS_FULL = 12;
     public static final int JOIN_CROSS_LEFT = 8;
+    public static final int JOIN_CROSS_RIGHT = 11;
+    public static final int JOIN_FULL_OUTER = 10;
     public static final int JOIN_INNER = 1;
+    public static final int JOIN_LEFT_OUTER = 2;
     public static final int JOIN_LT = 6;
-    public static final int JOIN_MAX = JOIN_CROSS_LEFT;
-    public static final int JOIN_ONE = 7;
-    public static final int JOIN_OUTER = 2;
+    public static final int JOIN_MAX = JOIN_CROSS_FULL;
+    public static final int JOIN_RIGHT_OUTER = 9;
     public static final int JOIN_SPLICE = 5;
     public static final int LATEST_BY_DEPRECATED = 1;
     public static final int LATEST_BY_NEW = 2;
@@ -772,10 +775,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return constWhereClause;
     }
 
-    public JoinContext getContext() {
-        return context;
-    }
-
     public LowerCaseCharSequenceObjHashMap<ExpressionNode> getDecls() {
         return decls;
     }
@@ -815,6 +814,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<ExpressionNode> getJoinColumns() {
         return joinColumns;
+    }
+
+    public JoinContext getJoinContext() {
+        return context;
     }
 
     public ExpressionNode getJoinCriteria() {
@@ -1160,6 +1163,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             QueryColumn thisColumn = bottomUpColumns.getQuick(i);
             if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
                 QueryColumn thatColumn = baseModel.getAliasToColumnMap().get(thisColumn.getAst().token);
+                // skip if baseModel does not have this column
+                if (thatColumn == null) {
+                    continue;
+                }
                 // We cannot mutate the column on this baseModel, because columns might be shared between
                 // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
                 // `thisColumn` alias should let us lookup, the column's reference
@@ -1556,21 +1563,34 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    private static void unitToSink(CharSink<?> sink, long timeUnit) {
-        if (timeUnit == WindowColumn.TIME_UNIT_MICROSECOND) {
-            sink.putAscii(" microsecond");
-        } else if (timeUnit == WindowColumn.TIME_UNIT_MILLISECOND) {
-            sink.putAscii(" millisecond");
-        } else if (timeUnit == WindowColumn.TIME_UNIT_SECOND) {
-            sink.putAscii(" second");
-        } else if (timeUnit == WindowColumn.TIME_UNIT_MINUTE) {
-            sink.putAscii(" minute");
-        } else if (timeUnit == WindowColumn.TIME_UNIT_HOUR) {
-            sink.putAscii(" hour");
-        } else if (timeUnit == WindowColumn.TIME_UNIT_DAY) {
-            sink.putAscii(" day");
-        } else {
-            sink.putAscii(" [unknown unit]");
+    private static void unitToSink(CharSink<?> sink, char timeUnit) {
+        switch (timeUnit) {
+            case 0:
+                break;
+            case WindowColumn.TIME_UNIT_NANOSECOND:
+                sink.putAscii(" nanosecond");
+                break;
+            case WindowColumn.TIME_UNIT_MICROSECOND:
+                sink.putAscii(" microsecond");
+                break;
+            case WindowColumn.TIME_UNIT_MILLISECOND:
+                sink.putAscii(" millisecond");
+                break;
+            case WindowColumn.TIME_UNIT_SECOND:
+                sink.putAscii(" second");
+                break;
+            case WindowColumn.TIME_UNIT_MINUTE:
+                sink.putAscii(" minute");
+                break;
+            case WindowColumn.TIME_UNIT_HOUR:
+                sink.putAscii(" hour");
+                break;
+            case WindowColumn.TIME_UNIT_DAY:
+                sink.putAscii(" day");
+                break;
+            default:
+                sink.putAscii(" [unknown unit]");
+                break;
         }
     }
 
@@ -1786,8 +1806,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     QueryModel model = joinModels.getQuick(orderedJoinModels.getQuick(i));
                     if (model != this) {
                         switch (model.getJoinType()) {
-                            case JOIN_OUTER:
+                            case JOIN_LEFT_OUTER:
                                 sink.putAscii(" left join ");
+                                break;
+                            case JOIN_RIGHT_OUTER:
+                                sink.putAscii(" right join ");
+                                break;
+                            case JOIN_FULL_OUTER:
+                                sink.putAscii(" full join ");
                                 break;
                             case JOIN_ASOF:
                                 sink.putAscii(" asof join ");
@@ -1819,7 +1845,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             model.toSink0(sink, true, showOrderBy);
                         }
 
-                        JoinContext jc = model.getContext();
+                        JoinContext jc = model.getJoinContext();
                         if (jc != null && jc.aIndexes.size() > 0) {
                             // join clause
                             sink.putAscii(" on ");

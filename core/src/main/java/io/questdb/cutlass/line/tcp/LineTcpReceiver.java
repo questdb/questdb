@@ -42,8 +42,8 @@ public class LineTcpReceiver implements Closeable {
     public LineTcpReceiver(
             LineTcpReceiverConfiguration configuration,
             CairoEngine engine,
-            WorkerPool networkSharedPool,
-            WorkerPool writerWorkerPool
+            WorkerPool sharedPoolNetwork,
+            WorkerPool sharedPoolWrite
     ) {
         try {
             this.scheduler = null;
@@ -55,13 +55,13 @@ public class LineTcpReceiver implements Closeable {
                     configuration.getConnectionPoolInitialCapacity()
             );
             this.dispatcher = IODispatchers.create(configuration, contextFactory);
-            networkSharedPool.assign(dispatcher);
-            this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, networkSharedPool, dispatcher, writerWorkerPool);
+            sharedPoolNetwork.assign(dispatcher);
+            this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, sharedPoolNetwork, dispatcher, sharedPoolWrite);
 
-            for (int i = 0, n = networkSharedPool.getWorkerCount(); i < n; i++) {
+            for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
                 // http context factory has thread local pools
                 // therefore we need each thread to clean their thread locals individually
-                networkSharedPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
+                sharedPoolNetwork.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
             }
         } catch (Throwable t) {
             close();

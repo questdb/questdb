@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -45,7 +46,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
     private static final IntMethod GET_INT = SwitchFunctionFactory::getInt;
     private static final LongMethod GET_LONG = SwitchFunctionFactory::getLong;
     private static final IntMethod GET_SHORT = SwitchFunctionFactory::getShort;
-    private static final LongMethod GET_TIMESTAMP = SwitchFunctionFactory::getTimestamp;
 
     @Override
     public String getSignature() {
@@ -148,7 +148,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             case ColumnType.DATE:
                 return getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_DATE);
             case ColumnType.TIMESTAMP:
-                return getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_TIMESTAMP);
+                return getTimestampKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, keyType);
             case ColumnType.BOOLEAN:
                 return getIfElseFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.STRING:
@@ -206,10 +206,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
     private static CharSequence getString(Function function, Record record) {
         return function.getStrA(record);
-    }
-
-    private static long getTimestamp(Function function, Record record) {
-        return function.getTimestamp(record);
     }
 
     private Function getCharSequenceKeyedFunction(
@@ -469,6 +465,46 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final Function elseB = getElseFunction(valueType, elseBranch);
         final CaseFunctionPicker picker = record -> {
             final int index = map.keyIndex(longMethod.getKey(keyFunction, record));
+            if (index < 0) {
+                return map.valueAtQuick(index);
+            }
+            return elseB;
+        };
+        argsToPoke.add(elseB);
+        argsToPoke.add(keyFunction);
+
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+    }
+
+    private Function getTimestampKeyedFunction(
+            ObjList<Function> args,
+            IntList argPositions,
+            int position,
+            int n,
+            Function keyFunction,
+            int valueType,
+            Function elseBranch,
+            int timestampType
+    ) throws SqlException {
+        final LongObjHashMap<Function> map = new LongObjHashMap<>();
+        final ObjList<Function> argsToPoke = new ObjList<>();
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        long key;
+        for (int i = 1; i < n; i += 2) {
+            final Function fun = args.getQuick(i);
+            int funType = fun.getType();
+            key = driver.from(fun.getTimestamp(null), ColumnType.getTimestampType(funType));
+            final int index = map.keyIndex(key);
+            if (index < 0) {
+                throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+            }
+            map.putAt(index, key, args.getQuick(i + 1));
+            argsToPoke.add(args.getQuick(i + 1));
+        }
+
+        final Function elseB = getElseFunction(valueType, elseBranch);
+        final CaseFunctionPicker picker = record -> {
+            final int index = map.keyIndex(keyFunction.getTimestamp(record));
             if (index < 0) {
                 return map.valueAtQuick(index);
             }

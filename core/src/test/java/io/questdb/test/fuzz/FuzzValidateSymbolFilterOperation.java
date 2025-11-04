@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Chars;
@@ -60,11 +61,18 @@ public class FuzzValidateSymbolFilterOperation implements FuzzTransactionOperati
                     return false;
                 }
             }
+        } catch (Exception e) {
+            // we intentionally catch and swallow all exceptions!
+            // why? Fuzz tests use a failure injection and query compilation and execution can fail
+            // with scary errors, such as I/O errors etc. That's expected and does not indicate a bug.
+            // we are only interested in a correctness of a symbol lookup - so when a query executes
+            // successfully only then we validate its results. nothing else matters.
+            // Note: This won't catch AssertionError
         }
         return false;
     }
 
-    private void validateSymbolIndex(CairoEngine engine, Rnd rnd, String tableName, String columnName) {
+    private void validateSymbolIndex(CairoEngine engine, Rnd rnd, String tableName, String columnName) throws SqlException {
         String symbol = symbols[rnd.nextInt(symbols.length)];
         String sql = String.format(
                 "SELECT %s, count(*) FROM %s WHERE %s = '%s' GROUP BY %s",
@@ -90,13 +98,6 @@ public class FuzzValidateSymbolFilterOperation implements FuzzTransactionOperati
             // rowCount of 0 is valid (symbol doesn't exist)
             // rowCount of 1 is valid (symbol exists)
             // rowCount > 1 would indicate an index corruption issue
-        } catch (Exception e) {
-            // we intentionally catch and swallow all exceptions!
-            // why? Fuzz tests use a failure injection and query compilation and execution can fail
-            // with scary errors, such as I/O errors etc. That's expected and does not indicate a bug.
-            // we are only interested in a correctness of a symbol lookup - so when a query executes
-            // successfully only then we validate its results. nothing else matters.
-            // Note: This won't catch AssertionError
         }
     }
 }

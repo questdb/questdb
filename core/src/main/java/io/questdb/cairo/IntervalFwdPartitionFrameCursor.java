@@ -77,9 +77,9 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
                 LOG.debug()
                         .$("next [partition=").$(partitionLo)
-                        .$(", intervalLo=").microTime(intervalLo)
-                        .$(", intervalHi=").microTime(intervalHi)
-                        .$(", partitionHi=").microTime(partitionTimestampHiApprox)
+                        .$(", intervalLo=").$ts(intervalModel.getTimestampDriver(), intervalLo)
+                        .$(", intervalHi=").$ts(intervalModel.getTimestampDriver(), intervalHi)
+                        .$(", partitionHi=").$ts(intervalModel.getTimestampDriver(), partitionTimestampHiApprox)
                         .$(", partitionLimit=").$(partitionLimit)
                         .$(", rowCount=").$(rowCount)
                         .I$();

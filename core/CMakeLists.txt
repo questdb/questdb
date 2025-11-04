@@ -39,7 +39,6 @@ endif (APPLE)
 set(
         VCL_FILES
         src/main/c/share/vec_agg.cpp
-        src/main/c/share/vec_ts_agg.cpp
         src/main/c/share/ooo_dispatch.cpp
         src/main/c/share/geohash_dispatch.cpp
 )
@@ -51,7 +50,6 @@ set(
         src/main/c/share/vec_agg_vanilla.cpp
         src/main/c/share/vec_agg.cpp
         src/main/c/share/vec_int_key_agg.cpp
-        src/main/c/share/vec_ts_agg.cpp
         src/main/c/share/ooo_dispatch.cpp
         src/main/c/share/geohash_dispatch.cpp
 )

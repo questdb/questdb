@@ -38,7 +38,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
@@ -569,7 +569,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                             p = cookieSkipBytes(p, hi);
                             Utf8Sequence v = csPool.next().of(p0, p);
                             try {
-                                cookie.expires = TimestampFormatUtils.parseHTTP(v.asAsciiCharSequence());
+                                cookie.expires = MicrosFormatUtils.parseHTTP(v.asAsciiCharSequence());
                             } catch (NumericException e) {
                                 LOG.error().$("invalid cookie Expires value [value=").$(v).I$();
                             }
@@ -734,6 +734,14 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         }
     }
 
+    private void parseKnownHeaders() {
+        parseContentType();
+        parseContentDisposition();
+        parseStatementTimeout();
+        parseContentLength();
+        cookieSortAndMap();
+    }
+
     private long parseMediaType(long lo, long hi) {
         // media-type format is: type "/" subtype
         // type and subtype are tokens
@@ -742,14 +750,6 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             return p;
         }
         return HttpSemantics.swallowTokens(p + 1, hi);
-    }
-
-    private void parseKnownHeaders() {
-        parseContentType();
-        parseContentDisposition();
-        parseStatementTimeout();
-        parseContentLength();
-        cookieSortAndMap();
     }
 
     private int parseMethod(long lo, long hi) {

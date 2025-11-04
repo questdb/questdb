@@ -6,6 +6,7 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -14,23 +15,41 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.*;
 
+@RunWith(Parameterized.class)
 public class MatViewStateTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
+
+    public MatViewStateTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Test
     public void testMatViewNoStateFile() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym string, price double, ts timestamp" +
+                            "  sym string, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -71,9 +90,9 @@ public class MatViewStateTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym string, price double, ts timestamp" +
+                            "  sym string, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -122,9 +141,9 @@ public class MatViewStateTest extends AbstractCairoTest {
     @Test
     public void testMatViewStateResetRefreshIntervals() throws Exception {
         assertMemoryLeak(ff, () -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym string, price double, ts timestamp" +
+                            "  sym string, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -150,9 +169,9 @@ public class MatViewStateTest extends AbstractCairoTest {
     @Test
     public void testMatViewTransactionBlockStateMaintenance() throws Exception {
         assertMemoryLeak(ff, () -> {
-            execute(
+            executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "  sym string, price double, ts timestamp" +
+                            "  sym string, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -200,7 +219,7 @@ public class MatViewStateTest extends AbstractCairoTest {
             final MatViewStateReader viewState = new MatViewStateReader().of(reader, viewToken);
             assertEquals(invalid, viewState.isInvalid());
             assertEquals(lastRefreshBaseTxn, viewState.getLastRefreshBaseTxn());
-            assertEquals(lastRefreshTimestamp, viewState.getLastRefreshTimestamp());
+            assertEquals(lastRefreshTimestamp, viewState.getLastRefreshTimestampUs());
             TestUtils.assertEquals(invalidationReason, viewState.getInvalidationReason());
             assertEquals(lastPeriodHi, viewState.getLastPeriodHi());
             if (refreshIntervals != null) {
@@ -210,5 +229,10 @@ public class MatViewStateTest extends AbstractCairoTest {
             }
             assertEquals(refreshIntervalsBaseTxn, viewState.getRefreshIntervalsBaseTxn());
         }
+    }
+
+    private void executeWithRewriteTimestamp(CharSequence sqlText) throws SqlException {
+        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType.getTypeName());
+        engine.execute(sqlText, sqlExecutionContext);
     }
 }

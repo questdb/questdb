@@ -56,6 +56,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
             GroupByFunctionsUpdater groupByFunctionsUpdater,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
+            int timestampType,
             TimestampSampler timestampSampler,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
@@ -70,6 +71,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
                 configuration,
                 recordFunctions,
                 timestampIndex,
+                timestampType,
                 timestampSampler,
                 groupByFunctions,
                 groupByFunctionsUpdater,

@@ -126,6 +126,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             cursor = new SampleByFirstLastRecordCursor(
                     configuration,
                     timestampSampler,
+                    metadata.getColumnType(timestampIndex),
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
@@ -322,6 +323,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         public SampleByFirstLastRecordCursor(
                 CairoConfiguration configuration,
                 TimestampSampler timestampSampler,
+                int timestampType,
                 Function timezoneNameFunc,
                 int timezoneNameFuncPos,
                 Function offsetFunc,
@@ -333,6 +335,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         ) {
             super(
                     timestampSampler,
+                    timestampType,
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
@@ -350,8 +353,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
         @Override
         public void close() {
-            frameAddressCache.clear();
             Misc.free(frameMemoryPool);
+            frameAddressCache.clear();
             frameMemory = null;
             frameCursor = Misc.free(frameCursor);
         }
@@ -717,7 +720,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         ) throws SqlException {
             this.frameCursor = frameCursor;
             this.groupBySymbolKey = groupBySymbolKey;
-            frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
+            frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
             toTop();
             parseParams(this, sqlExecutionContext);
             initialized = false;
