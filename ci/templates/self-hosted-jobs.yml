@@ -15,8 +15,8 @@ jobs:
       javadoc_step: ""
       javadoc_profile: ""
       jdk: "1.17"
-      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-amazon-corretto.aarch64"
-      JAVA_HOME: "/usr/lib/jvm/java-17-amazon-corretto.aarch64"
+      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-openjdk-arm64"
+      JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-arm64"
       os: Linux
     steps:
       - template: steps.yml
