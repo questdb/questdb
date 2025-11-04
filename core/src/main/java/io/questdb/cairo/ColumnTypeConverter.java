@@ -99,7 +99,7 @@ public class ColumnTypeConverter {
             assert symbolTable != null;
             convertFromSymbol(skipRows, rowCount, srcFixFd, symbolTable, dstColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
             return true;
-        } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isDecimal(dstColumnType)) {
+        } else if (ColumnType.isFixedSize(ColumnType.tagOf(srcColumnType)) && ColumnType.isDecimal(dstColumnType)) {
             return convertToDecimal(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
         } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
             return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink);
