@@ -32,7 +32,7 @@ import org.jetbrains.annotations.Nullable;
 
 public final class SqlHints {
     public static final String ASOF_DRIVEBY_CACHE_HINT = "asof_driveby_cache";
-    public static final String ASOF_INDEX_HINT = "asof_index_search";
+    public static final String ASOF_INDEX_HINT = "asof_index";
     public static final String ASOF_LINEAR_HINT = "asof_linear";
     public static final String ASOF_MEMOIZED_HINT = "asof_memoized";
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
