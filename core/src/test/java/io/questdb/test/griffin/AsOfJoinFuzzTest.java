@@ -266,10 +266,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         String hint = switch (hintType) {
-            case MEMOIZED -> " /*+ ASOF_MEMOIZED(t1 t2) */ ";
-            case INDEX -> " /*+ ASOF_INDEX_SEARCH(t1 t2) */ ";
-            case LINEAR -> " /*+ ASOF_LINEAR(t1 t2) */ ";
-            case DRIVEBY_CACHING -> " /*+ ASOF_DRIVEBY_CACHE(t1 t2) */ ";
+            case MEMOIZED -> " /*+ asof_memoized(t1 t2) */ ";
+            case INDEX -> " /*+ asof_index(t1 t2) */ ";
+            case LINEAR -> " /*+ asof_linear(t1 t2) */ ";
+            case DRIVEBY_CACHING -> " /*+ asof_driveby_cache(t1 t2) */ ";
             default -> "";
         };
         String query = "select " + hint + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
