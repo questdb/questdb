@@ -33,7 +33,7 @@
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>17</javac.target>
-        <argLine>-ea -Dfile.encoding=UTF-8</argLine>
+        <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
         <web.console.version>1.1.4</web.console.version>
@@ -46,7 +46,7 @@
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
     </properties>
 
-    <version>9.1.1-SNAPSHOT</version>
+    <version>9.1.2-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -84,6 +84,8 @@
                     <compilerArgs>
                         <arg>${compilerArg1}</arg>
                         <arg>${compilerArg2}</arg>
+                        <arg>-J-XX:-TieredCompilation</arg>
+                        <arg>-J-XX:TieredStopAtLevel=1</arg>
                     </compilerArgs>
                     <fork>true</fork>
                     <source>${javac.compile.source}</source>
