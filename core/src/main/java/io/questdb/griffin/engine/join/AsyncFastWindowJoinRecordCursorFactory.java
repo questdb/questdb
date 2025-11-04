@@ -436,7 +436,8 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
         columnSink.resetPtr();
         final long[] columnSinkPtrs = atom.getColumnSinkPtrs(slotId);
         Arrays.fill(columnSinkPtrs, 0);
-        final int[] columnIndexes = atom.getGroupByColumnIndexes();
+        final var columnIndexes = atom.getGroupByColumnIndexes();
+        final var columnTags = atom.getGroupByColumnTags();
         final int columnCount = columnIndexes.length;
 
         final long slaveTsScale = atom.getSlaveTsScale();
@@ -501,13 +502,11 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                         }
                         timestamps.add(slaveTimestamp);
 
-                        // TODO: support all fixed-size columns that may have aggregate functions
-                        //  with batch computation support
                         // now let's copy the column values to be aggregated
                         for (int i = 0; i < columnCount; i++) {
                             final int ptrIdx = idx * columnCount + i;
                             long ptr = columnSinkPtrs[ptrIdx];
-                            columnSink.of(ptr).putDouble(joinRecord.getDouble(columnIndexes[i]));
+                            columnSink.of(ptr).put(joinRecord, columnIndexes[i], columnTags[i]);
                             columnSinkPtrs[ptrIdx] = columnSink.ptr();
                         }
                     }
@@ -558,7 +557,8 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                     for (int i = 0; i < columnCount; i++) {
                         final int ptrIdx = idx * columnCount + i;
                         final long ptr = columnSinkPtrs[ptrIdx];
-                        groupByFunctions.getQuick(i).computeBatch(value, ptr + 8L * rowLo, rowHi - rowLo);
+                        final long typeSize = ColumnType.sizeOfTag(columnTags[i]);
+                        groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, rowHi - rowLo);
                     }
                 }
             }

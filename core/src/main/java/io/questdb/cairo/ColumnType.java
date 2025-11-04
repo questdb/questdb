@@ -610,9 +610,13 @@ public final class ColumnType {
     public static int sizeOf(int columnType) {
         short tag = tagOf(columnType);
         if (tag < TYPE_SIZE.length) {
-            return TYPE_SIZE[tag];
+            return sizeOfTag(tag);
         }
         return -1;
+    }
+
+    public static int sizeOfTag(short tag) {
+        return TYPE_SIZE[tag];
     }
 
     public static short tagOf(int type) {

@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.engine.join.JoinRecord;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
@@ -73,13 +75,56 @@ public class GroupByColumnSink {
         return ptr;
     }
 
-    // TODO: support other fixed-size columns, not just double
+    public void put(JoinRecord record, int colIndex, int colTag) {
+        switch (colTag) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE:
+                putByte(record.getByte(colIndex));
+                break;
+            case ColumnType.GEOBYTE:
+                putByte(record.getGeoByte(colIndex));
+                break;
+            case ColumnType.SHORT:
+                putShort(record.getShort(colIndex));
+                break;
+            case ColumnType.GEOSHORT:
+                putShort(record.getGeoShort(colIndex));
+                break;
+            case ColumnType.INT:
+                putInt(record.getInt(colIndex));
+                break;
+            case ColumnType.IPv4:
+                putInt(record.getIPv4(colIndex));
+                break;
+            case ColumnType.FLOAT:
+                putFloat(record.getFloat(colIndex));
+                break;
+            case ColumnType.GEOINT:
+                putInt(record.getGeoInt(colIndex));
+                break;
+            case ColumnType.LONG:
+                putLong(record.getLong(colIndex));
+                break;
+            case ColumnType.GEOLONG:
+                putLong(record.getGeoLong(colIndex));
+                break;
+            case ColumnType.DOUBLE:
+                putDouble(record.getDouble(colIndex));
+                break;
+            case ColumnType.DATE:
+                putLong(record.getDate(colIndex));
+                break;
+            case ColumnType.TIMESTAMP:
+                putLong(record.getTimestamp(colIndex));
+                break;
+            case ColumnType.LONG128, ColumnType.UUID:
+                putLong128(record.getLong128Lo(colIndex), record.getLong128Hi(colIndex));
+                break;
+        }
+    }
+
     public void putDouble(double value) {
-        int size = size();
-        int newSize = size + 8;
-        checkCapacity(newSize);
-        Unsafe.getUnsafe().putDouble(ptr + HEADER_SIZE + size, value);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, newSize);
+        long ptr = reserve(Double.BYTES);
+        Unsafe.getUnsafe().putDouble(ptr, value);
     }
 
     public void resetPtr() {
@@ -92,5 +137,51 @@ public class GroupByColumnSink {
 
     public int size() {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_OFFSET) : 0;
+    }
+
+    public long startAddress() {
+        return ptr + HEADER_SIZE;
+    }
+
+    private void putByte(byte value) {
+        long ptr = reserve(Byte.BYTES);
+        Unsafe.getUnsafe().putByte(ptr, value);
+    }
+
+    private void putFloat(float value) {
+        long ptr = reserve(Float.BYTES);
+        Unsafe.getUnsafe().putFloat(ptr, value);
+    }
+
+    private void putInt(int value) {
+        long ptr = reserve(Integer.BYTES);
+        Unsafe.getUnsafe().putInt(ptr, value);
+    }
+
+    private void putLong(long value) {
+        long ptr = reserve(Long.BYTES);
+        Unsafe.getUnsafe().putLong(ptr, value);
+    }
+
+    private void putLong128(long lo, long hi) {
+        long ptr = reserve(16);
+        Unsafe.getUnsafe().putLong(ptr, lo);
+        Unsafe.getUnsafe().putLong(ptr + 8L, hi);
+    }
+
+    private void putShort(short value) {
+        long ptr = reserve(Short.BYTES);
+        Unsafe.getUnsafe().putShort(ptr, value);
+    }
+
+    /**
+     * Reserve a specific amount of space (in bytes) and returns a pointer to its start.
+     */
+    private long reserve(int reservedSize) {
+        int currentSize = size();
+        int newSize = currentSize + reservedSize;
+        checkCapacity(newSize);
+        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, newSize);
+        return ptr + HEADER_SIZE + currentSize;
     }
 }

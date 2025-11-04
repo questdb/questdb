@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
@@ -207,11 +208,10 @@ public class GroupByUtils {
                         throw SqlException.invalidColumn(node.position, node.token);
                     }
 
-                    if (func instanceof GroupByFunction) {
+                    if (func instanceof GroupByFunction groupByFunc) {
                         // configure map value columns for group-by functions
                         // some functions may need more than one column in values,
                         // so we have them do all the work
-                        GroupByFunction groupByFunc = (GroupByFunction) func;
 
                         // insert the function into our function list even before we validate it support a given
                         // fill type. it's to close the function properly when the validation fails
@@ -393,7 +393,9 @@ public class GroupByUtils {
 
     public static boolean isBatchComputationSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
-            if (!functions.getQuick(i).supportsBatchComputation()) {
+            final var function = functions.getQuick(i);
+            // Only UnaryFunction should support batch computation, but we're still doing a sanity check
+            if (!function.supportsBatchComputation() || !(function instanceof UnaryFunction)) {
                 return false;
             }
         }
@@ -441,11 +443,10 @@ public class GroupByUtils {
                         executionContext
                 );
 
-                if (function instanceof GroupByFunction) {
+                if (function instanceof GroupByFunction func) {
                     // configure map value columns for group-by functions
                     // some functions may need more than one column in values,
                     // so we have them do all the work
-                    GroupByFunction func = (GroupByFunction) function;
                     workerGroupByFunctions.add(func);
                 } else {
                     // it's a key function; we don't need it

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -41,6 +42,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.DirectMapValue;
 import io.questdb.griffin.engine.groupby.DirectMapValueFactory;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
@@ -88,8 +90,8 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledMasterFilter;
-    // TODO: we could use IntList here, just for the sake of consistency
     private final int[] groupByColumnIndexes;
+    private final short[] groupByColumnTags;
     private final JoinSymbolTableSource joinSymbolTableSource;
     private final long joinWindowHi;
     private final long joinWindowLo;
@@ -237,11 +239,16 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             //  vectorized reducer
             this.vectorized = GroupByUtils.isBatchComputationSupported(ownerGroupByFunctions);
             if (vectorized) {
+                final int groupByFunctionSize = ownerGroupByFunctions.size();
                 // TODO: deduplicate columns we have to copy, i.e. for min(int_col), max(int_col),
                 //  we should do a single copy of the int_col
-                this.groupByColumnIndexes = new int[ownerGroupByFunctions.size()];
-                for (int i = 0, n = groupByColumnIndexes.length; i < n; i++) {
-                    groupByColumnIndexes[i] = ownerGroupByFunctions.getQuick(i).getColumnIndex();
+                this.groupByColumnIndexes = new int[groupByFunctionSize];
+                this.groupByColumnTags = new short[groupByFunctionSize];
+                for (int i = 0; i < groupByFunctionSize; i++) {
+                    var func = ownerGroupByFunctions.getQuick(i);
+                    groupByColumnIndexes[i] = func.getColumnIndex();
+                    var unary = (UnaryFunction) func;
+                    groupByColumnTags[i] = ColumnType.tagOf(unary.getArg().getType());
                 }
                 this.ownerColumnSink = new GroupByColumnSink(INITIAL_COLUMN_SINK_CAPACITY);
                 ownerColumnSink.setAllocator(ownerAllocator);
@@ -252,13 +259,14 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
                     perWorkerColumnSinks.extendAndSet(i, sink);
                 }
 
-                this.ownerColumnSinkPtrs = new long[LOOKUP_TABLE_SIZE * ownerGroupByFunctions.size()];
+                this.ownerColumnSinkPtrs = new long[LOOKUP_TABLE_SIZE * groupByFunctionSize];
                 this.perWorkerColumnSinkPtrs = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerColumnSinkPtrs.extendAndSet(i, new long[LOOKUP_TABLE_SIZE * ownerGroupByFunctions.size()]);
+                    perWorkerColumnSinkPtrs.extendAndSet(i, new long[LOOKUP_TABLE_SIZE * groupByFunctionSize]);
                 }
             } else {
                 this.groupByColumnIndexes = null;
+                this.groupByColumnTags = null;
                 this.ownerColumnSink = null;
                 this.perWorkerColumnSinks = null;
                 this.ownerColumnSinkPtrs = null;
@@ -343,6 +351,10 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
 
     public int[] getGroupByColumnIndexes() {
         return groupByColumnIndexes;
+    }
+
+    public short[] getGroupByColumnTags() {
+        return groupByColumnTags;
     }
 
     public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
