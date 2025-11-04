@@ -70,16 +70,10 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
-import java.util.Arrays;
-import java.util.Collection;
 
 import static io.questdb.PropertyKey.CAIRO_CHECKPOINT_RECOVERY_ENABLED;
 import static io.questdb.PropertyKey.CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED;
 
-@RunWith(Parameterized.class)
 public class CheckpointTest extends AbstractCairoTest {
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
     static int SCOREBOARD_FORMAT = 1;
@@ -88,7 +82,8 @@ public class CheckpointTest extends AbstractCairoTest {
     private static Path triggerFilePath;
     private int rootLen;
 
-    public CheckpointTest(int scoreboardFormat) throws Exception {
+    public CheckpointTest() throws Exception {
+        int scoreboardFormat = TestUtils.generateRandom(LOG).nextBoolean() ? 1 : 2;
         if (scoreboardFormat != SCOREBOARD_FORMAT) {
             SCOREBOARD_FORMAT = scoreboardFormat;
             tearDownStatic();
@@ -110,14 +105,6 @@ public class CheckpointTest extends AbstractCairoTest {
         path = Misc.free(path);
         triggerFilePath = Misc.free(triggerFilePath);
         AbstractCairoTest.tearDownStatic();
-    }
-
-    @Parameterized.Parameters(name = "V{0}")
-    public static Collection<Object[]> testParams() {
-        return Arrays.asList(new Object[][]{
-                {1},
-                {2},
-        });
     }
 
     @Before
