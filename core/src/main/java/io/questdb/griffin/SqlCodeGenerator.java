@@ -4654,8 +4654,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case SELECT_MODEL_GROUP_BY -> generateSelectGroupBy(model, executionContext);
             case SELECT_MODEL_VIRTUAL -> generateSelectVirtual(model, executionContext);
             case SELECT_MODEL_WINDOW -> generateSelectWindow(model, executionContext);
-            case SELECT_MODEL_WINDOW_JOIN:
-                return generateSelectWindowJoin(model, executionContext);
+            case SELECT_MODEL_WINDOW_JOIN -> generateSelectWindowJoin(model, executionContext);
             case SELECT_MODEL_DISTINCT -> generateSelectDistinct(model, executionContext);
             case SELECT_MODEL_CURSOR -> generateSelectCursor(model, executionContext);
             case SELECT_MODEL_SHOW -> model.getTableNameFunction();
