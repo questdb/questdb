@@ -33,6 +33,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 
 public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
     @Override
@@ -66,6 +67,14 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     }
 
                     @Override
+                    public void computeBatch(MapValue mapValue, long ptr, int count) {
+                        if (count > 0) {
+                            final long addr = ptr + ((long) count - 1) * Byte.BYTES;
+                            mapValue.putByte(valueIndex + 1, Unsafe.getUnsafe().getByte(addr));
+                        }
+                    }
+
+                    @Override
                     public String getName() {
                         return "last";
                     }
@@ -85,6 +94,14 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     @Override
                     public void computeNext(MapValue mapValue, Record record, long rowId) {
                         computeFirst(mapValue, record, rowId);
+                    }
+
+                    @Override
+                    public void computeBatch(MapValue mapValue, long ptr, int count) {
+                        if (count > 0) {
+                            final long addr = ptr + ((long) count - 1) * Short.BYTES;
+                            mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(addr));
+                        }
                     }
 
                     @Override
@@ -110,6 +127,14 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     }
 
                     @Override
+                    public void computeBatch(MapValue mapValue, long ptr, int count) {
+                        if (count > 0) {
+                            final long addr = ptr + ((long) count - 1) * Integer.BYTES;
+                            mapValue.putInt(valueIndex + 1, Unsafe.getUnsafe().getInt(addr));
+                        }
+                    }
+
+                    @Override
                     public String getName() {
                         return "last";
                     }
@@ -129,6 +154,14 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     @Override
                     public void computeNext(MapValue mapValue, Record record, long rowId) {
                         computeFirst(mapValue, record, rowId);
+                    }
+
+                    @Override
+                    public void computeBatch(MapValue mapValue, long ptr, int count) {
+                        if (count > 0) {
+                            final long addr = ptr + ((long) count - 1) * Long.BYTES;
+                            mapValue.putLong(valueIndex + 1, Unsafe.getUnsafe().getLong(addr));
+                        }
                     }
 
                     @Override

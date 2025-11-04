@@ -34,6 +34,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 
 public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory {
 
@@ -72,6 +73,20 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
+        public void computeBatch(MapValue mapValue, long ptr, int count) {
+            if (count > 0) {
+                long hi = ptr + count - 1;
+                for (; hi >= ptr; hi--) {
+                    byte value = Unsafe.getUnsafe().getByte(hi);
+                    if (value != GeoHashes.BYTE_NULL) {
+                        mapValue.putByte(valueIndex + 1, value);
+                        break;
+                    }
+                }
+            }
+        }
+
+        @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoByte(record) != GeoHashes.BYTE_NULL) {
                 computeFirst(mapValue, record, rowId);
@@ -101,6 +116,20 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
     private static class LastNotNullGeoHashGroupByFunctionInt extends FirstGeoHashGroupByFunctionInt {
         public LastNotNullGeoHashGroupByFunctionInt(int type, Function function) {
             super(type, function);
+        }
+
+        @Override
+        public void computeBatch(MapValue mapValue, long ptr, int count) {
+            if (count > 0) {
+                long hi = ptr + (count - 1) * 4L;
+                for (; hi >= ptr; hi -= 4L) {
+                    int value = Unsafe.getUnsafe().getInt(hi);
+                    if (value != GeoHashes.INT_NULL) {
+                        mapValue.putInt(valueIndex + 1, value);
+                        break;
+                    }
+                }
+            }
         }
 
         @Override
@@ -136,6 +165,20 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
+        public void computeBatch(MapValue mapValue, long ptr, int count) {
+            if (count > 0) {
+                long hi = ptr + (count - 1) * 8L;
+                for (; hi >= ptr; hi -= 8L) {
+                    long value = Unsafe.getUnsafe().getLong(hi);
+                    if (value != GeoHashes.NULL) {
+                        mapValue.putLong(valueIndex + 1, value);
+                        break;
+                    }
+                }
+            }
+        }
+
+        @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoLong(record) != GeoHashes.NULL) {
                 computeFirst(mapValue, record, rowId);
@@ -165,6 +208,20 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
     private static class LastNotNullGeoHashGroupByFunctionShort extends FirstGeoHashGroupByFunctionShort {
         public LastNotNullGeoHashGroupByFunctionShort(int type, Function function) {
             super(type, function);
+        }
+
+        @Override
+        public void computeBatch(MapValue mapValue, long ptr, int count) {
+            if (count > 0) {
+                long hi = ptr + (count - 1) * 2L;
+                for (; hi >= ptr; hi -= 2L) {
+                    short value = Unsafe.getUnsafe().getShort(hi);
+                    if (value != GeoHashes.SHORT_NULL) {
+                        mapValue.putShort(valueIndex + 1, value);
+                        break;
+                    }
+                }
+            }
         }
 
         @Override

@@ -27,12 +27,21 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class LastLongGroupByFunction extends FirstLongGroupByFunction {
 
     public LastLongGroupByFunction(@NotNull Function arg) {
         super(arg);
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            final long addr = ptr + ((long) count - 1) * Long.BYTES;
+            mapValue.putLong(valueIndex + 1, Unsafe.getUnsafe().getLong(addr));
+        }
     }
 
     @Override

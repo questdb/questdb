@@ -33,7 +33,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 
 public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
@@ -42,6 +44,13 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     public FirstGeoHashGroupByFunctionShort(int type, Function arg) {
         super(type);
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(ptr));
+        }
     }
 
     @Override
@@ -58,6 +67,14 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public int getColumnIndex() {
+        if (arg instanceof ColumnFunction columnFunction) {
+            return columnFunction.getColumnIndex();
+        }
+        return -1;
     }
 
     @Override
@@ -117,6 +134,11 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
         // This method is used to init an empty value, so it's ok to reset the row id field here.
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putShort(valueIndex + 1, GeoHashes.SHORT_NULL);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return getColumnIndex() != -1;
     }
 
     @Override

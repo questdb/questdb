@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstBooleanGroupByFunction extends BooleanFunction implements GroupByFunction, UnaryFunction {
@@ -41,6 +43,13 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
 
     public FirstBooleanGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putBool(valueIndex + 1, Unsafe.getUnsafe().getByte(ptr) != 0);
+        }
     }
 
     @Override
@@ -65,8 +74,21 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
     }
 
     @Override
+    public int getColumnIndex() {
+        if (arg instanceof ColumnFunction columnFunction) {
+            return columnFunction.getColumnIndex();
+        }
+        return -1;
+    }
+
+    @Override
     public String getName() {
         return "first";
+    }
+
+    @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
     }
 
     @Override
@@ -110,6 +132,11 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putBool(valueIndex + 1, false);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return getColumnIndex() != -1;
     }
 
     @Override

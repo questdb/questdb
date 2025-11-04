@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class MinFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
@@ -41,6 +43,21 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     public MinFloatGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            final long hi = ptr + count * (long) Float.BYTES;
+            float min = Float.NaN;
+            for (; ptr < hi; ptr += Float.BYTES) {
+                float value = Unsafe.getUnsafe().getFloat(ptr);
+                if (value < min || Numbers.isNull(min)) {
+                    min = value;
+                }
+            }
+            mapValue.putFloat(valueIndex, min);
+        }
     }
 
     @Override
@@ -60,6 +77,14 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public int getColumnIndex() {
+        if (arg instanceof ColumnFunction columnFunction) {
+            return columnFunction.getColumnIndex();
+        }
+        return -1;
     }
 
     @Override
@@ -120,6 +145,11 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putFloat(valueIndex, Float.NaN);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return getColumnIndex() != -1;
     }
 
     @Override

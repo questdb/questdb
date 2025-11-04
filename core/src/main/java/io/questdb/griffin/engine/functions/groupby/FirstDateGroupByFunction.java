@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstDateGroupByFunction extends DateFunction implements GroupByFunction, UnaryFunction {
@@ -41,6 +43,13 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
 
     public FirstDateGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putDate(valueIndex + 1, Unsafe.getUnsafe().getLong(ptr));
+        }
     }
 
     @Override
@@ -57,6 +66,14 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
     @Override
     public Function getArg() {
         return this.arg;
+    }
+
+    @Override
+    public int getColumnIndex() {
+        if (arg instanceof ColumnFunction columnFunction) {
+            return columnFunction.getColumnIndex();
+        }
+        return -1;
     }
 
     @Override
@@ -110,6 +127,11 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putDate(valueIndex + 1, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return getColumnIndex() != -1;
     }
 
     @Override

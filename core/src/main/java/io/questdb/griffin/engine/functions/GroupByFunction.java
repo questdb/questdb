@@ -43,6 +43,28 @@ public interface GroupByFunction extends Function, Mutable {
     default void clear() {
     }
 
+    /**
+     * Aggregates the buffered argument values for the current group in one go.
+     * <p>
+     * The engine materialises the argument column into a
+     * {@link io.questdb.griffin.engine.groupby.GroupByColumnSink}, exposing the values in native
+     * memory starting at {@code ptr}. Each entry has the fixed size implied by the function's
+     * argument type. Implementations can use vectorised routines to consume the {@code count}
+     * consecutive values and must write the resulting aggregate into {@code mapValue}.
+     * <p>
+     * This method:
+     * <ul>
+     *     <li>runs at most once per group {@link MapValue}, immediately after {@link #setEmpty(MapValue)};</li>
+     *     <li>runs without a preceding {@link #computeFirst(MapValue, Record, long)} invocation;</li>
+     *     <li>is not followed by {@link #merge(MapValue, MapValue)};</li>
+     *     <li>always receives a non-zero {@code ptr} pointing to readable memory;</li>
+     *     <li>is used only when {@link #supportsBatchComputation()} returns {@code true}.</li>
+     * </ul>
+     *
+     * @param mapValue group state that must be updated with the aggregated result
+     * @param ptr      native memory address of the first buffered value for the group
+     * @param count    number of buffered values that can be read starting from {@code ptr}
+     */
     default void computeBatch(MapValue mapValue, long ptr, int count) {
         throw new UnsupportedOperationException();
     }
@@ -86,6 +108,12 @@ public interface GroupByFunction extends Function, Mutable {
         return false;
     }
 
+    /**
+     * Returns the zero-based index of the source column in the table metadata when the function
+     * operates directly on that column. Functions that do not map to a single metadata column
+     * should return {@code -1}. Batch aggregation code paths use this to decide which columns need
+     * to be materialised before invoking {@link #computeBatch(MapValue, long, int)}.
+     */
     default int getColumnIndex() {
         throw new UnsupportedOperationException();
     }
@@ -196,6 +224,13 @@ public interface GroupByFunction extends Function, Mutable {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Indicates whether {@link #computeBatch(MapValue, long, int)} is implemented for this function.
+     * When {@code true}, the engine may materialise the argument column into native memory buffers
+     * and invoke {@code computeBatch} instead of per-row aggregation for compatible execution paths.
+     *
+     * @return {@code true} if the function can consume batches via {@code computeBatch}, {@code false} otherwise
+     */
     default boolean supportsBatchComputation() {
         return false;
     }

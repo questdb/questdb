@@ -77,8 +77,11 @@ public class GroupByColumnSink {
 
     public void put(JoinRecord record, int colIndex, int colTag) {
         switch (colTag) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE:
+            case ColumnType.BYTE:
                 putByte(record.getByte(colIndex));
+                break;
+            case ColumnType.BOOLEAN:
+                putByte(record.getBool(colIndex) ? (byte) 1 : (byte) 0);
                 break;
             case ColumnType.GEOBYTE:
                 putByte(record.getGeoByte(colIndex));
@@ -119,6 +122,9 @@ public class GroupByColumnSink {
             case ColumnType.LONG128, ColumnType.UUID:
                 putLong128(record.getLong128Lo(colIndex), record.getLong128Hi(colIndex));
                 break;
+            case ColumnType.CHAR:
+                putChar(record.getChar(colIndex));
+                break;
         }
     }
 
@@ -146,6 +152,11 @@ public class GroupByColumnSink {
     private void putByte(byte value) {
         long ptr = reserve(Byte.BYTES);
         Unsafe.getUnsafe().putByte(ptr, value);
+    }
+
+    private void putChar(char value) {
+        long ptr = reserve(Character.BYTES);
+        Unsafe.getUnsafe().putChar(ptr, value);
     }
 
     private void putFloat(float value) {

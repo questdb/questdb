@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -41,6 +43,14 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     public AvgShortGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putLong(valueIndex, Vect.sumShort(ptr, count));
+            mapValue.putLong(valueIndex + 1, count);
+        }
     }
 
     @Override
@@ -60,6 +70,14 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public int getColumnIndex() {
+        if (arg instanceof ColumnFunction columnFunction) {
+            return columnFunction.getColumnIndex();
+        }
+        return -1;
     }
 
     @Override
@@ -136,6 +154,11 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return getColumnIndex() != -1;
     }
 
     @Override

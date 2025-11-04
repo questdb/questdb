@@ -5564,12 +5564,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function f;
                     try {
                         f = functionParser.parseFunction(ast, baseMetadata, executionContext);
-                        if (!(f instanceof WindowFunction)) {
+                        if (!(f instanceof WindowFunction af)) {
                             Misc.free(f);
                             throw SqlException.$(ast.position, "non-window function called in window context");
                         }
 
-                        WindowFunction af = (WindowFunction) f;
                         functions.extendAndSet(i, f);
 
                         // sorting and/or multiple passes are required, so fall back to old implementation

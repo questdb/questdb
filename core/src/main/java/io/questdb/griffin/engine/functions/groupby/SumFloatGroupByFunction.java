@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class SumFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
@@ -40,6 +42,27 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     public SumFloatGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            float acc = 0.0f;
+            boolean hasFinite = false;
+            final long hi = ptr + count * (long) Float.BYTES;
+            for (; ptr < hi; ptr += Float.BYTES) {
+                final float value = Unsafe.getUnsafe().getFloat(ptr);
+                if (Float.isFinite(value)) {
+                    acc += value;
+                    hasFinite = true;
+                }
+            }
+            if (hasFinite) {
+                mapValue.putFloat(valueIndex, acc);
+            } else {
+                mapValue.putFloat(valueIndex, Float.NaN);
+            }
+        }
     }
 
     @Override
@@ -64,6 +87,14 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public int getColumnIndex() {
+        if (arg instanceof ColumnFunction columnFunction) {
+            return columnFunction.getColumnIndex();
+        }
+        return -1;
     }
 
     @Override
@@ -128,6 +159,11 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putFloat(valueIndex, Float.NaN);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return getColumnIndex() != -1;
     }
 
     @Override

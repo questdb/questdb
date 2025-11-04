@@ -222,8 +222,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * Returns true if this factory handles limit M , N clause already and false otherwise .
-     * If true then separate limit cursor factory is not needed (and could actually cause problem
+     * Returns true if this factory handles {@code limit(M, N)} clause.
+     * If true, then a separate limit cursor factory is not needed (and could actually cause problem
      * by re-applying limit logic).
      */
     default boolean implementsLimit() {

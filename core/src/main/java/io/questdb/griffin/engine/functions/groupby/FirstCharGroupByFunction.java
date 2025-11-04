@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstCharGroupByFunction extends CharFunction implements GroupByFunction, UnaryFunction {
@@ -41,6 +43,13 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
 
     public FirstCharGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putChar(valueIndex + 1, Unsafe.getUnsafe().getChar(ptr));
+        }
     }
 
     @Override
@@ -62,6 +71,14 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     @Override
     public char getChar(Record rec) {
         return rec.getChar(valueIndex + 1);
+    }
+
+    @Override
+    public int getColumnIndex() {
+        if (arg instanceof ColumnFunction columnFunction) {
+            return columnFunction.getColumnIndex();
+        }
+        return -1;
     }
 
     @Override
@@ -115,6 +132,11 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putChar(valueIndex + 1, (char) 0);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return getColumnIndex() != -1;
     }
 
     @Override
