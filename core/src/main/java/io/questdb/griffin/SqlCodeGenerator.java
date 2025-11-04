@@ -2627,6 +2627,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
             boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
             boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias);
+            boolean hasMemoizedDrivebyHint = SqlHints.hasAsOfMemoizedDrivebyHint(model, masterAlias, slaveAlias);
 
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                 if (!hasLinearHint) {
@@ -2649,7 +2650,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     toleranceInterval
                             );
                         }
-                        if (isOptimizable && hasMemoizedHint && isSingleSymbolJoin(slaveMetadata)) {
+                        if (isOptimizable && (hasMemoizedHint || hasMemoizedDrivebyHint) && isSingleSymbolJoin(slaveMetadata)) {
                             return new AsOfJoinMemoizedRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
@@ -2660,7 +2661,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     columnAccessHelper,
                                     slaveContext,
                                     toleranceInterval,
-                                    SqlHints.hasAsOfDrivebyCacheHint(model, masterAlias, slaveAlias)
+                                    hasMemoizedDrivebyHint
                             );
                         }
                         return new AsOfJoinFastRecordCursorFactory(
