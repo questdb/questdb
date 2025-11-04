@@ -102,8 +102,9 @@ public final class DataID implements Sinkable {
      * because it was already set.
      */
     public synchronized boolean set(long lo, long hi) {
-        if (isInitialized())
+        if (isInitialized()) {
             return false;
+        }
         writeUuid(configuration.getFilesFacade(), configuration.getDbRoot(), lo, hi);
         this.id.of(lo, hi);
         return true;
