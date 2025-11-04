@@ -189,7 +189,7 @@ public class IPv4GroupByFunctionBatchTest {
         value.putInt(function.getValueIndex(), Numbers.IPv4_NULL);
 
         long ptr = allocateInts(ipv4("8.8.4.4"), ipv4("1.1.1.1"));
-        function.computeBatch(value, ptr, 3);
+        function.computeBatch(value, ptr, 2);
 
         Assert.assertEquals(ipv4("1.1.1.1"), function.getIPv4(value));
         Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
