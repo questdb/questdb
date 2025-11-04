@@ -3,10 +3,6 @@ jobs:
     displayName: "on linux-arm64"
     pool:
       name: "hetzner-docker-arm"
-      demands:
-        - Agent.Name -equals arm64-$(System.StageName)$(Build.BuildId)
-#    dependsOn:
-#      - StartArmAgent
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     variables:
