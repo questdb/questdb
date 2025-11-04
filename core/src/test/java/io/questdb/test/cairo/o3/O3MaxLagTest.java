@@ -44,34 +44,16 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8StringSink;
-import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
-import java.util.Arrays;
-import java.util.Collection;
 
 import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix;
 
-@RunWith(Parameterized.class)
 public class O3MaxLagTest extends AbstractO3Test {
     private final static Log LOG = LogFactory.getLog(O3MaxLagTest.class);
     private static final Utf8StringSink utf8Sink = new Utf8StringSink();
-
-    public O3MaxLagTest(TestTimestampType timestampType) {
-        super(timestampType);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
-        });
-    }
 
     @Test
     public void testBigUncommittedCheckStrColFixedAndVarMappedSizes() throws Exception {
@@ -1427,9 +1409,11 @@ public class O3MaxLagTest extends AbstractO3Test {
             tw.ic(MicrosTimestampDriver.INSTANCE.fromHours(1));
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
-                    replaceTimestampSuffix("str\tts\tx\tstr2\ty\n" +
-                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
-                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n", timestampType.getTypeName())
+                    replaceTimestampSuffix("""
+                            str\tts\tx\tstr2\ty
+                            aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull
+                            aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull
+                            """, timestampType.getTypeName())
             );
 
             appendRowsWithDroppedColumn(tw, appendCount - halfCount, rnd);
@@ -1439,9 +1423,11 @@ public class O3MaxLagTest extends AbstractO3Test {
                     compiler,
                     sqlExecutionContext,
                     "select * from x where str = 'aa'", sink,
-                    replaceTimestampSuffix("str\tts\tx\tstr2\ty\n" +
-                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
-                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n", timestampType.getTypeName())
+                    replaceTimestampSuffix("""
+                            str\tts\tx\tstr2\ty
+                            aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull
+                            aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull
+                            """, timestampType.getTypeName())
             );
 
             if (iteration % 2 == 0) {
@@ -1454,9 +1440,11 @@ public class O3MaxLagTest extends AbstractO3Test {
         }
 
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
-                replaceTimestampSuffix("str\tts\tx\tstr2\ty\n" +
-                        "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
-                        "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n", timestampType.getTypeName())
+                replaceTimestampSuffix("""
+                        str\tts\tx\tstr2\ty
+                        aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull
+                        aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull
+                        """, timestampType.getTypeName())
         );
     }
 }

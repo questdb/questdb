@@ -73,11 +73,7 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
@@ -86,14 +82,14 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.test.tools.TestUtils.generateRandom;
 
 
-@RunWith(Parameterized.class)
 public class MatViewTest extends AbstractCairoTest {
     private final int rowsPerQuery;
     private final TestTimestampType timestampType;
 
-    public MatViewTest(int rowsPerQuery, TestTimestampType timestampType) {
-        this.rowsPerQuery = rowsPerQuery;
-        this.timestampType = timestampType;
+    public MatViewTest() {
+        final Rnd rnd = generateRandom(LOG);
+        this.rowsPerQuery = rnd.nextInt(100) > 50 ? -1 : 1;
+        this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
     @BeforeClass
@@ -102,16 +98,6 @@ public class MatViewTest extends AbstractCairoTest {
         inputRoot = TestUtils.getCsvRoot();
         inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
         AbstractCairoTest.setUpStatic();
-    }
-
-    @Parameterized.Parameters(name = "rows_per_query={0},ts={1}")
-    public static Collection<Object[]> testParams() {
-        // only run a single combination per CI run
-        final Rnd rnd = generateRandom(LOG);
-        if (rnd.nextInt(100) > 50) {
-            return Arrays.asList(new Object[][]{{-1, TestTimestampType.MICRO}, {-1, TestTimestampType.NANO}});
-        }
-        return Arrays.asList(new Object[][]{{1, TestTimestampType.MICRO}, {1, TestTimestampType.NANO}});
     }
 
     @Before

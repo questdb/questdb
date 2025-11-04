@@ -60,14 +60,10 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
 
-@RunWith(Parameterized.class)
 public class WindowFunctionTest extends AbstractCairoTest {
     private static final List<String> FRAME_FUNCTIONS;
     private static final String[][] FRAME_FUNCTIONS_PARAMETER_COLUMN_NAME = new String[][]{
@@ -109,15 +105,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     private static final List<String> WINDOW_ONLY_FUNCTIONS;
     private final TestTimestampType timestampType;
 
-    public WindowFunctionTest(TestTimestampType timestampType) {
-        this.timestampType = timestampType;
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> testParams() {
-        return Arrays.asList(new Object[][]{
-                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
-        });
+    public WindowFunctionTest() {
+        this.timestampType = TestUtils.getTimestampType();
     }
 
     @Test

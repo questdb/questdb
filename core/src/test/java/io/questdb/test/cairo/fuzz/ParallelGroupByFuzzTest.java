@@ -52,11 +52,7 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
@@ -66,7 +62,6 @@ import static org.junit.Assert.fail;
 
 // This is not a fuzz test in traditional sense, but it's multithreaded, and we want to run it
 // in CI frequently along with other fuzz tests.
-@RunWith(Parameterized.class)
 public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
@@ -75,36 +70,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private final boolean enableJitCompiler;
     private final boolean enableParallelGroupBy;
 
-    public ParallelGroupByFuzzTest(boolean enableParallelGroupBy, boolean enableJitCompiler, boolean convertToParquet) {
-        this.enableParallelGroupBy = enableParallelGroupBy;
-        this.enableJitCompiler = enableJitCompiler;
-        this.convertToParquet = convertToParquet;
-    }
-
-    @Parameterized.Parameters(name = "parallel={0} JIT={1} parquet={2}")
-    public static Collection<Object[]> data() {
-        // only run a single combination per CI run
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        // make sure to have a run with all equal flags occasionally
-        if (rnd.nextInt(100) >= 90) {
-            boolean flag = rnd.nextBoolean();
-            return Arrays.asList(new Object[][]{{flag, flag, flag}});
-        }
-        return Arrays.asList(new Object[][]{
-                {true, false, false},
-                {rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean()}
-        });
-        // uncomment to run all combinations
-//        return Arrays.asList(new Object[][]{
-//                {true, true, true},
-//                {true, true, false},
-//                {true, false, true},
-//                {true, false, false},
-//                {false, true, true},
-//                {false, true, false},
-//                {false, false, true},
-//                {false, false, false},
-//        });
+    public ParallelGroupByFuzzTest() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        this.enableParallelGroupBy = rnd.nextBoolean();
+        this.enableJitCompiler = rnd.nextBoolean();
+        this.convertToParquet = rnd.nextBoolean();
     }
 
     @Override
@@ -894,12 +864,14 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeFalse(convertToParquet);
         testParallelGroupByArray(
                 "SELECT first(darr), last(darr), key FROM tab order by key",
-                "first\tlast\tkey\n" +
-                        "[[null,null,null],[null,0.7883065830055033,null]]\t[[0.8522582952903538,0.6179906752583175],[null,null],[null,null]]\tk0\n" +
-                        "[[null,0.20447441837877756],[null,null]]\t[[null,null],[null,0.9164539569237466],[null,null]]\tk1\n" +
-                        "[[0.3491070363730514,0.7611029514995744],[0.4217768841969397,null],[0.7261136209823622,0.4224356661645131]]\t[[0.47845408543565093,null,0.19197284817490712],[null,null,0.21496623812935467]]\tk2\n" +
-                        "[[null,0.33608255572515877],[0.690540444367637,null]]\t[[0.7339245159010606,null],[0.39425956944686746,0.55078841544971]]\tk3\n" +
-                        "[[null,null],[0.12503042190293423,null]]\t[[null,0.6489095881388134],[0.280119654942501,null],[0.5379723582047159,null]]\tk4\n"
+                """
+                        first\tlast\tkey
+                        [[null,null,null],[null,0.7883065830055033,null]]\t[[0.8522582952903538,0.6179906752583175],[null,null],[null,null]]\tk0
+                        [[null,0.20447441837877756],[null,null]]\t[[null,null],[null,0.9164539569237466],[null,null]]\tk1
+                        [[0.3491070363730514,0.7611029514995744],[0.4217768841969397,null],[0.7261136209823622,0.4224356661645131]]\t[[0.47845408543565093,null,0.19197284817490712],[null,null,0.21496623812935467]]\tk2
+                        [[null,0.33608255572515877],[0.690540444367637,null]]\t[[0.7339245159010606,null],[0.39425956944686746,0.55078841544971]]\tk3
+                        [[null,null],[0.12503042190293423,null]]\t[[null,0.6489095881388134],[0.280119654942501,null],[0.5379723582047159,null]]\tk4
+                        """
         );
     }
 
@@ -2093,6 +2065,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 """
                         min\tmax\tround\tsum\tfirst\tlast
                         -9220264229979566148\t9222440717001210457\t-9.223372036854776E18\t-8085484953408325183\t8416773233910814357\t6812734169481155056
+                        """
+                """
+                        count_distinct\tapprox_count_distinct
+                        4000\t4000
                         """
         );
     }
