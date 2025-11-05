@@ -614,7 +614,7 @@ tests:
             type: "TIMESTAMP"
         expect:
           result:
-            - [1, "2.5", "2023-10-01T10:00:00.100000Z"]
+            - [1, "2.500", "2023-10-01T10:00:00.100000Z"]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS decimals;"
