@@ -62,7 +62,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private long reenterPartitionHi;
     private int reenterPartitionIndex;
     private long reenterPartitionLo;
-    private long remainingSize;
+    private long remainingRowsInPartition;
 
     public FwdTableReaderPageFrameCursor(
             IntList columnIndexes,
@@ -95,8 +95,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public long getRemainingSize() {
-        return remainingSize;
+    public long getRemainingRowsInPartition() {
+        return remainingRowsInPartition;
     }
 
     @Override
@@ -243,7 +243,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reenterPartitionFrame = false;
         }
 
-        remainingSize = partitionHi - adjustedHi;
+        remainingRowsInPartition = partitionHi - adjustedHi;
 
         frame.partitionLo = partitionLo;
         frame.partitionHi = adjustedHi;

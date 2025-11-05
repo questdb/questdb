@@ -70,9 +70,11 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      */
     IntList getColumnIndexes();
 
-    default long getRemainingSize() {
-        return 0L;
-    }
+    /**
+     * Returns the number of rows remained unprocessed in the table partition
+     * which backs the page frames provided by this cursor.
+     */
+    long getRemainingRowsInPartition();
 
     /**
      * Returns the symbol table for the specified column index.
