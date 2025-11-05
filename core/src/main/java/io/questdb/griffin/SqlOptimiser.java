@@ -3409,8 +3409,6 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Reconfigures a parquet reading model to project columns
-     *
-     * @param model
      */
     private void parquetProjectionPushdown(QueryModel model) {
 
@@ -7383,20 +7381,6 @@ public class SqlOptimiser implements Mutable {
             }
             throw SqlException.position(updateQueryModel.getModelPosition()).put(e);
         }
-    }
-
-    private static class ColumnNameCollector implements PostOrderTreeTraversalAlgo.Visitor {
-        public CharSequenceHashSet columnNames = new CharSequenceHashSet(); // todo: allocating
-
-        @Override
-        public void visit(ExpressionNode node) {
-            if (node.type == LITERAL) {
-                if (!columnNames.contains(node.token)) {
-                    columnNames.add(node.token);
-                }
-            }
-        }
-
     }
 
     private static class LiteralCheckingVisitor implements PostOrderTreeTraversalAlgo.Visitor {
