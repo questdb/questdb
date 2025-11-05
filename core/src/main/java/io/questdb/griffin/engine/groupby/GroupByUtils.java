@@ -392,6 +392,9 @@ public class GroupByUtils {
     }
 
     public static boolean isBatchComputationSupported(ObjList<GroupByFunction> functions) {
+        if (functions == null || functions.size() == 0) {
+            return false;
+        }
         for (int i = 0, n = functions.size(); i < n; i++) {
             final var function = functions.getQuick(i);
             // Only UnaryFunction should support batch computation, but we're still doing a sanity check

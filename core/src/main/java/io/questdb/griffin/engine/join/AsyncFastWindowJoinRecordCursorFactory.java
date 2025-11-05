@@ -281,6 +281,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
             long entrySize = slaveData.entrySize();
             long capacity = slaveData.capacity();
 
+            // reuse exists GroupByLongList
             for (long p = dataPtr, lim = dataPtr + entrySize * capacity; p < lim; p += entrySize) {
                 int key = Unsafe.getUnsafe().getInt(p);
                 if (key != 0) {
@@ -390,7 +391,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                 rowIds.of(rowIdsPtr);
                 timestamps.of(timestampsPtr);
 
-                if (rowIds != null && rowIds.size() > 0) {
+                if (rowIds.size() > 0) {
                     long newRowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     newRowLo = newRowLo < 0 ? -newRowLo - 1 : newRowLo;
                     slaveData.put(idx, 2, newRowLo);
@@ -453,7 +454,6 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
         final GroupByAllocator allocator = atom.getAllocator(slotId);
         allocator.close();
         final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
-        columnSink.resetPtr();
         final IntList columnIndexes = atom.getGroupByColumnIndexes();
         final int columnCount = columnIndexes.size();
         final var columnTags = atom.getGroupByColumnTags();
@@ -761,7 +761,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                     rowIds.of(rowIdsPtr);
                     timestamps.of(timestampsPtr);
 
-                    if (rowIds != null && rowIds.size() > 0) {
+                    if (rowIds.size() > 0) {
                         long newRowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         newRowLo = newRowLo < 0 ? -newRowLo - 1 : newRowLo;
                         slaveData.put(idx, 2, newRowLo);
@@ -832,8 +832,6 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                 joinRecord.of(record, slaveRecord);
 
                 final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
-                final GroupByAllocator allocator = atom.getAllocator(slotId);
-                allocator.close();
                 final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
                 columnSink.resetPtr();
                 final IntList columnIndexes = atom.getGroupByColumnIndexes();
