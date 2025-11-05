@@ -78,6 +78,20 @@ public class GroupByLongList {
         }
     }
 
+    public void clear() {
+        if (ptr != 0) {
+            int currentSize = Unsafe.getUnsafe().getInt(ptr + SIZE_OFFSET);
+            if (currentSize > 0) {
+                Vect.memset(ptr + HEADER_SIZE, 8L * currentSize, 0);
+            }
+            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
+        }
+    }
+
+    public long dataPtr() {
+        return ptr + HEADER_SIZE;
+    }
+
     public long get(long index) {
         return Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE + 8L * index);
     }

@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.engine.join.JoinRecord;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 
 public class GroupByColumnSink {
     private static final long HEADER_SIZE = 2 * Integer.BYTES;
@@ -59,10 +58,15 @@ public class GroupByColumnSink {
         }
     }
 
+    public void clear() {
+        if (ptr != 0) {
+            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
+        }
+    }
+
     public GroupByColumnSink of(long ptr) {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + initialCapacity);
-            Vect.memset(this.ptr + HEADER_SIZE, initialCapacity, 0);
             Unsafe.getUnsafe().putInt(this.ptr, initialCapacity);
             Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
         } else {
