@@ -668,7 +668,7 @@ func (tr *TestRunner) main(yamlFile string) error {
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Println("Usage: go run runner.go <test_file.yaml>")
+		fmt.Println("Usage: go run main.go <test_file.yaml>")
 		os.Exit(1)
 	}
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/lib/pq"
+	"github.com/shopspring/decimal"
 )
 
 type PqDriver struct {
@@ -133,10 +134,18 @@ func (r *PqQueryResult) Values() ([]interface{}, error) {
 		return nil, err
 	}
 
+	columnTypes, err := r.rows.ColumnTypes()
+	if err != nil {
+		return nil, err
+	}
+
 	// Convert []byte to string for consistency with pgx
 	for i, v := range values {
 		if b, ok := v.([]byte); ok {
 			values[i] = string(b)
+		}
+		if columnTypes[i].DatabaseTypeName() == "NUMERIC" {
+			values[i] = decimal.RequireFromString(values[i].(string))
 		}
 	}
 
