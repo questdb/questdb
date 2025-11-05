@@ -62,14 +62,10 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.security.PrivateKey;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -82,7 +78,6 @@ import static io.questdb.test.tools.TestUtils.assertContains;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.*;
 
-@RunWith(Parameterized.class)
 public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     private final static String AUTH_KEY_ID1 = "testUser1";
@@ -93,17 +88,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthUtils.toPrivateKey(TOKEN);
     private final boolean walEnabled;
 
-    public LineTcpSenderTest(WalMode walMode, TestTimestampType timestampType) {
-        this.walEnabled = (walMode == WalMode.WITH_WAL);
-        this.timestampType = timestampType;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL, TestTimestampType.MICRO}, {WalMode.NO_WAL, TestTimestampType.MICRO},
-                {WalMode.WITH_WAL, TestTimestampType.NANO}, {WalMode.NO_WAL, TestTimestampType.NANO},
-        });
+    public LineTcpSenderTest() {
+        Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
+        this.walEnabled = TestUtils.isWal(rnd);
+        this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
     @Before

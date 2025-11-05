@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin;
+package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;

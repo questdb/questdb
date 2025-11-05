@@ -38,7 +38,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -46,15 +45,10 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-@RunWith(Parameterized.class)
 public class O3FailureFuzzTest extends AbstractO3Test {
     private final static AtomicInteger counter = new AtomicInteger(0);
     private final static AtomicBoolean failNextAllocOrOpen = new AtomicBoolean(false);
@@ -92,21 +86,10 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     private static Rnd rnd;
     private final int workerCount;
 
-    public O3FailureFuzzTest(ParallelMode mode, TestTimestampType timestampType) {
-        super(timestampType);
-        this.workerCount = mode == ParallelMode.CONTENDED ? 0 : 2;
+    public O3FailureFuzzTest() {
+        super();
+        this.workerCount = super.rnd.nextBoolean() ? 0 : 2;
     }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {ParallelMode.PARALLEL, TestTimestampType.MICRO},
-                {ParallelMode.PARALLEL, TestTimestampType.NANO},
-                {ParallelMode.CONTENDED, TestTimestampType.MICRO},
-                {ParallelMode.CONTENDED, TestTimestampType.NANO},
-        });
-    }
-
 
     public static void reset() {
         failNextAllocOrOpen.set(false);

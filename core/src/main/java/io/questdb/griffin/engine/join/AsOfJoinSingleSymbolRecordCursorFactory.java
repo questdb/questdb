@@ -48,6 +48,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
     private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
+
     private final AsofJoinColumnAccessHelper columnAccessHelper;
     private final AsOfSingleSymbolJoinRecordCursor cursor;
     private final int slaveSymbolColumnIndex;
