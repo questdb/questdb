@@ -62,32 +62,20 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
-@RunWith(Parameterized.class)
 public class UpdateTest extends AbstractCairoTest {
     private static final long DEFAULT_CIRCUIT_BREAKER_TIMEOUT = 300_000L;
     protected final SCSequence eventSubSequence = new SCSequence();
     private final boolean walEnabled;
 
-    public UpdateTest(WalMode walMode) {
-        this.walEnabled = (walMode == WalMode.WITH_WAL);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
-        });
+    public UpdateTest() {
+        this.walEnabled = TestUtils.isWal();
     }
 
     @Override
@@ -133,36 +121,42 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET x = 1");
 
             assertSql(
-                    "ts\tv\tx\tz\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\t1\t2\n" +
-                            "1970-01-01T00:00:02.000000Z\t3\t1\t3\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\t1\t4\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\t1\t5\n",
+                    """
+                            ts\tv\tx\tz
+                            1970-01-01T00:00:00.000000Z\t1\t1\t1
+                            1970-01-01T00:00:01.000000Z\t2\t1\t2
+                            1970-01-01T00:00:02.000000Z\t3\t1\t3
+                            1970-01-01T00:00:03.000000Z\t4\t1\t4
+                            1970-01-01T00:00:04.000000Z\t5\t1\t5
+                            """,
                     "up"
             );
 
             update("UPDATE up SET z = 2");
 
             assertSql(
-                    "ts\tv\tx\tz\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t2\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\t1\t2\n" +
-                            "1970-01-01T00:00:02.000000Z\t3\t1\t2\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\t1\t2\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\t1\t2\n",
+                    """
+                            ts\tv\tx\tz
+                            1970-01-01T00:00:00.000000Z\t1\t1\t2
+                            1970-01-01T00:00:01.000000Z\t2\t1\t2
+                            1970-01-01T00:00:02.000000Z\t3\t1\t2
+                            1970-01-01T00:00:03.000000Z\t4\t1\t2
+                            1970-01-01T00:00:04.000000Z\t5\t1\t2
+                            """,
                     "up"
             );
 
             update("UPDATE up SET v = 33");
 
             assertSql(
-                    "ts\tv\tx\tz\n" +
-                            "1970-01-01T00:00:00.000000Z\t33\t1\t2\n" +
-                            "1970-01-01T00:00:01.000000Z\t33\t1\t2\n" +
-                            "1970-01-01T00:00:02.000000Z\t33\t1\t2\n" +
-                            "1970-01-01T00:00:03.000000Z\t33\t1\t2\n" +
-                            "1970-01-01T00:00:04.000000Z\t33\t1\t2\n",
+                    """
+                            ts\tv\tx\tz
+                            1970-01-01T00:00:00.000000Z\t33\t1\t2
+                            1970-01-01T00:00:01.000000Z\t33\t1\t2
+                            1970-01-01T00:00:02.000000Z\t33\t1\t2
+                            1970-01-01T00:00:03.000000Z\t33\t1\t2
+                            1970-01-01T00:00:04.000000Z\t33\t1\t2
+                            """,
                     "up"
             );
 
@@ -170,14 +164,16 @@ public class UpdateTest extends AbstractCairoTest {
             execute("INSERT INTO up VALUES('1970-01-01T00:00:06.000000Z', 100.0, 100.0, 100.0)");
 
             assertSql(
-                    "ts\tv\tx\tz\n" +
-                            "1970-01-01T00:00:00.000000Z\t33\t1\t2\n" +
-                            "1970-01-01T00:00:01.000000Z\t33\t1\t2\n" +
-                            "1970-01-01T00:00:02.000000Z\t33\t1\t2\n" +
-                            "1970-01-01T00:00:03.000000Z\t33\t1\t2\n" +
-                            "1970-01-01T00:00:04.000000Z\t33\t1\t2\n" +
-                            "1970-01-01T00:00:05.000000Z\t10\t10\t10\n" +
-                            "1970-01-01T00:00:06.000000Z\t100\t100\t100\n",
+                    """
+                            ts\tv\tx\tz
+                            1970-01-01T00:00:00.000000Z\t33\t1\t2
+                            1970-01-01T00:00:01.000000Z\t33\t1\t2
+                            1970-01-01T00:00:02.000000Z\t33\t1\t2
+                            1970-01-01T00:00:03.000000Z\t33\t1\t2
+                            1970-01-01T00:00:04.000000Z\t33\t1\t2
+                            1970-01-01T00:00:05.000000Z\t10\t10\t10
+                            1970-01-01T00:00:06.000000Z\t100\t100\t100
+                            """,
                     "up"
             );
         });
@@ -199,12 +195,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET x = 1 WHERE x > 10");
 
             assertSql(
-                    "ts\tv\tx\tz\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\t2\t2\n" +
-                            "1970-01-01T00:00:02.000000Z\t3\t3\t3\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\t4\t4\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\t5\t5\n",
+                    """
+                            ts\tv\tx\tz
+                            1970-01-01T00:00:00.000000Z\t1\t1\t1
+                            1970-01-01T00:00:01.000000Z\t2\t2\t2
+                            1970-01-01T00:00:02.000000Z\t3\t3\t3
+                            1970-01-01T00:00:03.000000Z\t4\t4\t4
+                            1970-01-01T00:00:04.000000Z\t5\t5\t5
+                            """,
                     "up"
             );
         });
@@ -226,12 +224,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET x = 1 WHERE 1 != 1");
 
             assertSql(
-                    "ts\tv\tx\tz\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\t2\t2\n" +
-                            "1970-01-01T00:00:02.000000Z\t3\t3\t3\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\t4\t4\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\t5\t5\n",
+                    """
+                            ts\tv\tx\tz
+                            1970-01-01T00:00:00.000000Z\t1\t1\t1
+                            1970-01-01T00:00:01.000000Z\t2\t2\t2
+                            1970-01-01T00:00:02.000000Z\t3\t3\t3
+                            1970-01-01T00:00:03.000000Z\t4\t4\t4
+                            1970-01-01T00:00:04.000000Z\t5\t5\t5
+                            """,
                     "up"
             );
         });
@@ -251,12 +251,14 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET ip = str");
 
-            String data = "ts\tstr\tip\n" +
-                    "1970-01-01T00:00:00.000000Z\t\t\n" +
-                    "1970-01-01T00:00:01.000000Z\t187.139.150.80\t187.139.150.80\n" +
-                    "1970-01-01T00:00:02.000000Z\t18.206.96.238\t18.206.96.238\n" +
-                    "1970-01-01T00:00:03.000000Z\t92.80.211.65\t92.80.211.65\n" +
-                    "1970-01-01T00:00:04.000000Z\t212.159.205.29\t212.159.205.29\n";
+            String data = """
+                    ts\tstr\tip
+                    1970-01-01T00:00:00.000000Z\t\t
+                    1970-01-01T00:00:01.000000Z\t187.139.150.80\t187.139.150.80
+                    1970-01-01T00:00:02.000000Z\t18.206.96.238\t18.206.96.238
+                    1970-01-01T00:00:03.000000Z\t92.80.211.65\t92.80.211.65
+                    1970-01-01T00:00:04.000000Z\t212.159.205.29\t212.159.205.29
+                    """;
             assertSql(data, "up");
 
             update("UPDATE up set str = 'abc'");
@@ -273,12 +275,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " x" +
                     " from long_sequence(5)" +
                     "), index(symCol) timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
-            assertSql("symCol\tts\tx\n" +
-                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n",
+            assertSql("""
+                            symCol\tts\tx
+                            WCP\t1970-01-01T00:00:00.000000Z\t1
+                            WCP\t1970-01-01T00:00:01.000000Z\t2
+                            WCP\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
 
@@ -287,21 +291,25 @@ public class UpdateTest extends AbstractCairoTest {
                     update("update up set symCol = null");
                     // Index is updated
                     assertSql(
-                            "symCol\tts\tx\n" +
-                                    "\t1970-01-01T00:00:00.000000Z\t1\n" +
-                                    "\t1970-01-01T00:00:01.000000Z\t2\n" +
-                                    "\t1970-01-01T00:00:02.000000Z\t3\n" +
-                                    "\t1970-01-01T00:00:03.000000Z\t4\n" +
-                                    "\t1970-01-01T00:00:04.000000Z\t5\n",
+                            """
+                                    symCol\tts\tx
+                                    \t1970-01-01T00:00:00.000000Z\t1
+                                    \t1970-01-01T00:00:01.000000Z\t2
+                                    \t1970-01-01T00:00:02.000000Z\t3
+                                    \t1970-01-01T00:00:03.000000Z\t4
+                                    \t1970-01-01T00:00:04.000000Z\t5
+                                    """,
                             "up where symCol = null"
                     );
 
                     // Old index is still working
                     assertCursor(
-                            "symCol\tts\tx\n" +
-                                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n",
+                            """
+                                    symCol\tts\tx
+                                    WCP\t1970-01-01T00:00:00.000000Z\t1
+                                    WCP\t1970-01-01T00:00:01.000000Z\t2
+                                    WCP\t1970-01-01T00:00:02.000000Z\t3
+                                    """,
                             cursor,
                             factory.getMetadata(),
                             true
@@ -337,12 +345,14 @@ public class UpdateTest extends AbstractCairoTest {
                 update("update up set symCol = null where ts >= '1970-01-01T03'");
                 // Index is updated
                 assertSql(
-                        "symCol\tts\tx\n" +
-                                "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                                "WCP\t1970-01-01T01:00:00.000000Z\t2\n" +
-                                "WCP\t1970-01-01T02:00:00.000000Z\t3\n" +
-                                "\t1970-01-01T03:00:00.000000Z\t4\n" +
-                                "\t1970-01-01T04:00:00.000000Z\t5\n",
+                        """
+                                symCol\tts\tx
+                                WCP\t1970-01-01T00:00:00.000000Z\t1
+                                WCP\t1970-01-01T01:00:00.000000Z\t2
+                                WCP\t1970-01-01T02:00:00.000000Z\t3
+                                \t1970-01-01T03:00:00.000000Z\t4
+                                \t1970-01-01T04:00:00.000000Z\t5
+                                """,
                         "up"
                 );
             }
@@ -389,8 +399,10 @@ public class UpdateTest extends AbstractCairoTest {
             update("update symInd set sym_index = sym_index");
 
             assertSql(
-                    "count\tmin\tmax\n" +
-                            "75\t1970-01-01T00:00:00.000000Z\t1970-01-01T02:28:00.000000Z\n",
+                    """
+                            count\tmin\tmax
+                            75\t1970-01-01T00:00:00.000000Z\t1970-01-01T02:28:00.000000Z
+                            """,
                     "select count(), min(ts), max(ts) from symInd where sym_index = null"
             );
 
@@ -524,12 +536,14 @@ public class UpdateTest extends AbstractCairoTest {
             );
 
             assertSql(
-                    "ts\ts\tx\ty\n" +
-                            "1970-01-01T00:00:00.000000Z\ta\t101\t100\n" +
-                            "1970-01-01T00:00:01.000000Z\ta\t101\t100\n" +
-                            "1970-01-01T00:00:02.000000Z\tb\t303\t300\n" +
-                            "1970-01-01T00:00:03.000000Z\t\t505\t500\n" +
-                            "1970-01-01T00:00:04.000000Z\t\t505\t500\n",
+                    """
+                            ts\ts\tx\ty
+                            1970-01-01T00:00:00.000000Z\ta\t101\t100
+                            1970-01-01T00:00:01.000000Z\ta\t101\t100
+                            1970-01-01T00:00:02.000000Z\tb\t303\t300
+                            1970-01-01T00:00:03.000000Z\t\t505\t500
+                            1970-01-01T00:00:04.000000Z\t\t505\t500
+                            """,
                     "up"
             );
         });
@@ -551,17 +565,19 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE testUpdateAddedColumn SET y = x + 1 WHERE ts between '1970-01-01T12' and '1970-01-02T12'");
 
             assertSql(
-                    "ts\tx\ty\n" +
-                            "1970-01-01T00:00:00.000000Z\t0\tnull\n" +
-                            "1970-01-01T06:00:00.000000Z\t1\tnull\n" +
-                            "1970-01-01T12:00:00.000000Z\t2\t3\n" +
-                            "1970-01-01T18:00:00.000000Z\t3\t4\n" +
-                            "1970-01-02T00:00:00.000000Z\t4\t5\n" +
-                            "1970-01-02T06:00:00.000000Z\t5\t6\n" +
-                            "1970-01-02T12:00:00.000000Z\t6\t7\n" +
-                            "1970-01-02T18:00:00.000000Z\t7\tnull\n" +
-                            "1970-01-03T00:00:00.000000Z\t8\tnull\n" +
-                            "1970-01-03T06:00:00.000000Z\t9\tnull\n",
+                    """
+                            ts\tx\ty
+                            1970-01-01T00:00:00.000000Z\t0\tnull
+                            1970-01-01T06:00:00.000000Z\t1\tnull
+                            1970-01-01T12:00:00.000000Z\t2\t3
+                            1970-01-01T18:00:00.000000Z\t3\t4
+                            1970-01-02T00:00:00.000000Z\t4\t5
+                            1970-01-02T06:00:00.000000Z\t5\t6
+                            1970-01-02T12:00:00.000000Z\t6\t7
+                            1970-01-02T18:00:00.000000Z\t7\tnull
+                            1970-01-03T00:00:00.000000Z\t8\tnull
+                            1970-01-03T06:00:00.000000Z\t9\tnull
+                            """,
                     "testUpdateAddedColumn"
             );
 
@@ -570,17 +586,19 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE testUpdateAddedColumn SET y = COALESCE(y, x + 2) WHERE x%2 = 0");
 
             assertSql(
-                    "ts\tx\ty\n" +
-                            "1970-01-01T00:00:00.000000Z\t0\t2\n" +
-                            "1970-01-01T06:00:00.000000Z\t1\tnull\n" +
-                            "1970-01-01T12:00:00.000000Z\t2\t4\n" +
-                            "1970-01-01T18:00:00.000000Z\t3\tnull\n" +
-                            "1970-01-02T00:00:00.000000Z\t4\t6\n" +
-                            "1970-01-02T06:00:00.000000Z\t5\tnull\n" +
-                            "1970-01-02T12:00:00.000000Z\t6\t8\n" +
-                            "1970-01-02T18:00:00.000000Z\t7\tnull\n" +
-                            "1970-01-03T00:00:00.000000Z\t8\t10\n" +
-                            "1970-01-03T06:00:00.000000Z\t9\tnull\n",
+                    """
+                            ts\tx\ty
+                            1970-01-01T00:00:00.000000Z\t0\t2
+                            1970-01-01T06:00:00.000000Z\t1\tnull
+                            1970-01-01T12:00:00.000000Z\t2\t4
+                            1970-01-01T18:00:00.000000Z\t3\tnull
+                            1970-01-02T00:00:00.000000Z\t4\t6
+                            1970-01-02T06:00:00.000000Z\t5\tnull
+                            1970-01-02T12:00:00.000000Z\t6\t8
+                            1970-01-02T18:00:00.000000Z\t7\tnull
+                            1970-01-03T00:00:00.000000Z\t8\t10
+                            1970-01-03T06:00:00.000000Z\t9\tnull
+                            """,
                     "testUpdateAddedColumn"
             );
 
@@ -588,17 +606,19 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE testUpdateAddedColumn SET y = COALESCE(y, 1)");
 
             assertSql(
-                    "ts\ty\n" +
-                            "1970-01-01T00:00:00.000000Z\t2\n" +
-                            "1970-01-01T06:00:00.000000Z\t1\n" +
-                            "1970-01-01T12:00:00.000000Z\t4\n" +
-                            "1970-01-01T18:00:00.000000Z\t1\n" +
-                            "1970-01-02T00:00:00.000000Z\t6\n" +
-                            "1970-01-02T06:00:00.000000Z\t1\n" +
-                            "1970-01-02T12:00:00.000000Z\t8\n" +
-                            "1970-01-02T18:00:00.000000Z\t1\n" +
-                            "1970-01-03T00:00:00.000000Z\t10\n" +
-                            "1970-01-03T06:00:00.000000Z\t1\n",
+                    """
+                            ts\ty
+                            1970-01-01T00:00:00.000000Z\t2
+                            1970-01-01T06:00:00.000000Z\t1
+                            1970-01-01T12:00:00.000000Z\t4
+                            1970-01-01T18:00:00.000000Z\t1
+                            1970-01-02T00:00:00.000000Z\t6
+                            1970-01-02T06:00:00.000000Z\t1
+                            1970-01-02T12:00:00.000000Z\t8
+                            1970-01-02T18:00:00.000000Z\t1
+                            1970-01-03T00:00:00.000000Z\t10
+                            1970-01-03T06:00:00.000000Z\t1
+                            """,
                     "testUpdateAddedColumn"
             );
         });
@@ -613,12 +633,14 @@ public class UpdateTest extends AbstractCairoTest {
                 tableWriter -> {
                 },
                 null,
-                "ts\tx\n" +
-                        "1970-01-01T00:00:00.000000Z\t1\n" +
-                        "1970-01-01T00:00:01.000000Z\t123\n" +
-                        "1970-01-01T00:00:02.000000Z\t123\n" +
-                        "1970-01-01T00:00:03.000000Z\t4\n" +
-                        "1970-01-01T00:00:04.000000Z\t5\n"
+                """
+                        ts\tx
+                        1970-01-01T00:00:00.000000Z\t1
+                        1970-01-01T00:00:01.000000Z\t123
+                        1970-01-01T00:00:02.000000Z\t123
+                        1970-01-01T00:00:03.000000Z\t4
+                        1970-01-01T00:00:04.000000Z\t5
+                        """
         );
     }
 
@@ -630,12 +652,14 @@ public class UpdateTest extends AbstractCairoTest {
         testUpdateAsyncMode(
                 tableWriter -> tableWriter.addColumn("newCol", ColumnType.INT),
                 "cached query plan cannot be used because table schema has changed [table=up]",
-                "ts\tx\tnewCol\n" +
-                        "1970-01-01T00:00:00.000000Z\t1\tnull\n" +
-                        "1970-01-01T00:00:01.000000Z\t2\tnull\n" +
-                        "1970-01-01T00:00:02.000000Z\t3\tnull\n" +
-                        "1970-01-01T00:00:03.000000Z\t4\tnull\n" +
-                        "1970-01-01T00:00:04.000000Z\t5\tnull\n"
+                """
+                        ts\tx\tnewCol
+                        1970-01-01T00:00:00.000000Z\t1\tnull
+                        1970-01-01T00:00:01.000000Z\t2\tnull
+                        1970-01-01T00:00:02.000000Z\t3\tnull
+                        1970-01-01T00:00:03.000000Z\t4\tnull
+                        1970-01-01T00:00:04.000000Z\t5\tnull
+                        """
         );
     }
 
@@ -657,12 +681,14 @@ public class UpdateTest extends AbstractCairoTest {
                     tableWriter -> {
                     },
                     "[43] test error",
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\n" +
-                            "1970-01-01T00:00:02.000000Z\t3\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\n"
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:01.000000Z\t2
+                            1970-01-01T00:00:02.000000Z\t3
+                            1970-01-01T00:00:03.000000Z\t4
+                            1970-01-01T00:00:04.000000Z\t5
+                            """
             );
         } finally {
             sqlExecutionContext = oldContext;
@@ -677,12 +703,14 @@ public class UpdateTest extends AbstractCairoTest {
         testUpdateAsyncMode(
                 tableWriter -> tableWriter.removeColumn("x"),
                 "cached query plan cannot be used because table schema has changed [table=up]",
-                "ts\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-01T00:00:01.000000Z\n" +
-                        "1970-01-01T00:00:02.000000Z\n" +
-                        "1970-01-01T00:00:03.000000Z\n" +
-                        "1970-01-01T00:00:04.000000Z\n"
+                """
+                        ts
+                        1970-01-01T00:00:00.000000Z
+                        1970-01-01T00:00:01.000000Z
+                        1970-01-01T00:00:02.000000Z
+                        1970-01-01T00:00:03.000000Z
+                        1970-01-01T00:00:04.000000Z
+                        """
         );
     }
 
@@ -700,20 +728,22 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET bin1 = cast(null as binary) WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
             assertSql(
-                    "ts\tbin1\tlng2\n" +
-                            "1970-01-01T00:00:00.000000Z\t00000000 41 1d 15 55 8a 17 fa d8 cc 14 ce f1 59 88 c4 91\n" +
-                            "00000010 3b 72 db f3\t1\n" +
-                            "1970-01-01T06:00:00.000000Z\t00000000 c7 88 de a0 79 3c 77 15 68 61 26 af 19 c4 95 94\n" +
-                            "00000010 36 53\t2\n" +
-                            "1970-01-01T12:00:00.000000Z\t\t3\n" +
-                            "1970-01-01T18:00:00.000000Z\t\t4\n" +
-                            "1970-01-02T00:00:00.000000Z\t\t5\n" +
-                            "1970-01-02T06:00:00.000000Z\t00000000 08 a1 1e 38 8d 1b 9e f4 c8 39 09 fe d8\t6\n" +
-                            "1970-01-02T12:00:00.000000Z\t\t7\n" +
-                            "1970-01-02T18:00:00.000000Z\t00000000 78 b5 b9 11 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b\n" +
-                            "00000010 b1 3e e3 f1\t8\n" +
-                            "1970-01-03T00:00:00.000000Z\t\t9\n" +
-                            "1970-01-03T06:00:00.000000Z\t00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3\t10\n",
+                    """
+                            ts\tbin1\tlng2
+                            1970-01-01T00:00:00.000000Z\t00000000 41 1d 15 55 8a 17 fa d8 cc 14 ce f1 59 88 c4 91
+                            00000010 3b 72 db f3\t1
+                            1970-01-01T06:00:00.000000Z\t00000000 c7 88 de a0 79 3c 77 15 68 61 26 af 19 c4 95 94
+                            00000010 36 53\t2
+                            1970-01-01T12:00:00.000000Z\t\t3
+                            1970-01-01T18:00:00.000000Z\t\t4
+                            1970-01-02T00:00:00.000000Z\t\t5
+                            1970-01-02T06:00:00.000000Z\t00000000 08 a1 1e 38 8d 1b 9e f4 c8 39 09 fe d8\t6
+                            1970-01-02T12:00:00.000000Z\t\t7
+                            1970-01-02T18:00:00.000000Z\t00000000 78 b5 b9 11 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b
+                            00000010 b1 3e e3 f1\t8
+                            1970-01-03T00:00:00.000000Z\t\t9
+                            1970-01-03T06:00:00.000000Z\t00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3\t10
+                            """,
                     "up"
             );
         });
@@ -740,26 +770,28 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET bin1 = cast(null as binary), bin2 = cast(null as binary) WHERE lng2 in (6,8,10,12,14)");
 
             assertSql(
-                    "ts\tbin1\tlng2\tbin2\n" +
-                            "1970-01-01T00:00:00.000000Z\t00000000 41 1d 15 55 8a 17 fa d8 cc 14 ce f1 59 88 c4 91\n" +
-                            "00000010 3b 72 db f3\t1\t\n" +
-                            "1970-01-01T06:00:00.000000Z\t00000000 c7 88 de a0 79 3c 77 15 68 61 26 af 19 c4 95 94\n" +
-                            "00000010 36 53\t2\t\n" +
-                            "1970-01-01T12:00:00.000000Z\t00000000 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09 fe\t3\t\n" +
-                            "1970-01-01T18:00:00.000000Z\t00000000 30 78 36 6a 32 de e4 7c d2 35 07 42 fc 31 79\t4\t\n" +
-                            "1970-01-02T00:00:00.000000Z\t00000000 81 2b 93 4d 1a 8e 78 b5 b9 11 53 d0\t5\t\n" +
-                            "1970-01-02T06:00:00.000000Z\t\t6\t\n" +
-                            "1970-01-02T12:00:00.000000Z\t00000000 ac 37 c8 cd 82 89 2b 4d 5f f6 46\t7\t\n" +
-                            "1970-01-02T18:00:00.000000Z\t\t8\t\n" +
-                            "1970-01-03T00:00:00.000000Z\t00000000 d2 85 7f a5 b8 7b 4a 9d 46 7c 8d dd 93 e6 d0\t9\t\n" +
-                            "1970-01-03T06:00:00.000000Z\t\t10\t\n" +
-                            "1970-01-07T22:40:00.000000Z\t00000000 a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a e7\n" +
-                            "00000010 0c 89\t11\t00000000 63 b7 c2 9f 29 8e 29 5e 69 c6 eb ea c3 c9 73 93\n" +
-                            "00000010 46 fe\n" +
-                            "1970-01-08T04:40:00.000000Z\t\t12\t\n" +
-                            "1970-01-08T10:40:00.000000Z\t00000000 e0 b0 e9 98 f7 67 62 28 60 b0 ec 0b 92\t13\t00000000 24 bc 2e 60 6a 1c 0b 20 a2 86 89 37 11 2c\n" +
-                            "1970-01-08T16:40:00.000000Z\t\t14\t\n" +
-                            "1970-01-08T22:40:00.000000Z\t00000000 e4 35 e4 3a dc 5c 65 ff 27 67 77\t15\t00000000 52 d0 29 26 c5 aa da 18 ce 5f b2\n",
+                    """
+                            ts\tbin1\tlng2\tbin2
+                            1970-01-01T00:00:00.000000Z\t00000000 41 1d 15 55 8a 17 fa d8 cc 14 ce f1 59 88 c4 91
+                            00000010 3b 72 db f3\t1\t
+                            1970-01-01T06:00:00.000000Z\t00000000 c7 88 de a0 79 3c 77 15 68 61 26 af 19 c4 95 94
+                            00000010 36 53\t2\t
+                            1970-01-01T12:00:00.000000Z\t00000000 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09 fe\t3\t
+                            1970-01-01T18:00:00.000000Z\t00000000 30 78 36 6a 32 de e4 7c d2 35 07 42 fc 31 79\t4\t
+                            1970-01-02T00:00:00.000000Z\t00000000 81 2b 93 4d 1a 8e 78 b5 b9 11 53 d0\t5\t
+                            1970-01-02T06:00:00.000000Z\t\t6\t
+                            1970-01-02T12:00:00.000000Z\t00000000 ac 37 c8 cd 82 89 2b 4d 5f f6 46\t7\t
+                            1970-01-02T18:00:00.000000Z\t\t8\t
+                            1970-01-03T00:00:00.000000Z\t00000000 d2 85 7f a5 b8 7b 4a 9d 46 7c 8d dd 93 e6 d0\t9\t
+                            1970-01-03T06:00:00.000000Z\t\t10\t
+                            1970-01-07T22:40:00.000000Z\t00000000 a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a e7
+                            00000010 0c 89\t11\t00000000 63 b7 c2 9f 29 8e 29 5e 69 c6 eb ea c3 c9 73 93
+                            00000010 46 fe
+                            1970-01-08T04:40:00.000000Z\t\t12\t
+                            1970-01-08T10:40:00.000000Z\t00000000 e0 b0 e9 98 f7 67 62 28 60 b0 ec 0b 92\t13\t00000000 24 bc 2e 60 6a 1c 0b 20 a2 86 89 37 11 2c
+                            1970-01-08T16:40:00.000000Z\t\t14\t
+                            1970-01-08T22:40:00.000000Z\t00000000 e4 35 e4 3a dc 5c 65 ff 27 67 77\t15\t00000000 52 d0 29 26 c5 aa da 18 ce 5f b2
+                            """,
                     "up"
             );
         });
@@ -800,10 +832,12 @@ public class UpdateTest extends AbstractCairoTest {
             }
 
             assertSql(
-                    "ts\tx\ty\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t[[1.0,2.0],[3.0,4.0]]\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\t[[2.0,3.0],[4.0,5.0]]\n" +
-                            "1970-01-01T00:00:02.000000Z\t3\t[]\n",
+                    """
+                            ts\tx\ty
+                            1970-01-01T00:00:00.000000Z\t1\t[[1.0,2.0],[3.0,4.0]]
+                            1970-01-01T00:00:01.000000Z\t2\t[[2.0,3.0],[4.0,5.0]]
+                            1970-01-01T00:00:02.000000Z\t3\t[]
+                            """,
                     "tab"
             );
         });
@@ -822,24 +856,28 @@ public class UpdateTest extends AbstractCairoTest {
             );
 
             assertSql(
-                    "ts\txint\txbool\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\ttrue\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\ttrue\n" +
-                            "1970-01-01T00:00:02.000000Z\t3\ttrue\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\ttrue\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\ttrue\n",
+                    """
+                            ts\txint\txbool
+                            1970-01-01T00:00:00.000000Z\t1\ttrue
+                            1970-01-01T00:00:01.000000Z\t2\ttrue
+                            1970-01-01T00:00:02.000000Z\t3\ttrue
+                            1970-01-01T00:00:03.000000Z\t4\ttrue
+                            1970-01-01T00:00:04.000000Z\t5\ttrue
+                            """,
                     "up"
             );
 
             update("UPDATE up SET xbool = false WHERE xint = 2");
 
             assertSql(
-                    "ts\txint\txbool\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\ttrue\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\tfalse\n" +
-                            "1970-01-01T00:00:02.000000Z\t3\ttrue\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\ttrue\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\ttrue\n",
+                    """
+                            ts\txint\txbool
+                            1970-01-01T00:00:00.000000Z\t1\ttrue
+                            1970-01-01T00:00:01.000000Z\t2\tfalse
+                            1970-01-01T00:00:02.000000Z\t3\ttrue
+                            1970-01-01T00:00:03.000000Z\t4\ttrue
+                            1970-01-01T00:00:04.000000Z\t5\ttrue
+                            """,
                     "up"
             );
         });
@@ -857,12 +895,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET X = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\n" +
-                            "1970-01-01T00:00:02.000000Z\tnull\n" +
-                            "1970-01-01T00:00:03.000000Z\tnull\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:01.000000Z\t2
+                            1970-01-01T00:00:02.000000Z\tnull
+                            1970-01-01T00:00:03.000000Z\tnull
+                            1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
         });
@@ -956,9 +996,11 @@ public class UpdateTest extends AbstractCairoTest {
                     "inconvertible types: LONG -> CHAR [from=, to=xchar]"
             );
 
-            String expected = "ts\txint\txlong\txdouble\txshort\txbyte\txchar\txdate\txfloat\txts\txbool\txl256\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1\t1\t1\t1970-01-01T00:00:00.001Z\t1.0\t1970-01-01T00:00:00.000001Z\ttrue\t0x01\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t2\t1970-01-01T00:00:00.002Z\t2.0\t1970-01-01T00:00:00.000002Z\ttrue\t0x02\n";
+            String expected = """
+                    ts\txint\txlong\txdouble\txshort\txbyte\txchar\txdate\txfloat\txts\txbool\txl256
+                    1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1\t1\t1\t1970-01-01T00:00:00.001Z\t1.0\t1970-01-01T00:00:00.000001Z\ttrue\t0x01
+                    1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t2\t1970-01-01T00:00:00.002Z\t2.0\t1970-01-01T00:00:00.000002Z\ttrue\t0x02
+                    """;
 
             update("UPDATE up SET xint=xshort");
             assertSql(expected, "up");
@@ -1077,12 +1119,14 @@ public class UpdateTest extends AbstractCairoTest {
                     "WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
             assertSql(
-                    "ts\tg1c\tg3c\tg5c\tg7c\n" +
-                            "1970-01-01T00:00:00.000000Z\t9\t46s\tjnw97\tzfuqd3b\n" +
-                            "1970-01-01T00:00:01.000000Z\th\twh4\ts2z2f\t1cjjwk6\n" +
-                            "1970-01-01T00:00:02.000000Z\tq\tque\tquest\tquestdb\n" +
-                            "1970-01-01T00:00:03.000000Z\tq\tque\tquest\tquestdb\n" +
-                            "1970-01-01T00:00:04.000000Z\tx\t76u\tq0s5w\ts2vqs1b\n",
+                    """
+                            ts\tg1c\tg3c\tg5c\tg7c
+                            1970-01-01T00:00:00.000000Z\t9\t46s\tjnw97\tzfuqd3b
+                            1970-01-01T00:00:01.000000Z\th\twh4\ts2z2f\t1cjjwk6
+                            1970-01-01T00:00:02.000000Z\tq\tque\tquest\tquestdb
+                            1970-01-01T00:00:03.000000Z\tq\tque\tquest\tquestdb
+                            1970-01-01T00:00:04.000000Z\tx\t76u\tq0s5w\ts2vqs1b
+                            """,
                     "up"
             );
         });
@@ -1109,12 +1153,14 @@ public class UpdateTest extends AbstractCairoTest {
                     "WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
             assertSql(
-                    "ts\tg1c\tg3c\tg5c\tg7c\n" +
-                            "1970-01-01T00:00:00.000000Z\t9\t46s\tjnw97\tzfuqd3b\n" +
-                            "1970-01-01T00:00:01.000000Z\th\twh4\ts2z2f\t1cjjwk6\n" +
-                            "1970-01-01T00:00:02.000000Z\tq\tq4s\tq4s2x\tq4s2xyt\n" +
-                            "1970-01-01T00:00:03.000000Z\tb\tbuy\tbuyv3\tbuyv3pv\n" +
-                            "1970-01-01T00:00:04.000000Z\tx\t76u\tq0s5w\ts2vqs1b\n",
+                    """
+                            ts\tg1c\tg3c\tg5c\tg7c
+                            1970-01-01T00:00:00.000000Z\t9\t46s\tjnw97\tzfuqd3b
+                            1970-01-01T00:00:01.000000Z\th\twh4\ts2z2f\t1cjjwk6
+                            1970-01-01T00:00:02.000000Z\tq\tq4s\tq4s2x\tq4s2xyt
+                            1970-01-01T00:00:03.000000Z\tb\tbuy\tbuyv3\tbuyv3pv
+                            1970-01-01T00:00:04.000000Z\tx\t76u\tq0s5w\ts2vqs1b
+                            """,
                     "up"
             );
         });
@@ -1148,22 +1194,24 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET geo1 = cast('q' as geohash(1c)), geo2 = 'qu', geo4='quest', geo8='questdb0' WHERE lng2 in (6, 8, 10, 12, 14)");
 
             assertSql(
-                    "ts\tstr1\tlng2\tgeo1\tgeo2\tgeo4\tgeo8\n" +
-                            "1970-01-01T00:00:00.000000Z\t15\t1\t\t\t\t\n" +
-                            "1970-01-01T06:00:00.000000Z\t15\t2\t\t\t\t\n" +
-                            "1970-01-01T12:00:00.000000Z\t\t3\t\t\t\t\n" +
-                            "1970-01-01T18:00:00.000000Z\t1\t4\t\t\t\t\n" +
-                            "1970-01-02T00:00:00.000000Z\t1\t5\t\t\t\t\n" +
-                            "1970-01-02T06:00:00.000000Z\t1\t6\tq\tqu\tquest\tquestdb0\n" +
-                            "1970-01-02T12:00:00.000000Z\t190232\t7\t\t\t\t\n" +
-                            "1970-01-02T18:00:00.000000Z\t\t8\tq\tqu\tquest\tquestdb0\n" +
-                            "1970-01-03T00:00:00.000000Z\t15\t9\t\t\t\t\n" +
-                            "1970-01-03T06:00:00.000000Z\t\t10\tq\tqu\tquest\tquestdb0\n" +
-                            "1970-01-07T22:40:00.000000Z\t\t11\tn\tpn\t2gjm2\t7qgcr0y6\n" +
-                            "1970-01-08T04:40:00.000000Z\t\t12\tq\tqu\tquest\tquestdb0\n" +
-                            "1970-01-08T10:40:00.000000Z\t\t13\t8\t1y\tcd0fj\t5h18p8vz\n" +
-                            "1970-01-08T16:40:00.000000Z\t\t14\tq\tqu\tquest\tquestdb0\n" +
-                            "1970-01-08T22:40:00.000000Z\t\t15\t1\trc\t5vm2w\tz22qdyty\n",
+                    """
+                            ts\tstr1\tlng2\tgeo1\tgeo2\tgeo4\tgeo8
+                            1970-01-01T00:00:00.000000Z\t15\t1\t\t\t\t
+                            1970-01-01T06:00:00.000000Z\t15\t2\t\t\t\t
+                            1970-01-01T12:00:00.000000Z\t\t3\t\t\t\t
+                            1970-01-01T18:00:00.000000Z\t1\t4\t\t\t\t
+                            1970-01-02T00:00:00.000000Z\t1\t5\t\t\t\t
+                            1970-01-02T06:00:00.000000Z\t1\t6\tq\tqu\tquest\tquestdb0
+                            1970-01-02T12:00:00.000000Z\t190232\t7\t\t\t\t
+                            1970-01-02T18:00:00.000000Z\t\t8\tq\tqu\tquest\tquestdb0
+                            1970-01-03T00:00:00.000000Z\t15\t9\t\t\t\t
+                            1970-01-03T06:00:00.000000Z\t\t10\tq\tqu\tquest\tquestdb0
+                            1970-01-07T22:40:00.000000Z\t\t11\tn\tpn\t2gjm2\t7qgcr0y6
+                            1970-01-08T04:40:00.000000Z\t\t12\tq\tqu\tquest\tquestdb0
+                            1970-01-08T10:40:00.000000Z\t\t13\t8\t1y\tcd0fj\t5h18p8vz
+                            1970-01-08T16:40:00.000000Z\t\t14\tq\tqu\tquest\tquestdb0
+                            1970-01-08T22:40:00.000000Z\t\t15\t1\trc\t5vm2w\tz22qdyty
+                            """,
                     "up"
             );
         });
@@ -1182,12 +1230,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET geo3 = 'questdb', geo5 = 'questdb' WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
             assertSql(
-                    "ts\tgeo3\tgeo5\n" +
-                            "1970-01-01T00:00:00.000000Z\t9v1\t46swg\n" +
-                            "1970-01-01T00:00:01.000000Z\tjnw\tzfuqd\n" +
-                            "1970-01-01T00:00:02.000000Z\tque\tquest\n" +
-                            "1970-01-01T00:00:03.000000Z\tque\tquest\n" +
-                            "1970-01-01T00:00:04.000000Z\tmmt\t71ftm\n",
+                    """
+                            ts\tgeo3\tgeo5
+                            1970-01-01T00:00:00.000000Z\t9v1\t46swg
+                            1970-01-01T00:00:01.000000Z\tjnw\tzfuqd
+                            1970-01-01T00:00:02.000000Z\tque\tquest
+                            1970-01-01T00:00:03.000000Z\tque\tquest
+                            1970-01-01T00:00:04.000000Z\tmmt\t71ftm
+                            """,
                     "up"
             );
         });
@@ -1206,12 +1256,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET geo3 = 'questdb'::varchar, geo5 = 'questdb'::varchar WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
             assertSql(
-                    "ts\tgeo3\tgeo5\n" +
-                            "1970-01-01T00:00:00.000000Z\t9v1\t46swg\n" +
-                            "1970-01-01T00:00:01.000000Z\tjnw\tzfuqd\n" +
-                            "1970-01-01T00:00:02.000000Z\tque\tquest\n" +
-                            "1970-01-01T00:00:03.000000Z\tque\tquest\n" +
-                            "1970-01-01T00:00:04.000000Z\tmmt\t71ftm\n",
+                    """
+                            ts\tgeo3\tgeo5
+                            1970-01-01T00:00:00.000000Z\t9v1\t46swg
+                            1970-01-01T00:00:01.000000Z\tjnw\tzfuqd
+                            1970-01-01T00:00:02.000000Z\tque\tquest
+                            1970-01-01T00:00:03.000000Z\tque\tquest
+                            1970-01-01T00:00:04.000000Z\tmmt\t71ftm
+                            """,
                     "up"
             );
         });
@@ -1229,12 +1281,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET x = x WHERE x > 1 and x < 4");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\n" +
-                            "1970-01-01T00:00:02.000000Z\t3\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:01.000000Z\t2
+                            1970-01-01T00:00:02.000000Z\t3
+                            1970-01-01T00:00:03.000000Z\t4
+                            1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
         });
@@ -1253,17 +1307,19 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
 
             assertSql(
-                    "ts\tx\ty\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\tnull\n" +
-                            "1970-01-01T06:56:40.000000Z\t2\t42\n" +
-                            "1970-01-01T13:53:20.000000Z\t3\tnull\n" +
-                            "1970-01-01T20:50:00.000000Z\t4\t42\n" +
-                            "1970-01-02T03:46:40.000000Z\t5\tnull\n" +
-                            "1970-01-02T10:43:20.000000Z\t6\t42\n" +
-                            "1970-01-02T17:40:00.000000Z\t7\tnull\n" +
-                            "1970-01-03T00:36:40.000000Z\t8\t42\n" +
-                            "1970-01-03T07:33:20.000000Z\t9\tnull\n" +
-                            "1970-01-03T14:30:00.000000Z\t10\tnull\n",
+                    """
+                            ts\tx\ty
+                            1970-01-01T00:00:00.000000Z\t1\tnull
+                            1970-01-01T06:56:40.000000Z\t2\t42
+                            1970-01-01T13:53:20.000000Z\t3\tnull
+                            1970-01-01T20:50:00.000000Z\t4\t42
+                            1970-01-02T03:46:40.000000Z\t5\tnull
+                            1970-01-02T10:43:20.000000Z\t6\t42
+                            1970-01-02T17:40:00.000000Z\t7\tnull
+                            1970-01-03T00:36:40.000000Z\t8\t42
+                            1970-01-03T07:33:20.000000Z\t9\tnull
+                            1970-01-03T14:30:00.000000Z\t10\tnull
+                            """,
                     "up"
             );
         });
@@ -1281,33 +1337,37 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET xint = -1000 WHERE ts in '2020-01-01T00;6h;12h;24'");
             assertSql(
-                    "xint\txsym\tts\n" +
-                            "-1000\tCPSW\t2020-01-01T04:47:59.900000Z\n" +
-                            "2\tHYRX\t2020-01-01T09:35:59.800000Z\n" +
-                            "-1000\t\t2020-01-01T14:23:59.700000Z\n" +
-                            "4\tVTJW\t2020-01-01T19:11:59.600000Z\n" +
-                            "5\tPEHN\t2020-01-01T23:59:59.500000Z\n" +
-                            "-1000\t\t2020-01-02T04:47:59.400000Z\n" +
-                            "7\tVTJW\t2020-01-02T09:35:59.300000Z\n" +
-                            "-1000\t\t2020-01-02T14:23:59.200000Z\n" +
-                            "9\tCPSW\t2020-01-02T19:11:59.100000Z\n" +
-                            "10\t\t2020-01-02T23:59:59.000000Z\n",
+                    """
+                            xint\txsym\tts
+                            -1000\tCPSW\t2020-01-01T04:47:59.900000Z
+                            2\tHYRX\t2020-01-01T09:35:59.800000Z
+                            -1000\t\t2020-01-01T14:23:59.700000Z
+                            4\tVTJW\t2020-01-01T19:11:59.600000Z
+                            5\tPEHN\t2020-01-01T23:59:59.500000Z
+                            -1000\t\t2020-01-02T04:47:59.400000Z
+                            7\tVTJW\t2020-01-02T09:35:59.300000Z
+                            -1000\t\t2020-01-02T14:23:59.200000Z
+                            9\tCPSW\t2020-01-02T19:11:59.100000Z
+                            10\t\t2020-01-02T23:59:59.000000Z
+                            """,
                     "up"
             );
 
             update("UPDATE up SET xint = -1000 WHERE ts in '2020-01-01T06;6h;12h;24' and xint > 7");
             assertSql(
-                    "xint\txsym\tts\n" +
-                            "-1000\tCPSW\t2020-01-01T04:47:59.900000Z\n" +
-                            "2\tHYRX\t2020-01-01T09:35:59.800000Z\n" +
-                            "-1000\t\t2020-01-01T14:23:59.700000Z\n" +
-                            "4\tVTJW\t2020-01-01T19:11:59.600000Z\n" +
-                            "5\tPEHN\t2020-01-01T23:59:59.500000Z\n" +
-                            "-1000\t\t2020-01-02T04:47:59.400000Z\n" +
-                            "7\tVTJW\t2020-01-02T09:35:59.300000Z\n" +
-                            "-1000\t\t2020-01-02T14:23:59.200000Z\n" +
-                            "-1000\tCPSW\t2020-01-02T19:11:59.100000Z\n" +
-                            "-1000\t\t2020-01-02T23:59:59.000000Z\n",
+                    """
+                            xint\txsym\tts
+                            -1000\tCPSW\t2020-01-01T04:47:59.900000Z
+                            2\tHYRX\t2020-01-01T09:35:59.800000Z
+                            -1000\t\t2020-01-01T14:23:59.700000Z
+                            4\tVTJW\t2020-01-01T19:11:59.600000Z
+                            5\tPEHN\t2020-01-01T23:59:59.500000Z
+                            -1000\t\t2020-01-02T04:47:59.400000Z
+                            7\tVTJW\t2020-01-02T09:35:59.300000Z
+                            -1000\t\t2020-01-02T14:23:59.200000Z
+                            -1000\tCPSW\t2020-01-02T19:11:59.100000Z
+                            -1000\t\t2020-01-02T23:59:59.000000Z
+                            """,
                     "up"
             );
         });
@@ -1333,27 +1393,29 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 9 or x = 6 or x = 13 or x = 20");
 
             assertSql(
-                    "ts\tx\ty\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\tnull\n" +
-                            "1970-01-01T06:56:40.000000Z\t2\t42\n" +
-                            "1970-01-01T13:53:20.000000Z\t3\tnull\n" +
-                            "1970-01-01T20:50:00.000000Z\t4\t42\n" +
-                            "1970-01-02T03:46:40.000000Z\t5\tnull\n" +
-                            "1970-01-02T10:43:20.000000Z\t6\t42\n" +
-                            "1970-01-02T17:40:00.000000Z\t7\tnull\n" +
-                            "1970-01-03T00:36:40.000000Z\t8\tnull\n" +
-                            "1970-01-03T07:33:20.000000Z\t9\t42\n" +
-                            "1970-01-03T14:30:00.000000Z\t10\tnull\n" +
-                            "1970-01-03T21:26:40.000000Z\t11\t10\n" +
-                            "1970-01-04T04:23:20.000000Z\t12\t20\n" +
-                            "1970-01-04T11:20:00.000000Z\t13\t42\n" +
-                            "1970-01-04T18:16:40.000000Z\t14\t40\n" +
-                            "1970-01-05T01:13:20.000000Z\t15\t50\n" +
-                            "1970-01-05T08:10:00.000000Z\t16\t60\n" +
-                            "1970-01-05T15:06:40.000000Z\t17\t70\n" +
-                            "1970-01-05T22:03:20.000000Z\t18\t80\n" +
-                            "1970-01-06T05:00:00.000000Z\t19\t90\n" +
-                            "1970-01-06T11:56:40.000000Z\t20\t42\n",
+                    """
+                            ts\tx\ty
+                            1970-01-01T00:00:00.000000Z\t1\tnull
+                            1970-01-01T06:56:40.000000Z\t2\t42
+                            1970-01-01T13:53:20.000000Z\t3\tnull
+                            1970-01-01T20:50:00.000000Z\t4\t42
+                            1970-01-02T03:46:40.000000Z\t5\tnull
+                            1970-01-02T10:43:20.000000Z\t6\t42
+                            1970-01-02T17:40:00.000000Z\t7\tnull
+                            1970-01-03T00:36:40.000000Z\t8\tnull
+                            1970-01-03T07:33:20.000000Z\t9\t42
+                            1970-01-03T14:30:00.000000Z\t10\tnull
+                            1970-01-03T21:26:40.000000Z\t11\t10
+                            1970-01-04T04:23:20.000000Z\t12\t20
+                            1970-01-04T11:20:00.000000Z\t13\t42
+                            1970-01-04T18:16:40.000000Z\t14\t40
+                            1970-01-05T01:13:20.000000Z\t15\t50
+                            1970-01-05T08:10:00.000000Z\t16\t60
+                            1970-01-05T15:06:40.000000Z\t17\t70
+                            1970-01-05T22:03:20.000000Z\t18\t80
+                            1970-01-06T05:00:00.000000Z\t19\t90
+                            1970-01-06T11:56:40.000000Z\t20\t42
+                            """,
                     "up"
             );
         });
@@ -1405,12 +1467,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET x = 1");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t1\n" +
-                            "1970-01-01T00:00:02.000000Z\t1\n" +
-                            "1970-01-01T00:00:03.000000Z\t1\n" +
-                            "1970-01-01T00:00:04.000000Z\t1\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:01.000000Z\t1
+                            1970-01-01T00:00:02.000000Z\t1
+                            1970-01-01T00:00:03.000000Z\t1
+                            1970-01-01T00:00:04.000000Z\t1
+                            """,
                     "up"
             );
         });
@@ -1428,8 +1492,10 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(1))" +
                     " timestamp(ts) partition by DAY");
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t1
+                            """,
                     "up"
             );
 
@@ -1465,12 +1531,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET x = 123 WHERE x > 1 and x < 5");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t123\n" +
-                            "1970-01-01T00:00:02.000000Z\t123\n" +
-                            "1970-01-01T00:00:03.000000Z\t123\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:01.000000Z\t123
+                            1970-01-01T00:00:02.000000Z\t123
+                            1970-01-01T00:00:03.000000Z\t123
+                            1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
         });
@@ -1492,8 +1560,10 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET x = 44");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t44\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t44
+                            """,
                     "up"
             );
         });
@@ -1551,12 +1621,14 @@ public class UpdateTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "ts\txxx\tsym\tsymi\tabc\n" +
-                            "2022-02-24T01:01:00.000000Z\ta\tabc\ti\tnull\n" +
-                            "2022-02-24T02:01:00.000000Z\ta\tabc\ti\tnull\n" +
-                            "2022-02-24T03:01:00.000000Z\ta\tabc\ti\tnull\n" +
-                            "2022-02-24T04:01:00.000000Z\ta\tabc\ti\tnull\n" +
-                            "2022-02-24T05:01:00.000000Z\ta\tabc\ti\tnull\n",
+                    """
+                            ts\txxx\tsym\tsymi\tabc
+                            2022-02-24T01:01:00.000000Z\ta\tabc\ti\tnull
+                            2022-02-24T02:01:00.000000Z\ta\tabc\ti\tnull
+                            2022-02-24T03:01:00.000000Z\ta\tabc\ti\tnull
+                            2022-02-24T04:01:00.000000Z\ta\tabc\ti\tnull
+                            2022-02-24T05:01:00.000000Z\ta\tabc\ti\tnull
+                            """,
                     "test"
             );
 
@@ -1583,22 +1655,24 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET y = 42 where x = 9 or x = 10 or x = 11");
 
             assertSql(
-                    "ts\tx\ty\n" +
-                            "1970-01-01T00:00:00.000000Z\t0\tnull\n" +
-                            "1970-01-01T00:00:01.000000Z\t1\tnull\n" +
-                            "1970-01-01T00:00:02.000000Z\t2\tnull\n" +
-                            "1970-01-01T00:00:03.000000Z\t3\tnull\n" +
-                            "1970-01-01T00:00:04.000000Z\t4\tnull\n" +
-                            "1970-01-01T00:00:05.000000Z\t5\tnull\n" +
-                            "1970-01-01T00:00:06.000000Z\t6\tnull\n" +
-                            "1970-01-01T00:00:07.000000Z\t7\tnull\n" +
-                            "1970-01-01T00:00:08.000000Z\t8\tnull\n" +
-                            "1970-01-01T00:00:09.000000Z\t9\t42\n" +
-                            "1970-01-01T00:01:40.000000Z\t10\t42\n" +
-                            "1970-01-01T00:01:41.000000Z\t11\t42\n" +
-                            "1970-01-01T00:01:42.000000Z\t12\t30\n" +
-                            "1970-01-01T00:01:43.000000Z\t13\t40\n" +
-                            "1970-01-01T00:01:44.000000Z\t14\t50\n",
+                    """
+                            ts\tx\ty
+                            1970-01-01T00:00:00.000000Z\t0\tnull
+                            1970-01-01T00:00:01.000000Z\t1\tnull
+                            1970-01-01T00:00:02.000000Z\t2\tnull
+                            1970-01-01T00:00:03.000000Z\t3\tnull
+                            1970-01-01T00:00:04.000000Z\t4\tnull
+                            1970-01-01T00:00:05.000000Z\t5\tnull
+                            1970-01-01T00:00:06.000000Z\t6\tnull
+                            1970-01-01T00:00:07.000000Z\t7\tnull
+                            1970-01-01T00:00:08.000000Z\t8\tnull
+                            1970-01-01T00:00:09.000000Z\t9\t42
+                            1970-01-01T00:01:40.000000Z\t10\t42
+                            1970-01-01T00:01:41.000000Z\t11\t42
+                            1970-01-01T00:01:42.000000Z\t12\t30
+                            1970-01-01T00:01:43.000000Z\t13\t40
+                            1970-01-01T00:01:44.000000Z\t14\t50
+                            """,
                     "up"
             );
         });
@@ -1624,22 +1698,24 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET y = 42 where x = 5 or x = 7 or x = 10 or x = 13 or x = 14");
 
             assertSql(
-                    "ts\tx\ty\n" +
-                            "1970-01-01T00:00:00.000000Z\t0\tnull\n" +
-                            "1970-01-01T00:00:01.000000Z\t1\tnull\n" +
-                            "1970-01-01T00:00:02.000000Z\t2\tnull\n" +
-                            "1970-01-01T00:00:03.000000Z\t3\tnull\n" +
-                            "1970-01-01T00:00:04.000000Z\t4\tnull\n" +
-                            "1970-01-01T00:00:05.000000Z\t5\t42\n" +
-                            "1970-01-01T00:00:06.000000Z\t6\tnull\n" +
-                            "1970-01-01T00:00:07.000000Z\t7\t42\n" +
-                            "1970-01-01T00:00:08.000000Z\t8\tnull\n" +
-                            "1970-01-01T00:00:09.000000Z\t9\tnull\n" +
-                            "1970-01-01T00:01:40.000000Z\t10\t42\n" +
-                            "1970-01-01T00:01:41.000000Z\t11\t20\n" +
-                            "1970-01-01T00:01:42.000000Z\t12\t30\n" +
-                            "1970-01-01T00:01:43.000000Z\t13\t42\n" +
-                            "1970-01-01T00:01:44.000000Z\t14\t42\n",
+                    """
+                            ts\tx\ty
+                            1970-01-01T00:00:00.000000Z\t0\tnull
+                            1970-01-01T00:00:01.000000Z\t1\tnull
+                            1970-01-01T00:00:02.000000Z\t2\tnull
+                            1970-01-01T00:00:03.000000Z\t3\tnull
+                            1970-01-01T00:00:04.000000Z\t4\tnull
+                            1970-01-01T00:00:05.000000Z\t5\t42
+                            1970-01-01T00:00:06.000000Z\t6\tnull
+                            1970-01-01T00:00:07.000000Z\t7\t42
+                            1970-01-01T00:00:08.000000Z\t8\tnull
+                            1970-01-01T00:00:09.000000Z\t9\tnull
+                            1970-01-01T00:01:40.000000Z\t10\t42
+                            1970-01-01T00:01:41.000000Z\t11\t20
+                            1970-01-01T00:01:42.000000Z\t12\t30
+                            1970-01-01T00:01:43.000000Z\t13\t42
+                            1970-01-01T00:01:44.000000Z\t14\t42
+                            """,
                     "up"
             );
         });
@@ -1658,17 +1734,19 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
 
             assertSql(
-                    "ts\tx\ty\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\tnull\n" +
-                            "1970-01-01T00:01:40.000000Z\t2\t42\n" +
-                            "1970-01-01T00:03:20.000000Z\t3\tnull\n" +
-                            "1970-01-01T00:05:00.000000Z\t4\t42\n" +
-                            "1970-01-01T00:06:40.000000Z\t5\tnull\n" +
-                            "1970-01-01T00:08:20.000000Z\t6\t42\n" +
-                            "1970-01-01T00:10:00.000000Z\t7\tnull\n" +
-                            "1970-01-01T00:11:40.000000Z\t8\t42\n" +
-                            "1970-01-01T00:13:20.000000Z\t9\tnull\n" +
-                            "1970-01-01T00:15:00.000000Z\t10\tnull\n",
+                    """
+                            ts\tx\ty
+                            1970-01-01T00:00:00.000000Z\t1\tnull
+                            1970-01-01T00:01:40.000000Z\t2\t42
+                            1970-01-01T00:03:20.000000Z\t3\tnull
+                            1970-01-01T00:05:00.000000Z\t4\t42
+                            1970-01-01T00:06:40.000000Z\t5\tnull
+                            1970-01-01T00:08:20.000000Z\t6\t42
+                            1970-01-01T00:10:00.000000Z\t7\tnull
+                            1970-01-01T00:11:40.000000Z\t8\t42
+                            1970-01-01T00:13:20.000000Z\t9\tnull
+                            1970-01-01T00:15:00.000000Z\t10\tnull
+                            """,
                     "up"
             );
         });
@@ -1694,22 +1772,24 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET y = 42 where x = 6 or x = 8 or x = 12 or x = 14");
 
             assertSql(
-                    "ts\tx\ty\n" +
-                            "1970-01-01T00:00:00.000000Z\t0\tnull\n" +
-                            "1970-01-01T00:00:01.000000Z\t1\tnull\n" +
-                            "1970-01-01T00:00:02.000000Z\t2\tnull\n" +
-                            "1970-01-01T00:00:03.000000Z\t3\tnull\n" +
-                            "1970-01-01T00:00:04.000000Z\t4\tnull\n" +
-                            "1970-01-01T00:00:05.000000Z\t5\tnull\n" +
-                            "1970-01-01T00:00:06.000000Z\t6\t42\n" +
-                            "1970-01-01T00:00:07.000000Z\t7\tnull\n" +
-                            "1970-01-01T00:00:08.000000Z\t8\t42\n" +
-                            "1970-01-01T00:00:09.000000Z\t9\tnull\n" +
-                            "1970-01-01T00:01:40.000000Z\t10\t10\n" +
-                            "1970-01-01T00:01:41.000000Z\t11\t20\n" +
-                            "1970-01-01T00:01:42.000000Z\t12\t42\n" +
-                            "1970-01-01T00:01:43.000000Z\t13\t40\n" +
-                            "1970-01-01T00:01:44.000000Z\t14\t42\n",
+                    """
+                            ts\tx\ty
+                            1970-01-01T00:00:00.000000Z\t0\tnull
+                            1970-01-01T00:00:01.000000Z\t1\tnull
+                            1970-01-01T00:00:02.000000Z\t2\tnull
+                            1970-01-01T00:00:03.000000Z\t3\tnull
+                            1970-01-01T00:00:04.000000Z\t4\tnull
+                            1970-01-01T00:00:05.000000Z\t5\tnull
+                            1970-01-01T00:00:06.000000Z\t6\t42
+                            1970-01-01T00:00:07.000000Z\t7\tnull
+                            1970-01-01T00:00:08.000000Z\t8\t42
+                            1970-01-01T00:00:09.000000Z\t9\tnull
+                            1970-01-01T00:01:40.000000Z\t10\t10
+                            1970-01-01T00:01:41.000000Z\t11\t20
+                            1970-01-01T00:01:42.000000Z\t12\t42
+                            1970-01-01T00:01:43.000000Z\t13\t40
+                            1970-01-01T00:01:44.000000Z\t14\t42
+                            """,
                     "up"
             );
         });
@@ -1731,36 +1811,42 @@ public class UpdateTest extends AbstractCairoTest {
             // char
             update("update up set s = 'a' where s = 'bar'");
             assertSql(
-                    "s\tts\tx\n" +
-                            "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "a\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "a\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "a\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            s\tts\tx
+                            foo\t1970-01-01T00:00:00.000000Z\t1
+                            foo\t1970-01-01T00:00:01.000000Z\t2
+                            a\t1970-01-01T00:00:02.000000Z\t3
+                            a\t1970-01-01T00:00:03.000000Z\t4
+                            a\t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
 
             // string
             update("update up set s = 'baz' where s = 'a'");
             assertSql(
-                    "s\tts\tx\n" +
-                            "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "baz\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "baz\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "baz\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            s\tts\tx
+                            foo\t1970-01-01T00:00:00.000000Z\t1
+                            foo\t1970-01-01T00:00:01.000000Z\t2
+                            baz\t1970-01-01T00:00:02.000000Z\t3
+                            baz\t1970-01-01T00:00:03.000000Z\t4
+                            baz\t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
 
             // UUID
             update("update up set s = cast('11111111-1111-1111-1111-111111111111' as uuid) where s = 'baz'");
             assertSql(
-                    "s\tts\tx\n" +
-                            "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            s\tts\tx
+                            foo\t1970-01-01T00:00:00.000000Z\t1
+                            foo\t1970-01-01T00:00:01.000000Z\t2
+                            11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:02.000000Z\t3
+                            11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:03.000000Z\t4
+                            11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
         });
@@ -1780,17 +1866,19 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET str1 = 'questdb' WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
             assertSql(
-                    "ts\tstr1\tlng2\n" +
-                            "1970-01-01T00:00:00.000000Z\t15\t1\n" +
-                            "1970-01-01T06:00:00.000000Z\t15\t2\n" +
-                            "1970-01-01T12:00:00.000000Z\tquestdb\t3\n" +
-                            "1970-01-01T18:00:00.000000Z\t1\t4\n" +
-                            "1970-01-02T00:00:00.000000Z\tquestdb\t5\n" +
-                            "1970-01-02T06:00:00.000000Z\t1\t6\n" +
-                            "1970-01-02T12:00:00.000000Z\tquestdb\t7\n" +
-                            "1970-01-02T18:00:00.000000Z\t\t8\n" +
-                            "1970-01-03T00:00:00.000000Z\tquestdb\t9\n" +
-                            "1970-01-03T06:00:00.000000Z\t\t10\n",
+                    """
+                            ts\tstr1\tlng2
+                            1970-01-01T00:00:00.000000Z\t15\t1
+                            1970-01-01T06:00:00.000000Z\t15\t2
+                            1970-01-01T12:00:00.000000Z\tquestdb\t3
+                            1970-01-01T18:00:00.000000Z\t1\t4
+                            1970-01-02T00:00:00.000000Z\tquestdb\t5
+                            1970-01-02T06:00:00.000000Z\t1\t6
+                            1970-01-02T12:00:00.000000Z\tquestdb\t7
+                            1970-01-02T18:00:00.000000Z\t\t8
+                            1970-01-03T00:00:00.000000Z\tquestdb\t9
+                            1970-01-03T06:00:00.000000Z\t\t10
+                            """,
                     "up"
             );
         });
@@ -1809,13 +1897,17 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET str1 = 'questdb' WHERE ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1");
             assertSql(
-                    "count\n" +
-                            "7201\n",
+                    """
+                            count
+                            7201
+                            """,
                     "select count() from up where str1 = 'questdb'"
             );
             assertSql(
-                    "count\n" +
-                            "7201\n",
+                    """
+                            count
+                            7201
+                            """,
                     "select count() from up where ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1"
             );
         });
@@ -1844,27 +1936,29 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET str1 = 'questdb2', str2 = 'questdb2' WHERE ts = '1970-01-01T01:18:00.000000Z'");
 
             assertSql(
-                    "ts\tstr1\tlng2\tstr2\n" +
-                            "1970-01-01T00:00:00.000000Z\t15\t1\t\n" +
-                            "1970-01-01T00:03:00.000000Z\t15\t2\t\n" +
-                            "1970-01-01T00:06:00.000000Z\t\t3\t\n" +
-                            "1970-01-01T00:09:00.000000Z\t1\t4\t\n" +
-                            "1970-01-01T00:12:00.000000Z\t1\t5\t\n" +
-                            "1970-01-01T00:15:00.000000Z\t1\t6\t\n" +
-                            "1970-01-01T00:18:00.000000Z\t190232\t7\t\n" +
-                            "1970-01-01T00:21:00.000000Z\t\t8\t\n" +
-                            "1970-01-01T00:24:00.000000Z\t15\t9\t\n" +
-                            "1970-01-01T00:27:00.000000Z\t\t10\t\n" +
-                            "1970-01-01T00:30:00.000000Z\t\t11\t190232\n" +
-                            "1970-01-01T00:36:00.000000Z\t\t12\t\n" +
-                            "1970-01-01T00:42:00.000000Z\t\t13\t15\n" +
-                            "1970-01-01T00:48:00.000000Z\t15\t14\t\n" +
-                            "1970-01-01T00:54:00.000000Z\trdgb\t15\t\n" +
-                            "1970-01-01T01:00:00.000000Z\t\t16\trdgb\n" +
-                            "1970-01-01T01:06:00.000000Z\t15\t17\t1\n" +
-                            "1970-01-01T01:12:00.000000Z\trdgb\t18\t\n" +
-                            "1970-01-01T01:18:00.000000Z\tquestdb2\t19\tquestdb2\n" +
-                            "1970-01-01T01:24:00.000000Z\t\t20\t15\n",
+                    """
+                            ts\tstr1\tlng2\tstr2
+                            1970-01-01T00:00:00.000000Z\t15\t1\t
+                            1970-01-01T00:03:00.000000Z\t15\t2\t
+                            1970-01-01T00:06:00.000000Z\t\t3\t
+                            1970-01-01T00:09:00.000000Z\t1\t4\t
+                            1970-01-01T00:12:00.000000Z\t1\t5\t
+                            1970-01-01T00:15:00.000000Z\t1\t6\t
+                            1970-01-01T00:18:00.000000Z\t190232\t7\t
+                            1970-01-01T00:21:00.000000Z\t\t8\t
+                            1970-01-01T00:24:00.000000Z\t15\t9\t
+                            1970-01-01T00:27:00.000000Z\t\t10\t
+                            1970-01-01T00:30:00.000000Z\t\t11\t190232
+                            1970-01-01T00:36:00.000000Z\t\t12\t
+                            1970-01-01T00:42:00.000000Z\t\t13\t15
+                            1970-01-01T00:48:00.000000Z\t15\t14\t
+                            1970-01-01T00:54:00.000000Z\trdgb\t15\t
+                            1970-01-01T01:00:00.000000Z\t\t16\trdgb
+                            1970-01-01T01:06:00.000000Z\t15\t17\t1
+                            1970-01-01T01:12:00.000000Z\trdgb\t18\t
+                            1970-01-01T01:18:00.000000Z\tquestdb2\t19\tquestdb2
+                            1970-01-01T01:24:00.000000Z\t\t20\t15
+                            """,
                     "up"
             );
         });
@@ -1892,22 +1986,24 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET str1 = 'questdb1', str2 = 'questdb2' WHERE lng2 in (6, 8, 10, 12, 14)");
 
             assertSql(
-                    "ts\tstr1\tlng2\tstr2\n" +
-                            "1970-01-01T00:00:00.000000Z\t15\t1\t\n" +
-                            "1970-01-01T06:00:00.000000Z\t15\t2\t\n" +
-                            "1970-01-01T12:00:00.000000Z\t\t3\t\n" +
-                            "1970-01-01T18:00:00.000000Z\t1\t4\t\n" +
-                            "1970-01-02T00:00:00.000000Z\t1\t5\t\n" +
-                            "1970-01-02T06:00:00.000000Z\tquestdb1\t6\tquestdb2\n" +
-                            "1970-01-02T12:00:00.000000Z\t190232\t7\t\n" +
-                            "1970-01-02T18:00:00.000000Z\tquestdb1\t8\tquestdb2\n" +
-                            "1970-01-03T00:00:00.000000Z\t15\t9\t\n" +
-                            "1970-01-03T06:00:00.000000Z\tquestdb1\t10\tquestdb2\n" +
-                            "1970-01-07T22:40:00.000000Z\t\t11\t190232\n" +
-                            "1970-01-08T04:40:00.000000Z\tquestdb1\t12\tquestdb2\n" +
-                            "1970-01-08T10:40:00.000000Z\t\t13\t15\n" +
-                            "1970-01-08T16:40:00.000000Z\tquestdb1\t14\tquestdb2\n" +
-                            "1970-01-08T22:40:00.000000Z\trdgb\t15\t\n",
+                    """
+                            ts\tstr1\tlng2\tstr2
+                            1970-01-01T00:00:00.000000Z\t15\t1\t
+                            1970-01-01T06:00:00.000000Z\t15\t2\t
+                            1970-01-01T12:00:00.000000Z\t\t3\t
+                            1970-01-01T18:00:00.000000Z\t1\t4\t
+                            1970-01-02T00:00:00.000000Z\t1\t5\t
+                            1970-01-02T06:00:00.000000Z\tquestdb1\t6\tquestdb2
+                            1970-01-02T12:00:00.000000Z\t190232\t7\t
+                            1970-01-02T18:00:00.000000Z\tquestdb1\t8\tquestdb2
+                            1970-01-03T00:00:00.000000Z\t15\t9\t
+                            1970-01-03T06:00:00.000000Z\tquestdb1\t10\tquestdb2
+                            1970-01-07T22:40:00.000000Z\t\t11\t190232
+                            1970-01-08T04:40:00.000000Z\tquestdb1\t12\tquestdb2
+                            1970-01-08T10:40:00.000000Z\t\t13\t15
+                            1970-01-08T16:40:00.000000Z\tquestdb1\t14\tquestdb2
+                            1970-01-08T22:40:00.000000Z\trdgb\t15\t
+                            """,
                     "up"
             );
         });
@@ -1927,17 +2023,19 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET str1 = concat('questdb', str1), lng2 = -1 WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
             assertSql(
-                    "ts\tstr1\tlng2\n" +
-                            "1970-01-01T00:00:00.000000Z\t15\t1\n" +
-                            "1970-01-01T06:00:00.000000Z\t15\t2\n" +
-                            "1970-01-01T12:00:00.000000Z\tquestdb\t-1\n" +
-                            "1970-01-01T18:00:00.000000Z\t1\t4\n" +
-                            "1970-01-02T00:00:00.000000Z\tquestdb1\t-1\n" +
-                            "1970-01-02T06:00:00.000000Z\t1\t6\n" +
-                            "1970-01-02T12:00:00.000000Z\tquestdb190232\t-1\n" +
-                            "1970-01-02T18:00:00.000000Z\t\t8\n" +
-                            "1970-01-03T00:00:00.000000Z\tquestdb15\t-1\n" +
-                            "1970-01-03T06:00:00.000000Z\t\t10\n",
+                    """
+                            ts\tstr1\tlng2
+                            1970-01-01T00:00:00.000000Z\t15\t1
+                            1970-01-01T06:00:00.000000Z\t15\t2
+                            1970-01-01T12:00:00.000000Z\tquestdb\t-1
+                            1970-01-01T18:00:00.000000Z\t1\t4
+                            1970-01-02T00:00:00.000000Z\tquestdb1\t-1
+                            1970-01-02T06:00:00.000000Z\t1\t6
+                            1970-01-02T12:00:00.000000Z\tquestdb190232\t-1
+                            1970-01-02T18:00:00.000000Z\t\t8
+                            1970-01-03T00:00:00.000000Z\tquestdb15\t-1
+                            1970-01-03T06:00:00.000000Z\t\t10
+                            """,
                     "up"
             );
         });
@@ -1984,12 +2082,14 @@ public class UpdateTest extends AbstractCairoTest {
                     "SET sym = NULLIF(CONCAT(to_str(ts2, 'yyyy-MM-dd'), 'n'), 'n')");
 
             assertSql(
-                    "ts\tsym\tts2\n" +
-                            "1970-01-01T00:00:00.000000Z\t\t\n" +
-                            "1970-01-01T00:00:01.000000Z\t\t\n" +
-                            "1970-01-01T00:00:02.000000Z\t\t\n" +
-                            "1970-01-01T00:00:03.000000Z\t\t\n" +
-                            "1970-01-01T00:00:04.000000Z\t\t\n",
+                    """
+                            ts\tsym\tts2
+                            1970-01-01T00:00:00.000000Z\t\t
+                            1970-01-01T00:00:01.000000Z\t\t
+                            1970-01-01T00:00:02.000000Z\t\t
+                            1970-01-01T00:00:03.000000Z\t\t
+                            1970-01-01T00:00:04.000000Z\t\t
+                            """,
                     "up"
             );
 
@@ -1997,12 +2097,14 @@ public class UpdateTest extends AbstractCairoTest {
                     "SET sym = COALESCE(CONCAT(to_str(ts2, 'yyyy-MM-dd'), 'n'), 'n')");
 
             assertSql(
-                    "ts\tsym\tts2\n" +
-                            "1970-01-01T00:00:00.000000Z\tn\t\n" +
-                            "1970-01-01T00:00:01.000000Z\tn\t\n" +
-                            "1970-01-01T00:00:02.000000Z\tn\t\n" +
-                            "1970-01-01T00:00:03.000000Z\tn\t\n" +
-                            "1970-01-01T00:00:04.000000Z\tn\t\n",
+                    """
+                            ts\tsym\tts2
+                            1970-01-01T00:00:00.000000Z\tn\t
+                            1970-01-01T00:00:01.000000Z\tn\t
+                            1970-01-01T00:00:02.000000Z\tn\t
+                            1970-01-01T00:00:03.000000Z\tn\t
+                            1970-01-01T00:00:04.000000Z\tn\t
+                            """,
                     "up"
             );
         });
@@ -2041,22 +2143,26 @@ public class UpdateTest extends AbstractCairoTest {
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
-            assertSql("symCol\tts\tx\n" +
-                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n", "up");
+            assertSql("""
+                    symCol\tts\tx
+                    WCP\t1970-01-01T00:00:00.000000Z\t1
+                    WCP\t1970-01-01T00:00:01.000000Z\t2
+                    WCP\t1970-01-01T00:00:02.000000Z\t3
+                    VTJ\t1970-01-01T00:00:03.000000Z\t4
+                    \t1970-01-01T00:00:04.000000Z\t5
+                    """, "up");
 
             Assert.assertEquals(2, update("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'"));
 
             assertSql(
-                    "symCol\tts\tx\n" +
-                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "VTJ\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol\tts\tx
+                            WCP\t1970-01-01T00:00:00.000000Z\t1
+                            WCP\t1970-01-01T00:00:01.000000Z\t2
+                            WCP\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            VTJ\t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
         });
@@ -2074,12 +2180,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("update UP set x = null where ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\n" +
-                            "1970-01-01T00:00:02.000000Z\tnull\n" +
-                            "1970-01-01T00:00:03.000000Z\tnull\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:01.000000Z\t2
+                            1970-01-01T00:00:02.000000Z\tnull
+                            1970-01-01T00:00:03.000000Z\tnull
+                            1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
         });
@@ -2097,12 +2205,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE \"віт ер\" SET X = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\n" +
-                            "1970-01-01T00:00:02.000000Z\tnull\n" +
-                            "1970-01-01T00:00:03.000000Z\tnull\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:01.000000Z\t2
+                            1970-01-01T00:00:02.000000Z\tnull
+                            1970-01-01T00:00:03.000000Z\tnull
+                            1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "\"віт ер\""
             );
         });
@@ -2123,12 +2233,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET x = 12");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t12\n" +
-                            "1970-01-01T00:00:01.000000Z\t12\n" +
-                            "1970-01-01T00:00:02.000000Z\t12\n" +
-                            "1970-01-01T00:00:03.000000Z\t12\n" +
-                            "1970-01-01T00:00:04.000000Z\t12\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t12
+                            1970-01-01T00:00:01.000000Z\t12
+                            1970-01-01T00:00:02.000000Z\t12
+                            1970-01-01T00:00:03.000000Z\t12
+                            1970-01-01T00:00:04.000000Z\t12
+                            """,
                     "up"
             );
         });
@@ -2163,12 +2275,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET ts1 = '1970-02-01' WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
             assertSql(
-                    "ts\tts1\n" +
-                            "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\n" +
-                            "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z\n" +
-                            "1970-01-01T00:00:02.000000Z\t1970-02-01T00:00:00.000000Z\n" +
-                            "1970-01-01T00:00:03.000000Z\t1970-02-01T00:00:00.000000Z\n" +
-                            "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z\n",
+                    """
+                            ts\tts1
+                            1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z
+                            1970-01-01T00:00:02.000000Z\t1970-02-01T00:00:00.000000Z
+                            1970-01-01T00:00:03.000000Z\t1970-02-01T00:00:00.000000Z
+                            1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z
+                            """,
                     "up"
             );
         });
@@ -2187,12 +2301,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET ts1 = sym WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
             assertSql(
-                    "ts\tts1\tsym\n" +
-                            "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:01.000Z\n" +
-                            "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:02.000Z\n" +
-                            "1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:03.000Z\n" +
-                            "1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000Z\n" +
-                            "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:05.000Z\n",
+                    """
+                            ts\tts1\tsym
+                            1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:01.000Z
+                            1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:02.000Z
+                            1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:03.000Z
+                            1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000Z
+                            1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:05.000Z
+                            """,
                     "up"
             );
         });
@@ -2211,12 +2327,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET ts1 = v WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
             assertSql(
-                    "ts\tts1\tv\n" +
-                            "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-02-01\n" +
-                            "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z\t1970-02-01\n" +
-                            "1970-01-01T00:00:02.000000Z\t1970-02-01T00:00:00.000000Z\t1970-02-01\n" +
-                            "1970-01-01T00:00:03.000000Z\t1970-02-01T00:00:00.000000Z\t1970-02-01\n" +
-                            "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z\t1970-02-01\n",
+                    """
+                            ts\tts1\tv
+                            1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-02-01
+                            1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z\t1970-02-01
+                            1970-01-01T00:00:02.000000Z\t1970-02-01T00:00:00.000000Z\t1970-02-01
+                            1970-01-01T00:00:03.000000Z\t1970-02-01T00:00:00.000000Z\t1970-02-01
+                            1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z\t1970-02-01
+                            """,
                     "up"
             );
         });
@@ -2235,9 +2353,11 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET x = $1 WHERE x > 1 and x < 4");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t100\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:01.000000Z\t100
+                            """,
                     "up"
             );
         });
@@ -2255,12 +2375,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET x = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\n" +
-                            "1970-01-01T00:00:02.000000Z\tnull\n" +
-                            "1970-01-01T00:00:03.000000Z\tnull\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:01.000000Z\t2
+                            1970-01-01T00:00:02.000000Z\tnull
+                            1970-01-01T00:00:03.000000Z\tnull
+                            1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
         });
@@ -2276,12 +2398,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
 
             assertSql(
-                    "symCol\tts\tx\n" +
-                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol\tts\tx
+                            WCP\t1970-01-01T00:00:00.000000Z\t1
+                            WCP\t1970-01-01T00:00:01.000000Z\t2
+                            WCP\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
 
@@ -2292,12 +2416,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts)");
 
             assertSql(
-                    "symCol2\tts\tx\n" +
-                            "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol2\tts\tx
+                            XUX\t1970-01-01T00:00:00.000000Z\t1
+                            IBB\t1970-01-01T00:00:01.000000Z\t2
+                            IBB\t1970-01-01T00:00:02.000000Z\t3
+                            GZS\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "t2"
             );
 
@@ -2325,36 +2451,42 @@ public class UpdateTest extends AbstractCairoTest {
             // char
             update("update up set v = 'a' where v = 'bar'");
             assertSql(
-                    "v\tts\tx\n" +
-                            "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "a\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "a\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "a\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            v\tts\tx
+                            foo\t1970-01-01T00:00:00.000000Z\t1
+                            foo\t1970-01-01T00:00:01.000000Z\t2
+                            a\t1970-01-01T00:00:02.000000Z\t3
+                            a\t1970-01-01T00:00:03.000000Z\t4
+                            a\t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
 
             // string
             update("update up set v = 'baz' where v = 'a'");
             assertSql(
-                    "v\tts\tx\n" +
-                            "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "baz\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "baz\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "baz\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            v\tts\tx
+                            foo\t1970-01-01T00:00:00.000000Z\t1
+                            foo\t1970-01-01T00:00:01.000000Z\t2
+                            baz\t1970-01-01T00:00:02.000000Z\t3
+                            baz\t1970-01-01T00:00:03.000000Z\t4
+                            baz\t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
 
             // UUID
             update("update up set v = cast('11111111-1111-1111-1111-111111111111' as uuid) where v = 'baz'");
             assertSql(
-                    "v\tts\tx\n" +
-                            "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            v\tts\tx
+                            foo\t1970-01-01T00:00:00.000000Z\t1
+                            foo\t1970-01-01T00:00:01.000000Z\t2
+                            11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:02.000000Z\t3
+                            11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:03.000000Z\t4
+                            11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
         });
@@ -2374,17 +2506,19 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET v1 = 'questdb' WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
             assertSql(
-                    "ts\tv1\tlng2\n" +
-                            "1970-01-01T00:00:00.000000Z\t15\t1\n" +
-                            "1970-01-01T06:00:00.000000Z\t15\t2\n" +
-                            "1970-01-01T12:00:00.000000Z\tquestdb\t3\n" +
-                            "1970-01-01T18:00:00.000000Z\t1\t4\n" +
-                            "1970-01-02T00:00:00.000000Z\tquestdb\t5\n" +
-                            "1970-01-02T06:00:00.000000Z\t1\t6\n" +
-                            "1970-01-02T12:00:00.000000Z\tquestdb\t7\n" +
-                            "1970-01-02T18:00:00.000000Z\t\t8\n" +
-                            "1970-01-03T00:00:00.000000Z\tquestdb\t9\n" +
-                            "1970-01-03T06:00:00.000000Z\t\t10\n",
+                    """
+                            ts\tv1\tlng2
+                            1970-01-01T00:00:00.000000Z\t15\t1
+                            1970-01-01T06:00:00.000000Z\t15\t2
+                            1970-01-01T12:00:00.000000Z\tquestdb\t3
+                            1970-01-01T18:00:00.000000Z\t1\t4
+                            1970-01-02T00:00:00.000000Z\tquestdb\t5
+                            1970-01-02T06:00:00.000000Z\t1\t6
+                            1970-01-02T12:00:00.000000Z\tquestdb\t7
+                            1970-01-02T18:00:00.000000Z\t\t8
+                            1970-01-03T00:00:00.000000Z\tquestdb\t9
+                            1970-01-03T06:00:00.000000Z\t\t10
+                            """,
                     "up"
             );
         });
@@ -2403,13 +2537,17 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET v1 = 'questdb' WHERE ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1");
             assertSql(
-                    "count\n" +
-                            "7201\n",
+                    """
+                            count
+                            7201
+                            """,
                     "select count() from up where v1 = 'questdb'"
             );
             assertSql(
-                    "count\n" +
-                            "7201\n",
+                    """
+                            count
+                            7201
+                            """,
                     "select count() from up where ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1"
             );
         });
@@ -2438,27 +2576,29 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET v1 = 'questdb2', v2 = 'questdb2' WHERE ts = '1970-01-01T01:18:00.000000Z'");
 
             assertSql(
-                    "ts\tv1\tlng2\tv2\n" +
-                            "1970-01-01T00:00:00.000000Z\t15\t1\t\n" +
-                            "1970-01-01T00:03:00.000000Z\t15\t2\t\n" +
-                            "1970-01-01T00:06:00.000000Z\t\t3\t\n" +
-                            "1970-01-01T00:09:00.000000Z\t1\t4\t\n" +
-                            "1970-01-01T00:12:00.000000Z\t1\t5\t\n" +
-                            "1970-01-01T00:15:00.000000Z\t1\t6\t\n" +
-                            "1970-01-01T00:18:00.000000Z\t190232\t7\t\n" +
-                            "1970-01-01T00:21:00.000000Z\t\t8\t\n" +
-                            "1970-01-01T00:24:00.000000Z\t15\t9\t\n" +
-                            "1970-01-01T00:27:00.000000Z\t\t10\t\n" +
-                            "1970-01-01T00:30:00.000000Z\t\t11\t190232\n" +
-                            "1970-01-01T00:36:00.000000Z\t\t12\t\n" +
-                            "1970-01-01T00:42:00.000000Z\t\t13\t15\n" +
-                            "1970-01-01T00:48:00.000000Z\t15\t14\t\n" +
-                            "1970-01-01T00:54:00.000000Z\trdgb\t15\t\n" +
-                            "1970-01-01T01:00:00.000000Z\t\t16\trdgb\n" +
-                            "1970-01-01T01:06:00.000000Z\t15\t17\t1\n" +
-                            "1970-01-01T01:12:00.000000Z\trdgb\t18\t\n" +
-                            "1970-01-01T01:18:00.000000Z\tquestdb2\t19\tquestdb2\n" +
-                            "1970-01-01T01:24:00.000000Z\t\t20\t15\n",
+                    """
+                            ts\tv1\tlng2\tv2
+                            1970-01-01T00:00:00.000000Z\t15\t1\t
+                            1970-01-01T00:03:00.000000Z\t15\t2\t
+                            1970-01-01T00:06:00.000000Z\t\t3\t
+                            1970-01-01T00:09:00.000000Z\t1\t4\t
+                            1970-01-01T00:12:00.000000Z\t1\t5\t
+                            1970-01-01T00:15:00.000000Z\t1\t6\t
+                            1970-01-01T00:18:00.000000Z\t190232\t7\t
+                            1970-01-01T00:21:00.000000Z\t\t8\t
+                            1970-01-01T00:24:00.000000Z\t15\t9\t
+                            1970-01-01T00:27:00.000000Z\t\t10\t
+                            1970-01-01T00:30:00.000000Z\t\t11\t190232
+                            1970-01-01T00:36:00.000000Z\t\t12\t
+                            1970-01-01T00:42:00.000000Z\t\t13\t15
+                            1970-01-01T00:48:00.000000Z\t15\t14\t
+                            1970-01-01T00:54:00.000000Z\trdgb\t15\t
+                            1970-01-01T01:00:00.000000Z\t\t16\trdgb
+                            1970-01-01T01:06:00.000000Z\t15\t17\t1
+                            1970-01-01T01:12:00.000000Z\trdgb\t18\t
+                            1970-01-01T01:18:00.000000Z\tquestdb2\t19\tquestdb2
+                            1970-01-01T01:24:00.000000Z\t\t20\t15
+                            """,
                     "up"
             );
         });
@@ -2486,22 +2626,24 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET v1 = 'questdb1', v2 = 'questdb2' WHERE lng2 in (6, 8, 10, 12, 14)");
 
             assertSql(
-                    "ts\tv1\tlng2\tv2\n" +
-                            "1970-01-01T00:00:00.000000Z\t15\t1\t\n" +
-                            "1970-01-01T06:00:00.000000Z\t15\t2\t\n" +
-                            "1970-01-01T12:00:00.000000Z\t\t3\t\n" +
-                            "1970-01-01T18:00:00.000000Z\t1\t4\t\n" +
-                            "1970-01-02T00:00:00.000000Z\t1\t5\t\n" +
-                            "1970-01-02T06:00:00.000000Z\tquestdb1\t6\tquestdb2\n" +
-                            "1970-01-02T12:00:00.000000Z\t190232\t7\t\n" +
-                            "1970-01-02T18:00:00.000000Z\tquestdb1\t8\tquestdb2\n" +
-                            "1970-01-03T00:00:00.000000Z\t15\t9\t\n" +
-                            "1970-01-03T06:00:00.000000Z\tquestdb1\t10\tquestdb2\n" +
-                            "1970-01-07T22:40:00.000000Z\t\t11\t190232\n" +
-                            "1970-01-08T04:40:00.000000Z\tquestdb1\t12\tquestdb2\n" +
-                            "1970-01-08T10:40:00.000000Z\t\t13\t15\n" +
-                            "1970-01-08T16:40:00.000000Z\tquestdb1\t14\tquestdb2\n" +
-                            "1970-01-08T22:40:00.000000Z\trdgb\t15\t\n",
+                    """
+                            ts\tv1\tlng2\tv2
+                            1970-01-01T00:00:00.000000Z\t15\t1\t
+                            1970-01-01T06:00:00.000000Z\t15\t2\t
+                            1970-01-01T12:00:00.000000Z\t\t3\t
+                            1970-01-01T18:00:00.000000Z\t1\t4\t
+                            1970-01-02T00:00:00.000000Z\t1\t5\t
+                            1970-01-02T06:00:00.000000Z\tquestdb1\t6\tquestdb2
+                            1970-01-02T12:00:00.000000Z\t190232\t7\t
+                            1970-01-02T18:00:00.000000Z\tquestdb1\t8\tquestdb2
+                            1970-01-03T00:00:00.000000Z\t15\t9\t
+                            1970-01-03T06:00:00.000000Z\tquestdb1\t10\tquestdb2
+                            1970-01-07T22:40:00.000000Z\t\t11\t190232
+                            1970-01-08T04:40:00.000000Z\tquestdb1\t12\tquestdb2
+                            1970-01-08T10:40:00.000000Z\t\t13\t15
+                            1970-01-08T16:40:00.000000Z\tquestdb1\t14\tquestdb2
+                            1970-01-08T22:40:00.000000Z\trdgb\t15\t
+                            """,
                     "up"
             );
         });
@@ -2521,17 +2663,19 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET v1 = concat('questdb', v1), lng2 = -1 WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
             assertSql(
-                    "ts\tv1\tlng2\n" +
-                            "1970-01-01T00:00:00.000000Z\t15\t1\n" +
-                            "1970-01-01T06:00:00.000000Z\t15\t2\n" +
-                            "1970-01-01T12:00:00.000000Z\tquestdb\t-1\n" +
-                            "1970-01-01T18:00:00.000000Z\t1\t4\n" +
-                            "1970-01-02T00:00:00.000000Z\tquestdb1\t-1\n" +
-                            "1970-01-02T06:00:00.000000Z\t1\t6\n" +
-                            "1970-01-02T12:00:00.000000Z\tquestdb190232\t-1\n" +
-                            "1970-01-02T18:00:00.000000Z\t\t8\n" +
-                            "1970-01-03T00:00:00.000000Z\tquestdb15\t-1\n" +
-                            "1970-01-03T06:00:00.000000Z\t\t10\n",
+                    """
+                            ts\tv1\tlng2
+                            1970-01-01T00:00:00.000000Z\t15\t1
+                            1970-01-01T06:00:00.000000Z\t15\t2
+                            1970-01-01T12:00:00.000000Z\tquestdb\t-1
+                            1970-01-01T18:00:00.000000Z\t1\t4
+                            1970-01-02T00:00:00.000000Z\tquestdb1\t-1
+                            1970-01-02T06:00:00.000000Z\t1\t6
+                            1970-01-02T12:00:00.000000Z\tquestdb190232\t-1
+                            1970-01-02T18:00:00.000000Z\t\t8
+                            1970-01-03T00:00:00.000000Z\tquestdb15\t-1
+                            1970-01-03T06:00:00.000000Z\t\t10
+                            """,
                     "up"
             );
         });
@@ -2581,12 +2725,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " WHERE up.s = jn.s");
 
             assertSql(
-                    "ts\ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\ta\t101\n" +
-                            "1970-01-01T00:00:01.000000Z\tc\t2\n" +
-                            "1970-01-01T00:00:02.000000Z\tb\t303\n" +
-                            "1970-01-01T00:00:03.000000Z\t\t505\n" +
-                            "1970-01-01T00:00:04.000000Z\tb\t303\n",
+                    """
+                            ts\ts\tx
+                            1970-01-01T00:00:00.000000Z\ta\t101
+                            1970-01-01T00:00:01.000000Z\tc\t2
+                            1970-01-01T00:00:02.000000Z\tb\t303
+                            1970-01-01T00:00:03.000000Z\t\t505
+                            1970-01-01T00:00:04.000000Z\tb\t303
+                            """,
                     "up"
             );
         });
@@ -2605,9 +2751,11 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET x = 100 WHERE x < $1");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t100\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t100
+                            1970-01-01T00:00:01.000000Z\t2
+                            """,
                     "up"
             );
         });
@@ -2626,12 +2774,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET y = 10L * x WHERE x > 1 and x < 4");
 
             assertSql(
-                    "ts\tx\ty\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\t20\n" +
-                            "1970-01-01T00:00:02.000000Z\t3\t30\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\t4\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\t5\n",
+                    """
+                            ts\tx\ty
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-01T00:00:01.000000Z\t2\t20
+                            1970-01-01T00:00:02.000000Z\t3\t30
+                            1970-01-01T00:00:03.000000Z\t4\t4
+                            1970-01-01T00:00:04.000000Z\t5\t5
+                            """,
                     "up"
             );
         });
@@ -2650,12 +2800,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET y = 10 * x WHERE x > 1 and x < 4");
 
             assertSql(
-                    "ts\tx\ty\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t2\t20\n" +
-                            "1970-01-01T00:00:02.000000Z\t3\t30\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\t4\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\t5\n",
+                    """
+                            ts\tx\ty
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-01T00:00:01.000000Z\t2\t20
+                            1970-01-01T00:00:02.000000Z\t3\t30
+                            1970-01-01T00:00:03.000000Z\t4\t4
+                            1970-01-01T00:00:04.000000Z\t5\t5
+                            """,
                     "up"
             );
         });
@@ -2684,12 +2836,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " WHERE up.x < 4;");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t100\n" +
-                            "1970-01-01T00:00:01.000000Z\t100\n" +
-                            "1970-01-01T00:00:02.000000Z\t100\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t100
+                            1970-01-01T00:00:01.000000Z\t100
+                            1970-01-01T00:00:02.000000Z\t100
+                            1970-01-01T00:00:03.000000Z\t4
+                            1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
         });
@@ -2718,12 +2872,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " WHERE up.ts = down.ts and x > 1 and x < 4");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t202\n" +
-                            "1970-01-01T00:00:02.000000Z\t303\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:01.000000Z\t202
+                            1970-01-01T00:00:02.000000Z\t303
+                            1970-01-01T00:00:03.000000Z\t4
+                            1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
         });
@@ -2752,12 +2908,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " WHERE up.ts = down.ts and up.x < down.y and up.x < 4 and down.y > 100;");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\n" +
-                            "1970-01-01T00:00:01.000000Z\t200\n" +
-                            "1970-01-01T00:00:02.000000Z\t300\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:01.000000Z\t200
+                            1970-01-01T00:00:02.000000Z\t300
+                            1970-01-01T00:00:03.000000Z\t4
+                            1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
         });
@@ -2786,12 +2944,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " WHERE up.ts = down.ts and x < 4");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t100\n" +
-                            "1970-01-01T00:00:01.000000Z\t200\n" +
-                            "1970-01-01T00:00:02.000000Z\t300\n" +
-                            "1970-01-01T00:00:03.000000Z\t4\n" +
-                            "1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t100
+                            1970-01-01T00:00:01.000000Z\t200
+                            1970-01-01T00:00:02.000000Z\t300
+                            1970-01-01T00:00:03.000000Z\t4
+                            1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
         });
@@ -2820,12 +2980,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " WHERE up.x < down.y;");
 
             assertSql(
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t151\n" +
-                            "1970-01-01T00:00:01.000000Z\t251\n" +
-                            "1970-01-01T00:00:02.000000Z\t300\n" +
-                            "1970-01-01T00:00:03.000000Z\t400\n" +
-                            "1970-01-01T00:00:04.000000Z\t500\n",
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t151
+                            1970-01-01T00:00:01.000000Z\t251
+                            1970-01-01T00:00:02.000000Z\t300
+                            1970-01-01T00:00:03.000000Z\t400
+                            1970-01-01T00:00:04.000000Z\t500
+                            """,
                     "up"
             );
         });
@@ -2840,12 +3002,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)" + (walEnabled ? "partition by DAY WAL" : ""));
 
-            assertSql("symCol\tts\tx\n" +
-                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n", "up");
+            assertSql("""
+                    symCol\tts\tx
+                    WCP\t1970-01-01T00:00:00.000000Z\t1
+                    WCP\t1970-01-01T00:00:01.000000Z\t2
+                    WCP\t1970-01-01T00:00:02.000000Z\t3
+                    VTJ\t1970-01-01T00:00:03.000000Z\t4
+                    \t1970-01-01T00:00:04.000000Z\t5
+                    """, "up");
 
             execute("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
@@ -2854,12 +3018,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts)");
 
             assertSql(
-                    "symCol2\tts\tx\n" +
-                            "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol2\tts\tx
+                            XUX\t1970-01-01T00:00:00.000000Z\t1
+                            IBB\t1970-01-01T00:00:01.000000Z\t2
+                            IBB\t1970-01-01T00:00:02.000000Z\t3
+                            GZS\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "t2"
             );
 
@@ -2881,12 +3047,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
 
             assertSql(
-                    "symCol\tts\tx\n" +
-                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol\tts\tx
+                            WCP\t1970-01-01T00:00:00.000000Z\t1
+                            WCP\t1970-01-01T00:00:01.000000Z\t2
+                            WCP\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
 
@@ -2908,12 +3076,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""));
 
             assertSql(
-                    "symCol\tts\tx\n" +
-                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol\tts\tx
+                            WCP\t1970-01-01T00:00:00.000000Z\t1
+                            WCP\t1970-01-01T00:00:01.000000Z\t2
+                            WCP\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
 
@@ -2924,12 +3094,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts)");
 
             assertSql(
-                    "symCol2\tts\tx\n" +
-                            "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol2\tts\tx
+                            XUX\t1970-01-01T00:00:00.000000Z\t1
+                            IBB\t1970-01-01T00:00:01.000000Z\t2
+                            IBB\t1970-01-01T00:00:02.000000Z\t3
+                            GZS\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "t2"
             );
 
@@ -2954,12 +3126,14 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts)");
 
             assertSql(
-                    "symCol\tts\tx\n" +
-                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol\tts\tx
+                            WCP\t1970-01-01T00:00:00.000000Z\t1
+                            WCP\t1970-01-01T00:00:01.000000Z\t2
+                            WCP\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
 
@@ -2970,24 +3144,28 @@ public class UpdateTest extends AbstractCairoTest {
                     " timestamp(ts)");
 
             assertSql(
-                    "symCol2\tts\tx\n" +
-                            "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol2\tts\tx
+                            XUX\t1970-01-01T00:00:00.000000Z\t1
+                            IBB\t1970-01-01T00:00:01.000000Z\t2
+                            IBB\t1970-01-01T00:00:02.000000Z\t3
+                            GZS\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "t2"
             );
 
             Assert.assertEquals(1, update("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2"));
 
             assertSql(
-                    "symCol\tts\tx\n" +
-                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "VTJ\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol\tts\tx
+                            WCP\t1970-01-01T00:00:00.000000Z\t1
+                            WCP\t1970-01-01T00:00:01.000000Z\t2
+                            WCP\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            VTJ\t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
         });
@@ -3007,10 +3185,12 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("update metrics set adjusted_ts = ts + 2_000_000"); // +2 seconds in microseconds
 
-            assertQueryNoLeakCheck("id\tts\tvalue\tadjusted_ts\n" +
-                            "1\t2024-01-01T00:00:00.000000Z\t10.0\t2024-01-01T00:00:02.000000Z\n" +
-                            "2\t2024-01-01T00:00:00.500000Z\t20.0\t2024-01-01T00:00:02.500000Z\n" +
-                            "3\t2024-01-01T00:00:01.000000Z\t30.0\t2024-01-01T00:00:03.000000Z\n",
+            assertQueryNoLeakCheck("""
+                            id\tts\tvalue\tadjusted_ts
+                            1\t2024-01-01T00:00:00.000000Z\t10.0\t2024-01-01T00:00:02.000000Z
+                            2\t2024-01-01T00:00:00.500000Z\t20.0\t2024-01-01T00:00:02.500000Z
+                            3\t2024-01-01T00:00:01.000000Z\t30.0\t2024-01-01T00:00:03.000000Z
+                            """,
                     "select * from metrics", "ts", true, true);
         });
     }
@@ -3031,10 +3211,12 @@ public class UpdateTest extends AbstractCairoTest {
             // +2 seconds in microseconds
             update("update metrics set adjusted_ts_ns = ts + 2_000_000");
 
-            assertQueryNoLeakCheck("id\tts\tvalue\tadjusted_ts_ns\n" +
-                            "1\t2024-01-01T00:00:00.000000Z\t10.0\t2024-01-01T00:00:02.000000000Z\n" +
-                            "2\t2024-01-01T00:00:00.500000Z\t20.0\t2024-01-01T00:00:02.500000000Z\n" +
-                            "3\t2024-01-01T00:00:01.000000Z\t30.0\t2024-01-01T00:00:03.000000000Z\n",
+            assertQueryNoLeakCheck("""
+                            id\tts\tvalue\tadjusted_ts_ns
+                            1\t2024-01-01T00:00:00.000000Z\t10.0\t2024-01-01T00:00:02.000000000Z
+                            2\t2024-01-01T00:00:00.500000Z\t20.0\t2024-01-01T00:00:02.500000000Z
+                            3\t2024-01-01T00:00:01.000000Z\t30.0\t2024-01-01T00:00:03.000000000Z
+                            """,
                     "select * from metrics", "ts", true, true);
         });
     }
@@ -3055,10 +3237,12 @@ public class UpdateTest extends AbstractCairoTest {
             // +2 seconds in nanoseconds
             update("update metrics set adjusted_ts = ts_ns + 2_000_000_000");
 
-            assertQueryNoLeakCheck("id\tts_ns\tvalue\tadjusted_ts\n" +
-                            "1\t2024-01-01T00:00:00.000000000Z\t10.0\t2024-01-01T00:00:02.000000Z\n" +
-                            "2\t2024-01-01T00:00:00.500000000Z\t20.0\t2024-01-01T00:00:02.500000Z\n" +
-                            "3\t2024-01-01T00:00:01.000000000Z\t30.0\t2024-01-01T00:00:03.000000Z\n",
+            assertQueryNoLeakCheck("""
+                            id\tts_ns\tvalue\tadjusted_ts
+                            1\t2024-01-01T00:00:00.000000000Z\t10.0\t2024-01-01T00:00:02.000000Z
+                            2\t2024-01-01T00:00:00.500000000Z\t20.0\t2024-01-01T00:00:02.500000Z
+                            3\t2024-01-01T00:00:01.000000000Z\t30.0\t2024-01-01T00:00:03.000000Z
+                            """,
                     "select * from metrics", "ts_ns", true, true);
         });
     }
@@ -3077,10 +3261,12 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("update metrics set adjusted_ts = ts + 2_000_000_000"); // +2 seconds in nanoseconds
 
-            assertQueryNoLeakCheck("id\tts\tvalue\tadjusted_ts\n" +
-                            "1\t2024-01-01T00:00:00.000000000Z\t10.0\t2024-01-01T00:00:02.000000000Z\n" +
-                            "2\t2024-01-01T00:00:00.500000000Z\t20.0\t2024-01-01T00:00:02.500000000Z\n" +
-                            "3\t2024-01-01T00:00:01.000000000Z\t30.0\t2024-01-01T00:00:03.000000000Z\n",
+            assertQueryNoLeakCheck("""
+                            id\tts\tvalue\tadjusted_ts
+                            1\t2024-01-01T00:00:00.000000000Z\t10.0\t2024-01-01T00:00:02.000000000Z
+                            2\t2024-01-01T00:00:00.500000000Z\t20.0\t2024-01-01T00:00:02.500000000Z
+                            3\t2024-01-01T00:00:01.000000000Z\t30.0\t2024-01-01T00:00:03.000000000Z
+                            """,
                     "select * from metrics", "ts", true, true);
         });
     }
@@ -3104,12 +3290,14 @@ public class UpdateTest extends AbstractCairoTest {
 
             Assert.assertEquals(3, result);
 
-            assertQueryNoLeakCheck("sensor_id\tts_nano\treading\tstatus\n" +
-                            "1\t2022-01-01T00:00:00.000000000Z\t25.5\tcalibrated\n" +
-                            "2\t2022-01-01T00:00:00.001111111Z\t26.0\tcalibrated\n" +
-                            "3\t2022-01-01T00:00:00.999999999Z\t27.0\tcalibrated\n" +
-                            "4\t2022-01-01T00:00:01.000000000Z\t28.0\tinactive\n" +
-                            "5\t2022-01-01T00:00:01.000000123Z\t29.0\tactive\n",
+            assertQueryNoLeakCheck("""
+                            sensor_id\tts_nano\treading\tstatus
+                            1\t2022-01-01T00:00:00.000000000Z\t25.5\tcalibrated
+                            2\t2022-01-01T00:00:00.001111111Z\t26.0\tcalibrated
+                            3\t2022-01-01T00:00:00.999999999Z\t27.0\tcalibrated
+                            4\t2022-01-01T00:00:01.000000000Z\t28.0\tinactive
+                            5\t2022-01-01T00:00:01.000000123Z\t29.0\tactive
+                            """,
                     "select * from sensors", "ts_nano", true, true);
         });
     }
@@ -3130,10 +3318,12 @@ public class UpdateTest extends AbstractCairoTest {
             update("update events set type = 'precise' " +
                     "where ts_nano != ts_micro::timestamp_ns");
 
-            assertQueryNoLeakCheck("id\tts_nano\tts_micro\ttype\n" +
-                            "1\t2020-01-01T00:00:00.123456000Z\t2020-01-01T00:00:00.123456Z\tA\n" +
-                            "2\t2020-01-01T00:00:00.123456789Z\t2020-01-01T00:00:00.123456Z\tprecise\n" +
-                            "3\t2020-01-01T00:00:00.124456000Z\t2020-01-01T00:00:00.124456Z\tC\n",
+            assertQueryNoLeakCheck("""
+                            id\tts_nano\tts_micro\ttype
+                            1\t2020-01-01T00:00:00.123456000Z\t2020-01-01T00:00:00.123456Z\tA
+                            2\t2020-01-01T00:00:00.123456789Z\t2020-01-01T00:00:00.123456Z\tprecise
+                            3\t2020-01-01T00:00:00.124456000Z\t2020-01-01T00:00:00.124456Z\tC
+                            """,
                     "select * from events", "ts_nano", true, true);
         });
     }
@@ -3156,11 +3346,13 @@ public class UpdateTest extends AbstractCairoTest {
 
             Assert.assertEquals(2, result);
 
-            assertQueryNoLeakCheck("id\tts_nano\tmessage\tlevel\n" +
-                            "1\t2023-01-01T00:00:00.000000000Z\tStarted\tINFO\n" +
-                            "2\t2023-01-01T00:00:05.000000000Z\tError occurred\tUNKNOWN\n" +
-                            "3\t2023-01-01T00:00:01.000000000Z\tProcessing\tDEBUG\n" +
-                            "4\t2023-01-01T00:00:05.000000000Z\tWarning issued\tUNKNOWN\n",
+            assertQueryNoLeakCheck("""
+                            id\tts_nano\tmessage\tlevel
+                            1\t2023-01-01T00:00:00.000000000Z\tStarted\tINFO
+                            2\t2023-01-01T00:00:05.000000000Z\tError occurred\tUNKNOWN
+                            3\t2023-01-01T00:00:01.000000000Z\tProcessing\tDEBUG
+                            4\t2023-01-01T00:00:05.000000000Z\tWarning issued\tUNKNOWN
+                            """,
                     "select * from logs", null, true, true);
         });
     }
@@ -3182,12 +3374,14 @@ public class UpdateTest extends AbstractCairoTest {
             update("update events set status = 'processed' " +
                     "where ts_nano between " + baseNanos + " and " + (baseNanos + 600_000_000L));
 
-            assertQueryNoLeakCheck("id\tts_nano\tstatus\tvalue\n" +
-                            "1\t2020-01-01T00:00:00.000000000Z\tprocessed\t100.0\n" +
-                            "2\t2020-01-01T00:00:00.123456789Z\tprocessed\t200.0\n" +
-                            "3\t2020-01-01T00:00:00.500000000Z\tprocessed\t300.0\n" +
-                            "4\t2020-01-01T00:00:01.000000000Z\tpending\t400.0\n" +
-                            "5\t2020-01-01T00:00:01.500000123Z\tfailed\t500.0\n",
+            assertQueryNoLeakCheck("""
+                            id\tts_nano\tstatus\tvalue
+                            1\t2020-01-01T00:00:00.000000000Z\tprocessed\t100.0
+                            2\t2020-01-01T00:00:00.123456789Z\tprocessed\t200.0
+                            3\t2020-01-01T00:00:00.500000000Z\tprocessed\t300.0
+                            4\t2020-01-01T00:00:01.000000000Z\tpending\t400.0
+                            5\t2020-01-01T00:00:01.500000123Z\tfailed\t500.0
+                            """,
                     "select * from events", "ts_nano", true, true);
         });
     }
@@ -3204,12 +3398,14 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET ip = v");
 
-            String data = "ts\tv\tip\n" +
-                    "1970-01-01T00:00:00.000000Z\t\t\n" +
-                    "1970-01-01T00:00:01.000000Z\t187.139.150.80\t187.139.150.80\n" +
-                    "1970-01-01T00:00:02.000000Z\t18.206.96.238\t18.206.96.238\n" +
-                    "1970-01-01T00:00:03.000000Z\t92.80.211.65\t92.80.211.65\n" +
-                    "1970-01-01T00:00:04.000000Z\t212.159.205.29\t212.159.205.29\n";
+            String data = """
+                    ts\tv\tip
+                    1970-01-01T00:00:00.000000Z\t\t
+                    1970-01-01T00:00:01.000000Z\t187.139.150.80\t187.139.150.80
+                    1970-01-01T00:00:02.000000Z\t18.206.96.238\t18.206.96.238
+                    1970-01-01T00:00:03.000000Z\t92.80.211.65\t92.80.211.65
+                    1970-01-01T00:00:04.000000Z\t212.159.205.29\t212.159.205.29
+                    """;
             assertSql(data, "up");
 
             update("UPDATE up set v = 'abc'");
@@ -3243,13 +3439,15 @@ public class UpdateTest extends AbstractCairoTest {
 
         // Check what will be in JOIN between down1 and down2
         assertSql(
-                "sm\ts\n" +
-                        "101\ta\n" +
-                        "102\ta\n" +
-                        "303\tb\n" +
-                        "304\tb\n" +
-                        "505\t\n" +
-                        "506\t\n",
+                """
+                        sm\ts
+                        101\ta
+                        102\ta
+                        303\tb
+                        304\tb
+                        505\t
+                        506\t
+                        """,
                 "select down1.y + down2.y AS sm, down1.s FROM down1 JOIN down2 ON down1.s = down2.s"
         );
     }
@@ -3289,12 +3487,14 @@ public class UpdateTest extends AbstractCairoTest {
             }
 
             assertSql(
-                    "ts\tv\tx\tz\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
-                            "1970-01-02T00:00:00.000000Z\t2\t2\t2\n" +
-                            "1970-01-03T00:00:00.000000Z\t3\t3\t3\n" +
-                            "1970-01-04T00:00:00.000000Z\t4\t4\t4\n" +
-                            "1970-01-05T00:00:00.000000Z\t5\t5\t5\n",
+                    """
+                            ts\tv\tx\tz
+                            1970-01-01T00:00:00.000000Z\t1\t1\t1
+                            1970-01-02T00:00:00.000000Z\t2\t2\t2
+                            1970-01-03T00:00:00.000000Z\t3\t3\t3
+                            1970-01-04T00:00:00.000000Z\t4\t4\t4
+                            1970-01-05T00:00:00.000000Z\t5\t5\t5
+                            """,
                     "up"
             );
 
@@ -3302,14 +3502,16 @@ public class UpdateTest extends AbstractCairoTest {
             execute("INSERT INTO up VALUES('1970-01-01T00:00:06.000000Z', 100.0, 100.0, 100.0)");
 
             assertSql(
-                    "ts\tv\tx\tz\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
-                            "1970-01-01T00:00:05.000000Z\t10\t10\t10\n" +
-                            "1970-01-01T00:00:06.000000Z\t100\t100\t100\n" +
-                            "1970-01-02T00:00:00.000000Z\t2\t2\t2\n" +
-                            "1970-01-03T00:00:00.000000Z\t3\t3\t3\n" +
-                            "1970-01-04T00:00:00.000000Z\t4\t4\t4\n" +
-                            "1970-01-05T00:00:00.000000Z\t5\t5\t5\n",
+                    """
+                            ts\tv\tx\tz
+                            1970-01-01T00:00:00.000000Z\t1\t1\t1
+                            1970-01-01T00:00:05.000000Z\t10\t10\t10
+                            1970-01-01T00:00:06.000000Z\t100\t100\t100
+                            1970-01-02T00:00:00.000000Z\t2\t2\t2
+                            1970-01-03T00:00:00.000000Z\t3\t3\t3
+                            1970-01-04T00:00:00.000000Z\t4\t4\t4
+                            1970-01-05T00:00:00.000000Z\t5\t5\t5
+                            """,
                     "up"
             );
         });
@@ -3325,12 +3527,14 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("update up set symCol = 'VTJ' where symCol = 'WCP'");
             assertSql(
-                    "symCol\tts\tx\n" +
-                            "VTJ\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "VTJ\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "VTJ\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol\tts\tx
+                            VTJ\t1970-01-01T00:00:00.000000Z\t1
+                            VTJ\t1970-01-01T00:00:01.000000Z\t2
+                            VTJ\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
 
@@ -3342,11 +3546,13 @@ public class UpdateTest extends AbstractCairoTest {
                 println(factory, cursor);
             }
             TestUtils.assertEquals(
-                    "symCol\tts\tx\n" +
-                            "VTJ\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "VTJ\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "VTJ\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n",
+                    """
+                            symCol\tts\tx
+                            VTJ\t1970-01-01T00:00:00.000000Z\t1
+                            VTJ\t1970-01-01T00:00:01.000000Z\t2
+                            VTJ\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            """,
                     sink
             );
 
@@ -3364,20 +3570,24 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("update up set symCol = 'ABC' where symCol = 'WCP'");
             assertSql(
-                    "symCol\tts\tx\n" +
-                            "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "ABC\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol\tts\tx
+                            ABC\t1970-01-01T00:00:00.000000Z\t1
+                            ABC\t1970-01-01T00:00:01.000000Z\t2
+                            ABC\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
 
             assertQuery(
-                    "symCol\n" +
-                            "\n" +
-                            "ABC\n" +
-                            "VTJ\n",
+                    """
+                            symCol
+                            
+                            ABC
+                            VTJ
+                            """,
                     "select distinct symCol from up order by symCol",
                     null,
                     true,
@@ -3385,10 +3595,12 @@ public class UpdateTest extends AbstractCairoTest {
             );
 
             assertSql(
-                    "symCol\tcount\n" +
-                            "\t1\n" +
-                            "ABC\t3\n" +
-                            "VTJ\t1\n",
+                    """
+                            symCol\tcount
+                            \t1
+                            ABC\t3
+                            VTJ\t1
+                            """,
                     "select symCol, count() from up order by symCol"
             );
         });
@@ -3404,18 +3616,22 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("update up set symCol = 'ABC' where symCol is null");
             assertSql(
-                    "symCol\tts\tx\n" +
-                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "ABC\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol\tts\tx
+                            WCP\t1970-01-01T00:00:00.000000Z\t1
+                            WCP\t1970-01-01T00:00:01.000000Z\t2
+                            WCP\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            ABC\t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
 
             assertSql(
-                    "symCol\tts\tx\n" +
-                            "ABC\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol\tts\tx
+                            ABC\t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up where symCol = 'ABC'"
             );
 
@@ -3436,12 +3652,14 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("update up set symCol = 'ABC' where symCol = 'WCP'");
             assertSql(
-                    "symCol\tts\tx\n" +
-                            "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "ABC\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n",
+                    """
+                            symCol\tts\tx
+                            ABC\t1970-01-01T00:00:00.000000Z\t1
+                            ABC\t1970-01-01T00:00:01.000000Z\t2
+                            ABC\t1970-01-01T00:00:02.000000Z\t3
+                            VTJ\t1970-01-01T00:00:03.000000Z\t4
+                            \t1970-01-01T00:00:04.000000Z\t5
+                            """,
                     "up"
             );
 
@@ -3453,10 +3671,12 @@ public class UpdateTest extends AbstractCairoTest {
                 println(factory, cursor);
             }
             TestUtils.assertEquals(
-                    "symCol\tts\tx\n" +
-                            "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "ABC\t1970-01-01T00:00:02.000000Z\t3\n",
+                    """
+                            symCol\tts\tx
+                            ABC\t1970-01-01T00:00:00.000000Z\t1
+                            ABC\t1970-01-01T00:00:01.000000Z\t2
+                            ABC\t1970-01-01T00:00:02.000000Z\t3
+                            """,
                     sink
             );
 
