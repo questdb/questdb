@@ -40,8 +40,6 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.metadataHasChanged;
-
 /**
  * Provides addresses for page frames in both native and Parquet formats.
  * Memory in native page frames is mmapped, so no additional actions are

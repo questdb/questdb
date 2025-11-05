@@ -41,11 +41,9 @@ import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.Chars;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
@@ -115,8 +113,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             final int parquetType = parquetMetadata.getColumnType(parquetIndex);
 
             if (ColumnType.isUndefined(parquetType)) {
-                // skip? But we need the projection
-                continue;
+                // this column came from metadata, so we 100% need to be able to read it. We should error
+                throw CairoException.nonCritical().put("could not decode parquet column [name=").put(metadataName)
+                        .put(", expected=").put(ColumnType.nameOf(metadataType))
+                        .put(", actual=").put(ColumnType.nameOf(parquetType));
             }
 
             final boolean symbolRemappingDetected = (metadataType == ColumnType.VARCHAR && parquetType == ColumnType.SYMBOL);
@@ -258,39 +258,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             this.arrayBuffers = new ObjList<>(columnCount);
         }
 
-        public @NotNull BorrowedArray borrowedArray(int col) {
-            BorrowedArray array = arrayBuffers.getQuiet(col);
-            if (array != null) {
-                return array;
-            }
-            arrayBuffers.extendAndSet(col, array = new BorrowedArray());
-            return array;
-        }
-
-        public DirectBinarySequence bsView(int columnIndex) {
-            if (bsViews.getQuiet(columnIndex) == null) {
-                bsViews.extendAndSet(columnIndex, new DirectBinarySequence());
-            }
-            return bsViews.getQuick(columnIndex);
-        }
-
         @Override
         public void close() {
             Misc.freeObjList(arrayBuffers);
-        }
-
-        public DirectString csViewA(int columnIndex) {
-            if (csViewsA.getQuiet(columnIndex) == null) {
-                csViewsA.extendAndSet(columnIndex, new DirectString());
-            }
-            return csViewsA.getQuick(columnIndex);
-        }
-
-        public DirectString csViewB(int columnIndex) {
-            if (csViewsB.getQuiet(columnIndex) == null) {
-                csViewsB.extendAndSet(columnIndex, new DirectString());
-            }
-            return csViewsB.getQuick(columnIndex);
         }
 
         @Override
@@ -423,10 +393,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             return long256;
         }
 
-        public long getLong256Addr(int col) {
-            return dataPtrs.get(col) + (long) currentRowInRowGroup * Long256.BYTES;
-        }
-
         @Override
         public Long256 getLong256B(int col) {
             final Long256Impl long256 = long256B(col);
@@ -438,15 +404,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         public short getShort(int col) {
             long dataPtr = dataPtrs.get(col);
             return Unsafe.getUnsafe().getShort(dataPtr + currentRowInRowGroup * 2L);
-        }
-
-        public DirectString getStr(long addr, DirectString view) {
-            assert addr > 0;
-            final int len = Unsafe.getUnsafe().getInt(addr);
-            if (len != TableUtils.NULL_LEN) {
-                return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
-            }
-            return null;
         }
 
         @Override
@@ -486,28 +443,71 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             return VarcharTypeDriver.getValueSize(auxPtr, currentRowInRowGroup);
         }
 
-        public Long256Impl long256A(int columnIndex) {
+        private @NotNull BorrowedArray borrowedArray(int col) {
+            BorrowedArray array = arrayBuffers.getQuiet(col);
+            if (array != null) {
+                return array;
+            }
+            arrayBuffers.extendAndSet(col, array = new BorrowedArray());
+            return array;
+        }
+
+        private DirectBinarySequence bsView(int columnIndex) {
+            if (bsViews.getQuiet(columnIndex) == null) {
+                bsViews.extendAndSet(columnIndex, new DirectBinarySequence());
+            }
+            return bsViews.getQuick(columnIndex);
+        }
+
+        private DirectString csViewA(int columnIndex) {
+            if (csViewsA.getQuiet(columnIndex) == null) {
+                csViewsA.extendAndSet(columnIndex, new DirectString());
+            }
+            return csViewsA.getQuick(columnIndex);
+        }
+
+        private DirectString csViewB(int columnIndex) {
+            if (csViewsB.getQuiet(columnIndex) == null) {
+                csViewsB.extendAndSet(columnIndex, new DirectString());
+            }
+            return csViewsB.getQuick(columnIndex);
+        }
+
+        private long getLong256Addr(int col) {
+            return dataPtrs.get(col) + (long) currentRowInRowGroup * Long256.BYTES;
+        }
+
+        private DirectString getStr(long addr, DirectString view) {
+            assert addr > 0;
+            final int len = Unsafe.getUnsafe().getInt(addr);
+            if (len != TableUtils.NULL_LEN) {
+                return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
+            }
+            return null;
+        }
+
+        private Long256Impl long256A(int columnIndex) {
             if (longs256A.getQuiet(columnIndex) == null) {
                 longs256A.extendAndSet(columnIndex, new Long256Impl());
             }
             return longs256A.getQuick(columnIndex);
         }
 
-        public Long256Impl long256B(int columnIndex) {
+        private Long256Impl long256B(int columnIndex) {
             if (longs256B.getQuiet(columnIndex) == null) {
                 longs256B.extendAndSet(columnIndex, new Long256Impl());
             }
             return longs256B.getQuick(columnIndex);
         }
 
-        public Utf8SplitString utf8ViewA(int columnIndex) {
+        private Utf8SplitString utf8ViewA(int columnIndex) {
             if (utf8ViewsA.getQuiet(columnIndex) == null) {
                 utf8ViewsA.extendAndSet(columnIndex, new Utf8SplitString());
             }
             return utf8ViewsA.getQuick(columnIndex);
         }
 
-        public Utf8SplitString utf8ViewB(int columnIndex) {
+        private Utf8SplitString utf8ViewB(int columnIndex) {
             if (utf8ViewsB.getQuiet(columnIndex) == null) {
                 utf8ViewsB.extendAndSet(columnIndex, new Utf8SplitString());
             }
