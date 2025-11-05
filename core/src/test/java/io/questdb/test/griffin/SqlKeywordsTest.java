@@ -244,7 +244,7 @@ public class SqlKeywordsTest {
         specialCases.put("isIgnoreWord", "ignore");
         specialCases.put("isNullsWord", "nulls");
         specialCases.put("isTimestampNsKeyword", "timestamp_ns");
-
+        specialCases.put("isReadParquetKeyword", "read_parquet");
         excludedCases.add("isPublicKeyword");
     }
 }
