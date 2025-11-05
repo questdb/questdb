@@ -48,11 +48,11 @@ import org.jetbrains.annotations.Nullable;
 public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
 
     /**
-     * Calculates the total size (number of rows) across all page frames and updates the provided counter.
+     * Calculates the remaining size (number of rows) across all page frames, and updates the provided counter.
      * <p>
-     * This method provides an efficient way to determine the total row count without having to
-     * iterate through all page frames. The implementation should update the counter with the
-     * calculated size information.
+     * This method provides an efficient way to determine the number of remaining rows without having to
+     * iterate through all page frames. The implementation should update the counter with the calculated
+     * size information.
      * <p>
      * Note: This method is only guaranteed to work correctly if {@link #supportsSizeCalculation()}
      * returns {@code true}.
@@ -69,6 +69,10 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      * Such mapping requires knowing the corresponding table reader indexes.
      */
     IntList getColumnIndexes();
+
+    default long getRemainingSize() {
+        return 0L;
+    }
 
     /**
      * Returns the symbol table for the specified column index.
@@ -122,7 +126,8 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      * @param skipTarget the number of rows user wants to skip over in a limit SQL query
      * @return either a fully populated or lightweight frame, or {@code null} if no more frames are available
      */
-    @Nullable PageFrame next(long skipTarget);
+    @Nullable
+    PageFrame next(long skipTarget);
 
     /**
      * @return number of rows in all page frames
