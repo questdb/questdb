@@ -2624,11 +2624,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         final JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
         try {
-            boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
             boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
-            boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias);
-            boolean hasMemoizedDrivebyHint = SqlHints.hasAsOfMemoizedDrivebyHint(model, masterAlias, slaveAlias);
-
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                 if (!hasLinearHint) {
                     if (slave.supportsTimeFrameCursor()) {
@@ -2637,6 +2633,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         boolean isOptimizable = columnAccessHelper != NoopColumnAccessHelper.INSTANCE;
                         int joinColumnSplit = masterMetadata.getColumnCount();
                         JoinContext slaveContext = slaveModel.getJoinContext();
+
+                        boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
                         if (isOptimizable && hasIndexHint && isSingleSymbolJoinWithIndex(slaveMetadata)) {
                             return new AsOfJoinIndexedRecordCursorFactory(
                                     configuration,
@@ -2650,6 +2648,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     toleranceInterval
                             );
                         }
+
+                        boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias);
+                        boolean hasMemoizedDrivebyHint = SqlHints.hasAsOfMemoizedDrivebyHint(model, masterAlias, slaveAlias);
                         if (isOptimizable && (hasMemoizedHint || hasMemoizedDrivebyHint) && isSingleSymbolJoin(slaveMetadata)) {
                             return new AsOfJoinMemoizedRecordCursorFactory(
                                     configuration,
