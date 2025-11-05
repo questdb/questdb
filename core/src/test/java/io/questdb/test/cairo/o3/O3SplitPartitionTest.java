@@ -37,7 +37,6 @@ import io.questdb.std.Os;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -45,17 +44,11 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestName;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
-import java.util.Arrays;
-import java.util.Collection;
 
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
 
-@RunWith(Parameterized.class)
 public class O3SplitPartitionTest extends AbstractO3Test {
     protected static final Log LOG = LogFactory.getLog(O3SplitPartitionTest.class);
     private final StringBuilder tstData = new StringBuilder();
@@ -63,25 +56,10 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Rule
     public TestName name = new TestName();
 
-    public O3SplitPartitionTest(ParallelMode mode, CommitModeParam commitMode, MixedIOParam mixedIO, TestTimestampType timestampType) {
-        super(timestampType);
-        this.workerCount = mode == ParallelMode.CONTENDED ? 0 : 2;
-        AbstractO3Test.commitMode = commitMode == CommitModeParam.SYNC ? CommitMode.SYNC : CommitMode.NOSYNC;
-        AbstractO3Test.mixedIOEnabled = mixedIO == MixedIOParam.MIXED_IO_ALLOWED;
-    }
-
-    @Parameterized.Parameters(name = "{0},{1},{2},{3}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {ParallelMode.PARALLEL, CommitModeParam.NO_SYNC, MixedIOParam.MIXED_IO_ALLOWED, TestTimestampType.MICRO},
-                {ParallelMode.PARALLEL, CommitModeParam.NO_SYNC, MixedIOParam.NO_MIXED_IO, TestTimestampType.NANO},
-                {ParallelMode.PARALLEL, CommitModeParam.SYNC, MixedIOParam.MIXED_IO_ALLOWED, TestTimestampType.MICRO},
-                {ParallelMode.PARALLEL, CommitModeParam.SYNC, MixedIOParam.NO_MIXED_IO, TestTimestampType.NANO},
-                {ParallelMode.CONTENDED, CommitModeParam.NO_SYNC, MixedIOParam.MIXED_IO_ALLOWED, TestTimestampType.MICRO},
-                {ParallelMode.CONTENDED, CommitModeParam.NO_SYNC, MixedIOParam.NO_MIXED_IO, TestTimestampType.NANO},
-                {ParallelMode.CONTENDED, CommitModeParam.SYNC, MixedIOParam.MIXED_IO_ALLOWED, TestTimestampType.MICRO},
-                {ParallelMode.CONTENDED, CommitModeParam.SYNC, MixedIOParam.NO_MIXED_IO, TestTimestampType.NANO},
-        });
+    public O3SplitPartitionTest() {
+        this.workerCount = rnd.nextBoolean() ? 0 : 2;
+        AbstractO3Test.commitMode = rnd.nextBoolean() ? CommitMode.SYNC : CommitMode.NOSYNC;
+        AbstractO3Test.mixedIOEnabled = rnd.nextBoolean();
     }
 
     @Before
@@ -250,34 +228,38 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     TestUtils.assertSql(
                             compiler, sqlExecutionContext, "select ts, metric, loggerChannel from monthly_col_top", sink,
-                            replaceTimestampSuffix1("ts\tmetric\tloggerChannel\n" +
-                                    "2022-06-08T01:40:00.000000Z\t1\t\n" +
-                                    "2022-06-08T02:41:00.000000Z\t2\t\n" +
-                                    "2022-06-08T02:42:00.000000Z\t3\t\n" +
-                                    "2022-06-08T02:43:00.000000Z\t4\t\n" +
-                                    "2022-06-08T02:50:00.000000Z\t5\t3\n" +
-                                    "2022-06-08T02:50:00.000000Z\t6\t3\n" +
-                                    "2022-06-08T02:50:00.000000Z\t7\t1\n" +
-                                    "2022-06-08T02:50:00.000000Z\t8\t1\n" +
-                                    "2022-06-08T02:50:00.000000Z\t9\t2\n" +
-                                    "2022-06-08T02:50:00.000000Z\t10\t2\n" +
-                                    "2022-06-08T03:30:00.000000Z\t15\t3\n" +
-                                    "2022-06-08T03:30:00.000000Z\t16\t3\n" +
-                                    "2022-06-08T03:50:00.000000Z\t11\t2\n" +
-                                    "2022-06-08T03:50:00.000000Z\t12\t2\n" +
-                                    "2022-06-08T04:50:00.000000Z\t13\t2\n" +
-                                    "2022-06-08T04:50:00.000000Z\t14\t2\n", timestampTypeName)
+                            replaceTimestampSuffix1("""
+                                    ts\tmetric\tloggerChannel
+                                    2022-06-08T01:40:00.000000Z\t1\t
+                                    2022-06-08T02:41:00.000000Z\t2\t
+                                    2022-06-08T02:42:00.000000Z\t3\t
+                                    2022-06-08T02:43:00.000000Z\t4\t
+                                    2022-06-08T02:50:00.000000Z\t5\t3
+                                    2022-06-08T02:50:00.000000Z\t6\t3
+                                    2022-06-08T02:50:00.000000Z\t7\t1
+                                    2022-06-08T02:50:00.000000Z\t8\t1
+                                    2022-06-08T02:50:00.000000Z\t9\t2
+                                    2022-06-08T02:50:00.000000Z\t10\t2
+                                    2022-06-08T03:30:00.000000Z\t15\t3
+                                    2022-06-08T03:30:00.000000Z\t16\t3
+                                    2022-06-08T03:50:00.000000Z\t11\t2
+                                    2022-06-08T03:50:00.000000Z\t12\t2
+                                    2022-06-08T04:50:00.000000Z\t13\t2
+                                    2022-06-08T04:50:00.000000Z\t14\t2
+                                    """, timestampTypeName)
                     );
 
                     TestUtils.assertSql(
                             compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '2'", sink,
-                            replaceTimestampSuffix1("ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
-                                    "2022-06-08T02:50:00.000000Z\t9\t\t\t2\n" +
-                                    "2022-06-08T02:50:00.000000Z\t10\t\t\t2\n" +
-                                    "2022-06-08T03:50:00.000000Z\t11\t\t\t2\n" +
-                                    "2022-06-08T03:50:00.000000Z\t12\t\t\t2\n" +
-                                    "2022-06-08T04:50:00.000000Z\t13\t\t\t2\n" +
-                                    "2022-06-08T04:50:00.000000Z\t14\t\t\t2\n", timestampTypeName)
+                            replaceTimestampSuffix1("""
+                                    ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
+                                    2022-06-08T02:50:00.000000Z\t9\t\t\t2
+                                    2022-06-08T02:50:00.000000Z\t10\t\t\t2
+                                    2022-06-08T03:50:00.000000Z\t11\t\t\t2
+                                    2022-06-08T03:50:00.000000Z\t12\t\t\t2
+                                    2022-06-08T04:50:00.000000Z\t13\t\t\t2
+                                    2022-06-08T04:50:00.000000Z\t14\t\t\t2
+                                    """, timestampTypeName)
                     );
 
                     // OOO appends to last partition
@@ -289,13 +271,15 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     TestUtils.assertSql(
                             compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
-                            replaceTimestampSuffix1("ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
-                                    "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
-                                    "2022-06-08T02:50:00.000000Z\t6\t\t\t3\n" +
-                                    "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
-                                    "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
-                                    "2022-06-08T04:50:00.000000Z\t18\t\t4\t3\n" +
-                                    "2022-06-08T05:30:00.000000Z\t17\t\t4\t3\n", timestampTypeName)
+                            replaceTimestampSuffix1("""
+                                    ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
+                                    2022-06-08T02:50:00.000000Z\t5\t\t\t3
+                                    2022-06-08T02:50:00.000000Z\t6\t\t\t3
+                                    2022-06-08T03:30:00.000000Z\t15\t\t2\t3
+                                    2022-06-08T03:30:00.000000Z\t16\t\t2\t3
+                                    2022-06-08T04:50:00.000000Z\t18\t\t4\t3
+                                    2022-06-08T05:30:00.000000Z\t17\t\t4\t3
+                                    """, timestampTypeName)
                     );
 
                     // OOO merges and appends to last partition
@@ -308,16 +292,18 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     TestUtils.assertSql(
                             compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
-                            replaceTimestampSuffix1("ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
-                                    "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
-                                    "2022-06-08T02:50:00.000000Z\t6\t\t\t3\n" +
-                                    "2022-06-08T02:50:00.000000Z\t20\t\t4\t3\n" +
-                                    "2022-06-08T02:50:00.000000Z\t21\t\t4\t3\n" +
-                                    "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
-                                    "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
-                                    "2022-06-08T04:50:00.000000Z\t18\t\t4\t3\n" +
-                                    "2022-06-08T05:30:00.000000Z\t17\t\t4\t3\n" +
-                                    "2022-06-08T05:30:00.000000Z\t19\t\t4\t3\n", timestampTypeName)
+                            replaceTimestampSuffix1("""
+                                    ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
+                                    2022-06-08T02:50:00.000000Z\t5\t\t\t3
+                                    2022-06-08T02:50:00.000000Z\t6\t\t\t3
+                                    2022-06-08T02:50:00.000000Z\t20\t\t4\t3
+                                    2022-06-08T02:50:00.000000Z\t21\t\t4\t3
+                                    2022-06-08T03:30:00.000000Z\t15\t\t2\t3
+                                    2022-06-08T03:30:00.000000Z\t16\t\t2\t3
+                                    2022-06-08T04:50:00.000000Z\t18\t\t4\t3
+                                    2022-06-08T05:30:00.000000Z\t17\t\t4\t3
+                                    2022-06-08T05:30:00.000000Z\t19\t\t4\t3
+                                    """, timestampTypeName)
                     );
                 }
         );
@@ -902,10 +888,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     // Open reader
                     TestUtils.assertSql(
                             engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink,
-                            replaceTimestampSuffix1("sum\tts\tlast\n" +
-                                    "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
-                                    "-1987920\t2020-02-04T00:00:00.000000Z\t\n" +
-                                    "-1942590\t2020-02-05T00:00:00.000000Z\t\n", timestampTypeName)
+                            replaceTimestampSuffix1("""
+                                    sum\tts\tlast
+                                    -218130\t2020-02-03T00:00:00.000000Z\t
+                                    -1987920\t2020-02-04T00:00:00.000000Z\t
+                                    -1942590\t2020-02-05T00:00:00.000000Z\t
+                                    """, timestampTypeName)
                     );
 
                     engine.execute(
@@ -928,10 +916,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     TestUtils.assertSql(
                             engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink,
-                            replaceTimestampSuffix1("sum\tts\tlast\n" +
-                                    "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
-                                    "-51885870\t2020-02-04T00:00:00.000000Z\t\n" +
-                                    "-1942590\t2020-02-05T00:00:00.000000Z\t\n", timestampTypeName)
+                            replaceTimestampSuffix1("""
+                                    sum\tts\tlast
+                                    -218130\t2020-02-03T00:00:00.000000Z\t
+                                    -51885870\t2020-02-04T00:00:00.000000Z\t
+                                    -1942590\t2020-02-05T00:00:00.000000Z\t
+                                    """, timestampTypeName)
                     );
                 }
         );
@@ -962,10 +952,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     // Open reader
                     TestUtils.assertSql(
                             engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink,
-                            replaceTimestampSuffix1("sum\tts\tlast\n" +
-                                    "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
-                                    "-1987920\t2020-02-04T00:00:00.000000Z\t\n" +
-                                    "-1942590\t2020-02-05T00:00:00.000000Z\t\n", timestampTypeName)
+                            replaceTimestampSuffix1("""
+                                    sum\tts\tlast
+                                    -218130\t2020-02-03T00:00:00.000000Z\t
+                                    -1987920\t2020-02-04T00:00:00.000000Z\t
+                                    -1942590\t2020-02-05T00:00:00.000000Z\t
+                                    """, timestampTypeName)
                     );
 
                     engine.execute(
@@ -988,10 +980,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     TestUtils.assertSql(
                             engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink,
-                            replaceTimestampSuffix1("sum\tts\tlast\n" +
-                                    "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
-                                    "-51885870\t2020-02-04T00:00:00.000000Z\t\n" +
-                                    "-1942590\t2020-02-05T00:00:00.000000Z\t\n", timestampTypeName)
+                            replaceTimestampSuffix1("""
+                                    sum\tts\tlast
+                                    -218130\t2020-02-03T00:00:00.000000Z\t
+                                    -51885870\t2020-02-04T00:00:00.000000Z\t
+                                    -1942590\t2020-02-05T00:00:00.000000Z\t
+                                    """, timestampTypeName)
                     );
                 }
         );
@@ -1037,13 +1031,5 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                 "select * from " + "x" + " where " + filter,
                 LOG
         );
-    }
-
-    public enum CommitModeParam {
-        NO_SYNC, SYNC
-    }
-
-    public enum MixedIOParam {
-        MIXED_IO_ALLOWED, NO_MIXED_IO
     }
 }

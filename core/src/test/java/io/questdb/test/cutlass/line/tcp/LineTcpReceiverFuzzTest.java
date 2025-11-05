@@ -41,10 +41,6 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverFuzzTest.class);
 
-    public LineTcpReceiverFuzzTest(WalMode walMode) {
-        super(walMode);
-    }
-
     @Test
     public void testAddColumns() throws Exception {
         initLoadParameters(15, 2, 2, 5, 75);
