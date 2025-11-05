@@ -24,13 +24,11 @@ jobs:
       - template: steps.yml
 
   - job: linux_x64_zfs_jdk17
+    workspace:
+      clean: all
     displayName: "on linux-x64-zfs"
     pool:
-      name: "amd64-zfs"
-      demands:
-        - Agent.Name -equals amd64-zfs-$(System.StageName)$(Build.BuildId)
-    dependsOn:
-      - StartX64ZfsAgent
+      name: "hetzner-docker-zfs"
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     variables:
