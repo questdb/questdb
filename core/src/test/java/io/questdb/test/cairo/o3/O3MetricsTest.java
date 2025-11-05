@@ -31,33 +31,15 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
-import java.util.Arrays;
-import java.util.Collection;
 
 import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix;
 
-@RunWith(Parameterized.class)
 public class O3MetricsTest extends AbstractO3Test {
     private static final long MICROS_IN_HOUR = 3600000000L;
     private static final long MILLENNIUM = 946684800000000L;  // 2020-01-01T00:00:00
-
-    public O3MetricsTest(TestTimestampType timestampType) {
-        super(timestampType);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
-        });
-    }
 
     @Test
     public void testAppendOneRow() throws Exception {
@@ -76,16 +58,18 @@ public class O3MetricsTest extends AbstractO3Test {
             }
 
             engine.print("x", sink, sqlExecutionContext);
-            final String expected = replaceTimestampSuffix("i\tts\n" +
-                    "1\t2000-01-01T05:00:00.000000Z\n" +
-                    "2\t2000-01-01T06:00:00.000000Z\n" +
-                    "3\t2000-01-01T07:00:00.000000Z\n" +
-                    "4\t2000-01-01T08:00:00.000000Z\n" +
-                    "5\t2000-01-01T09:00:00.000000Z\n" +
-                    "6\t2000-01-01T10:00:00.000000Z\n" +
-                    "7\t2000-01-01T11:00:00.000000Z\n" +
-                    "8\t2000-01-01T12:00:00.000000Z\n" +
-                    "9\t2000-01-01T13:00:00.000000Z\n", timestampType.getTypeName());  // new row
+            final String expected = replaceTimestampSuffix("""
+                    i\tts
+                    1\t2000-01-01T05:00:00.000000Z
+                    2\t2000-01-01T06:00:00.000000Z
+                    3\t2000-01-01T07:00:00.000000Z
+                    4\t2000-01-01T08:00:00.000000Z
+                    5\t2000-01-01T09:00:00.000000Z
+                    6\t2000-01-01T10:00:00.000000Z
+                    7\t2000-01-01T11:00:00.000000Z
+                    8\t2000-01-01T12:00:00.000000Z
+                    9\t2000-01-01T13:00:00.000000Z
+                    """, timestampType.getTypeName());  // new row
 
             TestUtils.assertEquals(expected, sink);
 
@@ -113,10 +97,12 @@ public class O3MetricsTest extends AbstractO3Test {
 
             {
                 engine.print("x", sink, sqlExecutionContext);
-                final String expected = replaceTimestampSuffix("i\tts\n" +
-                        "1\t2000-01-01T05:00:00.000000Z\n" +
-                        "2\t2000-01-01T06:00:00.000000Z\n" +
-                        "4\t2000-01-03T00:00:00.000000Z\n", timestampType.getTypeName());  // new row
+                final String expected = replaceTimestampSuffix("""
+                        i\tts
+                        1\t2000-01-01T05:00:00.000000Z
+                        2\t2000-01-01T06:00:00.000000Z
+                        4\t2000-01-03T00:00:00.000000Z
+                        """, timestampType.getTypeName());  // new row
 
                 TestUtils.assertEquals(expected, sink);
             }

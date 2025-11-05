@@ -61,11 +61,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Rule;
-import org.junit.rules.TestName;
 import org.junit.rules.Timeout;
 
 import java.util.HashSet;
@@ -84,8 +82,7 @@ public class AbstractO3Test extends AbstractTest {
     protected static int o3ColumnMemorySize = -1;
     protected static int o3MemMaxPages = -1;
     protected static long partitionO3SplitThreshold = -1;
-    private static TestTimestampType firstRunMode = null;
-    private static int testRunOrder = 0;
+    protected final Rnd rnd;
     protected final TestTimestampType timestampType;
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -94,37 +91,21 @@ public class AbstractO3Test extends AbstractTest {
             .build();
     private RecordToRowCopier copier;
 
-    public AbstractO3Test(TestTimestampType timestampType) {
-        this.timestampType = timestampType;
+    public AbstractO3Test() {
+        this.rnd = TestUtils.generateRandom(LOG);
+        this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
     @BeforeClass
     public static void setUpClass() {
         ColumnType.makeUtf8DefaultString();
-        firstRunMode = null;
         runTests.clear();
-        testRunOrder = 0;
     }
 
     @Before
     public void setUp() {
         Rnd value = new Rnd();
         SharedRandom.RANDOM.set(value);
-
-        // Run half of the tests with microsecond and half with nanosecond timestamp
-        // Random execution order will ensure that we have a good mix of both types
-        if (firstRunMode == null) {
-            firstRunMode = timestampType;
-        }
-        if (timestampType == firstRunMode) {
-            // This is first run, either micro or nano
-            // Run only even tests in this mode
-            Assume.assumeTrue("skipping because to run in different ts mode", (testRunOrder++ & 1) == 0);
-            runTests.add(getBaseTestName(testName));
-        } else {
-            // Run all the other tests in the other mode
-            Assume.assumeTrue("skipping because already run in different ts mode", !runTests.contains(getBaseTestName(testName)));
-        }
 
         // instantiate these paths so that they are not included in memory leak test
         Path.PATH.get();
@@ -146,12 +127,6 @@ public class AbstractO3Test extends AbstractTest {
         partitionO3SplitThreshold = -1;
         cairoCommitLatency = 30_000_000;
         super.tearDown();
-    }
-
-    private CharSequence getBaseTestName(TestName testName) {
-        String name = testName.getMethodName();
-        int idx = name.indexOf('[');
-        return name.substring(0, idx);
     }
 
     protected static void assertIndexConsistency(
@@ -546,10 +521,6 @@ public class AbstractO3Test extends AbstractTest {
                 }
             }
         }
-    }
-
-    public enum ParallelMode {
-        CONTENDED, PARALLEL
     }
 
     @FunctionalInterface

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin;
+package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
@@ -41,32 +41,21 @@ import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
-@RunWith(Parameterized.class)
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
     private static final boolean RUN_ALL_PERMUTATIONS = false;
     private static final int RUN_N_PERMUTATIONS = 50;
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
 
-    public AsOfJoinFuzzTest(TestTimestampType leftTimestampType, TestTimestampType rightTimestampType) {
-        this.leftTableTimestampType = leftTimestampType;
-        this.rightTableTimestampType = rightTimestampType;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> testParams() {
-        return Arrays.asList(new Object[][]{
-                {TestTimestampType.MICRO, TestTimestampType.MICRO}, {TestTimestampType.MICRO, TestTimestampType.NANO},
-                {TestTimestampType.NANO, TestTimestampType.MICRO}, {TestTimestampType.NANO, TestTimestampType.NANO}
-        });
+    public AsOfJoinFuzzTest() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        this.leftTableTimestampType = TestUtils.getTimestampType(rnd);
+        this.rightTableTimestampType = TestUtils.getTimestampType(rnd);
     }
 
     @Test

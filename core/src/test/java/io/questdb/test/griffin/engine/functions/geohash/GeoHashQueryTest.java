@@ -29,6 +29,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -43,7 +44,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         for (int b = 60; b > 2; b--) {
             for (int i = 1; i < b; i++) {
-                if (rnd.nextInt(5) > 3) {
+                if (allowed(rnd)) {
                     assertException(
                             String.format("insert into gh%s%s select rnd_geohash(%s) from long_sequence(5)", b, i, i),
                             String.format("create table gh%s%s as (select rnd_geohash(%s) from long_sequence(5))", b, i, b),
@@ -61,7 +62,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         for (int b = 1; b <= 60; b++) {
             for (int i = b; i <= 60; i++) {
-                if (rnd.nextInt(5) > 3) {
+                if (allowed(rnd)) {
                     assertQuery(
                             String.format("count\n%s\n", 5),
                             String.format("select count() from gh%s%s", b, i),
@@ -655,5 +656,19 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "2\t1970-01-01T00:00:01.000000Z\t3\t34\t3456\t12345672\n", "t1"
             );
         });
+    }
+
+    private static boolean allowed(Rnd rnd) {
+        // when investigating a CI test failure make sure
+        // to change the OS detection to match the CI OS.
+        if (Os.isWindows()) {
+            // windows has slow mmap(), we throttle aggressively: only 5% allowed
+            int i = rnd.nextInt(20);
+            return i == 19;
+        } else {
+            // other OSs are faster -> we allow to run with 20% probability
+            int i = rnd.nextInt(5);
+            return i == 4;
+        }
     }
 }
