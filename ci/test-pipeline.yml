@@ -117,7 +117,7 @@ stages:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
               goals: "compile"
-              options: "--batch-mode -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+              options: "--batch-mode -P qdbr-coverage -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: $(jdk)
           - task: Maven@3
             displayName: "Merge partial JaCoCo reports"
