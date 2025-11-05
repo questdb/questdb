@@ -40,6 +40,8 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.metadataHasChanged;
+
 /**
  * Provides addresses for page frames in both native and Parquet formats.
  * Memory in native page frames is mmapped, so no additional actions are
@@ -199,7 +201,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             freeParquetBuffers.getQuick(i).reopen();
         }
         frameMemory.clear();
-        Misc.free(parquetDecoder);
+        // Don't free the decoder here - it will be reused across frames within the same query
+        // and only freed at the end of the query in close()
     }
 
     @Override
@@ -263,9 +266,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private void openParquet(int frameIndex) {
         final long addr = addressCache.getParquetAddr(frameIndex);
         final long fileSize = addressCache.getParquetFileSize(frameIndex);
+
+        // Only reinitialize decoder if file changed
         if (parquetDecoder.getFileAddr() != addr || parquetDecoder.getFileSize() != fileSize) {
             parquetDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         }
+
         final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
         if (parquetMetadata.getColumnCount() < addressCache.getColumnCount()) {
             throw CairoException.nonCritical().put("parquet column count is less than number of queried table columns [parquetColumnCount=")
@@ -273,6 +279,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     .put(", columnCount=")
                     .put(addressCache.getColumnCount());
         }
+
         // Prepare table reader to parquet column index mappings.
         toParquetColumnIndexes.clear();
         int metadataIndex = 0;
