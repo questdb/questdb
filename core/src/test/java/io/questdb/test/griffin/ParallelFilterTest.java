@@ -60,99 +60,104 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT;
 
-@RunWith(Parameterized.class)
 public class ParallelFilterTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int ROW_COUNT = PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
-    private static final String expectedNegativeLimit = "v\n" +
-            "4039070554630775695\n" +
-            "3424747151763089683\n" +
-            "4290477379978201771\n" +
-            "3794031607724753525\n" +
-            "3745605868208843008\n" +
-            "3464609208866088600\n" +
-            "3513816850827798261\n" +
-            "3542505137180114151\n" +
-            "4169687421984608700\n" +
-            "3433721896286859656\n";
-    private static final String expectedPositiveLimit = "v\n" +
-            "3394168647660478011\n" +
-            "4086802474270249591\n" +
-            "3958193676455060057\n" +
-            "3619114107112892010\n" +
-            "3705833798044144433\n" +
-            "4238042693748641409\n" +
-            "3518554007419864093\n" +
-            "4014104627539596639\n" +
-            "3393210801760647293\n" +
-            "4099611147050818391\n";
-    private static final String expectedSymbolInCursorQueryLimit = "v\ts\n" +
-            "-9200716729349404576\tC\n" +
-            "-9199187235976552080\tC\n" +
-            "-9128506055317587235\tB\n" +
-            "-8960406850507339854\tC\n" +
-            "-8955092533521658248\tC\n" +
-            "-8930904012891908076\tC\n" +
-            "-8906871108655466881\tB\n" +
-            "-8889930662239044040\tC\n" +
-            "-8888027247206813045\tC\n" +
-            "-8845171937548005347\tC\n";
-    private static final String expectedSymbolNoLimit = "v\n" +
-            "3393210801760647293\n" +
-            "3394168647660478011\n" +
-            "3424747151763089683\n" +
-            "3433721896286859656\n" +
-            "3464609208866088600\n" +
-            "3513816850827798261\n" +
-            "3518554007419864093\n" +
-            "3542505137180114151\n" +
-            "3619114107112892010\n" +
-            "3669882909701240516\n" +
-            "3705833798044144433\n" +
-            "3745605868208843008\n" +
-            "3771494396743411509\n" +
-            "3794031607724753525\n" +
-            "3820631780839257855\n" +
-            "3944678179613436885\n" +
-            "3958193676455060057\n" +
-            "4014104627539596639\n" +
-            "4039070554630775695\n" +
-            "4086802474270249591\n" +
-            "4099611147050818391\n" +
-            "4160567228070722087\n" +
-            "4169687421984608700\n" +
-            "4238042693748641409\n" +
-            "4290477379978201771\n";
-    private static final String expectedVarcharNoLimit = "l\tv\n" +
-            "3342946432339528961\t^̈RɗT\uDBCE\uDF3F\u008E\n" +
-            "3349345766605440862\t\n" +
-            "3394168647660478011\t)|1u%2uL>gG8#3Ts\n" +
-            "3401443869949416748\t\n" +
-            "3433721896286859656\t?[麛P\uD9E8\uDEDE\uD931\uDF48ҽ\uDA01\uDE60\n" +
-            "3523446414305966840\t7yXx>K%H[ g0nHS\\\n" +
-            "3547449704743013886\tfT)D>XP?dYL\n" +
-            "3570175762165818271\t97hVO\n" +
-            "3571824131493518678\tA왋G&ُܵ9}\uD91F\uDCE8+\uDAAF\uDC59\uDAC8\uDE3B亲\n" +
-            "3585172908882940409\t\n" +
-            "3682423623919780100\tF~)xNm\\~Fwz;gR.G\n" +
-            "3739186870210598690\tB&LA.&g\n" +
-            "3780956794407111569\t\n" +
-            "3921912097533020222\tmH%/###`3g?\n" +
-            "3927079694554322589\tg\uECF9J9漫\uDBDB\uDDDB1fÄ}o輖NI\n" +
-            "4171842711013652287\t\n" +
-            "4290056275098552124\t=ܼDdjvsoߛ)*EB\n";
+    private static final String expectedNegativeLimit = """
+            v
+            4039070554630775695
+            3424747151763089683
+            4290477379978201771
+            3794031607724753525
+            3745605868208843008
+            3464609208866088600
+            3513816850827798261
+            3542505137180114151
+            4169687421984608700
+            3433721896286859656
+            """;
+    private static final String expectedPositiveLimit = """
+            v
+            3394168647660478011
+            4086802474270249591
+            3958193676455060057
+            3619114107112892010
+            3705833798044144433
+            4238042693748641409
+            3518554007419864093
+            4014104627539596639
+            3393210801760647293
+            4099611147050818391
+            """;
+    private static final String expectedSymbolInCursorQueryLimit = """
+            v\ts
+            -9200716729349404576\tC
+            -9199187235976552080\tC
+            -9128506055317587235\tB
+            -8960406850507339854\tC
+            -8955092533521658248\tC
+            -8930904012891908076\tC
+            -8906871108655466881\tB
+            -8889930662239044040\tC
+            -8888027247206813045\tC
+            -8845171937548005347\tC
+            """;
+    private static final String expectedSymbolNoLimit = """
+            v
+            3393210801760647293
+            3394168647660478011
+            3424747151763089683
+            3433721896286859656
+            3464609208866088600
+            3513816850827798261
+            3518554007419864093
+            3542505137180114151
+            3619114107112892010
+            3669882909701240516
+            3705833798044144433
+            3745605868208843008
+            3771494396743411509
+            3794031607724753525
+            3820631780839257855
+            3944678179613436885
+            3958193676455060057
+            4014104627539596639
+            4039070554630775695
+            4086802474270249591
+            4099611147050818391
+            4160567228070722087
+            4169687421984608700
+            4238042693748641409
+            4290477379978201771
+            """;
+    private static final String expectedVarcharNoLimit = """
+            l\tv
+            3342946432339528961\t^̈RɗT\uDBCE\uDF3F\u008E
+            3349345766605440862\t
+            3394168647660478011\t)|1u%2uL>gG8#3Ts
+            3401443869949416748\t
+            3433721896286859656\t?[麛P\uD9E8\uDEDE\uD931\uDF48ҽ\uDA01\uDE60
+            3523446414305966840\t7yXx>K%H[ g0nHS\\
+            3547449704743013886\tfT)D>XP?dYL
+            3570175762165818271\t97hVO
+            3571824131493518678\tA왋G&ُܵ9}\uD91F\uDCE8+\uDAAF\uDC59\uDAC8\uDE3B亲
+            3585172908882940409\t
+            3682423623919780100\tF~)xNm\\~Fwz;gR.G
+            3739186870210598690\tB&LA.&g
+            3780956794407111569\t
+            3921912097533020222\tmH%/###`3g?
+            3927079694554322589\tg\uECF9J9漫\uDBDB\uDDDB1fÄ}o輖NI
+            4171842711013652287\t
+            4290056275098552124\t=ܼDdjvsoߛ)*EB
+            """;
     private static final String symbolInCursorQueryLimit = "select v, s from x where s::string::symbol in (select rnd_varchar('C', 'B') from long_sequence(100)) order by v limit 10";
     private static final String symbolQueryNegativeLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit -10";
     private static final String symbolQueryNoLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
@@ -161,16 +166,8 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private static final String varcharQueryNoLimit = "select l, v from x where l > 3326086085493629941L and l < 4326086085493629941L order by l";
     private final boolean convertToParquet;
 
-    public ParallelFilterTest(boolean convertToParquet) {
-        this.convertToParquet = convertToParquet;
-    }
-
-    @Parameterized.Parameters(name = "parquet={0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {true},
-                {false},
-        });
+    public ParallelFilterTest() {
+        this.convertToParquet = TestUtils.generateRandom(LOG).nextBoolean();
     }
 
     @Before
@@ -187,7 +184,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Test
     public void testArrayFilter() throws Exception {
-        Assume.assumeFalse(convertToParquet);
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
@@ -272,8 +268,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     @Test
     public void testAsyncTimestampSubQueryWithEqFilter() throws Exception {
         String query = "select * from x where ts2 = (select min(ts) from x)";
-        String expected = "ts\tts2\tid\n" +
-                "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\n";
+        String expected = """
+                ts\tts2\tid
+                1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1
+                """;
 
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
@@ -419,7 +417,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Test
     public void testHammerWorkStealing() throws Exception {
-        Assume.assumeFalse(convertToParquet);
         // Here we're stress-testing work stealing, so no shared workers and no reduce jobs.
         final int threadCount = 4;
         final int iterations = 1000;
@@ -516,14 +513,16 @@ public class ParallelFilterTest extends AbstractCairoTest {
     public void testParallelStressSymbolEnablePreTouch() throws Exception {
         testParallelStressSymbol(
                 "select /*+ ENABLE_PRE_TOUCH(x) */ * from x where v > 3326086085493629941L and v < 4326086085493629941L and s ~ 'A' order by v",
-                "v\ts\n" +
-                        "3393210801760647293\tA\n" +
-                        "3433721896286859656\tA\n" +
-                        "3619114107112892010\tA\n" +
-                        "3669882909701240516\tA\n" +
-                        "3820631780839257855\tA\n" +
-                        "4039070554630775695\tA\n" +
-                        "4290477379978201771\tA\n",
+                """
+                        v\ts
+                        3393210801760647293\tA
+                        3433721896286859656\tA
+                        3619114107112892010\tA
+                        3669882909701240516\tA
+                        3820631780839257855\tA
+                        4039070554630775695\tA
+                        4290477379978201771\tA
+                        """,
                 4,
                 1,
                 SqlJitMode.JIT_MODE_DISABLED
@@ -609,14 +608,16 @@ public class ParallelFilterTest extends AbstractCairoTest {
     public void testParallelStressSymbolSingleThreadMultipleWorkersSymbolValueFilter() throws Exception {
         testParallelStressSymbol(
                 "x where v > 3326086085493629941L and v < 4326086085493629941L and s ~ 'A' order by v",
-                "v\ts\n" +
-                        "3393210801760647293\tA\n" +
-                        "3433721896286859656\tA\n" +
-                        "3619114107112892010\tA\n" +
-                        "3669882909701240516\tA\n" +
-                        "3820631780839257855\tA\n" +
-                        "4039070554630775695\tA\n" +
-                        "4290477379978201771\tA\n",
+                """
+                        v\ts
+                        3393210801760647293\tA
+                        3433721896286859656\tA
+                        3619114107112892010\tA
+                        3669882909701240516\tA
+                        3820631780839257855\tA
+                        4039070554630775695\tA
+                        4290477379978201771\tA
+                        """,
                 4,
                 1,
                 SqlJitMode.JIT_MODE_DISABLED
@@ -653,8 +654,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     public void testParallelStressVarcharSingleThreadMultipleWorkersSymbolValueFilter() throws Exception {
         testParallelStressVarchar(
                 "x where l > 3326086085493629941L and l < 4326086085493629941L and v = 'A왋G&ُܵ9}\uD91F\uDCE8+\uDAAF\uDC59\uDAC8\uDE3B亲' order by l",
-                "l\tv\n" +
-                        "3571824131493518678\tA왋G&ُܵ9}\uD91F\uDCE8+\uDAAF\uDC59\uDAC8\uDE3B亲\n",
+                """
+                        l\tv
+                        3571824131493518678\tA왋G&ُܵ9}\uD91F\uDCE8+\uDAAF\uDC59\uDAC8\uDE3B亲
+                        """,
                 1,
                 SqlJitMode.JIT_MODE_DISABLED
         );
@@ -662,7 +665,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Test
     public void testReadParquet() throws Exception {
-        Assume.assumeTrue(convertToParquet);
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
@@ -790,7 +792,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testAsyncOffloadTimeout(String query) throws Exception {
-        Assume.assumeFalse(convertToParquet);
         final int rowCount = 10 * ROW_COUNT;
         // The test is very sensitive to page frame sizes.
         Assert.assertEquals(40, rowCount / configuration.getSqlPageFrameMaxRows());
@@ -926,11 +927,13 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             sqlExecutionContext,
                             "select * from tab where type IN (2, 3, 4, 6) limit 10",
                             sink,
-                            "ts\ttype\tvalue\n" +
-                                    "1970-01-01T00:00:00.000002Z\t2\tt2\n" +
-                                    "1970-01-01T00:00:00.000003Z\t3\tt3\n" +
-                                    "1970-01-01T00:00:00.000004Z\t4\tt4\n" +
-                                    "1970-01-01T00:00:00.000006Z\t6\tt6\n"
+                            """
+                                    ts\ttype\tvalue
+                                    1970-01-01T00:00:00.000002Z\t2\tt2
+                                    1970-01-01T00:00:00.000003Z\t3\tt3
+                                    1970-01-01T00:00:00.000004Z\t4\tt4
+                                    1970-01-01T00:00:00.000006Z\t6\tt6
+                                    """
                     );
                 },
                 configuration,
@@ -967,17 +970,19 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             sqlExecutionContext,
                             "select * from tab where preciseTs in '1970-01-01T00:00:00;3m;1d;5' and value IN ('t1', 't3') limit 10",
                             sink,
-                            "ts\tpreciseTs\ttype\tvalue\n" +
-                                    "1970-01-01T00:01:00.000000Z\t1970-01-01T00:01:00.000000Z\t1\tt1\n" +
-                                    "1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000000Z\t3\tt3\n" +
-                                    "1970-01-02T00:01:00.000000Z\t1970-01-02T00:01:00.000000Z\t1\tt1\n" +
-                                    "1970-01-02T00:03:00.000000Z\t1970-01-02T00:03:00.000000Z\t3\tt3\n" +
-                                    "1970-01-03T00:01:00.000000Z\t1970-01-03T00:01:00.000000Z\t1\tt1\n" +
-                                    "1970-01-03T00:03:00.000000Z\t1970-01-03T00:03:00.000000Z\t3\tt3\n" +
-                                    "1970-01-04T00:01:00.000000Z\t1970-01-04T00:01:00.000000Z\t1\tt1\n" +
-                                    "1970-01-04T00:03:00.000000Z\t1970-01-04T00:03:00.000000Z\t3\tt3\n" +
-                                    "1970-01-05T00:01:00.000000Z\t1970-01-05T00:01:00.000000Z\t1\tt1\n" +
-                                    "1970-01-05T00:03:00.000000Z\t1970-01-05T00:03:00.000000Z\t3\tt3\n"
+                            """
+                                    ts\tpreciseTs\ttype\tvalue
+                                    1970-01-01T00:01:00.000000Z\t1970-01-01T00:01:00.000000Z\t1\tt1
+                                    1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000000Z\t3\tt3
+                                    1970-01-02T00:01:00.000000Z\t1970-01-02T00:01:00.000000Z\t1\tt1
+                                    1970-01-02T00:03:00.000000Z\t1970-01-02T00:03:00.000000Z\t3\tt3
+                                    1970-01-03T00:01:00.000000Z\t1970-01-03T00:01:00.000000Z\t1\tt1
+                                    1970-01-03T00:03:00.000000Z\t1970-01-03T00:03:00.000000Z\t3\tt3
+                                    1970-01-04T00:01:00.000000Z\t1970-01-04T00:01:00.000000Z\t1\tt1
+                                    1970-01-04T00:03:00.000000Z\t1970-01-04T00:03:00.000000Z\t3\tt3
+                                    1970-01-05T00:01:00.000000Z\t1970-01-05T00:01:00.000000Z\t1\tt1
+                                    1970-01-05T00:03:00.000000Z\t1970-01-05T00:03:00.000000Z\t3\tt3
+                                    """
                     );
                 },
                 configuration,
@@ -1014,12 +1019,14 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             sqlExecutionContext,
                             "select * from tab where preciseTs in '1970-01-01T00:00:00;3m;1d;5' and value = 't3' limit 10",
                             sink,
-                            "ts\tpreciseTs\ttype\tvalue\n" +
-                                    "1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000000Z\t3\tt3\n" +
-                                    "1970-01-02T00:03:00.000000Z\t1970-01-02T00:03:00.000000Z\t3\tt3\n" +
-                                    "1970-01-03T00:03:00.000000Z\t1970-01-03T00:03:00.000000Z\t3\tt3\n" +
-                                    "1970-01-04T00:03:00.000000Z\t1970-01-04T00:03:00.000000Z\t3\tt3\n" +
-                                    "1970-01-05T00:03:00.000000Z\t1970-01-05T00:03:00.000000Z\t3\tt3\n"
+                            """
+                                    ts\tpreciseTs\ttype\tvalue
+                                    1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000000Z\t3\tt3
+                                    1970-01-02T00:03:00.000000Z\t1970-01-02T00:03:00.000000Z\t3\tt3
+                                    1970-01-03T00:03:00.000000Z\t1970-01-03T00:03:00.000000Z\t3\tt3
+                                    1970-01-04T00:03:00.000000Z\t1970-01-04T00:03:00.000000Z\t3\tt3
+                                    1970-01-05T00:03:00.000000Z\t1970-01-05T00:03:00.000000Z\t3\tt3
+                                    """
                     );
                 },
                 configuration,
@@ -1028,7 +1035,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testParallelStressSymbol(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
-        Assume.assumeFalse(convertToParquet);
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
         WorkerPool pool = new WorkerPool(() -> workerCount);
@@ -1084,7 +1090,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testParallelStressVarchar(String query, String expected, int threadCount, int jitMode) throws Exception {
-        Assume.assumeFalse(convertToParquet);
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
         WorkerPool pool = new WorkerPool(() -> 4);
@@ -1169,17 +1174,19 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             sqlExecutionContext,
                             "select * from price where type = $1 limit 10",
                             sink,
-                            "ts\ttype\tvalue\n" +
-                                    "1970-01-01T00:00:00.000003Z\tt3\t0.08486964232560668\n" +
-                                    "1970-01-01T00:00:00.000008Z\tt3\t0.9856290845874263\n" +
-                                    "1970-01-01T00:00:00.000013Z\tt3\t0.5243722859289777\n" +
-                                    "1970-01-01T00:00:00.000018Z\tt3\t0.6778564558839208\n" +
-                                    "1970-01-01T00:00:00.000023Z\tt3\t0.3288176907679504\n" +
-                                    "1970-01-01T00:00:00.000028Z\tt3\t0.6381607531178513\n" +
-                                    "1970-01-01T00:00:00.000033Z\tt3\t0.6761934857077543\n" +
-                                    "1970-01-01T00:00:00.000038Z\tt3\t0.7664256753596138\n" +
-                                    "1970-01-01T00:00:00.000043Z\tt3\t0.05048190020054388\n" +
-                                    "1970-01-01T00:00:00.000048Z\tt3\t0.8001121139739173\n"
+                            """
+                                    ts\ttype\tvalue
+                                    1970-01-01T00:00:00.000003Z\tt3\t0.08486964232560668
+                                    1970-01-01T00:00:00.000008Z\tt3\t0.9856290845874263
+                                    1970-01-01T00:00:00.000013Z\tt3\t0.5243722859289777
+                                    1970-01-01T00:00:00.000018Z\tt3\t0.6778564558839208
+                                    1970-01-01T00:00:00.000023Z\tt3\t0.3288176907679504
+                                    1970-01-01T00:00:00.000028Z\tt3\t0.6381607531178513
+                                    1970-01-01T00:00:00.000033Z\tt3\t0.6761934857077543
+                                    1970-01-01T00:00:00.000038Z\tt3\t0.7664256753596138
+                                    1970-01-01T00:00:00.000043Z\tt3\t0.05048190020054388
+                                    1970-01-01T00:00:00.000048Z\tt3\t0.8001121139739173
+                                    """
                     );
                 },
                 configuration,
