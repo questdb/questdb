@@ -33,6 +33,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
+@SuppressWarnings("resource")
 public class LineTcpSenderV3 extends LineTcpSenderV2 implements ArrayBufferAppender {
     public LineTcpSenderV3(LineChannel channel, int bufferCapacity, int maxNameLength) {
         super(channel, bufferCapacity, maxNameLength);

@@ -123,7 +123,7 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
 
     public boolean processNextBinaryPart(long addr) throws ParseException {
         switch (state) {
-            case SCALE:
+            case SCALE -> {
                 scale = Unsafe.getUnsafe().getByte(addr);
                 if (scale < 0 || scale > Decimals.MAX_SCALE) {
                     throw ParseException.invalidScale();
@@ -131,7 +131,8 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
                 state = ParserState.LEN;
                 nextBinaryPartExpectSize = 1;
                 return false;
-            case LEN:
+            }
+            case LEN -> {
                 len = Unsafe.getUnsafe().getByte(addr);
                 if (len > 0) {
                     state = ParserState.VALUES;
@@ -141,7 +142,8 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
                 state = ParserState.FINISH;
                 nextBinaryPartExpectSize = 1;
                 return true;
-            case VALUES:
+            }
+            case VALUES -> {
                 final int nints = (len + 3) / 4;
                 unscaledValues.clear(nints);
                 unscaledValues.extendAndSet(nints - 1, 0);
@@ -174,9 +176,11 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
                 state = ParserState.FINISH;
                 nextBinaryPartExpectSize = 1;
                 return true;
-            default:
+            }
+            default -> {
                 assert false;
                 return false;
+            }
         }
     }
 

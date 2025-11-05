@@ -372,7 +372,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (!recompile) {
             sqlExecutionContext.resetFlags();
         }
-        this.empty = sqlText == null || sqlText.length() == 0;
+        this.empty = sqlText == null || sqlText.isEmpty();
         if (empty) {
             sqlExecutionContext.setCacheHit(cacheHit = true);
             return;
@@ -901,7 +901,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void ofSimpleCachedSelect(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, TypesAndSelect tas) throws SqlException {
         setStateDesc(SYNC_DESC_ROW_DESCRIPTION); // send out the row description message
-        this.empty = sqlText == null || sqlText.length() == 0;
+        this.empty = sqlText == null || sqlText.isEmpty();
         this.sqlText = sqlText;
         this.factory = tas.getFactory();
         this.sqlTag = tas.getSqlTag();
@@ -930,7 +930,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
         // we do not need to create new objects until we know we're caching the entry
         this.sqlText = sqlText;
-        this.empty = sqlText == null || sqlText.length() == 0;
+        this.empty = sqlText == null || sqlText.isEmpty();
         cacheHit = false;
 
         if (!empty) {
@@ -3101,19 +3101,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             if (fn != null && fn.getType() == ColumnType.VARCHAR) {
                 final int sequenceType = Utf8s.getUtf8SequenceType(valueAddr, valueAddr + valueSize);
-                boolean ascii;
-                switch (sequenceType) {
-                    case 0:
+                boolean ascii = switch (sequenceType) {
+                    case 0 ->
                         // ascii sequence
-                        ascii = true;
-                        break;
-                    case 1:
+                            true;
+                    case 1 ->
                         // non-ASCII sequence
-                        ascii = false;
-                        break;
-                    default:
-                        throw kaput().put("invalid varchar bind variable type [variableIndex=").put(variableIndex).put(']');
-                }
+                            false;
+                    default ->
+                            throw kaput().put("invalid varchar bind variable type [variableIndex=").put(variableIndex).put(']');
+                };
                 // varchar value is sourced from the send-receive buffer (which is volatile, e.g. will be wiped
                 // without warning). It seems to be "ok" for all situations, of which there are only two:
                 // 1. the target type is "varchar", in which case the source value is "sank" into the buffer of

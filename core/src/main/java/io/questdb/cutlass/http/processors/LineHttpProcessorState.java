@@ -68,7 +68,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private final int maxResponseErrorMessageLength;
     private final LineTcpParser parser;
     private final AdaptiveRecvBuffer recvBuffer;
-    private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
+    private final DirectUtf8Sink utf8Sink = new DirectUtf8Sink(16);
     private final WeakClosableObjectPool<SymbolCache> symbolCachePool;
     int errorLine = -1;
     private Status currentStatus = Status.OK;
@@ -97,7 +97,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 configuration.autoCreateNewColumns(),
                 configuration.isStringToCharCastAllowed(),
                 configuration.getTimestampUnit(),
-                sink,
+                utf8Sink,
                 engine.getConfiguration().getMaxFileNameLength()
         );
         final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
@@ -139,7 +139,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         Misc.free(ilpTudCache);
         Misc.free(symbolCachePool);
         Misc.free(parser);
-        Misc.free(sink);
+        Misc.free(utf8Sink);
         cleanupGzip();
     }
 

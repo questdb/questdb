@@ -57,6 +57,8 @@ import static io.questdb.cairo.wal.WalUtils.*;
 
 class WalEventWriter implements Closeable {
     private final CairoConfiguration configuration;
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal256 decimal256 = new Decimal256();
     private final MemoryMARW eventIndexMem = Vm.getCMARWInstance();
     private final MemoryMARW eventMem = Vm.getCMARWInstance();
     private final FilesFacade ff;
@@ -198,19 +200,17 @@ class WalEventWriter implements Closeable {
                 eventMem.putLong(function.getDecimal64(null));
                 break;
             case ColumnType.DECIMAL128: {
-                Decimal128 d = new Decimal128();
-                function.getDecimal128(null, d);
-                eventMem.putDecimal128(d.getHigh(), d.getLow());
+                function.getDecimal128(null, decimal128);
+                eventMem.putDecimal128(decimal128.getHigh(), decimal128.getLow());
                 break;
             }
             case ColumnType.DECIMAL256: {
-                Decimal256 d = new Decimal256();
-                function.getDecimal256(null, d);
+                function.getDecimal256(null, decimal256);
                 eventMem.putDecimal256(
-                        d.getHh(),
-                        d.getHl(),
-                        d.getLh(),
-                        d.getLl()
+                        decimal256.getHh(),
+                        decimal256.getHl(),
+                        decimal256.getLh(),
+                        decimal256.getLl()
                 );
                 break;
             }

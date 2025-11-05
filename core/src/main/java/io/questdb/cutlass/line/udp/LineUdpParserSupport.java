@@ -29,12 +29,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Decimal256;
-import io.questdb.std.Decimals;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -129,7 +126,7 @@ public class LineUdpParserSupport {
             int columnIndex,
             CharSequence value
     ) {
-        if (value.length() > 0) {
+        if (!value.isEmpty()) {
             try {
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.LONG:

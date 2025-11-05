@@ -40,34 +40,6 @@ import org.jetbrains.annotations.Nullable;
 
 public class LineHttpSenderV3 extends LineHttpSenderV2 {
 
-    public LineHttpSenderV3(String host,
-                            int port,
-                            HttpClientConfiguration clientConfiguration,
-                            ClientTlsConfiguration tlsConfig,
-                            int autoFlushRows,
-                            String authToken,
-                            String username,
-                            String password,
-                            int maxNameLength,
-                            long maxRetriesNanos,
-                            int maxBackoffMillis,
-                            long minRequestThroughput,
-                            long flushIntervalNanos) {
-        super(host,
-                port,
-                clientConfiguration,
-                tlsConfig,
-                autoFlushRows,
-                authToken,
-                username,
-                password,
-                maxNameLength,
-                maxRetriesNanos,
-                maxBackoffMillis,
-                minRequestThroughput,
-                flushIntervalNanos);
-    }
-
     public LineHttpSenderV3(ObjList<String> hosts,
                             IntList ports,
                             String path,

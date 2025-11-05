@@ -42,6 +42,7 @@ public class DecimalBinaryFormatParserTest {
                 2, // Length
                 1, 8, // 2⁸ + 8
         });
+        Assert.assertNotNull(decimal256);
         Assert.assertEquals(0, decimal256.getScale());
         Assert.assertEquals("264", decimal256.toString());
     }
@@ -76,6 +77,7 @@ public class DecimalBinaryFormatParserTest {
                 5, // Scale
                 0, // Zero length means NULL decimal
         });
+        Assert.assertNotNull(decimal256);
         Assert.assertTrue(decimal256.isNull());
     }
 
@@ -87,6 +89,7 @@ public class DecimalBinaryFormatParserTest {
                 2, // Length
                 (byte) 0b11111111, (byte) 0b11110110, // -00 in two's complement big-endian
         });
+        Assert.assertNotNull(decimal256);
         Assert.assertEquals(2, decimal256.getScale());
         Assert.assertEquals("-0.10", decimal256.toString());
     }
@@ -99,6 +102,7 @@ public class DecimalBinaryFormatParserTest {
                 2, // Length
                 0x30, 0x39, // 12345 in big-endian
         });
+        Assert.assertNotNull(decimal256);
         Assert.assertEquals(3, decimal256.getScale());
         Assert.assertEquals("12.345", decimal256.toString());
     }
@@ -111,6 +115,7 @@ public class DecimalBinaryFormatParserTest {
                 1, // Length
                 127, // Max positive byte value
         });
+        Assert.assertNotNull(decimal256);
         Assert.assertEquals(0, decimal256.getScale());
         Assert.assertEquals("127", decimal256.toString());
     }
@@ -123,6 +128,7 @@ public class DecimalBinaryFormatParserTest {
                 1, // Length
                 (byte) 0xFF, // -1 in two's complement
         });
+        Assert.assertNotNull(decimal256);
         Assert.assertEquals(1, decimal256.getScale());
         Assert.assertEquals("-0.1", decimal256.toString());
     }
@@ -135,6 +141,7 @@ public class DecimalBinaryFormatParserTest {
                 4, // Length
                 0x00, 0x00, 0x00, 0x64, // 100 in big-endian
         });
+        Assert.assertNotNull(decimal256);
         Assert.assertEquals(0, decimal256.getScale());
         Assert.assertEquals("100", decimal256.toString());
     }
@@ -147,6 +154,7 @@ public class DecimalBinaryFormatParserTest {
                 8, // Length
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, (byte) 0xE8, // 1000 in big-endian
         });
+        Assert.assertNotNull(decimal256);
         Assert.assertEquals(0, decimal256.getScale());
         Assert.assertEquals("1000", decimal256.toString());
     }
@@ -159,6 +167,7 @@ public class DecimalBinaryFormatParserTest {
                 1, // Length
                 1, // Value 1
         });
+        Assert.assertNotNull(decimal256);
         Assert.assertEquals(Decimals.MAX_SCALE, decimal256.getScale());
         // Value 1 with scale 76 = 0.0000...0001 (75 zeros after decimal point)
         String expected = "0." + "0".repeat(75) + "1";
@@ -187,6 +196,7 @@ public class DecimalBinaryFormatParserTest {
                 3, // Length
                 0x01, (byte) 0x86, (byte) 0xA0, // 100000 in big-endian
         });
+        Assert.assertNotNull(decimal256);
         Assert.assertEquals(2, decimal256.getScale());
         Assert.assertEquals("1000.00", decimal256.toString());
     }
@@ -199,6 +209,7 @@ public class DecimalBinaryFormatParserTest {
                 5, // Length
                 0x00, 0x00, 0x00, 0x01, 0x00, // 256 in big-endian
         });
+        Assert.assertNotNull(decimal256);
         Assert.assertEquals(0, decimal256.getScale());
         Assert.assertEquals("256", decimal256.toString());
     }
@@ -241,6 +252,7 @@ public class DecimalBinaryFormatParserTest {
                 2, // Length
                 0x00, 0x64, // 100 in big-endian
         });
+        Assert.assertNotNull(decimal256);
         Assert.assertEquals(50, decimal256.getScale());
         String expected = "0.00000000000000000000000000000000000000000000000100";
         Assert.assertEquals(expected, decimal256.toString());

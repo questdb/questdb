@@ -35,8 +35,8 @@ import org.jetbrains.annotations.Nullable;
 public class ImplicitCastException extends RuntimeException implements FlyweightMessageContainer {
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<ImplicitCastException> tlException = new ThreadLocal<>(ImplicitCastException::new);
-    protected final StringSink message = new StringSink();
-    protected int position = 0;
+    private final StringSink message = new StringSink();
+    private int position = 0;
 
     public static ImplicitCastException inconvertibleValue(double value, int fromType, int toType) {
         return instance().put("inconvertible value: ")

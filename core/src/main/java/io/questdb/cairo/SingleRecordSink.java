@@ -132,18 +132,14 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     @Override
     public void putDecimal128(Decimal128 decimal128) {
         checkCapacity(16);
-        Unsafe.getUnsafe().putLong(appendAddress, decimal128.getHigh());
-        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal128.getLow());
+        Decimal128.put(decimal128, appendAddress);
         appendAddress += 16;
     }
 
     @Override
     public void putDecimal256(Decimal256 decimal256) {
         checkCapacity(32L);
-        Unsafe.getUnsafe().putLong(appendAddress, decimal256.getHh());
-        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal256.getHl());
-        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, decimal256.getLh());
-        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, decimal256.getLl());
+        Decimal256.put(decimal256, appendAddress);
         appendAddress += 32L;
     }
 

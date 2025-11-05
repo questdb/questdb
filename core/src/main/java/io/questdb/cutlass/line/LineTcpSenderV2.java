@@ -45,6 +45,7 @@ import org.jetbrains.annotations.NotNull;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
+@SuppressWarnings("resource")
 public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBufferAppender {
     public LineTcpSenderV2(LineChannel channel, int bufferCapacity, int maxNameLength) {
         super(channel, bufferCapacity, maxNameLength);

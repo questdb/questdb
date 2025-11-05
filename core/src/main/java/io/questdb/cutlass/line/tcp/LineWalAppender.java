@@ -60,18 +60,18 @@ public class LineWalAppender {
     private final Decimal256 decimal256;
     private final Long256Impl long256;
     private final int maxFileNameLength;
-    private final DirectUtf8Sink sink; // owned by LineHttpProcessorState or LineTcpMeasurementScheduler
+    private final DirectUtf8Sink utf8Sink; // owned by LineHttpProcessorState or LineTcpMeasurementScheduler
     private final boolean stringToCharCastAllowed;
     private byte timestampUnit;
 
-    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, byte timestampUnit, DirectUtf8Sink sink, int maxFileNameLength) {
+    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, byte timestampUnit, DirectUtf8Sink utf8Sink, int maxFileNameLength) {
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
         this.maxFileNameLength = maxFileNameLength;
         this.timestampUnit = timestampUnit;
         this.long256 = new Long256Impl();
         this.decimal256 = new Decimal256();
-        this.sink = sink;
+        this.utf8Sink = utf8Sink;
     }
 
     public void appendToWal(SecurityContext securityContext, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
@@ -274,9 +274,9 @@ public class LineWalAppender {
                                 break;
                             case ColumnType.SYMBOL:
                                 if (ent.isBinaryFormat()) {
-                                    sink.clear();
-                                    Numbers.append(sink, ent.getLongValue());
-                                    r.putSymUtf8(columnIndex, sink);
+                                    utf8Sink.clear();
+                                    Numbers.append(utf8Sink, ent.getLongValue());
+                                    r.putSymUtf8(columnIndex, utf8Sink);
                                 } else {
                                     r.putSymUtf8(columnIndex, ent.getValue());
                                 }
@@ -309,9 +309,9 @@ public class LineWalAppender {
                                             DecimalUtil.storeNull(r, columnIndex, colType);
                                             break;
                                         } else {
-                                            sink.clear();
-                                            Numbers.append(sink, ent.getFloatValue());
-                                            decimal256.ofString(sink.asAsciiCharSequence(), precision, scale);
+                                            utf8Sink.clear();
+                                            Numbers.append(utf8Sink, ent.getFloatValue());
+                                            decimal256.ofString(utf8Sink.asAsciiCharSequence(), precision, scale);
                                             DecimalUtil.storeNonNull(decimal256, r, columnIndex, colType);
                                         }
                                     } else {
@@ -324,9 +324,9 @@ public class LineWalAppender {
                                 break;
                             case ColumnType.SYMBOL:
                                 if (ent.isBinaryFormat()) {
-                                    sink.clear();
-                                    Numbers.append(sink, ent.getFloatValue());
-                                    r.putSymUtf8(columnIndex, sink);
+                                    utf8Sink.clear();
+                                    Numbers.append(utf8Sink, ent.getFloatValue());
+                                    r.putSymUtf8(columnIndex, utf8Sink);
                                 } else {
                                     r.putSymUtf8(columnIndex, ent.getValue());
                                 }
@@ -457,9 +457,9 @@ public class LineWalAppender {
                                 break;
                             case ColumnType.SYMBOL:
                                 if (ent.isBinaryFormat()) {
-                                    sink.clear();
-                                    sink.put(ent.getBooleanValue() ? 't' : 'f');
-                                    r.putSymUtf8(columnIndex, sink);
+                                    utf8Sink.clear();
+                                    utf8Sink.put(ent.getBooleanValue() ? 't' : 'f');
+                                    r.putSymUtf8(columnIndex, utf8Sink);
                                 } else {
                                     r.putSymUtf8(columnIndex, ent.getValue());
                                 }
@@ -482,9 +482,9 @@ public class LineWalAppender {
                                 break;
                             case ColumnType.SYMBOL:
                                 if (ent.isBinaryFormat()) {
-                                    sink.clear();
-                                    Numbers.append(sink, ent.getLongValue());
-                                    r.putSymUtf8(columnIndex, sink);
+                                    utf8Sink.clear();
+                                    Numbers.append(utf8Sink, ent.getLongValue());
+                                    r.putSymUtf8(columnIndex, utf8Sink);
                                 } else {
                                     r.putSymUtf8(columnIndex, ent.getValue());
                                 }

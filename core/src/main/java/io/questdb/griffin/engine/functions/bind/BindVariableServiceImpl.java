@@ -53,6 +53,7 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+@SuppressWarnings("resource")
 public class BindVariableServiceImpl implements BindVariableService {
     private final ObjectPool<IPv4BindVariable> IPv4VarPool;
     private final ObjectPool<ArrayBindVariable> arrayVarPool;
@@ -246,7 +247,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setArray0(function, value, index, null);
+            setArray0(function, value, index);
         } else {
             indexedVariables.setQuick(index, function = arrayVarPool.next());
             ((ArrayBindVariable) function).setView(value);
@@ -597,7 +598,7 @@ public class BindVariableServiceImpl implements BindVariableService {
             namedVariables.putAt(index, name, function = longVarPool.next());
             function.value = value;
         } else {
-            setLong0(namedVariables.valueAtQuick(index), value, -1, name, ColumnType.LONG);
+            setLong0(namedVariables.valueAtQuick(index), value, -1, name);
         }
     }
 
@@ -612,7 +613,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setLong0(function, value, index, null, ColumnType.LONG);
+            setLong0(function, value, index, null);
         } else {
             indexedVariables.setQuick(index, function = longVarPool.next());
             ((LongBindVariable) function).value = value;
@@ -854,7 +855,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         throw SqlException.$(0, "bind variable '").put(name).put("' is defined as ").put(ColumnType.nameOf(function.getType())).put(" and cannot accept ").put(ColumnType.nameOf(srcType));
     }
 
-    private static void setArray0(Function function, ArrayView value, int index, @Nullable CharSequence name) throws SqlException {
+    private static void setArray0(Function function, ArrayView value, int index) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.ARRAY:
@@ -864,7 +865,7 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.VARCHAR:
                 throw new UnsupportedOperationException("implement me");
             default:
-                reportError(function, ColumnType.ARRAY, index, name);
+                reportError(function, ColumnType.ARRAY, index, null);
                 break;
         }
     }
@@ -1167,7 +1168,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setLong0(Function function, long value, int index, @Nullable CharSequence name, int srcType) throws SqlException {
+    private static void setLong0(Function function, long value, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BYTE:
@@ -1204,7 +1205,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((CharBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsChar(value, ColumnType.LONG) : 0;
                 break;
             default:
-                reportError(function, srcType, index, name);
+                reportError(function, (int) ColumnType.LONG, index, name);
                 break;
         }
     }
