@@ -42,7 +42,7 @@ jobs:
       javadoc_profile: ""
       jdk: "1.17"
       os: Linux
-      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-amazon-corretto.x86_64"
-      JAVA_HOME: "/usr/lib/jvm/java-17-amazon-corretto.x86_64"
+      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-openjdk-amd64"
+      JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-amd64"
     steps:
       - template: steps.yml
