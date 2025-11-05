@@ -35,7 +35,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.ProjectedPageFrame;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
@@ -55,6 +54,7 @@ import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetPageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -3412,18 +3412,17 @@ public class SqlOptimiser implements Mutable {
      *
      * @param model
      */
-    private void parquetProjectionPushdown(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private void parquetProjectionPushdown(QueryModel model) {
+
+        // todo: unions, joins testing etc.
         if (model == null) {
             return;
         }
 
-        if (model.getTableName() == null || !SqlKeywords.isReadParquetKeyword(model.getTableName())
-                || !(model.getTableNameFunction() instanceof ProjectedPageFrame)) {
-            parquetProjectionPushdown(model.getNestedModel(), executionContext);
+        if (model.getTableName() == null || !SqlKeywords.isReadParquetKeyword(model.getTableName())) {
+            parquetProjectionPushdown(model.getNestedModel());
             return;
         }
-
-        assert model.getTableNameFunction() instanceof ProjectedPageFrame;
 
         GenericRecordMetadata existingMetadata = (GenericRecordMetadata) model.getTableNameFunction().getMetadata();
         GenericRecordMetadata projectionMetadata = new GenericRecordMetadata();
@@ -3434,17 +3433,17 @@ public class SqlOptimiser implements Mutable {
             projectionMetadata.add(existingColumn);
         }
 
-        if (model.getTableNameFunction() instanceof ReadParquetPageFrameRecordCursorFactory) {
-            ReadParquetPageFrameRecordCursorFactory factory = (ReadParquetPageFrameRecordCursorFactory) model.getTableNameFunction();
+        if (model.getTableNameFunction() instanceof ReadParquetPageFrameRecordCursorFactory factory) {
             ReadParquetPageFrameRecordCursorFactory projectedFactory = new ReadParquetPageFrameRecordCursorFactory(configuration, factory.path, projectionMetadata);
             factory.close();
             model.setTableNameFunction(projectedFactory);
         }
 
-//        model.getTableNameFunction().close();
-//        model.setTableNameFunction(TableUtils.createCursorFunction(functionParser, model, executionContext, projectionMetadata).getRecordCursorFactory());
-//
-//        ((ProjectedPageFrame) model.getTableNameFunction()).setProjectionMetadata(projectionMetadata);
+        if (model.getTableNameFunction() instanceof ReadParquetRecordCursorFactory factory) {
+            ReadParquetRecordCursorFactory projectedFactory = new ReadParquetRecordCursorFactory(factory.path, projectionMetadata, configuration.getFilesFacade());
+            factory.close();
+            model.setTableNameFunction(projectedFactory);
+        }
     }
 
     private void parseFunctionAndEnumerateColumns(
@@ -7298,7 +7297,7 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
-            parquetProjectionPushdown(rewrittenModel, sqlExecutionContext);
+            parquetProjectionPushdown(rewrittenModel);
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed

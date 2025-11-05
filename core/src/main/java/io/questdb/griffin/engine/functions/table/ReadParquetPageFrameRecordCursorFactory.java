@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.table;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.PageFrameCursor;
-import io.questdb.cairo.sql.ProjectedPageFrame;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
@@ -47,9 +46,9 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 /**
  * Factory for parallel read_parquet() SQL function.
  */
-public class ReadParquetPageFrameRecordCursorFactory extends AbstractRecordCursorFactory implements ProjectedPageFrame {
-    private PageFrameRecordCursorImpl cursor;
-    private ReadParquetPageFrameCursor pageFrameCursor;
+public class ReadParquetPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final PageFrameRecordCursorImpl cursor;
+    private final ReadParquetPageFrameCursor pageFrameCursor;
     public Path path;
     private @Nullable RecordMetadata projection;
 
@@ -111,15 +110,5 @@ public class ReadParquetPageFrameRecordCursorFactory extends AbstractRecordCurso
         Misc.free(cursor);
         Misc.free(pageFrameCursor);
         path = Misc.free(path);
-    }
-
-    @Override
-    public @Nullable RecordMetadata getProjectionMetadata() {
-        return projection;
-    }
-
-    @Override
-    public void setProjectionMetadata(RecordMetadata metadata) {
-        this.projection = metadata;
     }
 }

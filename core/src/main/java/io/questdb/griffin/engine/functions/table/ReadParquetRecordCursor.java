@@ -76,7 +76,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     // doesn't include unsupported columns
     private final RecordMetadata metadata;
     private final RowGroupBuffers rowGroupBuffers;
-    IntList projectionToColumnMap;
     private long addr = 0;
     private int currentRowInRowGroup;
     private long fd = -1;
@@ -92,7 +91,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             this.decoder = new PartitionDecoder();
             this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
-            this.projectionToColumnMap = new IntList(32);
         } catch (Throwable th) {
             close();
             throw th;
@@ -129,35 +127,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         }
 
         return false;
-//
-//        int metadataIndex = 0;
-//        for (int parquetIndex = 0, n = parquetMetadata.getColumnCount(); parquetIndex < n; parquetIndex++) {
-//
-//            final int parquetType = parquetMetadata.getColumnType(parquetIndex);
-//            // If the column is not recognized by the decoder, we have to skip it.
-//            if (ColumnType.isUndefined(parquetType)) {
-//                continue;
-//            }
-//
-//            CharSequence metadataColumnName = metadata.getColumnName(metadataIndex);
-//            if (parquetMetadata.getColumnIndex(metadataColumnName) < 0) {
-//                return true;
-//            }
-//
-//            if (metadataIndex != parquetIndex) {
-//
-//            }
-//
-//
-//            final int metadataType = metadata.getColumnType(metadataIndex);
-//            final boolean symbolRemappingDetected = (metadataType == ColumnType.VARCHAR && parquetType == ColumnType.SYMBOL);
-//            // No need to compare column types if we deal with symbol remapping.
-//            if (!symbolRemappingDetected && metadataType != parquetType) {
-//                return true;
-//            }
-//            metadataIndex++;
-//        }
-//        return metadataIndex != metadata.getColumnCount();
     }
 
     @Override
@@ -174,7 +143,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             addr = 0;
         }
-        projectionToColumnMap.clear();
     }
 
     @Override
@@ -195,7 +163,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
-    public void of(LPSZ path, @Nullable RecordMetadata projection) {
+    public void of(LPSZ path) {
         try {
             // Reopen the file, it could have changed
             this.fd = TableUtils.openRO(ff, path, LOG);
@@ -210,32 +178,17 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             columns.reopen();
             final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
 
-            if (projection != null) {
-                if (record == null) {
-                    record = new ProjectedParquetRecord(projection.getColumnCount());
-                }
-                columns.setCapacity(2L * projection.getColumnCount());
-                for (int i = 0, n = parquetMetadata.getColumnCount(); i < n; i++) {
-                    final int columnType = parquetMetadata.getColumnType(i);
-                    final CharSequence columnName = parquetMetadata.getColumnName(i);
-                    if (!ColumnType.isUndefined(columnType) && projection.getColumnIndexQuiet(columnName) >= 0) {
-                        columns.add(i);
-                        columns.add(columnType);
-                        projectionToColumnMap.extendAndSet(i, (int) (columns.size() - 2) / 2);
-                    }
-                }
-            } else {
-                if (record == null) {
-                    record = new ParquetRecord(parquetMetadata.getColumnCount());
-                }
-                columns.setCapacity(2L * parquetMetadata.getColumnCount());
-                for (int i = 0, n = parquetMetadata.getColumnCount(); i < n; i++) {
-                    final int columnType = parquetMetadata.getColumnType(i);
-                    if (!ColumnType.isUndefined(columnType)) {
-                        columns.add(i);
-                        columns.add(columnType);
-                    }
-                }
+            if (record == null) {
+                record = new ParquetRecord(metadata.getColumnCount());
+            }
+
+            columns.setCapacity(2L * metadata.getColumnCount());
+            for (int metadataIndex = 0, n = metadata.getColumnCount(); metadataIndex < n; metadataIndex++) {
+                final CharSequence metadataName = metadata.getColumnName(metadataIndex);
+                final int parquetIndex = parquetMetadata.getColumnIndex(metadataName);
+                final int parquetType = parquetMetadata.getColumnType(parquetIndex);
+                columns.add(parquetIndex);
+                columns.add(parquetType);
             }
             toTop();
         } catch (DataUnavailableException e) {
@@ -547,10 +500,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             return longs256B.getQuick(columnIndex);
         }
 
-        public int projectionIndirection(int col) {
-            return projectionToColumnMap.get(col);
-        }
-
         public Utf8SplitString utf8ViewA(int columnIndex) {
             if (utf8ViewsA.getQuiet(columnIndex) == null) {
                 utf8ViewsA.extendAndSet(columnIndex, new Utf8SplitString());
@@ -563,187 +512,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                 utf8ViewsB.extendAndSet(columnIndex, new Utf8SplitString());
             }
             return utf8ViewsB.getQuick(columnIndex);
-        }
-    }
-
-    private class ProjectedParquetRecord extends ParquetRecord {
-
-        public ProjectedParquetRecord(int columnCount) {
-            super(columnCount);
-        }
-
-        public @NotNull BorrowedArray borrowedArray(int col) {
-            return super.borrowedArray(projectionIndirection(col));
-        }
-
-        public DirectBinarySequence bsView(int columnIndex) {
-            return super.bsView(projectionIndirection(columnIndex));
-        }
-
-        public DirectString csViewA(int columnIndex) {
-            return super.csViewA(projectionIndirection(columnIndex));
-        }
-
-        public DirectString csViewB(int columnIndex) {
-            return super.csViewB(projectionIndirection(columnIndex));
-        }
-
-        @Override
-        public ArrayView getArray(int col, int colType) {
-            return super.getArray(projectionIndirection(col), colType);
-        }
-
-        @Override
-        public BinarySequence getBin(int col) {
-            return super.getBin(projectionIndirection(col));
-        }
-
-        @Override
-        public long getBinLen(int col) {
-            return super.getBinLen(projectionIndirection(col));
-        }
-
-        @Override
-        public boolean getBool(int col) {
-            return super.getBool(projectionIndirection(col));
-        }
-
-        @Override
-        public byte getByte(int col) {
-            return super.getByte(projectionIndirection(col));
-        }
-
-        @Override
-        public char getChar(int col) {
-            return super.getChar(projectionIndirection(col));
-        }
-
-        @Override
-        public double getDouble(int col) {
-            return super.getDouble(projectionIndirection(col));
-        }
-
-        @Override
-        public float getFloat(int col) {
-            return super.getFloat(projectionIndirection(col));
-        }
-
-        @Override
-        public byte getGeoByte(int col) {
-            return super.getGeoByte(projectionIndirection(col));
-        }
-
-        @Override
-        public int getGeoInt(int col) {
-            return super.getGeoInt(projectionIndirection(col));
-        }
-
-        @Override
-        public long getGeoLong(int col) {
-            return super.getLong(projectionIndirection(col));
-        }
-
-        @Override
-        public short getGeoShort(int col) {
-            return super.getGeoShort(projectionIndirection(col));
-        }
-
-        @Override
-        public int getIPv4(int col) {
-            return super.getIPv4(projectionIndirection(col));
-        }
-
-        @Override
-        public int getInt(int col) {
-            return super.getInt(projectionIndirection(col));
-        }
-
-        @Override
-        public long getLong(int col) {
-            return super.getLong(projectionIndirection(col));
-        }
-
-        @Override
-        public long getLong128Hi(int col) {
-            return super.getLong128Hi(projectionIndirection(col));
-        }
-
-        @Override
-        public long getLong128Lo(int col) {
-            return super.getLong128Lo(projectionIndirection(col));
-        }
-
-        @Override
-        public void getLong256(int col, CharSink<?> sink) {
-            col = projectionIndirection(col);
-            Numbers.appendLong256FromUnsafe(getLong256Addr(col), sink);
-        }
-
-        @Override
-        public Long256 getLong256A(int col) {
-            return super.getLong256A(projectionIndirection(col));
-        }
-
-        public long getLong256Addr(int col) {
-            return super.getLong256Addr(projectionIndirection(col));
-        }
-
-        @Override
-        public Long256 getLong256B(int col) {
-            return super.getLong256B(projectionIndirection(col));
-        }
-
-        @Override
-        public short getShort(int col) {
-            return super.getShort(projectionIndirection(col));
-        }
-
-        @Override
-        public CharSequence getStrA(int col) {
-            return super.getStrA(projectionIndirection(col));
-        }
-
-        @Override
-        public CharSequence getStrB(int col) {
-            return super.getStrB(projectionIndirection(col));
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            return super.getStrLen(projectionIndirection(col));
-        }
-
-        @Nullable
-        @Override
-        public Utf8Sequence getVarcharA(int col) {
-            return super.getVarcharA(projectionIndirection(col));
-        }
-
-        @Nullable
-        @Override
-        public Utf8Sequence getVarcharB(int col) {
-            return super.getVarcharB(projectionIndirection(col));
-        }
-
-        @Override
-        public int getVarcharSize(int col) {
-            return super.getVarcharSize(projectionIndirection(col));
-        }
-
-        public Long256Impl long256A(int columnIndex) {
-            return super.long256A(projectionIndirection(columnIndex));
-        }
-
-        public Long256Impl long256B(int columnIndex) {
-            return super.long256B(projectionIndirection(columnIndex));
-        }
-
-        public Utf8SplitString utf8ViewA(int columnIndex) {
-            return super.utf8ViewA(projectionIndirection(columnIndex));
-        }
-
-        public Utf8SplitString utf8ViewB(int columnIndex) {
-            return super.utf8ViewB(projectionIndirection(columnIndex));
         }
     }
 }
