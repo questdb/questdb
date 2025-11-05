@@ -139,7 +139,7 @@ public final class DirectArray extends MutableArray implements Mutable {
         assert ptr > 0 : "ptr <= 0";
         long offset = flatIndex * DOUBLE_BYTES;
         assert size >= offset + DOUBLE_BYTES : "size < offset + DOUBLE_BYTES";
-        Unsafe.getUnsafe().putDouble(ptr + offset, value);
+        Unsafe.putDouble(ptr + offset, value);
     }
 
     /**
@@ -152,7 +152,7 @@ public final class DirectArray extends MutableArray implements Mutable {
         assert flatIndex >= 0 && flatIndex < flatViewLength : "flatIndex out of bounds";
         long offset = flatIndex * LONG_BYTES;
         assert size >= offset + LONG_BYTES : "size < offset + LONG_BYTES";
-        Unsafe.getUnsafe().putLong(ptr + offset, value);
+        Unsafe.putLong(ptr + offset, value);
     }
 
     public MemoryA startMemoryA() {
@@ -250,7 +250,7 @@ public final class DirectArray extends MutableArray implements Mutable {
         public void putDouble(double value) {
             assert ptr != 0 : "ptr == 0";
             assert appendOffset <= size - Double.BYTES : "appending beyond limit";
-            Unsafe.getUnsafe().putDouble(ptr + appendOffset, value);
+            Unsafe.putDouble(ptr + appendOffset, value);
             appendOffset += Double.BYTES;
         }
 
@@ -268,7 +268,7 @@ public final class DirectArray extends MutableArray implements Mutable {
         public void putLong(long value) {
             assert ptr != 0 : "ptr == 0";
             assert appendOffset <= size - Long.BYTES : "appending beyond limit";
-            Unsafe.getUnsafe().putLong(ptr + appendOffset, value);
+            Unsafe.putLong(ptr + appendOffset, value);
             appendOffset += Long.BYTES;
         }
 

@@ -31,6 +31,7 @@ import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.std.str.Path;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.HttpServer;
@@ -183,6 +184,7 @@ public class ServerMain implements Closeable {
                 fileWatcher = Misc.free(fileWatcher);
             }
             freeOnExit.close();
+            Path.clearThreadLocals();
         }
     }
 

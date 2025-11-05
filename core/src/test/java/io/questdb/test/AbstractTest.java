@@ -36,8 +36,10 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.AllocationsTracker;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Zip;
+import io.questdb.std.str.Path;
 import io.questdb.test.cutlass.http.HttpQueryTestBuilder;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.tools.TestUtils;
@@ -84,6 +86,9 @@ public class AbstractTest {
     @AfterClass
     public static void tearDownStatic() {
         TestUtils.removeTestPath(root);
+        Path.clearThreadLocals();
+        AllocationsTracker.dumpAllocations(LOG, "End of test class");
+        AllocationsTracker.dumpNewAllocationsStacktraces(LOG);
     }
 
     @Before
@@ -97,6 +102,7 @@ public class AbstractTest {
     @After
     public void tearDown() throws Exception {
         LOG.info().$("Finished test ").$safe(getClass().getSimpleName()).$('#').$safe(testName.getMethodName()).$();
+        Path.clearThreadLocals();
         TestUtils.removeTestPath(root);
         OFF_POOL_READER_ID.set(0);
         SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;

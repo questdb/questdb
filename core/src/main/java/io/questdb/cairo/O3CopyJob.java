@@ -423,39 +423,39 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     dstVarOffset
             );
         } else if (ColumnType.isDesignatedTimestamp(columnType)) {
-            Vect.oooCopyIndex(timestampMergeIndexAddr, timestampMergeIndexCount, dstFixAddr);
+            Vect.oooCopyIndexChecked(timestampMergeIndexAddr, timestampMergeIndexCount, dstFixAddr);
         } else {
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.BOOLEAN:
                 case ColumnType.BYTE:
                 case ColumnType.GEOBYTE:
-                    Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                    Vect.mergeShuffle8BitChecked(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.SHORT:
                 case ColumnType.CHAR:
                 case ColumnType.GEOSHORT:
-                    Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                    Vect.mergeShuffle16BitChecked(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.INT:
                 case ColumnType.IPv4:
                 case ColumnType.FLOAT:
                 case ColumnType.SYMBOL:
                 case ColumnType.GEOINT:
-                    Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                    Vect.mergeShuffle32BitChecked(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.DOUBLE:
                 case ColumnType.LONG:
                 case ColumnType.DATE:
                 case ColumnType.GEOLONG:
                 case ColumnType.TIMESTAMP:
-                    Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                    Vect.mergeShuffle64BitChecked(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.UUID:
                 case ColumnType.LONG128:
-                    Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                    Vect.mergeShuffle128BitChecked(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.LONG256:
-                    Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                    Vect.mergeShuffle256BitChecked(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 default:
                     break;
@@ -1010,13 +1010,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             final long o3SplitPartitionSize,
             boolean partitionMutates
     ) {
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, timestampMin);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, srcDataNewPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, srcDataOldPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates ? 1 : 0);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, o3SplitPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // parquet partition file size
+        Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
+        Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, timestampMin);
+        Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, srcDataNewPartitionSize);
+        Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, srcDataOldPartitionSize);
+        Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates ? 1 : 0);
+        Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, o3SplitPartitionSize);
+        Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // parquet partition file size
 
         TimestampDriver driver = ColumnType.getTimestampDriver(tableWriter.getTimestampType());
         LOG.debug()

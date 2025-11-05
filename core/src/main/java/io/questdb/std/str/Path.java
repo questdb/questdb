@@ -130,13 +130,13 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
 
     public LPSZ $() {
         if (tailPtr == headPtr || Unsafe.getUnsafe().getByte(tailPtr) != NULL) {
-            Unsafe.getUnsafe().putByte(tailPtr, NULL);
+            Unsafe.putByte(tailPtr, NULL);
         }
         return this.lpsz;
     }
 
     public void $at(int index) {
-        Unsafe.getUnsafe().putByte(headPtr + index, NULL);
+        Unsafe.putByte(headPtr + index, NULL);
     }
 
     public @NotNull CharSequence asAsciiCharSequence() {
@@ -188,7 +188,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
             if (requiredCapacity + OVERHEAD >= capacity) {
                 extend(requiredCapacity * 2 + OVERHEAD);
             }
-            Unsafe.getUnsafe().putByte(tailPtr++, (byte) (b == '/' && Os.isWindows() ? '\\' : b));
+            Unsafe.putByte(tailPtr++, (byte) (b == '/' && Os.isWindows() ? '\\' : b));
         }
         return this;
     }
@@ -305,7 +305,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
 
     public void put(int index, byte b) {
         ascii = false;
-        Unsafe.getUnsafe().putByte(headPtr + index, b);
+        Unsafe.putByte(headPtr + index, b);
     }
 
     @Override
@@ -460,7 +460,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     // allocates given buffer at path tail and sets it to 0
     public void zeroPad(int len) {
         checkExtend(len);
-        Vect.memset(tailPtr, len, 0);
+        Vect.memsetChecked(tailPtr, len, 0);
     }
 
     private static Path newTLPath() {
@@ -495,13 +495,13 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         if (requiredCapacity >= capacity) {
             extend(requiredCapacity + 15);
         }
-        Unsafe.getUnsafe().putByte(tailPtr++, b);
+        Unsafe.putByte(tailPtr++, b);
         return this;
     }
 
     private void randomSeed() {
         for (long p = headPtr, hi = headPtr + capacity + 1; p < hi; p++) {
-            Unsafe.getUnsafe().putByte(p, (byte) (p % 127));
+            Unsafe.putByte(p, (byte) (p % 127));
         }
     }
 

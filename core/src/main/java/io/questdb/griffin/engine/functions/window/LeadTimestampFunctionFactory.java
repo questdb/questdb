@@ -108,7 +108,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
             if (respectNull) {
                 buffer.putLong((long) loIdx * Long.BYTES, l);
             }
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNull;
         }
     }
@@ -158,7 +158,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
             if (respectNulls) {
                 memory.putLong(startOffset + firstIdx * Long.BYTES, l);
             }
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNulls;
         }
     }

@@ -69,7 +69,7 @@ public final class Files {
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private final static FdCache fdCache = new FdCache();
     private static final MmapCache mmapCache = new MmapCache();
-    public static boolean FS_CACHE_ENABLED = true;
+    public static boolean FS_CACHE_ENABLED = false;
     // To be set in tests to check every call for using OPEN file descriptor
     public static boolean VIRTIO_FS_DETECTED = false;
 
@@ -356,18 +356,39 @@ public final class Files {
     public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
         int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
         long mmapCacheKey = fdCache.toMmapCacheKey(fd);
-        return mmapCache.cacheMmap(osFd, mmapCacheKey, len, offset, flags, memoryTag);
+        long address = mmapCache.cacheMmap(osFd, mmapCacheKey, len, offset, flags, memoryTag);
+        if (address != -1) {
+            AllocationsTracker.onMalloc(address, len);
+        }
+        return address;
     }
 
     public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
+        if (newSize < 1) {
+            throw CairoException.critical(0).put("could not remap file, invalid newSize [previousSize=").put(previousSize)
+                    .put(", newSize=").put(newSize)
+                    .put(", offset=").put(offset)
+                    .put(", fd=").put(fd)
+                    .put(", memoryTag=").put(memoryTag)
+                    .put(']');
+        }
+
+        AllocationsTracker.onFree(address);
         int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
         long mmapCacheKey = fdCache.toMmapCacheKey(fd);
-        return mmapCache.mremap(osFd, mmapCacheKey, address, previousSize, newSize, offset, flags, memoryTag);
+        long newAddress = mmapCache.mremap(osFd, mmapCacheKey, address, previousSize, newSize, offset, flags, memoryTag);
+        if (newAddress != -1) {
+            AllocationsTracker.onMalloc(newAddress, newSize);
+        }
+        return newAddress;
     }
 
     public static native int msync(long addr, long len, boolean async);
 
     public static void munmap(long address, long len, int memoryTag) {
+        if (address != 0) {
+            AllocationsTracker.onFree(address);
+        }
         mmapCache.unmap(address, len, memoryTag);
     }
 

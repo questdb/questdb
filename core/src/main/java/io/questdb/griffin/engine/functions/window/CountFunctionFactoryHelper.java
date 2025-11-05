@@ -313,7 +313,7 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), isNotNullFunc.isNotNull(arg, record) ? VALUE_ONE : VALUE_ZERO);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), isNotNullFunc.isNotNull(arg, record) ? VALUE_ONE : VALUE_ZERO);
         }
     }
 
@@ -364,7 +364,7 @@ public class CountFunctionFactoryHelper {
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
             long val = value != null ? value.getLong(0) : 0;
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), val);
         }
     }
 
@@ -552,7 +552,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -720,7 +720,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -918,7 +918,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -1056,7 +1056,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -1164,7 +1164,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -1219,7 +1219,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -1276,7 +1276,7 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override

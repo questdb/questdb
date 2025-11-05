@@ -170,7 +170,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
             final long sizeBytes = entrySize * this.keyCapacity;
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
-            Vect.memset(memStart, sizeBytes, 0);
+            Vect.memsetChecked(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
             keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY, memoryTag);
 
@@ -209,7 +209,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         free = (int) (keyCapacity * loadFactor);
         size = 0;
         nResizes = 0;
-        Vect.memset(memStart, memLimit - memStart, 0);
+        Vect.memsetChecked(memStart, memLimit - memStart, 0);
         Misc.free(allocator); // free all memory, but allocator remains usable for further allocations
     }
 
@@ -301,8 +301,8 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 long arenaPtr = allocator.malloc(srcSize);
                 Vect.memcpy(arenaPtr, srcPtrWithUnstableFlags & PTR_MASK, srcSize);
                 long arenaPtrWithUnstableFlags = arenaPtr | PTR_UNSTABLE_MASK;
-                Unsafe.getUnsafe().putLong(destAddr, srcHashSizeFlags);
-                Unsafe.getUnsafe().putLong(destAddr + 8, arenaPtrWithUnstableFlags);
+                Unsafe.putLong(destAddr, srcHashSizeFlags);
+                Unsafe.putLong(destAddr + 8, arenaPtrWithUnstableFlags);
 
                 // copy value
                 Vect.memcpy(destAddr + KEY_SIZE, srcAddr + KEY_SIZE, entrySize - KEY_SIZE);
@@ -381,16 +381,16 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             long keyHashSizeFlags,
             UnorderedVarcharMapValue value
     ) {
-        Unsafe.getUnsafe().putLong(startAddress, keyHashSizeFlags);
+        Unsafe.putLong(startAddress, keyHashSizeFlags);
         if ((keyPtrWithUnstableFlag & PTR_UNSTABLE_MASK) == 0) {
             // stable pointer
-            Unsafe.getUnsafe().putLong(startAddress + 8L, keyPtrWithUnstableFlag);
+            Unsafe.putLong(startAddress + 8L, keyPtrWithUnstableFlag);
         } else {
             // unstable pointer, copy key to our memory
             long arenaPtr = allocator.malloc(keySize);
             Vect.memcpy(arenaPtr, keyPtrWithUnstableFlag & PTR_MASK, keySize);
             long arenaPtrWithUnstableFlags = arenaPtr | PTR_UNSTABLE_MASK;
-            Unsafe.getUnsafe().putLong(startAddress + 8, arenaPtrWithUnstableFlags);
+            Unsafe.putLong(startAddress + 8, arenaPtrWithUnstableFlags);
         }
         if (--free == 0) {
             rehash();
@@ -488,7 +488,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         final long newSizeBytes = entrySize * newKeyCapacity;
         final long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag);
         final long newMemLimit = newMemStart + newSizeBytes;
-        Vect.memset(newMemStart, newSizeBytes, 0);
+        Vect.memsetChecked(newMemStart, newSizeBytes, 0);
         final int newMask = (int) newKeyCapacity - 1;
 
         for (long addr = memStart; addr < memLimit; addr += entrySize) {

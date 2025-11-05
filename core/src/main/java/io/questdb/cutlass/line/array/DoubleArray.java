@@ -113,7 +113,7 @@ public class DoubleArray extends AbstractArray {
     public DoubleArray setAll(double value) {
         long ptr = array.ptr();
         for (int i = 0, size = array.getFlatViewLength(); i < size; i++) {
-            Unsafe.getUnsafe().putDouble(ptr, value);
+            Unsafe.putDouble(ptr, value);
             ptr += Double.BYTES;
         }
         return this;

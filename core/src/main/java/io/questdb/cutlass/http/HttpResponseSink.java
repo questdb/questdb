@@ -238,8 +238,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         boolean finished = chunkedRequestDone && ret == Zip.Z_STREAM_END;
         if (finished) {
             long p = compressOutBuffer.getWriteAddress(0);
-            Unsafe.getUnsafe().putInt(p, crc); // crc
-            Unsafe.getUnsafe().putInt(p + 4, (int) total); // total
+            Unsafe.putInt(p, crc); // crc
+            Unsafe.putInt(p + 4, (int) total); // total
             compressOutBuffer.onWrite(8);
             compressionComplete = true;
         }
@@ -360,7 +360,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink put(byte b) {
-            Unsafe.getUnsafe().putByte(getWriteAddress(1), b);
+            Unsafe.putByte(getWriteAddress(1), b);
             onWrite(1);
             return this;
         }
@@ -448,8 +448,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         void write64BitZeroPadding() {
-            Unsafe.getUnsafe().putLong(bufStartOfData - 8, 0);
-            Unsafe.getUnsafe().putLong(_wptr, 0);
+            Unsafe.putLong(bufStartOfData - 8, 0);
+            Unsafe.putLong(_wptr, 0);
         }
     }
 
@@ -575,7 +575,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink put(byte b) {
-            Unsafe.getUnsafe().putByte(buffer.getWriteAddress(1), b);
+            Unsafe.putByte(buffer.getWriteAddress(1), b);
             buffer.onWrite(1);
             return this;
         }

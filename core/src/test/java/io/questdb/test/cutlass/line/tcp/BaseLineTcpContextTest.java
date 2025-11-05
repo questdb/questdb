@@ -282,8 +282,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     protected void runInAuthContext(Runnable r) throws Exception {
         assertMemoryLeak(() -> {
-            setupContext(null);
             try {
+                setupContext(null);
                 r.run();
             } finally {
                 closeContext();

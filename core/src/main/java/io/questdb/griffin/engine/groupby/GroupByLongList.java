@@ -55,7 +55,7 @@ public class GroupByLongList {
         int newSize = size() + 1;
         checkCapacity(newSize);
         set(newSize - 1, value);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, newSize);
+        Unsafe.putInt(ptr + SIZE_OFFSET, newSize);
     }
 
     public int capacity() {
@@ -74,7 +74,7 @@ public class GroupByLongList {
             final int newCapacity = Math.max(oldCapacity << 1, capacity);
             ptr = allocator.realloc(oldPtr, 8L * oldCapacity + HEADER_SIZE, 8L * newCapacity + HEADER_SIZE);
             Vect.memset(ptr + HEADER_SIZE + 8L * oldCapacity, 8L * (newCapacity - oldCapacity), 0);
-            Unsafe.getUnsafe().putInt(ptr, newCapacity);
+            Unsafe.putInt(ptr, newCapacity);
         }
     }
 
@@ -86,8 +86,8 @@ public class GroupByLongList {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + 8L * initialCapacity);
             Vect.memset(this.ptr + HEADER_SIZE, 8L * initialCapacity, 0);
-            Unsafe.getUnsafe().putInt(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
+            Unsafe.putInt(this.ptr, initialCapacity);
+            Unsafe.putInt(this.ptr + SIZE_OFFSET, 0);
         } else {
             this.ptr = ptr;
         }

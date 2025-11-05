@@ -74,8 +74,8 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
 
     public void clear() {
         if (ptr != 0) {
-            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
+            Unsafe.putInt(ptr + SIZE_OFFSET, 0);
+            Unsafe.putBoolean(ptr + IS_ASCII_OFFSET, true);
         }
     }
 
@@ -104,17 +104,17 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
         int thisSize = size();
         long lo = ptr + HEADER_SIZE + thisSize;
         seq.writeTo(lo, 0, thatSize);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, thisSize + thatSize);
-        Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, seq.isAscii() && isAscii());
+        Unsafe.putInt(ptr + SIZE_OFFSET, thisSize + thatSize);
+        Unsafe.putBoolean(ptr + IS_ASCII_OFFSET, seq.isAscii() && isAscii());
         return this;
     }
 
     @Override
     public Utf8Sink put(byte b) {
         checkCapacity(1);
-        Unsafe.getUnsafe().putByte(ptr + HEADER_SIZE + size(), b);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, size() + 1);
-        Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, false);
+        Unsafe.putByte(ptr + HEADER_SIZE + size(), b);
+        Unsafe.putInt(ptr + SIZE_OFFSET, size() + 1);
+        Unsafe.putBoolean(ptr + IS_ASCII_OFFSET, false);
         return this;
     }
 
@@ -154,12 +154,12 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
         long newSize = newCapacity + HEADER_SIZE;
         if (ptr == 0) {
             ptr = allocator.malloc(newSize);
-            Unsafe.getUnsafe().putInt(ptr, newCapacity);
-            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
+            Unsafe.putInt(ptr, newCapacity);
+            Unsafe.putInt(ptr + SIZE_OFFSET, 0);
+            Unsafe.putBoolean(ptr + IS_ASCII_OFFSET, true);
         } else {
             ptr = allocator.realloc(ptr, capacity + HEADER_SIZE, newSize);
-            Unsafe.getUnsafe().putInt(ptr, newCapacity);
+            Unsafe.putInt(ptr, newCapacity);
         }
     }
 }

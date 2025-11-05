@@ -210,7 +210,8 @@ public class Bootstrap {
                 config = configuration;
             }
 
-            Files.FS_CACHE_ENABLED = config.getCairoConfiguration().getFileDescriptorCacheEnabled();
+//            Files.FS_CACHE_ENABLED = config.getCairoConfiguration().getFileDescriptorCacheEnabled();
+            Files.FS_CACHE_ENABLED = false;
             LogLevel.init(config.getCairoConfiguration());
             if (LogLevel.TIMESTAMP_TIMEZONE != null) {
                 log.infoW().$("changing logger timezone [from=`UTC`, to=`").$(LogLevel.TIMESTAMP_TIMEZONE).$('`').I$();

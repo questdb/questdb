@@ -96,7 +96,7 @@ public class LongArray extends AbstractArray {
     public LongArray setAll(long value) {
         long ptr = array.ptr();
         for (int i = 0, size = array.getFlatViewLength(); i < size; i++) {
-            Unsafe.getUnsafe().putLong(ptr, value);
+            Unsafe.putLong(ptr, value);
             ptr += Long.BYTES;
         }
         return this;

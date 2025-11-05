@@ -92,7 +92,7 @@ public class Rnd {
 
     public void nextChars(final long address, int len) {
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(address + i * 2L, nextChar());
+            Unsafe.putChar(address + i * 2L, nextChar());
         }
     }
 

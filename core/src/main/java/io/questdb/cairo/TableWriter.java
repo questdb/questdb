@@ -7226,9 +7226,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     latchCount++;
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
-                    Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+                    Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
                     // original partition timestamp
-                    Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
+                    Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
 
                     if (
                             isCommitReplaceMode()
@@ -8309,10 +8309,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 // Save the hint that this symbol is already re-mapped, and the results are in o3MemColumns2
-                Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary, -1L);
+                Unsafe.putLong(mappedAddrBuffPrimary, -1L);
             } else {
                 // Save the hint that symbol column is not re-mapped
-                Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary, 0);
+                Unsafe.putLong(mappedAddrBuffPrimary, 0);
                 LOG.debug().$("no new symbols, no remapping needed [table=").$(tableToken)
                         .$(", column=").$safe(metadata.getColumnName(columnIndex))
                         .$(", rows=").$(totalRows)

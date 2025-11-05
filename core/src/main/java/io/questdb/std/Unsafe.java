@@ -124,7 +124,7 @@ public final class Unsafe {
 
     public static long calloc(long size, int memoryTag) {
         long ptr = malloc(size, memoryTag);
-        Vect.memset(ptr, size, 0);
+        Vect.memsetChecked(ptr, size, 0);
         return ptr;
     }
 
@@ -158,6 +158,7 @@ public final class Unsafe {
 
     public static long free(long ptr, long size, int memoryTag) {
         if (ptr != 0) {
+            AllocationsTracker.onFree(ptr);
             Unsafe.getUnsafe().freeMemory(ptr);
             incrFreeCount();
             recordMemAlloc(-size, memoryTag);
@@ -247,6 +248,7 @@ public final class Unsafe {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
             checkAllocLimit(size, memoryTag);
             long ptr = Unsafe.getUnsafe().allocateMemory(size);
+            AllocationsTracker.onMalloc(ptr, size);
             recordMemAlloc(size, memoryTag);
             incrMallocCount();
             return ptr;
@@ -264,15 +266,66 @@ public final class Unsafe {
         }
     }
 
+    public  static void putBoolean(long address, boolean value) {
+        AllocationsTracker.assertAllocatedMemory(address, 1);
+        UNSAFE.putBoolean(null, address, value);
+    }
+
+    public static void putByte(long address, byte value) {
+        AllocationsTracker.assertAllocatedMemory(address, Byte.BYTES);
+        UNSAFE.putByte(address, value);
+    }
+
+    public static void putChar(long address, char value) {
+        AllocationsTracker.assertAllocatedMemory(address, Character.BYTES);
+        UNSAFE.putChar(address, value);
+    }
+
+    public static void putDouble(long address, double value) {
+        AllocationsTracker.assertAllocatedMemory(address, Double.BYTES);
+        UNSAFE.putDouble(address, value);
+    }
+
+    public static void putFloat(long address, float value) {
+        AllocationsTracker.assertAllocatedMemory(address, Float.BYTES);
+        UNSAFE.putFloat(address, value);
+    }
+
+    public static void putInt(long address, int value) {
+        AllocationsTracker.assertAllocatedMemory(address, Integer.BYTES);
+        UNSAFE.putInt(address, value);
+    }
+
+    public static void putLong(long address, long value) {
+        AllocationsTracker.assertAllocatedMemory(address, Long.BYTES);
+        UNSAFE.putLong(address, value);
+    }
+
+    public static void putShort(long address, short value) {
+        AllocationsTracker.assertAllocatedMemory(address, Short.BYTES);
+        UNSAFE.putShort(address, value);
+    }
+
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
             checkAllocLimit(-oldSize + newSize, memoryTag);
+            if (oldSize != 0) {
+                // We need to track free before we call reallocateMemory()
+                // If the reallocation is successful then allocator may use the old address to satisfy a concurrent allocation
+                // request issued by some other thread. If we don't track free before the call, then the other thread may
+                // get the same address which is still tracked as allocated and this violates the tracking logic.
+                AllocationsTracker.onFree(address);
+            }
             long ptr = Unsafe.getUnsafe().reallocateMemory(address, newSize);
+            AllocationsTracker.onMalloc(ptr, newSize);
             recordMemAlloc(-oldSize + newSize, memoryTag);
             incrReallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
+            // reallocation failed - the original memory block is still valid
+            AllocationsTracker.onMalloc(address, oldSize);
+
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [RSS_MEM_USED=")
                     .put(getRssMemUsed())

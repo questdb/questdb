@@ -32,7 +32,7 @@ public interface FlatArrayView {
 
     default long appendPlainDoubleValue(long addr, int offset, int length) {
         for (int i = offset, n = offset + length; i < n; i++) {
-            Unsafe.getUnsafe().putDouble(addr, getDoubleAtAbsIndex(i));
+            Unsafe.putDouble(addr, getDoubleAtAbsIndex(i));
             addr += Double.BYTES;
         }
         return addr;

@@ -1011,9 +1011,10 @@ public class Utf8sTest {
             TestUtils.assertEquals(strSink, str);
 
             // test with DirectUtf8Sink too
-            DirectUtf8Sink directSink = new DirectUtf8Sink(size);
-            Utf8s.strCpy(mem, mem + size, directSink);
-            TestUtils.assertEquals(strSink, directSink);
+            try (DirectUtf8Sink directSink = new DirectUtf8Sink(size)) {
+                Utf8s.strCpy(mem, mem + size, directSink);
+                TestUtils.assertEquals(strSink, directSink);
+            }
         } finally {
             Unsafe.free(mem, size, MemoryTag.NATIVE_DEFAULT);
         }

@@ -351,7 +351,7 @@ public final class TableUtils {
             if (addr < 1) {
                 throw CairoException.critical(ff.errno()).put("Could not allocate 1 byte");
             }
-            Unsafe.getUnsafe().putByte(addr, walFlag);
+            Unsafe.putByte(addr, walFlag);
             ff.write(fd, addr, Byte.BYTES, 0);
         } finally {
             if (addr > 0) {
@@ -1585,10 +1585,10 @@ public final class TableUtils {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
-                Vect.memset(addr, count, 0);
+                Vect.memsetChecked(addr, count, 0);
                 break;
             case ColumnType.GEOBYTE:
-                Vect.memset(addr, count, GeoHashes.BYTE_NULL);
+                Vect.memsetChecked(addr, count, GeoHashes.BYTE_NULL);
                 break;
             case ColumnType.CHAR:
             case ColumnType.SHORT:
@@ -1801,7 +1801,7 @@ public final class TableUtils {
     }
 
     public static void writeIntOrFail(FilesFacade ff, long fd, long offset, int value, long tempMem8b, Path path) {
-        Unsafe.getUnsafe().putInt(tempMem8b, value);
+        Unsafe.putInt(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.critical(ff.errno())
                     .put("could not write 8 bytes [path=").put(path)
@@ -1813,7 +1813,7 @@ public final class TableUtils {
     }
 
     public static void writeLongOrFail(FilesFacade ff, long fd, long offset, long value, long tempMem8b, Path path) {
-        Unsafe.getUnsafe().putLong(tempMem8b, value);
+        Unsafe.putLong(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             throw CairoException.critical(ff.errno())
                     .put("could not write 8 bytes [path=").put(path)

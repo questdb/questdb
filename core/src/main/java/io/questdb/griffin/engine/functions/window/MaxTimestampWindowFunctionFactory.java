@@ -467,7 +467,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
@@ -572,7 +572,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
 
             long val = value != null ? value.getTimestamp(0) : Numbers.LONG_NULL;
 
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), val);
         }
     }
 
@@ -915,7 +915,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -1246,7 +1246,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -1616,7 +1616,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -1926,7 +1926,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -2145,7 +2145,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -2258,7 +2258,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -2366,7 +2366,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          */
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**

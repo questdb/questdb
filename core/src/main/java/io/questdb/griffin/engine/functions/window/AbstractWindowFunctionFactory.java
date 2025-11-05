@@ -203,7 +203,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
          */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
         }
     }
 
@@ -268,7 +268,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
          */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
         }
     }
 }
