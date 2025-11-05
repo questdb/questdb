@@ -137,6 +137,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         for (int metadataIndex = 0, n = metadata.getColumnCount(); metadataIndex < n; metadataIndex++) {
             final CharSequence metadataName = metadata.getColumnName(metadataIndex);
             final int parquetIndex = decoder.metadata().getColumnIndex(metadataName);
+            assert parquetIndex >= 0;
             columnIndexes.add(parquetIndex);
         }
         this.rowCount = decoder.metadata().getRowCount();

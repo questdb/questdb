@@ -66,19 +66,19 @@ import org.jetbrains.annotations.Nullable;
  */
 public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(ReadParquetRecordCursor.class);
-    public final FilesFacade ff;
     private final LongList auxPtrs = new LongList();
     private final DirectIntList columns;
     private final LongList dataPtrs = new LongList();
     private final PartitionDecoder decoder;
+    private final FilesFacade ff;
     // doesn't include unsupported columns
     private final RecordMetadata metadata;
+    private final ParquetRecord record;
     private final RowGroupBuffers rowGroupBuffers;
     private long addr = 0;
     private int currentRowInRowGroup;
     private long fd = -1;
     private long fileSize = 0;
-    private ParquetRecord record;
     private int rowGroupIndex;
     private long rowGroupRowCount;
 
@@ -89,6 +89,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             this.decoder = new PartitionDecoder();
             this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
+            record = new ParquetRecord(metadata.getColumnCount());
+
         } catch (Throwable th) {
             close();
             throw th;
@@ -177,10 +179,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             rowGroupBuffers.reopen();
             columns.reopen();
             final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
-
-            if (record == null) {
-                record = new ParquetRecord(metadata.getColumnCount());
-            }
 
             columns.setCapacity(2L * metadata.getColumnCount());
             for (int metadataIndex = 0, n = metadata.getColumnCount(); metadataIndex < n; metadataIndex++) {
