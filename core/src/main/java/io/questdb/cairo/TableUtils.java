@@ -380,6 +380,26 @@ public final class TableUtils {
         return function;
     }
 
+    @NotNull
+    public static Function createCursorFunction(
+            FunctionParser functionParser,
+            @NotNull QueryModel model,
+            @NotNull SqlExecutionContext executionContext,
+            RecordMetadata metadata
+    ) throws SqlException {
+        final ExpressionNode tableNameExpr = model.getTableNameExpr();
+        final Function function = functionParser.parseFunction(
+                tableNameExpr,
+                metadata,
+                executionContext
+        );
+        if (!ColumnType.isCursor(function.getType())) {
+            Misc.free(function);
+            throw SqlException.$(tableNameExpr.position, "function must return CURSOR");
+        }
+        return function;
+    }
+
     public static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
         if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');

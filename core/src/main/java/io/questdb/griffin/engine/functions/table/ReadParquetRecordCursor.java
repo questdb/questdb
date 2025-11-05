@@ -105,25 +105,59 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             return true;
         }
 
-        int metadataIndex = 0;
-        for (int parquetIndex = 0, n = parquetMetadata.getColumnCount(); parquetIndex < n; parquetIndex++) {
+        for (int metadataIndex = 0; metadataIndex < metadata.getColumnCount(); metadataIndex++) {
+            final int metadataType = metadata.getColumnType(metadataIndex);
+            final CharSequence metadataName = metadata.getColumnName(metadataIndex);
+            final int parquetIndex = parquetMetadata.getColumnIndex(metadataName);
+
+            if (parquetIndex < 0) {
+                return true; // column not present in parquet
+            }
+
             final int parquetType = parquetMetadata.getColumnType(parquetIndex);
-            // If the column is not recognized by the decoder, we have to skip it.
+
             if (ColumnType.isUndefined(parquetType)) {
+                // skip? But we need the projection
                 continue;
             }
-            if (!Chars.equalsIgnoreCase(parquetMetadata.getColumnName(parquetIndex), metadata.getColumnName(metadataIndex))) {
-                return true;
-            }
-            final int metadataType = metadata.getColumnType(metadataIndex);
+
             final boolean symbolRemappingDetected = (metadataType == ColumnType.VARCHAR && parquetType == ColumnType.SYMBOL);
-            // No need to compare column types if we deal with symbol remapping.
+
             if (!symbolRemappingDetected && metadataType != parquetType) {
                 return true;
             }
-            metadataIndex++;
         }
-        return metadataIndex != metadata.getColumnCount();
+
+        return false;
+//
+//        int metadataIndex = 0;
+//        for (int parquetIndex = 0, n = parquetMetadata.getColumnCount(); parquetIndex < n; parquetIndex++) {
+//
+//            final int parquetType = parquetMetadata.getColumnType(parquetIndex);
+//            // If the column is not recognized by the decoder, we have to skip it.
+//            if (ColumnType.isUndefined(parquetType)) {
+//                continue;
+//            }
+//
+//            CharSequence metadataColumnName = metadata.getColumnName(metadataIndex);
+//            if (parquetMetadata.getColumnIndex(metadataColumnName) < 0) {
+//                return true;
+//            }
+//
+//            if (metadataIndex != parquetIndex) {
+//
+//            }
+//
+//
+//            final int metadataType = metadata.getColumnType(metadataIndex);
+//            final boolean symbolRemappingDetected = (metadataType == ColumnType.VARCHAR && parquetType == ColumnType.SYMBOL);
+//            // No need to compare column types if we deal with symbol remapping.
+//            if (!symbolRemappingDetected && metadataType != parquetType) {
+//                return true;
+//            }
+//            metadataIndex++;
+//        }
+//        return metadataIndex != metadata.getColumnCount();
     }
 
     @Override

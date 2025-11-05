@@ -50,18 +50,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameCursor;
-import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.cairo.sql.SingleSymbolFilter;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.vm.Vm;
@@ -137,6 +127,7 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.functions.table.ReadParquetPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -2564,6 +2555,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateFunctionQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory tableFactory = model.getTableNameFunction();
         if (tableFactory != null) {
+//            if (tableFactory instanceof ProjectedPageFrame) {
+//                // we need to project
+//                return TableUtils.createCursorFunction(functionParser, model, executionContext, ((ProjectedPageFrame)tableFactory).getProjectionMetadata()).getRecordCursorFactory();
+//            }
+
             // We're transferring ownership of the tableFactory's factory to another factory
             // setting tableFactory to NULL will prevent double-ownership.
             // We should not release tableFactory itself, they typically just a lightweight factory wrapper.

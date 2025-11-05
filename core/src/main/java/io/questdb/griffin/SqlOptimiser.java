@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLev
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.table.ReadParquetPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -3411,14 +3412,14 @@ public class SqlOptimiser implements Mutable {
      *
      * @param model
      */
-    private void parquetProjectionPushdown(QueryModel model) throws SqlException {
+    private void parquetProjectionPushdown(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model == null) {
             return;
         }
 
         if (model.getTableName() == null || !SqlKeywords.isReadParquetKeyword(model.getTableName())
                 || !(model.getTableNameFunction() instanceof ProjectedPageFrame)) {
-            parquetProjectionPushdown(model.getNestedModel());
+            parquetProjectionPushdown(model.getNestedModel(), executionContext);
             return;
         }
 
@@ -3433,7 +3434,17 @@ public class SqlOptimiser implements Mutable {
             projectionMetadata.add(existingColumn);
         }
 
-        ((ProjectedPageFrame) model.getTableNameFunction()).setProjectionMetadata(projectionMetadata);
+        if (model.getTableNameFunction() instanceof ReadParquetPageFrameRecordCursorFactory) {
+            ReadParquetPageFrameRecordCursorFactory factory = (ReadParquetPageFrameRecordCursorFactory) model.getTableNameFunction();
+            ReadParquetPageFrameRecordCursorFactory projectedFactory = new ReadParquetPageFrameRecordCursorFactory(configuration, factory.path, projectionMetadata);
+            factory.close();
+            model.setTableNameFunction(projectedFactory);
+        }
+
+//        model.getTableNameFunction().close();
+//        model.setTableNameFunction(TableUtils.createCursorFunction(functionParser, model, executionContext, projectionMetadata).getRecordCursorFactory());
+//
+//        ((ProjectedPageFrame) model.getTableNameFunction()).setProjectionMetadata(projectionMetadata);
     }
 
     private void parseFunctionAndEnumerateColumns(
@@ -3441,7 +3452,7 @@ public class SqlOptimiser implements Mutable {
             @NotNull SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final RecordCursorFactory tableFactory;
+        RecordCursorFactory tableFactory;
         TableToken tableToken;
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
             switch (model.getShowKind()) {
@@ -7287,7 +7298,7 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
-            parquetProjectionPushdown(rewrittenModel);
+            parquetProjectionPushdown(rewrittenModel, sqlExecutionContext);
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed
