@@ -555,8 +555,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume
     ) {
         securityContext.authorizeMatViewCreate();
-        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume);
-        getDdlListener(matViewToken).onTableOrViewOrMatViewCreated(securityContext, matViewToken, TableUtils.TABLE_KIND_REGULAR_TABLE);
+        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume, TableUtils.TABLE_KIND_REGULAR_TABLE);
         final MatViewDefinition matViewDefinition = struct.getMatViewDefinition();
         try {
             if (matViewGraph.addView(matViewDefinition)) {
@@ -612,9 +611,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     .put(']');
         }
         securityContext.authorizeTableCreate(tableKind);
-        final TableToken tableToken = createTableOrViewOrMatViewUnsecure(mem, null, path, ifNotExists, struct, keepLock, inVolume);
-        getDdlListener(tableToken).onTableOrViewOrMatViewCreated(securityContext, tableToken, tableKind);
-        return tableToken;
+        return createTableOrViewOrMatViewUnsecure(securityContext, mem, null, path, ifNotExists, struct, keepLock, inVolume, tableKind);
     }
 
     public @NotNull ViewDefinition createView(
@@ -626,8 +623,7 @@ public class CairoEngine implements Closeable, WriterSource {
             CreateViewOperation struct
     ) {
         securityContext.authorizeViewCreate();
-        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(mem, blockFileWriter, path, ifNotExists, struct, false, false);
-        getDdlListener(viewToken).onTableOrViewOrMatViewCreated(securityContext, viewToken, TableUtils.TABLE_KIND_REGULAR_TABLE);
+        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, struct, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         final ViewDefinition viewDefinition = struct.getViewDefinition();
         try {
             if (viewGraph.addView(viewDefinition)) {
@@ -1743,13 +1739,15 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private @NotNull TableToken createTableOrViewOrMatViewUnsecure(
+            SecurityContext securityContext,
             MemoryMARW mem,
             @Nullable BlockFileWriter blockFileWriter,
             Path path,
             boolean ifNotExists,
             TableStructure struct,
             boolean keepLock,
-            boolean inVolume
+            boolean inVolume,
+            int tableKind
     ) {
         assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
         final CharSequence tableName = struct.getTableName();
@@ -1798,6 +1796,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             locked = false;
                             LOG.info().$("unlocked [table=").$(tableToken).$("]").$();
                         }
+                        getDdlListener(tableToken).onTableOrViewOrMatViewCreated(securityContext, tableToken, tableKind);
                         tableNameRegistry.registerName(tableToken);
                     } catch (Throwable e) {
                         keepLock = false;

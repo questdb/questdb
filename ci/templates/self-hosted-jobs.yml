@@ -1,12 +1,10 @@
 jobs:
   - job: linux_arm64_jdk17
+    workspace:
+      clean: all
     displayName: "on linux-arm64"
     pool:
-      name: "arm64"
-      demands:
-        - Agent.Name -equals arm64-$(System.StageName)$(Build.BuildId)
-    dependsOn:
-      - StartArmAgent
+      name: "hetzner-docker-arm"
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     variables:
@@ -19,8 +17,8 @@ jobs:
       javadoc_step: ""
       javadoc_profile: ""
       jdk: "1.17"
-      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-amazon-corretto.aarch64"
-      JAVA_HOME: "/usr/lib/jvm/java-17-amazon-corretto.aarch64"
+      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-openjdk-arm64"
+      JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-arm64"
       os: Linux
     steps:
       - template: steps.yml

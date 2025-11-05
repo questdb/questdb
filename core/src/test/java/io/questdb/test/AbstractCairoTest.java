@@ -115,7 +115,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
-import io.questdb.test.griffin.AsOfJoinTest;
+import io.questdb.test.griffin.engine.join.AsOfJoinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVariableTestSetter;
 import io.questdb.test.tools.BindVariableTestTuple;

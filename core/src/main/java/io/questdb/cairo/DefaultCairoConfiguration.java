@@ -551,7 +551,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getMaxSqlRecompileAttempts() {
-        return 10;
+        return 50;
     }
 
     @Override
@@ -671,11 +671,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getParquetExportCopyReportFrequencyLines() {
-        return 500_000;
-    }
-
-    @Override
     public int getParquetExportCompressionCodec() {
         return ParquetCompression.COMPRESSION_ZSTD;
     }
@@ -683,6 +678,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getParquetExportCompressionLevel() {
         return 9;
+    }
+
+    @Override
+    public int getParquetExportCopyReportFrequencyLines() {
+        return 500_000;
     }
 
     @Override
@@ -696,13 +696,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getParquetExportVersion() {
-        return ParquetVersion.PARQUET_VERSION_V1;
+    public CharSequence getParquetExportTableNamePrefix() {
+        return "zzz.copy.";
     }
 
     @Override
-    public CharSequence getParquetExportTableNamePrefix() {
-        return "zzz.copy.";
+    public int getParquetExportVersion() {
+        return ParquetVersion.PARQUET_VERSION_V1;
     }
 
     @Override

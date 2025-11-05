@@ -5,8 +5,30 @@ steps:
     submodules: false
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
-    condition: eq(variables['os'], 'Linux')
-
+    condition: |
+      and(
+        eq(variables['os'], 'Linux'),
+        ne(variables['poolName'], 'hetzner-docker'),
+        ne(variables['poolName'], 'hetzner-docker-arm')
+      )
+  - bash: |
+      sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
+      JAVA_PATH="/usr/lib/jvm/java-17-openjdk-amd64"
+      echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+      echo "JAVA_HOME will be set to: $JAVA_PATH"
+    displayName: "Install JDK and Maven"
+    condition: |
+      eq(variables['poolName'], 'hetzner-docker')
+  - bash: |
+      sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
+      JAVA_PATH="/usr/lib/jvm/java-17-openjdk-arm64"
+      echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+      echo "JAVA_HOME will be set to: $JAVA_PATH"
+    displayName: "Install JDK and Maven"
+    condition: |
+      eq(variables['poolName'], 'hetzner-docker-arm')
   - task: Cache@2
     displayName: "Cache non-default Maven"
     continueOnError: true
@@ -14,13 +36,23 @@ steps:
       key: '"maven_version" | "$(MAVEN_VERSION)"'
       path: $(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)
       cacheHitVar: MVN_CACHE_RESTORED
-    condition: ne(variables['MAVEN_VERSION_OPTION'], 'Default')
+    condition: |
+      and(
+        ne(variables['MAVEN_VERSION_OPTION'], 'Default'),
+        ne(variables['poolName'], 'hetzner-docker'),
+        ne(variables['poolName'], 'hetzner-docker-arm')
+      )
   - task: Cache@2
     displayName: "Cache .m2/repository"
     continueOnError: true
     inputs:
       key: '"questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"'
       path: $(MAVEN_CACHE_FOLDER)
+    condition: |
+      and(
+        ne(variables['poolName'], 'hetzner-docker'),
+        ne(variables['poolName'], 'hetzner-docker-arm')
+      )
   - task: Cache@2
     displayName: "Cache .cargo/registry"
     continueOnError: true
@@ -32,7 +64,9 @@ steps:
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        ne(variables['poolName'], 'hetzner-docker'),
+        ne(variables['poolName'], 'hetzner-docker-arm')
       )
   - pwsh: New-Item -Path "$HOME/.m2/repository" -ItemType Directory -Force
     displayName: "Ensure .m2/repository exists (PowerShell)"
@@ -127,7 +161,7 @@ steps:
       options:
         "--batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -P qdbr-coverage,build-web-console
         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)

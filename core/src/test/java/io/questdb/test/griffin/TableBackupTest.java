@@ -38,13 +38,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -58,15 +58,10 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Collection;
 
-@RunWith(Parameterized.class)
 public class TableBackupTest extends AbstractTest {
     private static final int ERRNO_EIO = 5;
     private static final StringSink sink1 = new StringSink();
@@ -90,26 +85,27 @@ public class TableBackupTest extends AbstractTest {
     private int renameErrno;
     private FilesFacade testFf;
 
-    public TableBackupTest(AbstractCairoTest.WalMode walMode, int partitionBy) {
-        isWal = walMode == AbstractCairoTest.WalMode.WITH_WAL;
-        this.partitionBy = partitionBy;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.HOUR},
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.DAY},
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.WEEK},
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.MONTH},
-                {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.YEAR},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.NONE},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.HOUR},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.DAY},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.WEEK},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.MONTH},
-                {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.YEAR}
-        });
+    public TableBackupTest() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        isWal = TestUtils.isWal(rnd);
+        if (!isWal) {
+            switch (rnd.nextInt(6)) {
+                case 0 -> this.partitionBy = PartitionBy.HOUR;
+                case 1 -> this.partitionBy = PartitionBy.MONTH;
+                case 2 -> this.partitionBy = PartitionBy.DAY;
+                case 3 -> this.partitionBy = PartitionBy.WEEK;
+                case 4 -> this.partitionBy = PartitionBy.YEAR;
+                default -> this.partitionBy = PartitionBy.NONE;
+            }
+        } else {
+            switch (rnd.nextInt(5)) {
+                case 0 -> this.partitionBy = PartitionBy.HOUR;
+                case 1 -> this.partitionBy = PartitionBy.MONTH;
+                case 2 -> this.partitionBy = PartitionBy.DAY;
+                case 3 -> this.partitionBy = PartitionBy.WEEK;
+                default -> this.partitionBy = PartitionBy.YEAR;
+            }
+        }
     }
 
     public static TableToken executeCreateTableStmt(
