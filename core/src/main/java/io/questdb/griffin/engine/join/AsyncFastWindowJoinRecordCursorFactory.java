@@ -74,6 +74,8 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
 // TODO(puzpuzpuz): support "small" page frame size mode in page frame cursor and use it for window join factories;
 //                  when it's on, separate min/max page frame config props should be used,
@@ -82,6 +84,8 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
     private static final PageFrameReducer AGGREGATE = AsyncFastWindowJoinRecordCursorFactory::aggregate;
     private static final PageFrameReducer AGGREGATE_VECT = AsyncFastWindowJoinRecordCursorFactory::aggregateVect;
     private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncFastWindowJoinRecordCursorFactory::filterAndAggregate;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT = AsyncFastWindowJoinRecordCursorFactory::filterAndAggregateVect;
+
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncFastWindowJoinRecordCursor cursor;
     private final PageFrameSequence<AsyncFastWindowJoinAtom> frameSequence;
@@ -166,7 +170,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                 messageBus,
                 atom,
                 masterFilter != null
-                        ? FILTER_AND_AGGREGATE
+                        ? atom.isVectorized() ? FILTER_AND_AGGREGATE_VECT : FILTER_AND_AGGREGATE
                         : atom.isVectorized() ? AGGREGATE_VECT : AGGREGATE,
                 reduceTaskFactory,
                 workerCount,
@@ -525,7 +529,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                         }
                         timestamps.add(slaveTimestamp);
 
-                        // now let's copy the column values to be aggregated
+                        // copy the column values to be aggregated
                         for (int i = 0; i < columnCount; i++) {
                             long ptr = slaveData.get(idx, 2 + i);
                             columnSink.of(ptr).put(joinRecord, columnIndexes.getQuick(i), columnTags[i]);
@@ -599,7 +603,377 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        // TODO(puzpuzpuz): implement properly
+        final long frameRowCount = task.getFrameRowCount();
+        assert frameRowCount > 0;
+        final AsyncFastWindowJoinAtom atom = task.getFrameSequence(AsyncFastWindowJoinAtom.class).getAtom();
+
+        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        record.init(frameMemory);
+        final DirectLongList rows = task.getFilteredRows();
+        rows.clear();
+
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final Function filter = atom.getMasterFilter(slotId);
+        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
+
+        try {
+            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+                applyFilter(filter, rows, record, frameRowCount);
+            } else {
+                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
+            }
+
+            final long filteredRowCount = rows.size();
+            task.setFilteredRowCount(filteredRowCount);
+
+            if (filteredRowCount > 0) {
+                final int masterTimestampIndex = atom.getMasterTimestampIndex();
+                final long joinWindowLo = atom.getJoinWindowLo();
+                final long joinWindowHi = atom.getJoinWindowHi();
+                final long valueSizeInBytes = atom.getValueSizeBytes();
+                assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
+                final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
+
+                final DirectMapValue value = atom.getMapValue(slotId);
+                final AsyncTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+                final Record slaveRecord = slaveTimeFrameHelper.getRecord();
+                final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+                final JoinRecord joinRecord = atom.getJoinRecord(slotId);
+                joinRecord.of(record, slaveRecord);
+                final long slaveTsScale = atom.getSlaveTsScale();
+                final long masterTsScale = atom.getMasterTsScale();
+                final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+
+                final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+                final GroupByLongList rowIds = atom.getRowIdsGroupByList(slotId);
+                final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
+                long dataPtr = slaveData.ptr();
+                if (dataPtr != 0) {
+                    long entrySize = slaveData.entrySize();
+                    long capacity = slaveData.capacity();
+
+                    for (long p = dataPtr, lim = dataPtr + entrySize * capacity; p < lim; p += entrySize) {
+                        int key = Unsafe.getUnsafe().getInt(p);
+                        if (key != 0) {
+                            long ptr1 = Unsafe.getUnsafe().getLong(p + 4);
+                            if (ptr1 != 0) {
+                                rowIds.of(ptr1).clear();
+                            }
+                            long ptr2 = Unsafe.getUnsafe().getLong(p + 12);
+                            if (ptr2 != 0) {
+                                timestamps.of(ptr2).clear();
+                            }
+                            Unsafe.getUnsafe().putInt(p, 0);
+                            Unsafe.getUnsafe().putLong(p + 20, 0);
+                        }
+                    }
+                }
+
+                final int masterSymbolIndex = atom.getMasterSymbolIndex();
+                final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
+                final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
+
+                record.setRowIndex(rows.get(0));
+                final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
+                record.setRowIndex(rows.get(filteredRowCount - 1));
+                final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
+                long slaveTimestampLo, slaveTimestampHi;
+
+                if (joinWindowLo == Long.MAX_VALUE) {
+                    slaveTimestampLo = Long.MIN_VALUE;
+                } else {
+                    slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+                }
+
+                if (joinWindowHi == Long.MAX_VALUE) {
+                    slaveTimestampHi = Long.MAX_VALUE;
+                } else {
+                    slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+                }
+
+                long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
+                if (slaveRowId != Long.MIN_VALUE) {
+                    long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    for (; ; ) {
+                        slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
+                        final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
+                        if (slaveTimestamp > slaveTimestampHi) {
+                            break;
+                        }
+                        final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
+                        final int matchingMasterKey = slaveSymbolLookupTable.get(Math.max(slaveKey + 1, 0));
+                        if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
+                            final int idx = Math.max(matchingMasterKey + 1, 0);
+                            long rowIdsPtr = slaveData.get(idx, 0);
+                            long timestampsPtr = slaveData.get(idx, 1);
+                            rowIds.of(rowIdsPtr);
+                            timestamps.of(timestampsPtr);
+
+                            if (rowIdsPtr == 0) {
+                                slaveData.put(idx, 0, rowIds.ptr());
+                            }
+
+                            if (timestampsPtr == 0) {
+                                slaveData.put(idx, 1, timestamps.ptr());
+                            }
+                            rowIds.add(baseSlaveRowId + slaveRowId);
+                            timestamps.add(slaveTimestamp);
+                        }
+                        if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
+                            if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                                break;
+                            }
+                            slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                        }
+                    }
+                }
+
+                // Process filtered master rows
+                for (long p = 0; p < filteredRowCount; p++) {
+                    long r = rows.get(p);
+                    record.setRowIndex(r);
+                    rows.ensureCapacity(valueSizeInLongs);
+                    value.of(rows.getAppendAddress());
+                    value.setNew(true);
+                    rows.skip(valueSizeInLongs);
+                    functionUpdater.updateEmpty(value);
+
+                    final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
+                    if (joinWindowLo == Long.MAX_VALUE) {
+                        slaveTimestampLo = Long.MIN_VALUE;
+                    } else {
+                        slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
+                    }
+
+                    if (joinWindowHi == Long.MAX_VALUE) {
+                        slaveTimestampHi = Long.MAX_VALUE;
+                    } else {
+                        slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                    }
+
+                    final int masterKey = record.getInt(masterSymbolIndex);
+                    final int idx = Math.max(masterKey + 1, 0);
+                    long rowIdsPtr = slaveData.get(idx, 0);
+                    long timestampsPtr = slaveData.get(idx, 1);
+                    long rowLo = slaveData.get(idx, 2);
+                    rowIds.of(rowIdsPtr);
+                    timestamps.of(timestampsPtr);
+
+                    if (rowIds != null && rowIds.size() > 0) {
+                        long newRowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        newRowLo = newRowLo < 0 ? -newRowLo - 1 : newRowLo;
+                        slaveData.put(idx, 2, newRowLo);
+                        rowLo = newRowLo;
+                        long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
+                        if (rowLo < rowHi) {
+                            slaveRowId = rowIds.get(rowLo);
+                            slaveTimeFrameHelper.recordAt(slaveRowId);
+                            functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                            value.setNew(false);
+                            for (long i = rowLo + 1; i < rowHi; i++) {
+                                slaveRowId = rowIds.get(i);
+                                slaveTimeFrameHelper.recordAt(slaveRowId);
+                                functionUpdater.updateExisting(value, joinRecord, slaveRowId);
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            atom.release(slotId);
+        }
+    }
+
+    private static void filterAndAggregateVect(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            @NotNull PageFrameReduceTask task,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable PageFrameSequence<?> stealingFrameSequence
+    ) {
+        final long frameRowCount = task.getFrameRowCount();
+        assert frameRowCount > 0;
+        final AsyncFastWindowJoinAtom atom = task.getFrameSequence(AsyncFastWindowJoinAtom.class).getAtom();
+
+        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        record.init(frameMemory);
+        final DirectLongList rows = task.getFilteredRows();
+        rows.clear();
+
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final Function filter = atom.getMasterFilter(slotId);
+        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
+        try {
+            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+                applyFilter(filter, rows, record, frameRowCount);
+            } else {
+                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
+            }
+
+            final long filteredRowCount = rows.size();
+            task.setFilteredRowCount(filteredRowCount);
+
+            if (filteredRowCount > 0) {
+                final int masterTimestampIndex = atom.getMasterTimestampIndex();
+                final long joinWindowLo = atom.getJoinWindowLo();
+                final long joinWindowHi = atom.getJoinWindowHi();
+                final long valueSizeInBytes = atom.getValueSizeBytes();
+                assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
+                final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
+
+                final DirectMapValue value = atom.getMapValue(slotId);
+                final AsyncTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+                final Record slaveRecord = slaveTimeFrameHelper.getRecord();
+                final JoinRecord joinRecord = atom.getJoinRecord(slotId);
+                joinRecord.of(record, slaveRecord);
+
+                final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
+                final GroupByAllocator allocator = atom.getAllocator(slotId);
+                allocator.close();
+                final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
+                columnSink.resetPtr();
+                final IntList columnIndexes = atom.getGroupByColumnIndexes();
+                final int columnCount = columnIndexes.size();
+                final var columnTags = atom.getGroupByColumnTags();
+                final long slaveTsScale = atom.getSlaveTsScale();
+                final long masterTsScale = atom.getMasterTsScale();
+                final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+                final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
+                final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+                long dataPtr = slaveData.ptr();
+                if (dataPtr != 0) {
+                    long entrySize = slaveData.entrySize();
+                    long capacity = slaveData.capacity();
+
+                    for (long p = dataPtr, lim = dataPtr + entrySize * capacity; p < lim; p += entrySize) {
+                        int key = Unsafe.getUnsafe().getInt(p);
+                        if (key != 0) {
+                            long ptr1 = Unsafe.getUnsafe().getLong(p + 4);
+                            if (ptr1 != 0) {
+                                timestamps.of(ptr1).clear();
+                            }
+                            Unsafe.getUnsafe().putInt(p, 0);
+                            Unsafe.getUnsafe().putLong(p + 12, 0);
+                            for (int i = 0; i < columnCount; i++) {
+                                long ptr = Unsafe.getUnsafe().getLong(p + 20 + i * 8);
+                                if (ptr != 0) {
+                                    columnSink.of(ptr).clear();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                final int masterSymbolIndex = atom.getMasterSymbolIndex();
+                final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
+                final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
+                record.setRowIndex(rows.get(0));
+                final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
+                record.setRowIndex(rows.get(filteredRowCount - 1));
+                final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
+                long slaveTimestampLo, slaveTimestampHi;
+
+                if (joinWindowLo == Long.MAX_VALUE) {
+                    slaveTimestampLo = Long.MIN_VALUE;
+                } else {
+                    slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+                }
+
+                if (joinWindowHi == Long.MAX_VALUE) {
+                    slaveTimestampHi = Long.MAX_VALUE;
+                } else {
+                    slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+                }
+
+                long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
+                if (slaveRowId != Long.MIN_VALUE) {
+                    for (; ; ) {
+                        slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
+                        final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
+                        if (slaveTimestamp > slaveTimestampHi) {
+                            break;
+                        }
+                        final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
+                        final int matchingMasterKey = slaveSymbolLookupTable.get(Math.max(slaveKey + 1, 0));
+                        if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
+                            final int idx = Math.max(matchingMasterKey + 1, 0);
+                            long timestampsPtr = slaveData.get(idx, 0);
+                            timestamps.of(timestampsPtr);
+                            if (timestampsPtr == 0) {
+                                slaveData.put(idx, 0, timestamps.ptr());
+                            }
+                            timestamps.add(slaveTimestamp);
+
+                            // Copy column values to be aggregated
+                            for (int i = 0; i < columnCount; i++) {
+                                long ptr = slaveData.get(idx, 2 + i);
+                                columnSink.of(ptr).put(joinRecord, columnIndexes.getQuick(i), columnTags[i]);
+                                if (ptr == 0) {
+                                    slaveData.put(idx, 2 + i, columnSink.ptr());
+                                }
+                            }
+                        }
+                        if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
+                            if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                                break;
+                            }
+                            slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                        }
+                    }
+                }
+
+                for (long p = 0; p < filteredRowCount; p++) {
+                    long r = rows.get(p);
+                    record.setRowIndex(r);
+
+                    rows.ensureCapacity(valueSizeInLongs);
+                    value.of(rows.getAppendAddress());
+                    rows.skip(valueSizeInLongs);
+                    for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                        groupByFunctions.getQuick(i).setEmpty(value);
+                    }
+
+                    final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
+                    if (joinWindowLo == Long.MAX_VALUE) {
+                        slaveTimestampLo = Long.MIN_VALUE;
+                    } else {
+                        slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
+                    }
+
+                    if (joinWindowHi == Long.MAX_VALUE) {
+                        slaveTimestampHi = Long.MAX_VALUE;
+                    } else {
+                        slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                    }
+
+                    final int masterKey = record.getInt(masterSymbolIndex);
+                    final int idx = Math.max(masterKey + 1, 0);
+                    long timestampsPtr = slaveData.get(idx, 0);
+                    long rowLo = slaveData.get(idx, 1);
+                    timestamps.of(timestampsPtr);
+
+                    if (timestamps != null && timestamps.size() > 0) {
+                        long newRowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        newRowLo = newRowLo < 0 ? -newRowLo - 1 : newRowLo;
+                        slaveData.put(idx, 1, newRowLo);
+                        rowLo = newRowLo;
+                        long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
+                        for (int i = 0; i < columnCount; i++) {
+                            final long ptr = slaveData.get(idx, 2 + i);
+                            final long typeSize = ColumnType.sizeOfTag(columnTags[i]);
+                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
+                        }
+                    }
+                }
+            }
+        } finally {
+            atom.release(slotId);
+        }
     }
 
     @Override
