@@ -187,7 +187,7 @@ def ensure_rust_version(version, components):
         install_components(components)
 
 
-def ensure_rust(version, components):
+def ensure_rust(version, components, libc='glibc'):
     rustup_bin = shutil.which('rustup')
     cargo_bin = shutil.which('cargo')
     if rustup_bin and cargo_bin:
@@ -207,10 +207,14 @@ def ensure_rust(version, components):
     print(textwrap.indent(output, '    '))
 
     # Export keying info we can use for build caching.
-    libc_version = linux_glibc_version()
     export_ci_var('RUSTC_HOST_TRIPLE', host_triple)
     export_ci_var('RUSTC_RELEASE', release)
-    export_ci_var('LINUX_GLIBC_VERSION', libc_version)
+    if libc == 'glibc':
+        libc_version = linux_glibc_version()
+        export_ci_var('LINUX_LIBC_VERSION', libc_version)
+    else:
+        libc_version = 'musl'
+        export_ci_var('LINUX_LIBC_VERSION', libc_version)
 
 
 def export_cargo_install_env():
@@ -223,6 +227,9 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--export-cargo-install-env', action='store_true')
     parser.add_argument('--components', nargs='*', default=[])
+    parser.add_argument(
+        '--libc', type=str, default='glibc', 
+        help='Specify the version (e.g., "glibc", "musl"). Default is "glibc".')
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         '--version', type=str, default='stable', 
@@ -247,6 +254,6 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
     sys.stderr.write(f'===== Ensuring installation of {args.version} with components {args.components} =====\n')
-    ensure_rust(args.version, args.components)
+    ensure_rust(args.version, args.components, args.libc)
     if args.export_cargo_install_env:
         export_cargo_install_env()

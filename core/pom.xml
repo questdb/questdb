@@ -409,7 +409,8 @@
                                     <executable>${java.home}/bin/jlink</executable>
                                     <arguments>
                                         <argument>--module-path</argument>
-                                        <argument>${project.build.directory}/questdb-${project.version}.jar</argument>
+                                        <argument>
+                                            ${project.build.directory}/questdb-${project.version}.jar</argument>
                                         <argument>--add-modules</argument>
                                         <argument>io.questdb,jdk.crypto.ec,java.management</argument>
                                         <argument>--output</argument>
@@ -528,6 +529,25 @@
             </properties>
         </profile>
         <profile>
+            <id>platform-linux-x86-64-musl</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                    <arch>amd64</arch>
+                </os>
+                <property>
+                    <name>env.musl</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <properties>
+                <archive.name>${project.version}-rt-linux-x86-64-musl</archive.name>
+                <runtime.name>questdb-${project.version}-rt-linux-x86-64-musl</runtime.name>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>linux-x86-64-musl/libjemalloc.so</jemalloc.so>
+            </properties>
+        </profile>
+        <profile>
             <id>platform-freebsd-x86-64</id>
             <activation>
                 <os>
@@ -555,6 +575,25 @@
                 <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
                 <platform.dir.name>linux-aarch64</platform.dir.name>
                 <jemalloc.so>libjemalloc.so</jemalloc.so>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-linux-aarch64-musl</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                    <arch>aarch64</arch>
+                </os>
+                <property>
+                    <name>env.musl</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <properties>
+                <archive.name>${project.version}-rt-linux-aarch64-musl</archive.name>
+                <runtime.name>questdb-${project.version}-rt-linux-aarch64-musl</runtime.name>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>linux-aarch64-musl/libjemalloc.so</jemalloc.so>
             </properties>
         </profile>
         <profile>
