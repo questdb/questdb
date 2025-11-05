@@ -92,7 +92,6 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final DirectMapValue ownerGroupByValue;
     private final JoinRecord ownerJoinRecord;
     private final Function ownerMasterFilter;
-    // Combined storage: [0]=rowIds GroupByLongList ptr, [1]=timestamps GroupByLongList ptr, [2]=rowLos value, [3]=columnSink ptr
     private final DirectIntMultiLongHashMap ownerSlaveData;
     private final AsyncTimeFrameHelper ownerSlaveTimeFrameHelper;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
@@ -104,7 +103,6 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<Function> perWorkerMasterFilters;
     private final ObjList<GroupByLongList> perWorkerRowIdsGroupByLists;
-    // Combined per-worker storage: [0]=rowIds GroupByLongList ptr, [1]=timestamps GroupByLongList ptr, [2]=rowLos value, [3]=columnSink ptr
     private final ObjList<DirectIntMultiLongHashMap> perWorkerSlaveData;
     private final ObjList<AsyncTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     private final ObjList<GroupByLongList> perWorkerTimestampsGroupByLists;

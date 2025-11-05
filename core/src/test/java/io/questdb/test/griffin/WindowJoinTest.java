@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -102,6 +103,110 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "on (t.sym = p.sym) " +
                             " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
                             "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testFastJoinWithMasterFilter() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType.getTimestampType() == rightTableTimestampType.getTimestampType());
+        assertMemoryLeak(() -> {
+            prepareTable();
+            String expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\n" +
+                    "AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t100.5\n" +
+                    "AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t100.5\n" +
+                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t101.0\n" +
+                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t200.0\n" +
+                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t200.0\n" +
+                    "AAPL\t103.0\t2023-01-01T09:07:00.000000Z\t102.5\n" +
+                    "MSFT\t202.0\t2023-01-01T09:08:00.000000Z\t201.5\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Async Window Fast Join workers: 1\n" +
+                            "      join filter: sym=sym\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
+                            "      master filter: price<300\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.*, avg(p.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) and  t.price < 300 " +
+                            " range between 2 minute preceding and 2 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // verify result
+            assertQuery(
+                    expect,
+                    "select t.*, avg(p.price) window_price " +
+                            "from (select * from trades where price < 300) t " +
+                            "left join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+
+            expect = replaceTimestampSuffix("ts\tmax\n" +
+                    "2023-01-01T09:00:00.000000Z\t2023-01-01T09:01:00.000000Z\n" +
+                    "2023-01-01T09:01:00.000000Z\t2023-01-01T09:01:00.000000Z\n" +
+                    "2023-01-01T09:02:00.000000Z\t2023-01-01T09:01:00.000000Z\n" +
+                    "2023-01-01T09:03:00.000000Z\t2023-01-01T09:03:00.000000Z\n" +
+                    "2023-01-01T09:04:00.000000Z\t2023-01-01T09:03:00.000000Z\n" +
+                    "2023-01-01T09:07:00.000000Z\t2023-01-01T09:06:00.000000Z\n" +
+                    "2023-01-01T09:08:00.000000Z\t2023-01-01T09:07:00.000000Z\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "SelectedRecord\n" +
+                            "    Sort\n" +
+                            "      keys: [ts, sym]\n" +
+                            "        Async Window Fast Join workers: 1\n" +
+                            "          join filter: sym=sym\n" +
+                            "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
+                            "          window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
+                            "          master filter: price<300\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: prices\n",
+                    "select t.ts, max(p.ts) " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) and  t.price < 300 " +
+                            " range between 2 minute preceding and 2 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // verify result
+            assertQuery(
+                    expect,
+                    "select t.ts, max(p.ts) " +
+                            "from (select * from trades where price < 300) t " +
+                            "left join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) " +
+                            "order by t.ts;",
                     "ts",
                     true,
                     true
