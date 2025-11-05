@@ -144,6 +144,7 @@ stages:
                 --format=html \
                 --output-dir=rust-llvm-coverage \
                 --ignore-filename-regex='(\.cargo/registry|rustc/.*\.rs)' \
+                --path-equivalence=/azp/_work/1/s,$(Build.SourcesDirectory) \
                 --instr-profile=questdbr.profdata \
                 --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
                 --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary
@@ -152,6 +153,7 @@ stages:
               llvm-cov export \
                 --format=lcov \
                 --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+                --path-equivalence=/azp/_work/1/s,$(Build.SourcesDirectory) \
                 --instr-profile=questdbr.profdata \
                 --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
                 --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary \
