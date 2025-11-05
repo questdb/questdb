@@ -39,8 +39,8 @@ import io.questdb.std.str.Path;
  * Factory for single-threaded read_parquet() SQL function.
  */
 public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory {
-    public ReadParquetRecordCursor cursor;
-    public Path path;
+    private ReadParquetRecordCursor cursor;
+    private Path path;
 
     public ReadParquetRecordCursorFactory(@Transient Path path, RecordMetadata metadata, FilesFacade ff) {
         super(metadata);
@@ -52,6 +52,10 @@ public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory 
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         cursor.of(path.$());
         return cursor;
+    }
+
+    public Path getPath() {
+        return path;
     }
 
     @Override

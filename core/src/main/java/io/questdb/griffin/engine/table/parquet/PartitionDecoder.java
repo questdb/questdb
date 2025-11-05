@@ -289,7 +289,7 @@ public class PartitionDecoder implements QuietCloseable {
         public int getColumnIndex(CharSequence name) {
             assert ptr != 0;
             for (int i = 0, n = columnNames.size(); i < n; i++) {
-                if (columnNames.getQuick(i).equals(name)) {
+                if (Chars.equals(columnNames.getQuick(i), name)) {
                     return i;
                 }
             }

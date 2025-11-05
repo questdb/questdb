@@ -38,7 +38,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -49,8 +48,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 public class ReadParquetPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
     private final PageFrameRecordCursorImpl cursor;
     private final ReadParquetPageFrameCursor pageFrameCursor;
-    public Path path;
-    private @Nullable RecordMetadata projection;
+    private Path path;
 
     public ReadParquetPageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -86,6 +84,10 @@ public class ReadParquetPageFrameRecordCursorFactory extends AbstractRecordCurso
         assert order != ORDER_DESC;
         pageFrameCursor.of(path.$());
         return pageFrameCursor;
+    }
+
+    public Path getPath() {
+        return path;
     }
 
     @Override

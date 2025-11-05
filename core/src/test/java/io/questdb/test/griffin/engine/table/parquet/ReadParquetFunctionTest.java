@@ -285,11 +285,20 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                             " from long_sequence(1))"
             );
 
+            execute(
+                    "create table z as (select" +
+                            " x::int id," +
+                            " timestamp_sequence(0,10000) as ts," +
+                            " timestamp_sequence(0,10000)::timestamp_ns as ns" +
+                            " from long_sequence(1))"
+            );
+
             try (
                     Path path = new Path();
                     PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader readerX = engine.getReader("x");
-                    TableReader readerY = engine.getReader("y")
+                    TableReader readerY = engine.getReader("y");
+                    TableReader readerZ = engine.getReader("z")
             ) {
                 path.of(root).concat("table.parquet").$();
                 PartitionEncoder.populateFromTableReader(readerX, partitionDescriptor, 0);
@@ -310,6 +319,17 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         PartitionEncoder.encode(partitionDescriptor, path);
 
                         // Query the data once again - this time the Parquet schema is different.
+                        // But the addition of an extra column does not prevent the original projection
+                        // from succeeding to read the file
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            Assert.assertTrue(cursor.hasNext());
+                        }
+
+                        // only when the breakage is to the projection i.e. a changed column type, should it break
+                        engine.getConfiguration().getFilesFacade().remove(path.$());
+                        PartitionEncoder.populateFromTableReader(readerZ, partitionDescriptor, 0);
+                        PartitionEncoder.encode(partitionDescriptor, path);
+
                         try {
                             try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
                                 Assert.fail();

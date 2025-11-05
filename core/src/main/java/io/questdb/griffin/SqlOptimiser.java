@@ -3412,36 +3412,50 @@ public class SqlOptimiser implements Mutable {
      */
     private void parquetProjectionPushdown(QueryModel model) {
 
-        // todo: unions, joins testing etc.
         if (model == null) {
             return;
         }
+        // Recurse into joins, nested, and unions first.
+        final ObjList<QueryModel> jm = model.getJoinModels();
+        for (int i = 1, n = jm.size(); i < n; i++) {
+            parquetProjectionPushdown(jm.getQuick(i));
+        }
+        parquetProjectionPushdown(model.getNestedModel());
+        parquetProjectionPushdown(model.getUnionModel());
 
-        if (model.getTableName() == null || !SqlKeywords.isReadParquetKeyword(model.getTableName())) {
-            parquetProjectionPushdown(model.getNestedModel());
+        final RecordCursorFactory existingFactory = model.getTableNameFunction();
+        if (!(existingFactory instanceof ReadParquetPageFrameRecordCursorFactory)
+                && !(existingFactory instanceof ReadParquetRecordCursorFactory)) {
             return;
         }
 
-        GenericRecordMetadata existingMetadata = (GenericRecordMetadata) model.getTableNameFunction().getMetadata();
+        RecordMetadata existingMetadata = model.getTableNameFunction().getMetadata();
         GenericRecordMetadata projectionMetadata = new GenericRecordMetadata();
-        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
-            QueryColumn column = model.getColumns().getQuick(i);
+        for (int i = 0, n = model.getTopDownColumns().size(); i < n; i++) {
+            QueryColumn column = model.getTopDownColumns().getQuick(i);
             int existingIndex = existingMetadata.getColumnIndex(column.getName());
             TableColumnMetadata existingColumn = existingMetadata.getColumnMetadata(existingIndex);
             projectionMetadata.add(existingColumn);
         }
 
-        if (model.getTableNameFunction() instanceof ReadParquetPageFrameRecordCursorFactory factory) {
-            ReadParquetPageFrameRecordCursorFactory projectedFactory = new ReadParquetPageFrameRecordCursorFactory(configuration, factory.path, projectionMetadata);
-            factory.close();
-            model.setTableNameFunction(projectedFactory);
+        if (projectionMetadata.getColumnCount() == 0) {
+            return; // no pushdown
         }
 
-        if (model.getTableNameFunction() instanceof ReadParquetRecordCursorFactory factory) {
-            ReadParquetRecordCursorFactory projectedFactory = new ReadParquetRecordCursorFactory(factory.path, projectionMetadata, configuration.getFilesFacade());
-            factory.close();
-            model.setTableNameFunction(projectedFactory);
+        projectionMetadata.setTimestampIndex(existingMetadata.getTimestampIndex());
+
+        RecordCursorFactory projectedFactory;
+        if (existingFactory instanceof ReadParquetPageFrameRecordCursorFactory oldFactory) {
+            projectedFactory = new ReadParquetPageFrameRecordCursorFactory(configuration, oldFactory.getPath(), projectionMetadata);
+        } else {
+            ReadParquetRecordCursorFactory oldFactory = (ReadParquetRecordCursorFactory) existingFactory;
+            projectedFactory = new ReadParquetRecordCursorFactory(oldFactory.getPath(), projectionMetadata, configuration.getFilesFacade());
         }
+
+        existingFactory.close();
+        tableFactoriesInFlight.remove(existingFactory);
+        model.setTableNameFunction(projectedFactory);
+        tableFactoriesInFlight.add(projectedFactory);
     }
 
     private void parseFunctionAndEnumerateColumns(

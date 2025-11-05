@@ -277,7 +277,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     .put(", columnCount=")
                     .put(addressCache.getColumnCount());
         }
-
         // Prepare table reader to parquet column index mappings.
         toParquetColumnIndexes.clear();
         int metadataIndex = 0;
@@ -300,13 +299,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // Now do the final remapping.
         parquetColumns.clear();
         fromParquetColumnIndexes.clear();
-        fromParquetColumnIndexes.setAll(parquetMetadata.getColumnCount(), -1);
+        fromParquetColumnIndexes.setAll(metadataIndex, -1);
         for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
             final int columnIndex = addressCache.getColumnIndexes().getQuick(i);
-            final int parquetColumnIndex = toParquetColumnIndexes.getQuick(columnIndex);
             final int columnType = addressCache.getColumnTypes().getQuick(i);
-            parquetColumns.add(parquetColumnIndex);
-            fromParquetColumnIndexes.setQuick(parquetColumnIndex, i);
+            parquetColumns.add(columnIndex);
+            fromParquetColumnIndexes.extendAndSet(columnIndex, i);
             parquetColumns.add(columnType);
         }
     }
