@@ -2629,28 +2629,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                 if (!hasLinearHint) {
                     if (slave.supportsTimeFrameCursor()) {
-                        int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-                        AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, isSelfJoin);
-                        boolean isOptimizable = columnAccessHelper != NoopColumnAccessHelper.INSTANCE;
                         int joinColumnSplit = masterMetadata.getColumnCount();
                         JoinContext slaveContext = slaveModel.getJoinContext();
 
-                        boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
-                        if (isOptimizable && hasIndexHint && isSingleSymbolJoinWithIndex(slaveMetadata)) {
-                            return new AsOfJoinIndexedRecordCursorFactory(
+                        boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
+                        if (hasDenseHint) {
+                            return new AsOfJoinDenseRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
                                     master,
+                                    createRecordSinkMaster(masterMetadata),
                                     slave,
+                                    createRecordSinkSlave(slaveMetadata),
                                     joinColumnSplit,
-                                    slaveSymbolColumnIndex,
-                                    columnAccessHelper,
+                                    keyTypes,
                                     slaveContext,
                                     toleranceInterval
                             );
                         }
 
+                        AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, isSelfJoin);
+                        boolean isOptimizable = columnAccessHelper != NoopColumnAccessHelper.INSTANCE;
                         if (isOptimizable && isSingleSymbolJoin(slaveMetadata)) {
+                            int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                            slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex);
+
+                            boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
+                            if (hasIndexHint && slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
+                                return new AsOfJoinIndexedRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        slave,
+                                        joinColumnSplit,
+                                        slaveSymbolColumnIndex,
+                                        columnAccessHelper,
+                                        slaveContext,
+                                        toleranceInterval
+                                );
+                            }
                             boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias);
                             boolean hasMemoizedDrivebyHint = SqlHints.hasAsOfMemoizedDrivebyHint(model, masterAlias, slaveAlias);
                             if (hasMemoizedHint || hasMemoizedDrivebyHint) {
@@ -2667,21 +2684,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         hasMemoizedDrivebyHint
                                 );
                             }
-
-                            boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
-                            if (hasDenseHint) {
-                                return new AsOfJoinDenseRecordCursorFactory(
-                                        configuration,
-                                        joinMetadata,
-                                        master,
-                                        slave,
-                                        joinColumnSplit,
-                                        slaveSymbolColumnIndex,
-                                        columnAccessHelper,
-                                        slaveContext,
-                                        toleranceInterval
-                                );
-                            }
                         }
                         return new AsOfJoinFastRecordCursorFactory(
                                 configuration,
@@ -2695,8 +2697,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 slaveContext,
                                 toleranceInterval
                         );
-                    }
-                    if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                    } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
                         RecordCursorFactory slaveBase = slave.getBaseFactory();
                         int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
 
@@ -2722,8 +2723,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 slaveTimestampIndex,
                                 toleranceInterval
                         );
-                    }
-                    if (slave.isProjection()) {
+                    } else if (slave.isProjection()) {
                         RecordCursorFactory projectionBase = slave.getBaseFactory();
                         // We know projectionBase does not support supportsTimeFrameCursor, because
                         // Projections forward this call to its base factory and if we are in this branch
@@ -2786,6 +2786,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     }
                 }
+                // fallback for keyed join when no optimizations are applicable, or when asof_linear hint is used:
                 return new AsOfJoinLightRecordCursorFactory(
                         configuration,
                         joinMetadata,
@@ -2800,6 +2801,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
+            // reaching this point means the join is non-keyed
             if (!hasLinearHint) {
                 if (slave.supportsTimeFrameCursor()) {
                     return new AsOfJoinNoKeyFastRecordCursorFactory(
@@ -2880,7 +2882,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
             }
-            // slow path: this always works but can be quite slow, especially with large slave tables
+            // fallback for non-keyed join when no optimizations are applicable, or the asof_linear hint is used:
             return new AsOfJoinLightNoKeyRecordCursorFactory(
                     joinMetadata,
                     master,
@@ -6659,25 +6661,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private boolean isSingleSymbolJoin(RecordMetadata slaveMetadata) {
-        return isSingleSymbolJoin(slaveMetadata, false);
-    }
-
-    /**
-     * Checks if the ASOF JOIN is on a single symbol column, and optionally requires the slave column is indexed.
-     * This is a precondition to enable some optimized ASOF JOIN implementations.
-     */
-    private boolean isSingleSymbolJoin(RecordMetadata slaveMetadata, boolean requireSlaveIndex) {
         // Must be joining on exactly one column (besides timestamps)
         if (listColumnFilterA.size() != 1 || listColumnFilterB.size() != 1) {
             return false;
         }
         int slaveIndex = listColumnFilterA.getColumnIndexFactored(0);
-        return slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL &&
-                (!requireSlaveIndex || slaveMetadata.isColumnIndexed(slaveIndex));
-    }
-
-    private boolean isSingleSymbolJoinWithIndex(RecordMetadata slaveMetadata) {
-        return isSingleSymbolJoin(slaveMetadata, true);
+        return slaveMetadata.getColumnType(slaveIndex) == SYMBOL;
     }
 
     // skips skipped models until finding a WHERE clause

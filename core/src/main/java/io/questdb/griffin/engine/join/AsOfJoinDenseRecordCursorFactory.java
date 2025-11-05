@@ -27,6 +27,9 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -41,66 +44,95 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
+import io.questdb.std.Transient;
 
 /**
- * Dense ASOF JOIN cursor is an improvement over the Light cursor for the case of
- * single-symbol JOIN ON condition, where the slave cursor is a TimeFrameRecordCursor.
- * While the Light cursor only needs a forward-only scan of the slave cursor, the Dense
- * cursor uses two scans: forward and backward. The both start at the slave row that matches
- * the first master row by timestamp (as determined by nextSlave()).
+ * Dense ASOF JOIN cursor is an improvement over the Light cursor for the case where
+ * the slave cursor is a {@link TimeFrameRecordCursor}. While the Light cursor uses a
+ * forward-only scan of the slave cursor, the Dense cursor uses two scans: forward and
+ * backward. They both start at the slave row that matches the first master row by
+ * timestamp (as determined by {@link AbstractAsOfJoinFastRecordCursor#nextSlave
+ * nextSlave()}).
  * <p>
- * When encountering another master row, we first resume the forward scan from the previous
- * position until the master timestamp. While scanning, we memorize the symbol at each row
- * in a hashmap. Then we check whether the symbol is in the hashmap. If yes, we're done.
- * If not, we check whether it's in the backward scan's hashmap. If not, we resume the
- * backward scan until we find the symbol or exhaust the backward scan. In the backward scan,
- * we memorize only new symbols (not already encountered in backward scan).
+ * When encountering another master row, we first resume the forward scan from the
+ * previous position until the master timestamp. While scanning, we memorize the join
+ * key at each row in a hashmap. Then we check whether the key is in the hashmap. If
+ * yes, we're done.
  * <p>
- * Dense ASOF JOIN algo is the best choice when the master rows are densely interleaved with
- * slave rows. For each master row, we only need to scan a few slave rows. If the interleaving
- * is sparse, we'll still scan everything from the previous position, while the matching row
- * could be only a few rows behind the master.
+ * Up to this point, the algorithm is identical to the Light cursor. The key difference
+ * is, we didn't start the forward scan at the top of the slave cursor, and not finding
+ * the key in the hashmap doesn't mean there's no match. We must continue with the
+ * backward scan.
  * <p>
- * The Fast/Memoized algos are better for sparse interleaving because they use binary search to
- * quickly zero in on the latest slave row ahead of master, and then search backward. In a
- * typical case, this means they are able to entirely ignore most of the slave rows.
+ * If we didn't find the join key in the hashmap of the forward scan, we check whether
+ * it's in the backward scan's hashmap. If not, we resume the backward scan until we
+ * find the key or exhaust the backward scan. In the backward scan, we memorize only new
+ * keys (not already encountered in backward scan).
+ * <p>
+ * The Dense algorithm is the best choice when the master rows are densely interleaved
+ * with slave rows. For each master row, we only need to scan a few slave rows. If the
+ * interleaving is sparse, we'll still scan everything from the previous position, while
+ * the matching row could be only a few rows behind the master.
+ * <p>
+ * The Fast/Memoized algos are better for sparse interleaving because they use binary
+ * search to quickly zero in on the latest slave row ahead of master, and then search
+ * backward. In a typical case, this means they are able to entirely ignore most of the
+ * slave rows.
  */
 public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
     private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
-    private final AsofJoinColumnAccessHelper columnAccessHelper;
+
     private final AsOfJoinDenseRecordCursor cursor;
-    private final int slaveSymbolColumnIndex;
+    private final RecordSink masterKeySink;
+    private final RecordSink slaveKeySink;
     private final long toleranceInterval;
 
     public AsOfJoinDenseRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
+            RecordSink masterKeySink,
             RecordCursorFactory slaveFactory,
+            RecordSink slaveKeySink,
             int columnSplit,
-            int slaveSymbolColumnIndex,
-            AsofJoinColumnAccessHelper columnAccessHelper,
+            @Transient ColumnTypes keyTypes,
             JoinContext joinContext,
             long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        assert slaveFactory.supportsTimeFrameCursor();
-        this.columnAccessHelper = columnAccessHelper;
+        this.masterKeySink = masterKeySink;
+        this.slaveKeySink = slaveKeySink;
         this.toleranceInterval = toleranceInterval;
-        this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
-        this.cursor = new AsOfJoinDenseRecordCursor(
-                configuration,
-                columnSplit,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                masterFactory.getMetadata().getTimestampIndex(),
-                masterFactory.getMetadata().getTimestampType(),
-                slaveFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampType()
-        );
+
+        Map fwdScanKeyToRowId = null;
+        Map bwdScanKeyToRowId = null;
+        try {
+            long maxSinkTargetHeapSize = (long)
+                    configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
+            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE);
+            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE);
+            this.cursor = new AsOfJoinDenseRecordCursor(
+                    columnSplit,
+                    fwdScanKeyToRowId,
+                    bwdScanKeyToRowId,
+                    NullRecordFactory.getInstance(slaveFactory.getMetadata()),
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    masterFactory.getMetadata().getTimestampType(),
+                    new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                    slaveFactory.getMetadata().getTimestampIndex(),
+                    slaveFactory.getMetadata().getTimestampType(),
+                    new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN)
+            );
+        } catch (Throwable th) {
+            Misc.free(bwdScanKeyToRowId);
+            Misc.free(fwdScanKeyToRowId);
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -152,39 +184,41 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
 
         private final Map bwdScanKeyToRowId;
         private final Map fwdScanKeyToRowId;
+        private final SingleRecordSink masterSinkTarget;
+        private final SingleRecordSink slaveSinkTarget;
         private long backwardRowId = -1;
         private boolean backwardScanExhausted;
         private long forwardRowId = -1;
         private boolean forwardScanExhausted;
         private boolean slaveCursorReadyForForwardScan;
 
+
         public AsOfJoinDenseRecordCursor(
-                CairoConfiguration configuration,
                 int columnSplit,
+                Map fwdScanKeyToRowId,
+                Map bwdScanKeyToRowId,
                 Record nullRecord,
                 int masterTimestampIndex,
                 int masterTimestampType,
+                SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
-                int slaveTimestampType
+                int slaveTimestampType,
+                SingleRecordSink slaveSinkTarget
         ) {
-            super(
-                    columnSplit,
-                    nullRecord,
-                    masterTimestampIndex,
-                    masterTimestampType,
-                    slaveTimestampIndex,
-                    slaveTimestampType,
-                    configuration.getSqlAsOfJoinLookAhead())
-            ;
-            this.fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
-            this.bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, 1);
+            this.fwdScanKeyToRowId = fwdScanKeyToRowId;
+            this.bwdScanKeyToRowId = bwdScanKeyToRowId;
+            this.masterSinkTarget = masterSinkTarget;
+            this.slaveSinkTarget = slaveSinkTarget;
         }
 
         @Override
         public void close() {
             super.close();
-            Misc.free(fwdScanKeyToRowId);
+            Misc.free(slaveSinkTarget);
+            Misc.free(masterSinkTarget);
             Misc.free(bwdScanKeyToRowId);
+            Misc.free(fwdScanKeyToRowId);
         }
 
         @Override
@@ -200,7 +234,8 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
             final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL
                     ? Long.MIN_VALUE
                     : masterTimestamp - toleranceInterval;
-            int symbolKeyToFind = columnAccessHelper.getSlaveKey(masterRecord);
+            masterSinkTarget.clear();
+            masterKeySink.copy(masterRecord, masterSinkTarget);
 
             if (forwardRowId == -1) {
                 // No scanning done yet, initialize state of forward and backward scans
@@ -230,14 +265,14 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
 
             // Let's see if we saw a matching symbol in forward scan
             key = fwdScanKeyToRowId.withKey();
-            key.putInt(symbolKeyToFind);
+            key.put(masterRecord, masterKeySink);
             value = key.findValue();
             if (value != null) {
                 return setupSlaveRec(value.getLong(0), minSlaveTimestamp);
             }
             // Symbol not found, see if we already saw it in backward scan
             key = bwdScanKeyToRowId.withKey();
-            key.putInt(symbolKeyToFind);
+            key.put(masterRecord, masterKeySink);
             value = key.findValue();
             if (value != null) {
                 return setupSlaveRec(value.getLong(0), minSlaveTimestamp);
@@ -263,13 +298,14 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
                     break;
                 }
                 key = bwdScanKeyToRowId.withKey();
-                int symbolKey = slaveRecB.getInt(slaveSymbolColumnIndex);
-                key.putInt(symbolKey);
+                key.put(slaveRecB, slaveKeySink);
                 value = key.createValue();
                 if (value.isNew()) {
                     value.putLong(0, backwardRowId);
                 }
-                if (symbolKey == symbolKeyToFind) {
+                slaveSinkTarget.clear();
+                slaveKeySink.copy(slaveRecB, slaveSinkTarget);
+                if (masterSinkTarget.memeq(slaveSinkTarget)) {
                     return setupSlaveRec(backwardRowId, minSlaveTimestamp);
                 }
                 if (backwardRowId > frameRowLo) {
@@ -293,7 +329,8 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
-            columnAccessHelper.of(slaveCursor);
+            masterSinkTarget.reopen();
+            slaveSinkTarget.reopen();
             fwdScanKeyToRowId.reopen();
             fwdScanKeyToRowId.clear();
             bwdScanKeyToRowId.reopen();
@@ -328,7 +365,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
                 }
                 if (slaveTimestamp >= minSlaveTimestamp) {
                     key = fwdScanKeyToRowId.withKey();
-                    key.putInt(slaveRecB.getInt(slaveSymbolColumnIndex));
+                    key.put(slaveRecB, slaveKeySink);
                     value = key.createValue();
                     value.putLong(0, slaveRecB.getRowId());
                 }
@@ -361,7 +398,6 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
     }
 
     static {
-        TYPES_KEY.add(ColumnType.INT);
         TYPES_VALUE.add(ColumnType.LONG);
     }
 }
