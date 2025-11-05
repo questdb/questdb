@@ -34,8 +34,6 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
 import java.sql.CallableStatement;
@@ -45,8 +43,6 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -57,19 +53,13 @@ import java.util.regex.Pattern;
 
 import static org.junit.Assert.assertTrue;
 
-@RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PreparedStatementInvalidationTest extends BasePGTest {
 
     private final boolean walEnabled;
 
-    public PreparedStatementInvalidationTest(WalMode walMode) {
-        this.walEnabled = (walMode == WalMode.WITH_WAL);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> testParams() {
-        return Arrays.asList(new Object[][]{{WalMode.WITH_WAL}, {WalMode.NO_WAL}});
+    public PreparedStatementInvalidationTest() {
+        this.walEnabled = TestUtils.isWal();
     }
 
     @Before
@@ -117,8 +107,10 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 try (ResultSet rs = selectStatement.executeQuery()) {
                     sink.clear();
                     assertResultSet(
-                            "id[BIGINT],val[INTEGER],ts[TIMESTAMP]\n" +
-                                    "42,0,1990-01-01 00:00:00.0\n",
+                            """
+                                    id[BIGINT],val[INTEGER],ts[TIMESTAMP]
+                                    42,0,1990-01-01 00:00:00.0
+                                    """,
                             sink,
                             rs
                     );
@@ -162,8 +154,10 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 mayDrainWalQueue();
 
                 // assert it's actually written
-                assertSql("id\tval\tts\n" +
-                                "43\t0\t1990-01-01T00:00:00.000000Z\n",
+                assertSql("""
+                                id\tval\tts
+                                43\t0\t1990-01-01T00:00:00.000000Z
+                                """,
                         "select * from insert_after_drop");
             }
         });
@@ -224,8 +218,10 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 mayDrainWalQueue();
 
                 // assert it's actually written
-                assertSql("id\tval2\tts\n" +
-                                "43\t0\t1990-01-01T00:00:00.000000Z\n",
+                assertSql("""
+                                id\tval2\tts
+                                43\t0\t1990-01-01T00:00:00.000000Z
+                                """,
                         "select * from insert_after_drop");
             }
         });
@@ -255,9 +251,11 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 mayDrainWalQueue();
 
                 // assert it's actually written
-                assertSql("id\tts\n" +
-                                "42\t1990-01-01T00:00:00.000000Z\n" +
-                                "43\t1990-01-01T00:00:00.000000Z\n",
+                assertSql("""
+                                id\tts
+                                42\t1990-01-01T00:00:00.000000Z
+                                43\t1990-01-01T00:00:00.000000Z
+                                """,
                         "select * from insert_after_drop");
             }
         });
@@ -479,11 +477,15 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                         ResultSetMetaData metaData = rs.getMetaData();
                         String expected = null;
                         if (metaData.getColumnCount() == 3) {
-                            expected = "id[BIGINT],val[INTEGER],ts[TIMESTAMP]\n" +
-                                    "42,0,1990-01-01 00:00:00.0\n";
+                            expected = """
+                                    id[BIGINT],val[INTEGER],ts[TIMESTAMP]
+                                    42,0,1990-01-01 00:00:00.0
+                                    """;
                         } else if (metaData.getColumnCount() == 4) {
-                            expected = "id[BIGINT],val[INTEGER],ts[TIMESTAMP],val2[INTEGER]\n" +
-                                    "42,0,1990-01-01 00:00:00.0,null\n";
+                            expected = """
+                                    id[BIGINT],val[INTEGER],ts[TIMESTAMP],val2[INTEGER]
+                                    42,0,1990-01-01 00:00:00.0,null
+                                    """;
                         } else {
                             Assert.fail("Unexpected column count: " + metaData.getColumnCount());
                         }
@@ -523,8 +525,10 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 try (ResultSet resultSet = ps.executeQuery()) {
                     sink.clear();
                     assertResultSet(
-                            "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
-                                    "2,foobar,1970-01-01 00:00:00.000001\n",
+                            """
+                                    id[INTEGER],str[VARCHAR],ts[TIMESTAMP]
+                                    2,foobar,1970-01-01 00:00:00.000001
+                                    """,
                             sink,
                             resultSet
                     );
@@ -559,8 +563,10 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 try (ResultSet resultSet = ps.executeQuery()) {
                     sink.clear();
                     assertResultSet(
-                            "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
-                                    "2,foobar,1970-01-01 00:00:00.000001\n",
+                            """
+                                    id[INTEGER],str[VARCHAR],ts[TIMESTAMP]
+                                    2,foobar,1970-01-01 00:00:00.000001
+                                    """,
                             sink,
                             resultSet
                     );
@@ -576,8 +582,10 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 try (ResultSet rs = ps.executeQuery()) {
                     sink.clear();
                     assertResultSet(
-                            "id[INTEGER],ts[TIMESTAMP]\n" +
-                                    "2,1970-01-01 00:00:00.000001\n",
+                            """
+                                    id[INTEGER],ts[TIMESTAMP]
+                                    2,1970-01-01 00:00:00.000001
+                                    """,
                             sink, rs
                     );
                 }
@@ -593,8 +601,10 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 try (ResultSet rs = ps.executeQuery()) {
                     sink.clear();
                     assertResultSet(
-                            "id[INTEGER],ts[TIMESTAMP],str2[VARCHAR]\n" +
-                                    "2,1970-01-01 00:00:00.000001,2\n",
+                            """
+                                    id[INTEGER],ts[TIMESTAMP],str2[VARCHAR]
+                                    2,1970-01-01 00:00:00.000001,2
+                                    """,
                             sink, rs
                     );
                 }
@@ -612,8 +622,10 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 try (ResultSet rs = ps.executeQuery()) {
                     sink.clear();
                     assertResultSet(
-                            "id[INTEGER],ts[TIMESTAMP],str3[VARCHAR]\n" +
-                                    "2,1970-01-01 00:00:00.000001,2_new\n",
+                            """
+                                    id[INTEGER],ts[TIMESTAMP],str3[VARCHAR]
+                                    2,1970-01-01 00:00:00.000001,2_new
+                                    """,
                             sink, rs
                     );
                 }
@@ -643,17 +655,19 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 mayDrainWalQueue();
                 ResultSet rs1 = select.executeQuery();
                 sink.clear();
-                assertResultSet("timestamp[TIMESTAMP]\n" +
-                        "1970-01-01 00:00:00.0\n" +
-                        "1970-01-01 00:16:40.0\n" +
-                        "1970-01-01 00:33:20.0\n" +
-                        "1970-01-01 00:50:00.0\n" +
-                        "1970-01-01 01:06:40.0\n" +
-                        "1970-01-01 01:23:20.0\n" +
-                        "1970-01-01 01:40:00.0\n" +
-                        "1970-01-01 01:56:40.0\n" +
-                        "1970-01-01 02:13:20.0\n" +
-                        "1970-01-01 02:30:00.0\n", sink, rs1);
+                assertResultSet("""
+                        timestamp[TIMESTAMP]
+                        1970-01-01 00:00:00.0
+                        1970-01-01 00:16:40.0
+                        1970-01-01 00:33:20.0
+                        1970-01-01 00:50:00.0
+                        1970-01-01 01:06:40.0
+                        1970-01-01 01:23:20.0
+                        1970-01-01 01:40:00.0
+                        1970-01-01 01:56:40.0
+                        1970-01-01 02:13:20.0
+                        1970-01-01 02:30:00.0
+                        """, sink, rs1);
                 rs1.close();
             }
         });
@@ -687,17 +701,19 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 mayDrainWalQueue();
                 ResultSet rs1 = select.executeQuery();
                 sink.clear();
-                assertResultSet("timestamp[TIMESTAMP],symbol2[VARCHAR]\n" +
-                        "1970-01-01 02:30:00.0,b\n" +
-                        "1970-01-01 02:46:40.0,null\n" +
-                        "1970-01-01 03:03:20.0,b\n" +
-                        "1970-01-01 03:20:00.0,b\n" +
-                        "1970-01-01 03:36:40.0,b\n" +
-                        "1970-01-01 03:53:20.0,a\n" +
-                        "1970-01-01 04:10:00.0,a\n" +
-                        "1970-01-01 04:26:40.0,b\n" +
-                        "1970-01-01 04:43:20.0,a\n" +
-                        "1970-01-01 05:00:00.0,b\n", sink, rs1);
+                assertResultSet("""
+                        timestamp[TIMESTAMP],symbol2[VARCHAR]
+                        1970-01-01 02:30:00.0,b
+                        1970-01-01 02:46:40.0,null
+                        1970-01-01 03:03:20.0,b
+                        1970-01-01 03:20:00.0,b
+                        1970-01-01 03:36:40.0,b
+                        1970-01-01 03:53:20.0,a
+                        1970-01-01 04:10:00.0,a
+                        1970-01-01 04:26:40.0,b
+                        1970-01-01 04:43:20.0,a
+                        1970-01-01 05:00:00.0,b
+                        """, sink, rs1);
                 rs1.close();
             }
         });
@@ -731,17 +747,19 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 mayDrainWalQueue();
                 ResultSet rs1 = select.executeQuery();
                 sink.clear();
-                assertResultSet("timestamp[TIMESTAMP],symbol1[BIT]\n" +
-                        "1970-01-01 02:30:00.0,false\n" +
-                        "1970-01-01 02:46:40.0,false\n" +
-                        "1970-01-01 03:03:20.0,false\n" +
-                        "1970-01-01 03:20:00.0,true\n" +
-                        "1970-01-01 03:36:40.0,true\n" +
-                        "1970-01-01 03:53:20.0,true\n" +
-                        "1970-01-01 04:10:00.0,true\n" +
-                        "1970-01-01 04:26:40.0,false\n" +
-                        "1970-01-01 04:43:20.0,false\n" +
-                        "1970-01-01 05:00:00.0,false\n", sink, rs1);
+                assertResultSet("""
+                        timestamp[TIMESTAMP],symbol1[BIT]
+                        1970-01-01 02:30:00.0,false
+                        1970-01-01 02:46:40.0,false
+                        1970-01-01 03:03:20.0,false
+                        1970-01-01 03:20:00.0,true
+                        1970-01-01 03:36:40.0,true
+                        1970-01-01 03:53:20.0,true
+                        1970-01-01 04:10:00.0,true
+                        1970-01-01 04:26:40.0,false
+                        1970-01-01 04:43:20.0,false
+                        1970-01-01 05:00:00.0,false
+                        """, sink, rs1);
                 rs1.close();
             }
         });
@@ -775,17 +793,19 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 mayDrainWalQueue();
                 ResultSet rs1 = select.executeQuery();
                 sink.clear();
-                assertResultSet("timestamp[TIMESTAMP],symbol1[VARCHAR]\n" +
-                        "1970-01-01 02:30:00.0,null\n" +
-                        "1970-01-01 02:46:40.0,b\n" +
-                        "1970-01-01 03:03:20.0,a\n" +
-                        "1970-01-01 03:20:00.0,b\n" +
-                        "1970-01-01 03:36:40.0,b\n" +
-                        "1970-01-01 03:53:20.0,a\n" +
-                        "1970-01-01 04:10:00.0,null\n" +
-                        "1970-01-01 04:26:40.0,b\n" +
-                        "1970-01-01 04:43:20.0,b\n" +
-                        "1970-01-01 05:00:00.0,a\n", sink, rs1);
+                assertResultSet("""
+                        timestamp[TIMESTAMP],symbol1[VARCHAR]
+                        1970-01-01 02:30:00.0,null
+                        1970-01-01 02:46:40.0,b
+                        1970-01-01 03:03:20.0,a
+                        1970-01-01 03:20:00.0,b
+                        1970-01-01 03:36:40.0,b
+                        1970-01-01 03:53:20.0,a
+                        1970-01-01 04:10:00.0,null
+                        1970-01-01 04:26:40.0,b
+                        1970-01-01 04:43:20.0,b
+                        1970-01-01 05:00:00.0,a
+                        """, sink, rs1);
 
                 rs1.close();
             }

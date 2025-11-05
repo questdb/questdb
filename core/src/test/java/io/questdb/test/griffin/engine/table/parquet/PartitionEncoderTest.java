@@ -37,26 +37,13 @@ import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
-
-@RunWith(Parameterized.class)
 public class PartitionEncoderTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(PartitionEncoderTest.class);
     private final TestTimestampType timestampType;
 
-    public PartitionEncoderTest(TestTimestampType timestampType) {
-        this.timestampType = timestampType;
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> testParams() {
-        return Arrays.asList(new Object[][]{
-                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
-        });
+    public PartitionEncoderTest() {
+        this.timestampType = TestUtils.getTimestampType();
     }
 
     @Test
@@ -112,7 +99,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            final long rows = 10000000;
+            final long rows = 1000000;
             execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +

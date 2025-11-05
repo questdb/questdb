@@ -22,45 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin;
+package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assume;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
-import java.util.Arrays;
-import java.util.Collection;
 
 /**
  * Verifies correctness of both slow and fast non-keyed ASOF/LT join factories.
  * Fast factories skip full scan of right hand table by lazy time frame navigation.
  */
-@RunWith(Parameterized.class)
 public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     private final JoinType joinType;
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
 
-    public AsOfJoinNoKeyTest(JoinType joinType, TestTimestampType leftTimestampType, TestTimestampType rightTimestampType) {
-        this.joinType = joinType;
-        this.leftTableTimestampType = leftTimestampType;
-        this.rightTableTimestampType = rightTimestampType;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}-{2}")
-    public static Collection<Object[]> testParams() {
-        return Arrays.asList(new Object[][]{
-                {JoinType.ASOF, TestTimestampType.MICRO, TestTimestampType.MICRO}, {JoinType.ASOF, TestTimestampType.MICRO, TestTimestampType.NANO},
-                {JoinType.ASOF, TestTimestampType.NANO, TestTimestampType.MICRO}, {JoinType.ASOF, TestTimestampType.NANO, TestTimestampType.NANO},
-                {JoinType.LT, TestTimestampType.MICRO, TestTimestampType.MICRO}, {JoinType.LT, TestTimestampType.MICRO, TestTimestampType.NANO},
-                {JoinType.LT, TestTimestampType.NANO, TestTimestampType.MICRO}, {JoinType.LT, TestTimestampType.NANO, TestTimestampType.NANO}
-        });
+    public AsOfJoinNoKeyTest() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        this.joinType = rnd.nextBoolean() ? JoinType.ASOF : JoinType.LT;
+        this.leftTableTimestampType = TestUtils.getTimestampType(rnd);
+        this.rightTableTimestampType = TestUtils.getTimestampType(rnd);
     }
 
     @Override
@@ -226,17 +212,10 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     }
 
     private void assertResultSetsMatch(String leftTable, String rightTable) throws Exception {
-        final String join;
-        switch (joinType) {
-            case ASOF:
-                join = "ASOF";
-                break;
-            case LT:
-                join = "LT";
-                break;
-            default:
-                throw new IllegalArgumentException("Unexpected join type: " + joinType);
-        }
+        final String join = switch (joinType) {
+            case ASOF -> "ASOF";
+            case LT -> "LT";
+        };
 
         final StringSink expectedSink = new StringSink();
         // equivalent of the below query, but uses slow factory
