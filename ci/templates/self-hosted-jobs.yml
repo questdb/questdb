@@ -1,5 +1,7 @@
 jobs:
   - job: linux_arm64_jdk17
+    workspace:
+      clean: all
     displayName: "on linux-arm64"
     pool:
       name: "hetzner-docker-arm"
