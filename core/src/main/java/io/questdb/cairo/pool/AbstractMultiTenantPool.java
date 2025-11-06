@@ -407,7 +407,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                             if (deadline == Long.MAX_VALUE) {
                                 r.goodbye();
                                 Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
-                                var rec = LOG.info().$("shutting down, table is left behind [table=").$(r.getTableToken()).$(']');
+                                var rec = LOG.infoW().$("shutting down, table is left behind [table=").$(r.getTableToken()).$(']');
                                 try {
                                     var supervisor = r.getSupervisor();
                                     if (supervisor instanceof TracingResourcePoolSupervisor<T>) {
