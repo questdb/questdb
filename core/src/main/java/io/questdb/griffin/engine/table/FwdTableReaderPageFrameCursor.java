@@ -243,6 +243,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reenterPartitionFrame = false;
         }
 
+        // remaining rows in the partition = size of the partition - max row number of the frame
         remainingRowsInPartition = partitionHi - adjustedHi;
 
         frame.partitionLo = partitionLo;

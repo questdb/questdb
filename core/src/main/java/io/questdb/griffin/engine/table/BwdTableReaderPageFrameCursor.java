@@ -242,6 +242,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             this.reenterPartitionFrame = false;
         }
 
+        // remaining rows in the partition = max row number in the frame - min row number of the partition 
         remainingRowsInPartition = adjustedLo - partitionLo;
 
         frame.partitionLo = adjustedLo;
