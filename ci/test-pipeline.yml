@@ -174,7 +174,7 @@ stages:
 
               # Merge partial profdata files into the complete report
               echo "=== Merging Profdata Files ==="
-              llvm-profdata merge -sparse -v -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
+              llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
               if [ $? -eq 0 ] && [ -f questdbr.profdata ]; then
                 echo "Successfully merged profdata (size: $(stat -f%z questdbr.profdata 2>/dev/null || stat -c%s questdbr.profdata) bytes)"
               else
