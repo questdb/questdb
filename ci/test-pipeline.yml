@@ -226,10 +226,15 @@ stages:
               echo "=== Converting to Cobertura XML ==="
               # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
               curl -LsSf https://astral.sh/uv/install.sh | sh
+              
+              # NOTE: We use a hard-coded path '/azp/_work/1/s' instead of $(Build.SourcesDirectory) because:
+              # 1. Coverage data is generated on self-hosted runners (which always use /azp/_work/1/s)
+              # 2. This conversion to Cobertura format runs on Azure-hosted runners (where $(Build.SourcesDirectory) differs)
+              # 3. The --base-dir must match the path where coverage was originally generated for correct source mapping
               uv run --with lcov_cobertura python3 -m lcov_cobertura \
                   questdbr.lcov.dat \
                   --output cobertura.xml \
-                  --base-dir $(Build.SourcesDirectory)/core/rust
+                  --base-dir /azp/_work/1/s/core/rust/qdbr/src
               if [ $? -eq 0 ] && [ -f cobertura.xml ]; then
                 echo "Successfully converted to Cobertura XML (size: $(stat -f%z cobertura.xml 2>/dev/null || stat -c%s cobertura.xml) bytes)"
                 head -n 5 cobertura.xml
