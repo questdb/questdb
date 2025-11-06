@@ -195,7 +195,7 @@ import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinSingleSymbolRecordCursorFactory;
-import io.questdb.griffin.engine.join.ChainedJoinKeyMapping;
+import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
@@ -213,12 +213,13 @@ import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.NoopJoinKeyMapping;
+import io.questdb.griffin.engine.join.NoopSymbolShortCircuit;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.StringToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.SymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
@@ -307,6 +308,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 
 import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
@@ -1128,69 +1130,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
-    private @NotNull SymbolJoinKeyMapping createAsofColumnAccessHelper(
-            RecordMetadata masterMetadata,
-            RecordMetadata slaveMetadata,
-            boolean isSelfJoin
-    ) {
-        SymbolJoinKeyMapping columnAccessHelper = NoopJoinKeyMapping.INSTANCE;
-        assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
-        SymbolJoinKeyMapping[] symbolShortCircuits = null;
-        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-            int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
-            int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
-            if (slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
-                int masterColType = masterMetadata.getColumnType(masterIndex);
-                SymbolJoinKeyMapping newSymbolShortCircuit;
-                switch (masterColType) {
-                    case SYMBOL:
-                        if (isSelfJoin && masterIndex == slaveIndex) {
-                            // self join on the same column -> there is no point in attempting short-circuiting
-                            // NOTE: This check is naive, it can generate false positives
-                            //       For example 'select t1.s, t2.s2 from t as t1 asof join t as t2 on t1.s = t2.s2'
-                            //       This is deemed as a self-join (which it is), and due to the way columns are projected
-                            //       it will take this branch (even when it fact it's comparing different columns)
-                            //       and won't create a short circuit. This is OK from correctness perspective,
-                            //       but it is a missed opportunity for performance optimization. Doing a perfect check
-                            //       would require a more complex logic, which is not worth it for now
-                            continue;
-                        }
-                        newSymbolShortCircuit = new SymbolToSymbolJoinKeyMapping(configuration, masterIndex, slaveIndex);
-                        break;
-                    case VARCHAR:
-                        newSymbolShortCircuit = new VarcharToSymbolJoinKeyMapping(masterIndex, slaveIndex);
-                        break;
-                    case STRING:
-                        newSymbolShortCircuit = new StringToSymbolJoinKeyMapping(masterIndex, slaveIndex);
-                        break;
-                    default:
-                        // unsupported type for short circuit
-                        continue;
-                }
-                if (columnAccessHelper == NoopJoinKeyMapping.INSTANCE) {
-                    // ok, a single symbol short circuit
-                    columnAccessHelper = newSymbolShortCircuit;
-                } else if (symbolShortCircuits == null) {
-                    // 2 symbol short circuits, we need to chain them
-                    symbolShortCircuits = new SymbolJoinKeyMapping[2];
-                    symbolShortCircuits[0] = columnAccessHelper;
-                    symbolShortCircuits[1] = newSymbolShortCircuit;
-                    columnAccessHelper = new ChainedJoinKeyMapping(symbolShortCircuits);
-                } else {
-                    // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
-                    // this allocates arrays, but it should be very rare
-                    int size = symbolShortCircuits.length;
-                    SymbolJoinKeyMapping[] newSymbolShortCircuits = new SymbolJoinKeyMapping[size + 1];
-                    System.arraycopy(symbolShortCircuits, 0, newSymbolShortCircuits, 0, size);
-                    newSymbolShortCircuits[size] = newSymbolShortCircuit;
-                    columnAccessHelper = new ChainedJoinKeyMapping(newSymbolShortCircuits);
-                    symbolShortCircuits = newSymbolShortCircuits;
-                }
-            }
-        }
-        return columnAccessHelper;
-    }
-
     @NotNull
     private RecordCursorFactory createFullFatJoin(
             RecordCursorFactory master,
@@ -1551,6 +1490,68 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 columnSplit,
                 context
         );
+    }
+
+    private @NotNull SymbolShortCircuit createSymbolShortCircuit(
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata,
+            boolean isSelfJoin
+    ) {
+        SymbolShortCircuit symbolShortCircuit = NoopSymbolShortCircuit.INSTANCE;
+        assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
+        SymbolJoinKeyMapping[] mappings = null;
+        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+            int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
+            int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
+            if (slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
+                int masterColType = masterMetadata.getColumnType(masterIndex);
+                SymbolJoinKeyMapping newMapping;
+                switch (masterColType) {
+                    case SYMBOL:
+                        if (isSelfJoin && masterIndex == slaveIndex) {
+                            // self join on the same column -> there is no point in attempting short-circuiting
+                            // NOTE: This check is naive, it can generate false positives
+                            //       For example 'select t1.s, t2.s2 from t as t1 asof join t as t2 on t1.s = t2.s2'
+                            //       This is deemed as a self-join (which it is), and due to the way columns are projected
+                            //       it will take this branch (even when it fact it's comparing different columns)
+                            //       and won't create a short circuit. This is OK from correctness perspective,
+                            //       but it is a missed opportunity for performance optimization. Doing a perfect check
+                            //       would require a more complex logic, which is not worth it for now
+                            continue;
+                        }
+                        newMapping = new SymbolToSymbolJoinKeyMapping(configuration, masterIndex, slaveIndex);
+                        break;
+                    case VARCHAR:
+                        newMapping = new VarcharToSymbolJoinKeyMapping(masterIndex, slaveIndex);
+                        break;
+                    case STRING:
+                        newMapping = new StringToSymbolJoinKeyMapping(masterIndex, slaveIndex);
+                        break;
+                    default:
+                        // unsupported type for short circuit
+                        continue;
+                }
+                if (symbolShortCircuit == NoopSymbolShortCircuit.INSTANCE) {
+                    // ok, a single symbol short circuit
+                    symbolShortCircuit = (SymbolShortCircuit) newMapping;
+                } else if (mappings == null) {
+                    // 2 symbol mappings, we need to chain them
+                    mappings = new SymbolJoinKeyMapping[2];
+                    mappings[0] = (SymbolJoinKeyMapping) symbolShortCircuit;
+                    mappings[1] = newMapping;
+                    symbolShortCircuit = new ChainedSymbolShortCircuit(mappings);
+                } else {
+                    // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
+                    // this allocates arrays, but it should be very rare
+                    int size = mappings.length;
+                    SymbolJoinKeyMapping[] newMappings = Arrays.copyOf(mappings, size + 1);
+                    newMappings[size] = newMapping;
+                    symbolShortCircuit = new ChainedSymbolShortCircuit(newMappings);
+                    mappings = newMappings;
+                }
+            }
+        }
+        return symbolShortCircuit;
     }
 
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
@@ -2648,11 +2649,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
 
-                        SymbolJoinKeyMapping columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, isSelfJoin);
-                        boolean isOptimizable = columnAccessHelper != NoopJoinKeyMapping.INSTANCE;
-                        if (isOptimizable && isSingleSymbolJoin(slaveMetadata)) {
+                        SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, isSelfJoin);
+                        boolean isSingleSymbolJoin =
+                                symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
+                                        !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
+                        if (isSingleSymbolJoin) {
                             int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                             slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex);
+                            // This cast is safe for isSingleSymbolJoin:
+                            SymbolJoinKeyMapping symbolJoinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
 
                             boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
                             if (hasIndexHint && slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
@@ -2663,7 +2668,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slave,
                                         joinColumnSplit,
                                         slaveSymbolColumnIndex,
-                                        columnAccessHelper,
+                                        symbolJoinKeyMapping,
                                         slaveContext,
                                         toleranceInterval
                                 );
@@ -2678,7 +2683,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slave,
                                         joinColumnSplit,
                                         slaveSymbolColumnIndex,
-                                        columnAccessHelper,
+                                        symbolJoinKeyMapping,
                                         slaveContext,
                                         toleranceInterval,
                                         hasMemoizedDrivebyHint
@@ -2693,7 +2698,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 slave,
                                 createRecordSinkSlave(slaveMetadata),
                                 joinColumnSplit,
-                                columnAccessHelper,
+                                symbolShortCircuit,
                                 slaveContext,
                                 toleranceInterval
                         );
@@ -2770,8 +2775,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int joinColumnSplit = masterMetadata.getColumnCount();
                 JoinContext slaveContext = slaveModel.getJoinContext();
                 if (isSingleSymbolJoin(slaveMetadata)) {
-                    SymbolJoinKeyMapping columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, isSelfJoin);
-                    if (columnAccessHelper != NoopJoinKeyMapping.INSTANCE) {
+                    SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, isSelfJoin);
+                    if (symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE) {
                         int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                         return new AsOfJoinSingleSymbolRecordCursorFactory(
                                 configuration,
@@ -2780,7 +2785,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 slave,
                                 joinColumnSplit,
                                 slaveSymbolColumnIndex,
-                                columnAccessHelper,
+                                (SymbolJoinKeyMapping) symbolShortCircuit,
                                 slaveContext,
                                 toleranceInterval
                         );

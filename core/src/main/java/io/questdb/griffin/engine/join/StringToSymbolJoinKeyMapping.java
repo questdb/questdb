@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 
-public final class StringToSymbolJoinKeyMapping implements SymbolJoinKeyMapping {
+public final class StringToSymbolJoinKeyMapping implements SymbolJoinKeyMapping, SymbolShortCircuit {
     private final int masterStringIndex;
     private final int slaveSymbolIndex;
     private StaticSymbolTable slaveSymbolTable;
@@ -47,6 +47,11 @@ public final class StringToSymbolJoinKeyMapping implements SymbolJoinKeyMapping 
                     : StaticSymbolTable.VALUE_NOT_FOUND;
         }
         return slaveSymbolTable.keyOf(masterStr);
+    }
+
+    @Override
+    public boolean isShortCircuit(Record masterRecord) {
+        return getSlaveKey(masterRecord) == StaticSymbolTable.VALUE_NOT_FOUND;
     }
 
     @Override

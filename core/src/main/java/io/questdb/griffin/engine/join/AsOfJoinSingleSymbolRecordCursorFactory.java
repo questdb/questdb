@@ -48,9 +48,8 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
     private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
-
-    private final SymbolJoinKeyMapping columnAccessHelper;
     private final AsOfSingleSymbolJoinRecordCursor cursor;
+    private final SymbolJoinKeyMapping joinKeyMapping;
     private final int slaveSymbolColumnIndex;
     private final long toleranceInterval;
 
@@ -61,13 +60,13 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
             RecordCursorFactory slaveFactory,
             int columnSplit,
             int slaveSymbolColumnIndex,
-            SymbolJoinKeyMapping columnAccessHelper,
+            SymbolJoinKeyMapping joinKeyMapping,
             JoinContext joinContext,
             long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
-        this.columnAccessHelper = columnAccessHelper;
+        this.joinKeyMapping = joinKeyMapping;
         this.toleranceInterval = toleranceInterval;
         Map joinKeyMap = null;
         try {
@@ -202,7 +201,7 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
             if (masterHasNext) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? Long.MIN_VALUE : masterTimestamp - toleranceInterval;
-                int slaveSymbolKey = columnAccessHelper.getSlaveKey(masterRecord);
+                int slaveSymbolKey = joinKeyMapping.getSlaveKey(masterRecord);
                 MapKey key;
                 MapValue value;
                 long slaveTimestamp = this.slaveTimestamp;
@@ -295,7 +294,7 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecord);
-            columnAccessHelper.of(slaveCursor);
+            joinKeyMapping.of(slaveCursor);
             isMasterHasNextPending = true;
         }
     }

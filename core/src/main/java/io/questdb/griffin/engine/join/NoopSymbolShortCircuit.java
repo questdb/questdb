@@ -27,14 +27,10 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 
-public class NoopJoinKeyMapping implements SymbolJoinKeyMapping {
-    public static final NoopJoinKeyMapping INSTANCE = new NoopJoinKeyMapping();
+public class NoopSymbolShortCircuit implements SymbolShortCircuit {
+    public static final NoopSymbolShortCircuit INSTANCE = new NoopSymbolShortCircuit();
 
     @Override
-    public int getSlaveKey(Record masterRecord) {
-        throw new UnsupportedOperationException("NoopJoinKeyMapping doesn't have a symbol table");
-    }
-
     public boolean isShortCircuit(Record masterRecord) {
         return false;
     }

@@ -32,9 +32,9 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.std.IntIntHashMap;
 
-public final class SymbolToSymbolJoinKeyMapping implements SymbolJoinKeyMapping {
+public final class SymbolToSymbolJoinKeyMapping implements SymbolJoinKeyMapping, SymbolShortCircuit {
     private final CairoConfiguration config;
-    private final IntIntHashMap masterKeysExistingInSlaveCache = new IntIntHashMap(16, 0.4);
+    private final IntIntHashMap masterKeyToSlaveKey = new IntIntHashMap(16, 0.4);
     private final int masterSymbolIndex;
     private final int slaveSymbolIndex;
     private int maxCacheSize = 0;
@@ -51,7 +51,7 @@ public final class SymbolToSymbolJoinKeyMapping implements SymbolJoinKeyMapping 
         assert slaveSymbolTable != null : "slaveSymbolTable must be set before calling getSlaveKey";
 
         int masterKey = masterRecord.getInt(masterSymbolIndex);
-        int slaveKey = masterKeysExistingInSlaveCache.get(masterKey);
+        int slaveKey = masterKeyToSlaveKey.get(masterKey);
         if (slaveKey != -1) {
             return slaveKey;
         }
@@ -60,7 +60,7 @@ public final class SymbolToSymbolJoinKeyMapping implements SymbolJoinKeyMapping 
             if (slaveSymbolTable.containsNullValue()) {
                 slaveKey = SymbolTable.VALUE_IS_NULL;
                 // add to cache unconditionally even when at the max size, null is important to cache
-                masterKeysExistingInSlaveCache.put(masterKey, slaveKey);
+                masterKeyToSlaveKey.put(masterKey, slaveKey);
                 return slaveKey;
             }
             return StaticSymbolTable.VALUE_NOT_FOUND;
@@ -75,23 +75,28 @@ public final class SymbolToSymbolJoinKeyMapping implements SymbolJoinKeyMapping 
         }
 
         // we reserve space in the cache for null, so < instead of <=
-        if (masterKeysExistingInSlaveCache.size() < maxCacheSize) {
-            masterKeysExistingInSlaveCache.put(masterKey, slaveKey);
+        if (masterKeyToSlaveKey.size() < maxCacheSize) {
+            masterKeyToSlaveKey.put(masterKey, slaveKey);
         }
         return slaveKey;
     }
 
     @Override
+    public boolean isShortCircuit(Record masterRecord) {
+        return getSlaveKey(masterRecord) == StaticSymbolTable.VALUE_NOT_FOUND;
+    }
+
+    @Override
     public void of(TimeFrameRecordCursor slaveCursor) {
         this.slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
-        this.masterKeysExistingInSlaveCache.clear();
+        this.masterKeyToSlaveKey.clear();
         this.maxCacheSize = config.getSqlAsOfJoinShortCircuitCacheCapacity();
     }
 
     @Override
     public void of(RecordCursor slaveCursor) {
         this.slaveSymbolTable = (StaticSymbolTable) slaveCursor.getSymbolTable(slaveSymbolIndex);
-        this.masterKeysExistingInSlaveCache.clear();
+        this.masterKeyToSlaveKey.clear();
         this.maxCacheSize = config.getSqlAsOfJoinShortCircuitCacheCapacity();
     }
 }

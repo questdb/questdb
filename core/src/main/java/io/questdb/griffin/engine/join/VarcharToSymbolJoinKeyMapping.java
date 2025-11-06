@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
-public final class VarcharToSymbolJoinKeyMapping implements SymbolJoinKeyMapping {
+public final class VarcharToSymbolJoinKeyMapping implements SymbolJoinKeyMapping, SymbolShortCircuit {
     private final int masterVarcharIndex;
     private final int slaveSymbolIndex;
     private final StringSink utf16Sink = new StringSink();
@@ -55,6 +55,11 @@ public final class VarcharToSymbolJoinKeyMapping implements SymbolJoinKeyMapping
         utf16Sink.clear();
         utf16Sink.put(masterVarchar);
         return slaveSymbolTable.keyOf(utf16Sink);
+    }
+
+    @Override
+    public boolean isShortCircuit(Record masterRecord) {
+        return getSlaveKey(masterRecord) == StaticSymbolTable.VALUE_NOT_FOUND;
     }
 
     @Override

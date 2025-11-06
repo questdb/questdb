@@ -27,29 +27,14 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 
-public record ChainedJoinKeyMapping(
-        SymbolJoinKeyMapping[] shortCircuits
-) implements SymbolJoinKeyMapping {
+public interface SymbolShortCircuit {
 
-    @Override
-    public int getSlaveKey(Record masterRecord) {
-        throw new UnsupportedOperationException("ChainedJoinKeyMapping doesn't have a symbol table");
-    }
+    /**
+     * When joining on one or more symbol columns, detects when any slave column
+     * doesn't have the symbol at all (by inspecting its int-to-symbol mapping). This
+     * allows the record cursor to avoid searching for the matching slave row.
+     */
+    boolean isShortCircuit(Record masterRecord);
 
-    @Override
-    public boolean isShortCircuit(Record masterRecord) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            if (shortCircuits[i].isShortCircuit(masterRecord)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    @Override
-    public void of(TimeFrameRecordCursor slaveCursor) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            shortCircuits[i].of(slaveCursor);
-        }
-    }
+    void of(TimeFrameRecordCursor slaveCursor);
 }

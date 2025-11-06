@@ -3410,17 +3410,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (pair SYMBOL, side SYMBOL, ts #TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
             execute("""
-                    <<<<<<< HEAD:core/src/test/java/io/questdb/test/griffin/AsOfJoinTest.java
-                                        INSERT INTO trades VALUES 
-                    =======
-                                        INSERT INTO trades VALUES
-                    >>>>>>> mt_asof-cleanup:core/src/test/java/io/questdb/test/griffin/engine/join/AsOfJoinTest.java
-                                        ('BTC-USD', 'sell', '2000-01-01T00:00:00.000000Z', 1),
-                                        ('BTC-USD', 'buy', '2001-01-01T00:00:01.000000Z', 2),
-                                        ('BTC-USD', 'sell', '2002-01-01T00:00:03.000000Z', 3),
-                                        ('ETH-USD', 'sell', '2001-01-01T00:00:00.000000Z', 4),
-                                        ('ETH-USD', 'buy', '2001-01-01T00:00:01.000000Z', 5),
-                                        ('ETH-USD', 'sell', '2001-01-01T00:00:03.000000Z', 6)
+                    INSERT INTO trades VALUES
+                    ('BTC-USD', 'sell', '2000-01-01T00:00:00.000000Z', 1),
+                    ('BTC-USD', 'buy', '2001-01-01T00:00:01.000000Z', 2),
+                    ('BTC-USD', 'sell', '2002-01-01T00:00:03.000000Z', 3),
+                    ('ETH-USD', 'sell', '2001-01-01T00:00:00.000000Z', 4),
+                    ('ETH-USD', 'buy', '2001-01-01T00:00:01.000000Z', 5),
+                    ('ETH-USD', 'sell', '2001-01-01T00:00:03.000000Z', 6)
                     """
             );
 

@@ -25,23 +25,27 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 
-public interface SymbolJoinKeyMapping {
+public record ChainedSymbolShortCircuit(
+        SymbolJoinKeyMapping[] mappings
+) implements SymbolShortCircuit {
 
-    /**
-     * When joining on a single symbol column, returns the symbol key in the slave
-     * column corresponding to the symbol in the master column. If it returns
-     * {@link StaticSymbolTable#VALUE_NOT_FOUND}, the slave column doesn't have the
-     * symbol.
-     */
-    int getSlaveKey(Record masterRecord);
+    @Override
+    public boolean isShortCircuit(Record masterRecord) {
+        for (int i = 0, n = mappings.length; i < n; i++) {
+            if (mappings[i].getSlaveKey(masterRecord) == StaticSymbolTable.VALUE_NOT_FOUND) {
+                return true;
+            }
+        }
+        return false;
+    }
 
-    void of(TimeFrameRecordCursor slaveCursor);
-
-    default void of(RecordCursor slaveCursor) {
-        throw new UnsupportedOperationException();
+    @Override
+    public void of(TimeFrameRecordCursor slaveCursor) {
+        for (int i = 0, n = mappings.length; i < n; i++) {
+            mappings[i].of(slaveCursor);
+        }
     }
 }
