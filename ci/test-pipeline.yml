@@ -184,6 +184,8 @@ stages:
               echo ""
 
               # Compile the merged coverage report into an HTML report
+              # NOTE: We have to use --path-equivalence to remap paths collected on self-hosted runners
+              #       to paths used by the Azure-hosted runner executing this script
               echo "=== Generating HTML Coverage Report ==="
               llvm-cov show \
                 --format=html \
@@ -204,6 +206,7 @@ stages:
               echo ""
 
               # Export the merged coverage report to LCOV format
+              # NOTE: We have to use --path-equivalence to remap paths collected on self-hosted runners
               echo "=== Exporting to LCOV Format ==="
               llvm-cov export \
                 --format=lcov \
@@ -251,41 +254,42 @@ stages:
             displayName: "Merge partial Rust reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
 
-          - task: PublishBuildArtifacts@1
-            displayName: "Publish Rust Coverage Reports"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-            continueOnError: true
-            inputs:
-              PathtoPublish: '$(Build.SourcesDirectory)/rust-llvm-coverage'
-              ArtifactName: 'rust-coverage-html'
-              publishLocation: 'Container'
-
-          - task: PublishBuildArtifacts@1
-            displayName: "Publish Cobertura XML"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-            continueOnError: true
-            inputs:
-              PathtoPublish: '$(Build.SourcesDirectory)/cobertura.xml'
-              ArtifactName: 'rust-cobertura-xml'
-              publishLocation: 'Container'
-
-          - task: PublishBuildArtifacts@1
-            displayName: "Publish Merged Profdata"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-            continueOnError: true
-            inputs:
-              PathtoPublish: '$(Build.SourcesDirectory)/questdbr.profdata'
-              ArtifactName: 'rust-merged-profdata'
-              publishLocation: 'Container'
-
-          - task: PublishBuildArtifacts@1
-            displayName: "Publish LCOV Data"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-            continueOnError: true
-            inputs:
-              PathtoPublish: '$(Build.SourcesDirectory)/questdbr.lcov.dat'
-              ArtifactName: 'rust-lcov-data'
-              publishLocation: 'Container'
+          # The PublishBuildArtifacts tasks bellow are only useful for code coverage troubleshooting
+          #          - task: PublishBuildArtifacts@1
+          #            displayName: "Publish Rust Coverage Reports"
+          #            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+          #            continueOnError: true
+          #            inputs:
+          #              PathtoPublish: '$(Build.SourcesDirectory)/rust-llvm-coverage'
+          #              ArtifactName: 'rust-coverage-html'
+          #              publishLocation: 'Container'
+          #
+          #          - task: PublishBuildArtifacts@1
+          #            displayName: "Publish Cobertura XML"
+          #            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+          #            continueOnError: true
+          #            inputs:
+          #              PathtoPublish: '$(Build.SourcesDirectory)/cobertura.xml'
+          #              ArtifactName: 'rust-cobertura-xml'
+          #              publishLocation: 'Container'
+          #
+          #          - task: PublishBuildArtifacts@1
+          #            displayName: "Publish Merged Profdata"
+          #            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+          #            continueOnError: true
+          #            inputs:
+          #              PathtoPublish: '$(Build.SourcesDirectory)/questdbr.profdata'
+          #              ArtifactName: 'rust-merged-profdata'
+          #              publishLocation: 'Container'
+          #
+          #          - task: PublishBuildArtifacts@1
+          #            displayName: "Publish LCOV Data"
+          #            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+          #            continueOnError: true
+          #            inputs:
+          #              PathtoPublish: '$(Build.SourcesDirectory)/questdbr.lcov.dat'
+          #              ArtifactName: 'rust-lcov-data'
+          #              publishLocation: 'Container'
 
           - bash: |
               set -eux
