@@ -314,13 +314,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
     }
 
-    public GroupByAllocator getAllocator(int slotId) {
-        if (slotId == -1) {
-            return ownerAllocator;
-        }
-        return perWorkerAllocators.getQuick(slotId);
-    }
-
     public ObjList<Function> getBindVarFunctions() {
         return bindVarFunctions;
     }
