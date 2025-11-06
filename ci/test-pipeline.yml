@@ -229,7 +229,7 @@ stages:
               uv run --with lcov_cobertura python3 -m lcov_cobertura \
                   questdbr.lcov.dat \
                   --output cobertura.xml \
-                  --base-dir core/rust/qdbr/src
+                  --base-dir $(Build.SourcesDirectory)/core/rust
               if [ $? -eq 0 ] && [ -f cobertura.xml ]; then
                 echo "Successfully converted to Cobertura XML (size: $(stat -f%z cobertura.xml 2>/dev/null || stat -c%s cobertura.xml) bytes)"
                 head -n 5 cobertura.xml
