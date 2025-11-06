@@ -1169,8 +1169,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // at this point listColumnFilterB has column indexes of the master record that are JOIN keys
-        // so masterSink writes key columns of master record to a sink
-        RecordSink masterSink = createRecordSinkMaster(masterMetadata);
+        // so masterCopier writes key columns of master record to a sink
+        RecordSink masterCopier = createRecordCopierMaster(masterMetadata);
 
         // This metadata allocates native memory, it has to be closed in case join
         // generation is unsuccessful. The exception can be thrown anywhere between
@@ -1238,8 +1238,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     keyTypes,
                     valueTypes,
                     slaveTypes,
-                    masterSink,
-                    createRecordSinkSlave(slaveMetadata),
+                    masterCopier,
+                    createRecordCopierSlave(slaveMetadata),
                     masterMetadata.getColumnCount(),
                     RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB), // slaveValueSink
                     columnIndex,
@@ -1276,8 +1276,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
          */
         final RecordMetadata masterMetadata = master.getMetadata();
         final RecordMetadata slaveMetadata = slave.getMetadata();
-        final RecordSink masterKeySink = createRecordSinkMaster(masterMetadata);
-        final RecordSink slaveKeySink = createRecordSinkSlave(slaveMetadata);
+        final RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
+        final RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
 
         if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
             valueTypes.clear();
@@ -1294,8 +1294,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slave,
                         keyTypes,
                         valueTypes,
-                        masterKeySink,
-                        slaveKeySink,
+                        masterKeyCopier,
+                        slaveKeyCopier,
                         masterMetadata.getColumnCount(),
                         context
                 );
@@ -1312,8 +1312,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slave,
                         keyTypes,
                         valueTypes,
-                        masterKeySink,
-                        slaveKeySink,
+                        masterKeyCopier,
+                        slaveKeyCopier,
                         masterMetadata.getColumnCount(),
                         filter,
                         context,
@@ -1328,8 +1328,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slave,
                     keyTypes,
                     valueTypes,
-                    masterKeySink,
-                    slaveKeySink,
+                    masterKeyCopier,
+                    slaveKeyCopier,
                     masterMetadata.getColumnCount(),
                     context,
                     joinType
@@ -1355,8 +1355,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slave,
                     keyTypes,
                     valueTypes,
-                    masterKeySink,
-                    slaveKeySink,
+                    masterKeyCopier,
+                    slaveKeyCopier,
                     slaveSink,
                     masterMetadata.getColumnCount(),
                     context
@@ -1371,8 +1371,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slave,
                     keyTypes,
                     valueTypes,
-                    masterKeySink,
-                    slaveKeySink,
+                    masterKeyCopier,
+                    slaveKeyCopier,
                     slaveSink,
                     masterMetadata.getColumnCount(),
                     filter,
@@ -1388,8 +1388,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 slave,
                 keyTypes,
                 valueTypes,
-                masterKeySink,
-                slaveKeySink,
+                masterKeyCopier,
+                slaveKeyCopier,
                 slaveSink,
                 masterMetadata.getColumnCount(),
                 context,
@@ -1441,7 +1441,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return metadata;
     }
 
-    private @NotNull RecordSink createRecordSinkMaster(RecordMetadata masterMetadata) {
+    private @NotNull RecordSink createRecordCopierMaster(RecordMetadata masterMetadata) {
         return RecordSinkFactory.getInstance(
                 asm,
                 masterMetadata,
@@ -1452,7 +1452,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    private @NotNull RecordSink createRecordSinkSlave(RecordMetadata slaveMetadata) {
+    private @NotNull RecordSink createRecordCopierSlave(RecordMetadata slaveMetadata) {
         return RecordSinkFactory.getInstance(
                 asm,
                 slaveMetadata,
@@ -2639,9 +2639,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     configuration,
                                     joinMetadata,
                                     master,
-                                    createRecordSinkMaster(masterMetadata),
+                                    createRecordCopierMaster(masterMetadata),
                                     slave,
-                                    createRecordSinkSlave(slaveMetadata),
+                                    createRecordCopierSlave(slaveMetadata),
                                     joinColumnSplit,
                                     keyTypes,
                                     slaveContext,
@@ -2694,9 +2694,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 configuration,
                                 joinMetadata,
                                 master,
-                                createRecordSinkMaster(masterMetadata),
+                                createRecordCopierMaster(masterMetadata),
                                 slave,
-                                createRecordSinkSlave(slaveMetadata),
+                                createRecordCopierSlave(slaveMetadata),
                                 joinColumnSplit,
                                 symbolShortCircuit,
                                 slaveContext,
@@ -2718,9 +2718,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 configuration,
                                 joinMetadata,
                                 master,
-                                createRecordSinkMaster(masterMetadata),
+                                createRecordCopierMaster(masterMetadata),
                                 slaveBase,
-                                createRecordSinkSlave(slaveMetadata),
+                                createRecordCopierSlave(slaveMetadata),
                                 stolenFilter,
                                 masterMetadata.getColumnCount(),
                                 NullRecordFactory.getInstance(slaveMetadata),
@@ -2757,9 +2757,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         configuration,
                                         joinMetadata,
                                         master,
-                                        createRecordSinkMaster(masterMetadata),
+                                        createRecordCopierMaster(masterMetadata),
                                         filterStealingBase,
-                                        createRecordSinkSlave(slaveMetadata),
+                                        createRecordCopierSlave(slaveMetadata),
                                         stolenFilter,
                                         masterMetadata.getColumnCount(),
                                         NullRecordFactory.getInstance(slaveMetadata),
@@ -2798,8 +2798,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         master,
                         slave,
                         keyTypes,
-                        createRecordSinkMaster(masterMetadata),
-                        createRecordSinkSlave(slaveMetadata),
+                        createRecordCopierMaster(masterMetadata),
+                        createRecordCopierSlave(slaveMetadata),
                         joinColumnSplit,
                         slaveContext,
                         toleranceInterval
@@ -2931,8 +2931,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
         try {
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
-                RecordSink masterKeySink = createRecordSinkMaster(masterMetadata);
-                RecordSink slaveKeySink = createRecordSinkSlave(slaveMetadata);
+                RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
+                RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
                 int columnSplit = masterMetadata.getColumnCount();
                 JoinContext joinContext = slaveModel.getJoinContext();
                 valueTypes.clear();
@@ -2944,8 +2944,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slave,
                         keyTypes,
                         valueTypes,
-                        masterKeySink,
-                        slaveKeySink,
+                        masterKeyCopier,
+                        slaveKeyCopier,
                         columnSplit,
                         joinContext,
                         toleranceInterval
@@ -3104,9 +3104,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             // splice join result does not have timestamp
                                             createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
                                             master,
-                                            createRecordSinkMaster(masterMetadata),
+                                            createRecordCopierMaster(masterMetadata),
                                             slave,
-                                            createRecordSinkSlave(slaveMetadata),
+                                            createRecordCopierSlave(slaveMetadata),
                                             masterMetadata.getColumnCount(),
                                             slaveModel.getJoinContext()
                                     );
