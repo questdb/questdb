@@ -198,7 +198,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
             if (vectorized) {
                 final int groupByFunctionSize = ownerGroupByFunctions.size();
-                ownGroupByColumnSinkPtrs = new LongList(groupByFunctionSize + 1);
+                ownGroupByColumnSinkPtrs = new LongList(groupByFunctionSize + 1, 0);
                 ownGroupByColumnSinkPtrs.setPos(groupByFunctionSize + 1);
                 this.groupByColumnIndexes = new IntList(groupByFunctionSize);
                 this.groupByColumnTags = new short[groupByFunctionSize];
@@ -223,7 +223,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                     sink.setAllocator(perWorkerAllocators.getQuick(i));
                     perWorkerColumnSinks.extendAndSet(i, sink);
 
-                    LongList perWorkerGroupByColumnSinkPtr = new LongList(groupByFunctionSize + 1);
+                    LongList perWorkerGroupByColumnSinkPtr = new LongList(groupByFunctionSize + 1, 0);
                     perWorkerGroupByColumnSinkPtr.setPos(groupByFunctionSize + 1);
                     perWorkerGroupByColumnSinkPtrs.extendAndSet(i, perWorkerGroupByColumnSinkPtr);
 
@@ -263,6 +263,14 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
         Misc.free(ownerAllocator);
         Misc.freeObjListAndKeepObjects(perWorkerAllocators);
+        if (ownGroupByColumnSinkPtrs != null) {
+            ownGroupByColumnSinkPtrs.fillWithDefault();
+        }
+        if (perWorkerGroupByColumnSinkPtrs != null) {
+            for (int i = 0, n = perWorkerGroupByColumnSinkPtrs.size(); i < n; i++) {
+                perWorkerGroupByColumnSinkPtrs.getQuick(i).fillWithDefault();
+            }
+        }
     }
 
     @Override

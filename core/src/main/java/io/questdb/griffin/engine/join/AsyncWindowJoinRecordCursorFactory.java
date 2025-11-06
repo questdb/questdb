@@ -377,8 +377,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             columnSink.of(ptr);
             if (ptr != 0) {
                 columnSink.clear();
+            } else {
+                groupByColumnSinkPtrs.set(i, columnSink.ptr());
             }
-            groupByColumnSinkPtrs.set(i, columnSink.ptr());
         }
 
         try {
@@ -656,6 +657,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     columnSink.of(ptr);
                     if (ptr != 0) {
                         columnSink.clear();
+                    } else {
+                        groupByColumnSinkPtrs.set(i, columnSink.ptr());
                     }
                 }
 

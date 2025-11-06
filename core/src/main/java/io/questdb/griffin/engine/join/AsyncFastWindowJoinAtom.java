@@ -266,6 +266,8 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
         }
         Misc.free(ownerAllocator);
         Misc.freeObjListAndKeepObjects(perWorkerAllocators);
+        Misc.clear(ownerSlaveData);
+        Misc.clearObjList(perWorkerSlaveData);
     }
 
     @Override
@@ -283,6 +285,8 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
         Misc.freeObjList(perWorkerAllocators);
         Misc.freeObjList(ownerGroupByFunctions);
         Misc.freeObjList(perWorkerSlaveData);
+        Misc.clear(ownerSlaveData);
+        Misc.clearObjList(perWorkerSlaveData);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));

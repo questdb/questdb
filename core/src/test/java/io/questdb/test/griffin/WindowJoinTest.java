@@ -488,6 +488,51 @@ public class WindowJoinTest extends AbstractCairoTest {
                     true,
                     true
             );
+
+/*            expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\n" +
+                    "AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t301.5\n" +
+                    "AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t401.5\n" +
+                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t501.5\n" +
+                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t699.5\n" +
+                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t800.5\n" +
+                    "AAPL\t103.0\t2023-01-01T09:07:00.000000Z\t605.5\n" +
+                    "MSFT\t202.0\t2023-01-01T09:08:00.000000Z\t503.0\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Window Join workers: 1\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "      master filter: price<300\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.*, sum(p.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p on t.price < 300" +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "order by t.ts;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // verify result
+            assertQuery(
+                    expect,
+                    "select t.*, sum(p.price) window_price " +
+                            "from (select * from trades where price < 300) t " +
+                            "left join prices p " +
+                            "on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)" +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );*/
         });
     }
 

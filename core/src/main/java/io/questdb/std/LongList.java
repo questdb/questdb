@@ -289,6 +289,10 @@ public class LongList implements Mutable, LongVec, Sinkable {
         Arrays.fill(data, from, to, value);
     }
 
+    public void fillWithDefault() {
+        Arrays.fill(data, noEntryValue);
+    }
+
     public long get(int index) {
         if (index < pos) {
             return data[index];
