@@ -28,8 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
 
 /**
  * When joining on a single symbol column, detects when the slave column doesn't have
@@ -37,8 +35,6 @@ import org.jetbrains.annotations.NotNull;
  * in that case.
  */
 public interface AsofJoinColumnAccessHelper {
-    @Transient
-    CharSequence getMasterValue(Record masterRecord);
 
     /**
      * Used when joining on a single symbol column, returns the symbol key in the slave
@@ -46,9 +42,6 @@ public interface AsofJoinColumnAccessHelper {
      * {@link StaticSymbolTable#VALUE_NOT_FOUND}, the slave column doesn't have the symbol.
      */
     int getSlaveKey(Record masterRecord);
-
-    @NotNull
-    StaticSymbolTable getSlaveSymbolTable();
 
     /**
      * Used when joining on a single symbol column, detects when the slave column doesn't

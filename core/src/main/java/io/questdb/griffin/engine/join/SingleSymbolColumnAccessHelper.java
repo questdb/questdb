@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.std.IntIntHashMap;
-import org.jetbrains.annotations.NotNull;
 
 public final class SingleSymbolColumnAccessHelper implements AsofJoinColumnAccessHelper {
     private final CairoConfiguration config;
@@ -47,9 +46,6 @@ public final class SingleSymbolColumnAccessHelper implements AsofJoinColumnAcces
         this.config = config;
     }
 
-    @Override
-    public CharSequence getMasterValue(Record masterRecord) {
-        return masterRecord.getSymA(masterSymbolIndex);
     }
 
     @Override
@@ -85,11 +81,6 @@ public final class SingleSymbolColumnAccessHelper implements AsofJoinColumnAcces
             masterKeysExistingInSlaveCache.put(masterKey, slaveKey);
         }
         return slaveKey;
-    }
-
-    @Override
-    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        return slaveSymbolTable;
     }
 
     @Override

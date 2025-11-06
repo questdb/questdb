@@ -149,8 +149,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            CharSequence masterSymbolValue = columnAccessHelper.getMasterValue(masterRecord);
-            int symbolKey = TableUtils.toIndexKey(columnAccessHelper.getSlaveSymbolTable().keyOf(masterSymbolValue));
+            int symbolKey = TableUtils.toIndexKey(columnAccessHelper.getSlaveKey(masterRecord));
             if (symbolKey < 0) {
                 record.hasSlave(false);
                 return;

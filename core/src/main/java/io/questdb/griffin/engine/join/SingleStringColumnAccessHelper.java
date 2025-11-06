@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import org.jetbrains.annotations.NotNull;
 
 public final class SingleStringColumnAccessHelper implements AsofJoinColumnAccessHelper {
     private final int masterStringIndex;
@@ -40,11 +39,6 @@ public final class SingleStringColumnAccessHelper implements AsofJoinColumnAcces
     }
 
     @Override
-    public CharSequence getMasterValue(Record masterRecord) {
-        return masterRecord.getStrA(masterStringIndex);
-    }
-
-    @Override
     public int getSlaveKey(Record masterRecord) {
         CharSequence masterStr = masterRecord.getStrA(masterStringIndex);
         if (masterStr == null) {
@@ -53,11 +47,6 @@ public final class SingleStringColumnAccessHelper implements AsofJoinColumnAcces
                     : StaticSymbolTable.VALUE_NOT_FOUND;
         }
         return slaveSymbolTable.keyOf(masterStr);
-    }
-
-    @Override
-    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        return slaveSymbolTable;
     }
 
     @Override

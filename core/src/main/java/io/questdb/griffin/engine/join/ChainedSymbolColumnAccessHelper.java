@@ -25,25 +25,13 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import org.jetbrains.annotations.NotNull;
 
 public record ChainedSymbolColumnAccessHelper(
         AsofJoinColumnAccessHelper[] shortCircuits) implements AsofJoinColumnAccessHelper {
 
     @Override
-    public CharSequence getMasterValue(Record masterRecord) {
-        throw new UnsupportedOperationException("ChainedSymbolColumnAccessHelper can't be used to return the master value");
-    }
-
-    @Override
     public int getSlaveKey(Record masterRecord) {
-        throw new UnsupportedOperationException("ChainedSymbolColumnAccessHelper doesn't have a symbol table");
-    }
-
-    @Override
-    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
         throw new UnsupportedOperationException("ChainedSymbolColumnAccessHelper doesn't have a symbol table");
     }
 

@@ -25,25 +25,13 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import org.jetbrains.annotations.NotNull;
 
 public class NoopColumnAccessHelper implements AsofJoinColumnAccessHelper {
     public static final NoopColumnAccessHelper INSTANCE = new NoopColumnAccessHelper();
 
     @Override
-    public CharSequence getMasterValue(Record masterRecord) {
-        throw new UnsupportedOperationException("NoopColumnAccessHelper can't return the master value");
-    }
-
-    @Override
     public int getSlaveKey(Record masterRecord) {
-        throw new UnsupportedOperationException("NoopColumnAccessHelper doesn't have a symbol table");
-    }
-
-    @Override
-    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
         throw new UnsupportedOperationException("NoopColumnAccessHelper doesn't have a symbol table");
     }
 
