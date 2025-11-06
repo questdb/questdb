@@ -646,6 +646,107 @@ public class WindowJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWindowJoinWithMasterLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareTable();
+            String expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\n" +
+                    "AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t301.5\n" +
+                    "AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t202.0\n" +
+                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t101.5\n" +
+                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t400.0\n" +
+                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t200.5\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Window Join Light\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "      join filter: t.sym=p.sym\n" +
+                            "        Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.*, sum(p.price) as window_price " +
+                            "from (trades limit 5) t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQuery(
+                    expect,
+                    "select t.*, sum(p.price) window_price " +
+                            "from (trades limit 5) t " +
+                            "left join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinWithMasterLimitOffsetFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareTable();
+            String expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\n" +
+                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t101.5\n" +
+                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t400.0\n" +
+                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t200.5\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Window Join Light\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "      join filter: t.sym=p.sym\n" +
+                            "        Limit lo: 1 hi: 4 skip-over-rows: 1 limit: 3\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: trades\n" +
+                            "                  intervals: [(\"2023-01-01T09:00:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000001" : "000000001") + "Z\",\"MAX\")]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.*, sum(p.price) as window_price " +
+                            "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQuery(
+                    expect,
+                    "select t.*, sum(p.price) window_price " +
+                            "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
+                            "left join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
     private void prepareTable(boolean extraData) throws SqlException {
         executeWithRewriteTimestamp(
                 "create table trades (" +

@@ -83,8 +83,8 @@ public class GroupByLongList {
             int currentSize = Unsafe.getUnsafe().getInt(ptr + SIZE_OFFSET);
             if (currentSize > 0) {
                 Vect.memset(ptr + HEADER_SIZE, 8L * currentSize, 0);
+                Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
             }
-            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
         }
     }
 
