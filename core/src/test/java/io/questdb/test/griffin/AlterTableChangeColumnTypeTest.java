@@ -52,41 +52,32 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-@RunWith(Parameterized.class)
 public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     private final boolean partitioned;
     private final boolean walEnabled;
 
-    public AlterTableChangeColumnTypeTest(Mode walMode) {
-        this.walEnabled = (walMode == Mode.WITH_WAL);
-        this.partitioned = (walMode != Mode.NON_PARTITIONED);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {Mode.WITH_WAL}, {Mode.NO_WAL}, {Mode.NON_PARTITIONED}
-        });
+    public AlterTableChangeColumnTypeTest() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        this.walEnabled = TestUtils.isWal(rnd);
+        if (!walEnabled) {
+            this.partitioned = rnd.nextBoolean();
+        } else {
+            this.partitioned = true;
+        }
     }
 
     @Test
     public void testCannotConvertToSameType() throws Exception {
-        assumeNonWal();
         assertFailure("alter table x alter column d type double", 34, "column 'd' type is already 'DOUBLE'");
     }
 
     @Test
     public void testChangeDoubleToFloat() throws Exception {
         assertMemoryLeak(() -> {
-            assumeWal();
             execute("create table x (ts timestamp, col double) timestamp(ts) partition by day wal", sqlExecutionContext);
             execute("insert into x values('2024-05-14T16:00:00.000000Z', 0.0)", sqlExecutionContext);
             execute("insert into x values('2024-05-14T16:00:01.000000Z', 0.1)", sqlExecutionContext);
@@ -101,35 +92,38 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("alter table x alter column col type float", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                            "2024-05-14T16:00:00.000000Z\t0.0\n" +
-                            "2024-05-14T16:00:01.000000Z\t0.1\n" +
-                            "2024-05-14T16:00:02.000000Z\t3.1\n" +
-                            "2024-05-14T16:00:02.000000Z\t-9.223372E18\n" +
-                            "2024-05-14T16:00:02.000000Z\t-3.4E38\n" +
-                            "2024-05-14T16:00:02.000000Z\t3.4E38\n" +
-                            "2024-05-14T16:00:02.000000Z\tnull\n" +
-                            "2024-05-14T16:00:02.000000Z\tnull\n",
+            assertSql("""
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\t0.0
+                            2024-05-14T16:00:01.000000Z\t0.1
+                            2024-05-14T16:00:02.000000Z\t3.1
+                            2024-05-14T16:00:02.000000Z\t-9.223372E18
+                            2024-05-14T16:00:02.000000Z\t-3.4E38
+                            2024-05-14T16:00:02.000000Z\t3.4E38
+                            2024-05-14T16:00:02.000000Z\tnull
+                            2024-05-14T16:00:02.000000Z\tnull
+                            """,
                     "x");
 
             execute("alter table x alter column col type int", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t0\n" +
-                    "2024-05-14T16:00:01.000000Z\t0\n" +
-                    "2024-05-14T16:00:02.000000Z\t3\n" +
-                    "2024-05-14T16:00:02.000000Z\tnull\n" +
-                    "2024-05-14T16:00:02.000000Z\tnull\n" +
-                    "2024-05-14T16:00:02.000000Z\tnull\n" +
-                    "2024-05-14T16:00:02.000000Z\tnull\n" +
-                    "2024-05-14T16:00:02.000000Z\tnull\n", "x");
+            assertSql("""
+                    ts\tcol
+                    2024-05-14T16:00:00.000000Z\t0
+                    2024-05-14T16:00:01.000000Z\t0
+                    2024-05-14T16:00:02.000000Z\t3
+                    2024-05-14T16:00:02.000000Z\tnull
+                    2024-05-14T16:00:02.000000Z\tnull
+                    2024-05-14T16:00:02.000000Z\tnull
+                    2024-05-14T16:00:02.000000Z\tnull
+                    2024-05-14T16:00:02.000000Z\tnull
+                    """, "x");
         });
     }
 
     @Test
     public void testChangeFloatToDouble() throws Exception {
-        assumeWal();
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, col float) timestamp(ts) partition by day wal", sqlExecutionContext);
             execute("insert into x values('2024-05-14T16:00:00.000000Z', 0.0)", sqlExecutionContext);
@@ -143,24 +137,28 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("alter table x alter column col type double", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t0.0\n" +
-                    "2024-05-14T16:00:01.000000Z\t0.10000000149011612\n" +
-                    "2024-05-14T16:00:02.000000Z\t3.0999999046325684\n" +
-                    "2024-05-14T16:00:02.000000Z\t-9.223372036854776E18\n" +
-                    "2024-05-14T16:00:02.000000Z\t-3.3999999521443642E38\n" +
-                    "2024-05-14T16:00:02.000000Z\t3.3999999521443642E38\n", "x");
+            assertSql("""
+                    ts\tcol
+                    2024-05-14T16:00:00.000000Z\t0.0
+                    2024-05-14T16:00:01.000000Z\t0.10000000149011612
+                    2024-05-14T16:00:02.000000Z\t3.0999999046325684
+                    2024-05-14T16:00:02.000000Z\t-9.223372036854776E18
+                    2024-05-14T16:00:02.000000Z\t-3.3999999521443642E38
+                    2024-05-14T16:00:02.000000Z\t3.3999999521443642E38
+                    """, "x");
 
             execute("alter table x alter column col type int", sqlExecutionContext);
             drainWalQueue();
 
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t0\n" +
-                    "2024-05-14T16:00:01.000000Z\t0\n" +
-                    "2024-05-14T16:00:02.000000Z\t3\n" +
-                    "2024-05-14T16:00:02.000000Z\tnull\n" +
-                    "2024-05-14T16:00:02.000000Z\tnull\n" +
-                    "2024-05-14T16:00:02.000000Z\tnull\n", "x");
+            assertSql("""
+                    ts\tcol
+                    2024-05-14T16:00:00.000000Z\t0
+                    2024-05-14T16:00:01.000000Z\t0
+                    2024-05-14T16:00:02.000000Z\t3
+                    2024-05-14T16:00:02.000000Z\tnull
+                    2024-05-14T16:00:02.000000Z\tnull
+                    2024-05-14T16:00:02.000000Z\tnull
+                    """, "x");
         });
     }
 
@@ -332,8 +330,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             );
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ik\tSYMBOL\ttrue\t256\tfalse\t512\t5\tfalse\tfalse\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            ik\tSYMBOL\ttrue\t256\tfalse\t512\t5\tfalse\tfalse
+                            """,
                     "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
             );
 
@@ -347,8 +347,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             );
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ik\tSYMBOL\ttrue\t256\tfalse\t1024\t5\tfalse\tfalse\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            ik\tSYMBOL\ttrue\t256\tfalse\t1024\t5\tfalse\tfalse
+                            """,
                     "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
             );
         });
@@ -416,13 +418,15 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("insert into x select * from x");
             drainWalQueue();
 
-            assertSql("c\ttimestamp\n" +
-                    "TJWCP\t2018-01-01T00:00:07.200000Z\n" +
-                    "TJWCP\t2018-01-01T00:00:07.200000Z\n" +
-                    "abc\t2024-06-20T17:18:27.752076Z\n" +
-                    "abc\t2024-06-20T17:18:27.752076Z\n" +
-                    "def\t2024-06-20T17:18:27.752076Z\n" +
-                    "def\t2024-06-20T17:18:27.752076Z\n", "x order by timestamp, c");
+            assertSql("""
+                    c\ttimestamp
+                    TJWCP\t2018-01-01T00:00:07.200000Z
+                    TJWCP\t2018-01-01T00:00:07.200000Z
+                    abc\t2024-06-20T17:18:27.752076Z
+                    abc\t2024-06-20T17:18:27.752076Z
+                    def\t2024-06-20T17:18:27.752076Z
+                    def\t2024-06-20T17:18:27.752076Z
+                    """, "x order by timestamp, c");
         });
     }
 
@@ -438,17 +442,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
                 int typeId = currentType;
                 while (typeId == currentType) {
-                    switch (rnd.nextPositiveInt() % 3) {
-                        case 0:
-                            typeId = ColumnType.STRING;
-                            break;
-                        case 1:
-                            typeId = ColumnType.SYMBOL;
-                            break;
-                        default:
-                            typeId = ColumnType.VARCHAR;
-                            break;
-                    }
+                    typeId = switch (rnd.nextPositiveInt() % 3) {
+                        case 0 -> ColumnType.STRING;
+                        case 1 -> ColumnType.SYMBOL;
+                        default -> ColumnType.VARCHAR;
+                    };
                 }
                 String type = ColumnType.nameOf(typeId);
                 currentType = typeId;
@@ -513,13 +511,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testColumnDoesNotExist() throws Exception {
-        Assume.assumeTrue(!walEnabled && partitioned);
         assertFailure("alter table x alter column non_existing", 27, "column 'non_existing' does not exist in table 'x'");
     }
 
     @Test
     public void testConversionInvalidToken() throws Exception {
-        Assume.assumeTrue(!walEnabled && partitioned);
         assertFailure("alter table x alter column i type long abc", 39, "unexpected token [abc] while trying to change column type");
     }
 
@@ -626,10 +622,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "timestamp\td\n" +
-                            "2044-02-24T00:00:00.000000Z\t1.0\n" +
-                            "2044-02-25T00:00:00.000000Z\t1.0\n" +
-                            "2044-02-25T00:00:00.000000Z\t1.2\n",
+                    """
+                            timestamp\td
+                            2044-02-24T00:00:00.000000Z\t1.0
+                            2044-02-25T00:00:00.000000Z\t1.0
+                            2044-02-25T00:00:00.000000Z\t1.2
+                            """,
                     "select timestamp, d from x order by timestamp, d limit -3"
             );
         });
@@ -764,11 +762,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("timestamp\td\tik\n" +
-                    "2018-01-01T02:00:00.000000Z\t0.04488373772232379\tCPSW\n" +
-                    "2044-02-24T00:00:00.000000Z\t3.0\tabc\n" +
-                    "2044-02-25T00:00:00.000000Z\t4.0\tabc\n" +
-                    "2044-02-25T00:00:00.000000Z\t5.0\tdef\n", "select timestamp, d, ik from x limit -4");
+            assertSql("""
+                    timestamp\td\tik
+                    2018-01-01T02:00:00.000000Z\t0.04488373772232379\tCPSW
+                    2044-02-24T00:00:00.000000Z\t3.0\tabc
+                    2044-02-25T00:00:00.000000Z\t4.0\tabc
+                    2044-02-25T00:00:00.000000Z\t5.0\tdef
+                    """, "select timestamp, d, ik from x limit -4");
         });
     }
 
@@ -810,15 +810,16 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute("alter table y alter column converted type int", sqlExecutionContext);
             drainWalQueue();
 
-            assertQuery("converted\tcasted\toriginal\n" +
-                    "1316134911\t1316134911\t9999999999999\n", "select * from y", null, true, true);
+            assertQuery("""
+                    converted\tcasted\toriginal
+                    1316134911\t1316134911\t9999999999999
+                    """, "select * from y", null, true, true);
 
         });
     }
 
     @Test
     public void testFixedSizeColumnNullableBehaviour() throws Exception {
-        assumeNonWal();
         assertMemoryLeak(() -> {
             drainWalQueue();
             final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP", "BOOLEAN", "DATE"};
@@ -880,31 +881,21 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testFixedToStrConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-            testConvertFixedToVar("string");
-        });
+        assertMemoryLeak(() -> testConvertFixedToVar("string"));
     }
 
     @Test
     public void testFixedToSymbolConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-            testConvertVarToFixed("symbol");
-        });
+        assertMemoryLeak(() -> testConvertVarToFixed("symbol"));
     }
 
     @Test
     public void testFixedToVarcharConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-            testConvertFixedToVar("varchar");
-        });
+        assertMemoryLeak(() -> testConvertFixedToVar("varchar"));
     }
 
     @Test
     public void testIntOverflowConversions() throws SqlException {
-        //assumeWal();
         execute("create table x (a long, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR" + (walEnabled ? " WAL" : " BYPASS WAL"));
         execute("insert into x(a, timestamp) values(-7178801693176412875L, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);
         drainWalQueue();
@@ -915,25 +906,24 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
         execute("alter table x alter column a type int", sqlExecutionContext);
         drainWalQueue();
-        assertSql("cast\ta\n" +
-                "null\tnull\n", "select cast(-7.1788016931764132E18 as int), a from x");
+        assertSql("""
+                cast\ta
+                null\tnull
+                """, "select cast(-7.1788016931764132E18 as int), a from x");
     }
 
     @Test
     public void testNewTypeInvalid() throws Exception {
-        assumeNonWal();
         assertFailure("alter table x alter column c type abracadabra", 34, "unsupported column type: abracadabra");
     }
 
     @Test
     public void testNewTypeMissing() throws Exception {
-        assumeNonWal();
         assertFailure("alter table x alter column c type", 33, "column type expected");
     }
 
     @Test
     public void testShouldTruncateConvertedColumns() throws Exception {
-        assumeNonWal();
         assertMemoryLeak(() -> {
             // Create table with many partitions
             execute(
@@ -973,37 +963,26 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testStrToFixedConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-            testConvertVarToFixed("string");
-        });
+        assertMemoryLeak(() -> testConvertVarToFixed("string"));
     }
 
     @Test
     public void testSymbolToFixedConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-            testConvertFixedToVar("symbol");
-        });
+        assertMemoryLeak(() -> testConvertFixedToVar("symbol"));
     }
 
     @Test
     public void testTimestampConversionInvalid() throws Exception {
-        Assume.assumeTrue(!walEnabled && partitioned);
         assertFailure("alter table x alter column timestamp type long", 42, "cannot change type of designated timestamp column");
     }
 
     @Test
     public void testVarcharToFixedConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-            testConvertVarToFixed("varchar");
-        });
+        assertMemoryLeak(() -> testConvertVarToFixed("varchar"));
     }
 
     @Test
     public void testWalConversionFromVarToFixedDoesNotLeaveAuxFiles() throws Exception {
-        assumeWal();
         assertMemoryLeak(() -> {
             execute("create table x (s string, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR WAL;");
             execute("alter table x alter column s type int;");

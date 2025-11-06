@@ -28,7 +28,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.std.IntList;
 
-public class ListColumnFilter extends IntList implements ColumnFilter, Plannable {
+public final class ListColumnFilter extends IntList implements ColumnFilter, Plannable {
 
     public ListColumnFilter() {
     }
