@@ -33,8 +33,8 @@ import io.questdb.std.Decimals;
 public class Decimal16Constant extends Decimal16Function implements ConstantFunction {
     private final short value;
 
-    public Decimal16Constant(short value, int typep) {
-        super(typep);
+    public Decimal16Constant(short value, int type) {
+        super(type);
         this.value = value;
     }
 

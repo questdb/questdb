@@ -1762,9 +1762,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testDecimalAsStringMissingSuffix() throws Exception {
-        assertMemoryLeak(() -> {
-            assertDecimalStr("123.45", 10, 2, 12345L);
-        });
+        assertMemoryLeak(() -> assertDecimalStr("123.45", 10, 2, 12345L));
     }
 
     @Test
@@ -3233,7 +3231,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
             TableWriter.Row r = writer.newRow();
-            r.putDecimalStr(0, value, Misc.getThreadLocalDecimal256());
+            r.putDecimalStr(0, value);
             r.append();
             writer.commit();
         }
@@ -3245,28 +3243,16 @@ public class TableWriterTest extends AbstractCairoTest {
             final Record record = cursor.getRecord();
             final int type = reader.getMetadata().getColumnType(0);
             Assert.assertTrue(cursor.hasNext());
-            final long actual;
+            final long actual = switch (ColumnType.tagOf(type)) {
+                case ColumnType.DECIMAL8 -> record.getByte(0);
+                case ColumnType.DECIMAL16 -> record.getShort(0);
+                case ColumnType.DECIMAL32 -> record.getInt(0);
+                case ColumnType.DECIMAL64 -> record.getLong(0);
+                case ColumnType.DECIMAL128 -> record.getLong128Lo(0);
+                default -> // DECIMAL256
+                        record.getLong256A(0).getLong0();
+            };
 
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.DECIMAL8:
-                    actual = record.getByte(0);
-                    break;
-                case ColumnType.DECIMAL16:
-                    actual = record.getShort(0);
-                    break;
-                case ColumnType.DECIMAL32:
-                    actual = record.getInt(0);
-                    break;
-                case ColumnType.DECIMAL64:
-                    actual = record.getLong(0);
-                    break;
-                case ColumnType.DECIMAL128:
-                    actual = record.getLong128Lo(0);
-                    break;
-                default: // DECIMAL256
-                    actual = record.getLong256A(0).getLong0();
-                    break;
-            }
             Assert.assertEquals(expected, actual);
         }
     }

@@ -35,8 +35,8 @@ public class Decimal128Constant extends Decimal128Function implements ConstantFu
     private final long hi;
     private final long lo;
 
-    public Decimal128Constant(long hi, long lo, int typep) {
-        super(typep);
+    public Decimal128Constant(long hi, long lo, int type) {
+        super(type);
         this.hi = hi;
         this.lo = lo;
     }

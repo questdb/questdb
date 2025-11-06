@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
 
+@SuppressWarnings("resource")
 class TimestampCaseFunction extends TimestampFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;

@@ -2370,6 +2370,7 @@ public class WalWriter implements TableWriterAPI {
     private class RowImpl implements TableWriter.Row {
         private final StringSink tempSink = new StringSink();
         private final Utf8StringSink tempUtf8Sink = new Utf8StringSink();
+        private final Decimal256 decimal256Sink = new Decimal256();
         private long timestamp;
 
         @Override
@@ -2446,9 +2447,9 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putDecimalStr(int columnIndex, CharSequence decimalValue, Decimal256 decimalSink) {
+        public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
             int columnType = metadata.getColumnType(columnIndex);
-            WriterRowUtils.putDecimalStr(columnIndex, decimalSink, decimalValue, columnType, this);
+            WriterRowUtils.putDecimalStr(columnIndex, decimal256Sink, decimalValue, columnType, this);
         }
 
         @Override

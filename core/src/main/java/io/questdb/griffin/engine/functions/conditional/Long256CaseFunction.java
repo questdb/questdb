@@ -31,6 +31,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
+@SuppressWarnings("resource")
 class Long256CaseFunction extends Long256Function implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;

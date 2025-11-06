@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.ObjList;
 
+@SuppressWarnings("resource")
 class LongCaseFunction extends LongFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;

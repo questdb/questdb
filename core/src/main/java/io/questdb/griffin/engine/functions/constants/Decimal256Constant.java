@@ -37,8 +37,8 @@ public class Decimal256Constant extends Decimal256Function implements ConstantFu
     private final long lh;
     private final long ll;
 
-    public Decimal256Constant(long hh, long hl, long lh, long ll, int typep) {
-        super(typep);
+    public Decimal256Constant(long hh, long hl, long lh, long ll, int type) {
+        super(type);
         this.hh = hh;
         this.hl = hl;
         this.lh = lh;

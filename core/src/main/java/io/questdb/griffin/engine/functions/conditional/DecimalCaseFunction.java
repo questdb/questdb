@@ -31,6 +31,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.ObjList;
 
+@SuppressWarnings("resource")
 class DecimalCaseFunction extends DecimalFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;

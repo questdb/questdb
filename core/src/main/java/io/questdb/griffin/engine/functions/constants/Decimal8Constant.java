@@ -33,8 +33,8 @@ import io.questdb.std.Decimals;
 public class Decimal8Constant extends Decimal8Function implements ConstantFunction {
     private final byte value;
 
-    public Decimal8Constant(byte value, int typep) {
-        super(typep);
+    public Decimal8Constant(byte value, int type) {
+        super(type);
         this.value = value;
     }
 

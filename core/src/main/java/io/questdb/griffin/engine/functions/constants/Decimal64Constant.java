@@ -33,8 +33,8 @@ import io.questdb.std.Decimals;
 public class Decimal64Constant extends Decimal64Function implements ConstantFunction {
     private final long value;
 
-    public Decimal64Constant(long value, int typep) {
-        super(typep);
+    public Decimal64Constant(long value, int type) {
+        super(type);
         this.value = value;
     }
 

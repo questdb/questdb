@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.std.ObjList;
 
+@SuppressWarnings("resource")
 class DateCaseFunction extends DateFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;

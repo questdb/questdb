@@ -33,8 +33,8 @@ import io.questdb.std.Decimals;
 public class Decimal32Constant extends Decimal32Function implements ConstantFunction {
     private final int value;
 
-    public Decimal32Constant(int value, int typep) {
-        super(typep);
+    public Decimal32Constant(int value, int type) {
+        super(type);
         this.value = value;
     }
 

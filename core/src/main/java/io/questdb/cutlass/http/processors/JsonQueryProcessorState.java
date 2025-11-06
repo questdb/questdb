@@ -111,7 +111,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
-    private final StringSink sink = new StringSink();
+    private final StringSink stringSink = new StringSink();
     private final long statementTimeout;
     private byte apiVersion = DEFAULT_API_VERSION;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -189,7 +189,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             recordCursorFactory = null;
         }
         query.clear();
-        sink.clear();
+        stringSink.clear();
         queryState = QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
         columnValueFullySent = true;
@@ -616,14 +616,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private boolean addSunkColumnToOutput(RecordMetadata metadata) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        int columnIndex = metadata.getColumnIndexQuiet(sink);
+        int columnIndex = metadata.getColumnIndexQuiet(stringSink);
         if (columnIndex == RecordMetadata.COLUMN_NOT_FOUND) {
-            info().$("column not found: '").$safe(sink).$('\'').$();
+            info().$("column not found: '").$safe(stringSink).$('\'').$();
             HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
             JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
             response.putAscii('{')
                     .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
-                    .putAsciiQuoted("error").putAscii(':').putAscii('\"').putAscii("column not found: '").escapeJsonStr(sink).putAscii("'\"")
+                    .putAsciiQuoted("error").putAscii(':').putAscii('\"').putAscii("column not found: '").escapeJsonStr(stringSink).putAscii("'\"")
                     .putAscii('}');
             response.sendChunk(true);
             return true;
@@ -965,7 +965,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         while (rawLo < rawHi) {
             byte b = Unsafe.getUnsafe().getByte(rawLo);
             if (b < 0) {
-                int n = Utf8s.utf8DecodeMultiByte(rawLo, rawHi, b, sink);
+                int n = Utf8s.utf8DecodeMultiByte(rawLo, rawHi, b, stringSink);
                 if (n == -1) {
                     // Invalid code point
                     return 0;
@@ -976,7 +976,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 rawLo++;
                 if (escaped) {
                     escaped = false;
-                    sink.put((char) b);
+                    stringSink.put((char) b);
                     continue;
                 }
 
@@ -987,7 +987,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 } else if (!quoted && b == ',') {
                     return rawLo;
                 } else {
-                    sink.put((char) b);
+                    stringSink.put((char) b);
                 }
             }
         }
@@ -1117,7 +1117,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             long rawLo = columnNames.lo();
             final long rawHi = columnNames.hi();
             while (rawLo < rawHi) {
-                sink.clear();
+                stringSink.clear();
                 rawLo = parseNextColumnName(rawLo, rawHi);
                 if (rawLo <= 0) {
                     info().$("utf8 error when decoding column list '").$safe(columnNames).$('\'').$();
@@ -1130,7 +1130,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     return false;
                 }
 
-                if (sink.isEmpty()) {
+                if (stringSink.isEmpty()) {
                     info().$("empty column in query parameter '").$(URL_PARAM_COLS).$(": ").$safe(columnNames).$('\'').$();
                     HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
                     JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);

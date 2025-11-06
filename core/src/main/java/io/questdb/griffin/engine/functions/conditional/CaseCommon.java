@@ -158,16 +158,12 @@ public class CaseCommon {
 
     static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker, ObjList<Function> args) throws SqlException {
         if (isGeoHash(returnType)) {
-            switch (tagOf(returnType)) {
-                case GEOBYTE:
-                    return new GeoByteCaseFunction(returnType, picker, args);
-                case GEOSHORT:
-                    return new GeoShortCaseFunction(returnType, picker, args);
-                case GEOINT:
-                    return new GeoIntCaseFunction(returnType, picker, args);
-                default:
-                    return new GeoLongCaseFunction(returnType, picker, args);
-            }
+            return switch (tagOf(returnType)) {
+                case GEOBYTE -> new GeoByteCaseFunction(returnType, picker, args);
+                case GEOSHORT -> new GeoShortCaseFunction(returnType, picker, args);
+                case GEOINT -> new GeoIntCaseFunction(returnType, picker, args);
+                default -> new GeoLongCaseFunction(returnType, picker, args);
+            };
         }
         if (ColumnType.isArray(returnType)) {
             return new ArrayCaseFunction(returnType, picker, args);

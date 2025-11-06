@@ -10794,7 +10794,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll);
 
-        void putDecimalStr(int columnIndex, CharSequence value, Decimal256 decimal);
+        void putDecimalStr(int columnIndex, CharSequence decimalValue);
 
         void putDouble(int columnIndex, double value);
 
@@ -10930,7 +10930,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putDecimalStr(int columnIndex, CharSequence cs, Decimal256 decimal) {
+        public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
             // no-op
         }
 
@@ -11081,6 +11081,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private class RowImpl implements Row {
+        private final Decimal256 decimal256Sink = new Decimal256();
+
         @Override
         public void append() {
             rowAppend(activeNullSetters);
@@ -11155,9 +11157,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putDecimalStr(int columnIndex, CharSequence decimalValue, Decimal256 decimalSink) {
+        public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
             final int type = metadata.getColumnType(columnIndex);
-            WriterRowUtils.putDecimalStr(columnIndex, decimalSink, decimalValue, type, this);
+            WriterRowUtils.putDecimalStr(columnIndex, decimal256Sink, decimalValue, type, this);
         }
 
         @Override
