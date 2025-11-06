@@ -71,8 +71,21 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     IntList getColumnIndexes();
 
     /**
-     * Returns the number of rows remained unprocessed in the table partition
-     * which backs the page frames provided by this cursor.
+     * Returns the number of rows remaining in the current partition that have not yet been
+     * processed by this cursor.
+     * <p>
+     * This method provides an efficient count of unprocessed rows in the partition currently
+     * being scanned, without requiring iteration through the data. It is primarily used for
+     * size calculation operations in conjunction with {@link #calculateSize(RecordCursor.Counter)},
+     * allowing quick determination of the total number of rows available in the cursor.
+     * <p>
+     * The returned value represents rows in the current partition only. For cursors spanning
+     * multiple partitions, this count does not include rows from partitions that have not yet
+     * been visited.
+     *
+     * @return the number of unprocessed rows remaining in the current partition
+     * @see #calculateSize(RecordCursor.Counter)
+     * @see #size()
      */
     long getRemainingRowsInPartition();
 
