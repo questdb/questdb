@@ -104,12 +104,14 @@ stages:
           - template: templates/install-llvm.yml
             parameters:
               shouldRun: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+
           - task: Cache@2
             continueOnError: true
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
               key: '"questdb_main" | "maven"'
               path: $(MAVEN_CACHE_FOLDER)
+
           - task: Maven@3
             displayName: "Compile with Maven"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -119,6 +121,7 @@ stages:
               goals: "compile"
               options: "--batch-mode -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: $(jdk)
+
           - task: Maven@3
             displayName: "Merge partial JaCoCo reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -131,165 +134,40 @@ stages:
                 -DcoverDiff=$(COVERAGE_DIFF)
                 -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: $(jdk)
-          - bash: |
-                    set -eux
-                    export PATH=$LLVM_TOOLS_PATH:$PATH
-                    
-                    # Debug: Show LLVM tool versions
-                    echo "=== LLVM Tools Versions ==="
-                    llvm-profdata --version || echo "llvm-profdata not found"
-                    llvm-cov --version || echo "llvm-cov not found"
-                    echo ""
-                    
-                    # Debug: Show downloaded artifacts
-                    echo "=== Downloaded Rust Coverage Artifacts ==="
-                    ls -alR $(Pipeline.Workspace)/rust-llvm-coverage || echo "rust-llvm-coverage directory not found"
-                    echo ""
-                    
-                    # Debug: Show workspace structure
-                    echo "=== Pipeline Workspace Contents ==="
-                    find $(Pipeline.Workspace) -type f -name "*.profdata" -o -name "*.so" -o -name "*test-binary" || true
-                    echo ""
-                    
-                    # Debug: Verify required binaries exist
-                    echo "=== Verifying Required Binaries ==="
-                    if [ -f "$(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so" ]; then
-                    echo "libquestdbr.so found (size: $(stat -f%z "$(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so" 2>/dev/null || stat -c%s "$(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so"))"
-                    else
-                    echo "libquestdbr.so NOT found"
-                    fi
-                    if [ -f "$(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary" ]; then
-                    echo "questdbr-test-binary found (size: $(stat -f%z "$(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary" 2>/dev/null || stat -c%s "$(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary"))"
-                    else
-                    echo "questdbr-test-binary NOT found"
-                    fi
-                    echo ""
-                    
-                    # Debug: Count and list profdata files
-                    echo "=== Profdata Files to Merge ==="
-                    PROFDATA_COUNT=$(ls -1 $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata 2>/dev/null | wc -l)
-                    echo "Found $PROFDATA_COUNT .profdata files:"
-                    ls -lh $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata 2>/dev/null || echo "No .profdata files found"
-                    echo ""
-                    
-                    # Merge partial profdata files into the complete report
-                    echo "=== Merging Profdata Files ==="
-                    llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
-                    if [ $? -eq 0 ] && [ -f questdbr.profdata ]; then
-                    echo "Successfully merged profdata (size: $(stat -f%z questdbr.profdata 2>/dev/null || stat -c%s questdbr.profdata) bytes)"
-                    else
-                    echo "Failed to merge profdata files"
-                    exit 1
-                    fi
-                    echo ""
-                    
-                    # Compile the merged coverage report into an HTML report - commented out as it's used during code coverage troubleshooting only
-                    # NOTE: We have to use --path-equivalence to remap paths collected on self-hosted runners
-                    #       to paths used by the Azure-hosted runner executing this script
-            #              echo "=== Generating HTML Coverage Report ==="
-            #              llvm-cov show \
-            #                --format=html \
-            #                --output-dir=rust-llvm-coverage \
-            #                --ignore-filename-regex='(\.cargo/registry|rustc/.*\.rs)' \
-            #                --path-equivalence=/azp/_work/1/s,$(Build.SourcesDirectory) \
-            #                --instr-profile=questdbr.profdata \
-            #                --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
-            #                --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary
-            #              if [ $? -eq 0 ] && [ -d rust-llvm-coverage ]; then
-            #                HTML_FILES=$(find rust-llvm-coverage -name "*.html" | wc -l)
-            #                echo "Successfully generated HTML report ($HTML_FILES HTML files)"
-            #                ls -lh rust-llvm-coverage/index.html 2>/dev/null || echo "Note: index.html not found"
-            #              else
-            #                echo "Failed to generate HTML coverage report"
-            #                exit 1
-            #              fi
-            #              echo ""
 
-            # Export the merged coverage report to LCOV format
-            # NOTE: We have to use --path-equivalence to remap paths collected on self-hosted runners
-                    echo "=== Exporting to LCOV Format ==="
-                    llvm-cov export \
-                    --format=lcov \
-                    --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-                    --path-equivalence=/azp/_work/1/s,$(Build.SourcesDirectory) \
-                    --instr-profile=questdbr.profdata \
-                    --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
-                    --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary \
-                    > questdbr.lcov.dat
-                    if [ $? -eq 0 ] && [ -f questdbr.lcov.dat ]; then
-                    LCOV_LINES=$(wc -l < questdbr.lcov.dat)
-                    echo "Successfully exported to LCOV (size: $(stat -f%z questdbr.lcov.dat 2>/dev/null || stat -c%s questdbr.lcov.dat) bytes, $LCOV_LINES lines)"
-                    else
-                    echo "Failed to export to LCOV format"
-                    exit 1
-                    fi
-                    echo ""
-            
-            # Convert LCOV coverage results to Cobertura XML format
-                    echo "=== Converting to Cobertura XML ==="
-            # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
-                    curl -LsSf https://astral.sh/uv/install.sh | sh
-            
-            # NOTE: We use a hard-coded path '/azp/_work/1/s' instead of $(Build.SourcesDirectory) because:
-            # 1. Coverage data is generated on self-hosted runners (which always use /azp/_work/1/s)
-            # 2. This conversion to Cobertura format runs on Azure-hosted runners (where $(Build.SourcesDirectory) differs)
-            # 3. The --base-dir must match the path where coverage was originally generated for correct source mapping
-                    uv run --with lcov_cobertura python3 -m lcov_cobertura \
-                    questdbr.lcov.dat \
-                    --output cobertura.xml \
-                    --base-dir /azp/_work/1/s/core/rust/qdbr/src
-                    if [ $? -eq 0 ] && [ -f cobertura.xml ]; then
-                    echo "Successfully converted to Cobertura XML (size: $(stat -f%z cobertura.xml 2>/dev/null || stat -c%s cobertura.xml) bytes)"
-                    head -n 5 cobertura.xml
-                    else
-                    echo "Failed to convert to Cobertura XML"
-                    exit 1
-                    fi
-                    echo ""
-                    
-                    echo "=== Coverage Generation Complete ==="
-                    echo "Generated artifacts:"
-                    ls -lh questdbr.profdata questdbr.lcov.dat cobertura.xml 2>/dev/null
-                    echo "HTML report location: rust-llvm-coverage/"
+          - bash: |
+              set -eux
+              export PATH=$LLVM_TOOLS_PATH:$PATH
+              ls -al $(Pipeline.Workspace)/rust-llvm-coverage
+
+              # Merge partial profdata files into the complete report
+              llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
+              
+              # Export the merged coverage report to LCOV format
+              # NOTE: We have to use --path-equivalence to remap paths collected on self-hosted runners
+              llvm-cov export \
+              --format=lcov \
+              --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+              --path-equivalence=/azp/_work/1/s,$(Build.SourcesDirectory) \
+              --instr-profile=questdbr.profdata \
+              --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
+              --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary \
+              > questdbr.lcov.dat
+              
+              # Convert LCOV coverage results to Cobertura XML format
+              # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
+              curl -LsSf https://astral.sh/uv/install.sh | sh
+              
+              # NOTE: We use a hard-coded path '/azp/_work/1/s' instead of $(Build.SourcesDirectory) because:
+              # 1. Coverage data is generated on self-hosted runners (which always use /azp/_work/1/s)
+              # 2. This conversion to Cobertura format runs on Azure-hosted runners (where $(Build.SourcesDirectory) differs)
+              # 3. The --base-dir must match the path where coverage was originally generated for correct source mapping
+              uv run --with lcov_cobertura python3 -m lcov_cobertura \
+              questdbr.lcov.dat \
+              --output cobertura.xml \
+              --base-dir /azp/_work/1/s/core/rust/qdbr/src
             displayName: "Merge partial Rust reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-
-          # The PublishBuildArtifacts tasks bellow are only useful for code coverage troubleshooting
-          #          - task: PublishBuildArtifacts@1
-          #            displayName: "Publish Rust Coverage Reports"
-          #            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-          #            continueOnError: true
-          #            inputs:
-          #              PathtoPublish: '$(Build.SourcesDirectory)/rust-llvm-coverage'
-          #              ArtifactName: 'rust-coverage-html'
-          #              publishLocation: 'Container'
-          #
-          #          - task: PublishBuildArtifacts@1
-          #            displayName: "Publish Cobertura XML"
-          #            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-          #            continueOnError: true
-          #            inputs:
-          #              PathtoPublish: '$(Build.SourcesDirectory)/cobertura.xml'
-          #              ArtifactName: 'rust-cobertura-xml'
-          #              publishLocation: 'Container'
-          #
-          #          - task: PublishBuildArtifacts@1
-          #            displayName: "Publish Merged Profdata"
-          #            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-          #            continueOnError: true
-          #            inputs:
-          #              PathtoPublish: '$(Build.SourcesDirectory)/questdbr.profdata'
-          #              ArtifactName: 'rust-merged-profdata'
-          #              publishLocation: 'Container'
-          #
-          #          - task: PublishBuildArtifacts@1
-          #            displayName: "Publish LCOV Data"
-          #            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-          #            continueOnError: true
-          #            inputs:
-          #              PathtoPublish: '$(Build.SourcesDirectory)/questdbr.lcov.dat'
-          #              ArtifactName: 'rust-lcov-data'
-          #              publishLocation: 'Container'
 
           - bash: |
               set -eux
