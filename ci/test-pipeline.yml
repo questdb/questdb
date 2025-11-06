@@ -31,7 +31,6 @@ stages:
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
     variables:
       includeTests: "**/griffin/**,**/cairo/**"
@@ -42,7 +41,6 @@ stages:
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
     variables:
       excludeTests: "**/griffin/**,**/cairo/**"
