@@ -357,7 +357,48 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final int skip = 0;
         final long expectedNumOfRows = 24 + 1;
 
-        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, intervalHi, skip, expectedNumOfRows);
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory1_multipleIntervals() throws Exception {
+        // many partitions
+        // interval is the first partition
+        // size is less than page frame max rows
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60 * 60;
+        final long intervalLength = 1000000L * 60 * 60 * 12;
+        final int skip = 0;
+        final long expectedNumOfRows = 3 * (12 + 1);
+
+        final long DAY = 1000000L * 60 * 60 * 24;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{
+                0L, intervalLength,
+                DAY, DAY + intervalLength,
+                2 * DAY, 2 * DAY + intervalLength
+        }), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory1_nonZeroStart_multipleIntervals() throws Exception {
+        // many partitions
+        // interval is the first partition
+        // size is less than page frame max rows
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60 * 60;
+        final long intervalLo = 1000000L * 60 * 60 * 4;
+        final long intervalLength = 1000000L * 60 * 60 * 8;
+        final int skip = 0;
+        final long expectedNumOfRows = 3 * (8 + 1);
+
+        final long DAY = 1000000L * 60 * 60 * 24;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{
+                intervalLo, intervalLo + intervalLength,
+                intervalLo + DAY, intervalLo + DAY + intervalLength,
+                intervalLo + 2 * DAY, intervalLo + 2 * DAY + intervalLength
+        }), skip, expectedNumOfRows);
     }
 
     @Test
@@ -371,7 +412,48 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final int skip = 10;
         final long expectedNumOfRows = 24 + 1;
 
-        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, intervalHi, skip, expectedNumOfRows);
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory1_skip_multipleIntervals() throws Exception {
+        // many partitions
+        // interval is the first partition
+        // size is less than page frame max rows
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60 * 60;
+        final long intervalLength = 1000000L * 60 * 60 * 12;
+        final int skip = 8;
+        final long expectedNumOfRows = 3 * (12 + 1);
+
+        final long DAY = 1000000L * 60 * 60 * 24;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{
+                0L, intervalLength,
+                DAY, DAY + intervalLength,
+                2 * DAY, 2 * DAY + intervalLength
+        }), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory1_skip_nonZeroStart_multipleIntervals() throws Exception {
+        // many partitions
+        // interval is the first partition
+        // size is less than page frame max rows
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60 * 60;
+        final long intervalLo = 1000000L * 60 * 60 * 4;
+        final long intervalLength = 1000000L * 60 * 60 * 8;
+        final int skip = 6;
+        final long expectedNumOfRows = 3 * (8 + 1);
+
+        final long DAY = 1000000L * 60 * 60 * 24;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{
+                intervalLo, intervalLo + intervalLength,
+                intervalLo + DAY, intervalLo + DAY + intervalLength,
+                intervalLo + 2 * DAY, intervalLo + 2 * DAY + intervalLength
+        }), skip, expectedNumOfRows);
     }
 
     @Test
@@ -385,7 +467,22 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final int skip = 0;
         final long expectedNumOfRows = 24 * 3 + 1;
 
-        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, intervalHi, skip, expectedNumOfRows);
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory2_nonZeroStart() throws Exception {
+        // many partitions
+        // interval is 3 partitions
+        // size is less than page frame max rows
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60 * 60;
+        final long start = 1000000L * 60 * 60 * 8;
+        final long intervalHi = 1000000L * 60 * 60 * 24 * 3;
+        final int skip = 0;
+        final long expectedNumOfRows = -8 + 24 * 3 + 1;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{start, intervalHi}), skip, expectedNumOfRows);
     }
 
     @Test
@@ -399,7 +496,22 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final int skip = 10;
         final long expectedNumOfRows = 24 * 3 + 1;
 
-        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, intervalHi, skip, expectedNumOfRows);
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory2_skip_nonZeroStart() throws Exception {
+        // many partitions
+        // interval is 3 partitions
+        // size is less than page frame max rows
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60 * 60;
+        final long start = 1000000L * 60 * 60 * 8;
+        final long intervalHi = 1000000L * 60 * 60 * 24 * 3;
+        final int skip = 1;
+        final long expectedNumOfRows = -8 + 24 * 3 + 1;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{start, intervalHi}), skip, expectedNumOfRows);
     }
 
     @Test
@@ -413,7 +525,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final int skip = 0;
         final long expectedNumOfRows = 1440 + 1;
 
-        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, intervalHi, skip, expectedNumOfRows);
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
     }
 
     @Test
@@ -427,7 +539,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final int skip = 10;
         final long expectedNumOfRows = 1440 + 1;
 
-        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, intervalHi, skip, expectedNumOfRows);
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
     }
 
     @Test
@@ -441,7 +553,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final int skip = 0;
         final long expectedNumOfRows = 10000;
 
-        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, intervalHi, skip, expectedNumOfRows);
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
     }
 
     @Test
@@ -455,7 +567,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final int skip = 10;
         final long expectedNumOfRows = 10000;
 
-        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, intervalHi, skip, expectedNumOfRows);
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
     }
 
     @Test
@@ -469,7 +581,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final int skip = 0;
         final long expectedNumOfRows = 600;
 
-        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, intervalHi, skip, expectedNumOfRows);
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
     }
 
     @Test
@@ -483,7 +595,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final int skip = 10;
         final long expectedNumOfRows = 600;
 
-        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, intervalHi, skip, expectedNumOfRows);
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
     }
 
     @Test
@@ -497,7 +609,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final int skip = 0;
         final long expectedNumOfRows = 300 + 1;
 
-        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, intervalHi, skip, expectedNumOfRows);
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
     }
 
     @Test
@@ -511,7 +623,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final int skip = 10;
         final long expectedNumOfRows = 300 + 1;
 
-        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, intervalHi, skip, expectedNumOfRows);
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
     }
 
     @Test
@@ -868,7 +980,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         });
     }
 
-    private void testFactory_IntervalPartitionFrameCursorFactory(int numOfRows, long increment, long intervalHi, int skip, long expectedNumOfRows) throws Exception {
+    private void testFactory_IntervalPartitionFrameCursorFactory(int numOfRows, long increment, LongList intervals, int skip, long expectedNumOfRows) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, "10");
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, "1000");
 
@@ -915,7 +1027,6 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     timestampIndex = reader.getMetadata().getTimestampIndex();
                 }
 
-                final LongList intervals = new LongList(new long[]{0L, intervalHi});
                 final RuntimeIntervalModel intervalModel = new RuntimeIntervalModel(
                         ColumnType.getTimestampDriver(timestampType),
                         PartitionBy.DAY,
@@ -951,7 +1062,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                         if (skip > 0) {
                             Record record = cursor.getRecord();
                             while (counter.get() < skip && cursor.hasNext()) {
-                                Assert.assertEquals(counter.get() * increment, record.getTimestamp(3));
+                                Assert.assertEquals(intervals.getQuick(0) + counter.get() * increment, record.getTimestamp(3));
                                 counter.inc();
                             }
                         }
