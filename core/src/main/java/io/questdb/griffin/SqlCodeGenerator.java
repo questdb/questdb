@@ -219,6 +219,7 @@ import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.StringToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.SymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.SymbolKeyMappingRecordCopier;
 import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
@@ -2653,10 +2654,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         boolean isSingleSymbolJoin =
                                 symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
                                         !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
+                        RecordSink recordCopierMaster;
                         if (isSingleSymbolJoin) {
                             int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-                            slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex);
-                            // This cast is safe for isSingleSymbolJoin:
                             SymbolJoinKeyMapping symbolJoinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
 
                             boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
@@ -2689,12 +2689,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         hasMemoizedDrivebyHint
                                 );
                             }
+
+                            // We're falling back to the default Fast scan. We can still optimize one thing:
+                            // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
+                            // For that to work, we need code that maps master symbol key to slave symbol key.
+                            SymbolJoinKeyMapping joinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
+                            recordCopierMaster = new SymbolKeyMappingRecordCopier(joinKeyMapping);
+                            writeSymbolAsString.unset(slaveSymbolColumnIndex);
+                        } else {
+                            recordCopierMaster = createRecordCopierMaster(masterMetadata);
                         }
                         return new AsOfJoinFastRecordCursorFactory(
                                 configuration,
                                 joinMetadata,
                                 master,
-                                createRecordCopierMaster(masterMetadata),
+                                recordCopierMaster,
                                 slave,
                                 createRecordCopierSlave(slaveMetadata),
                                 joinColumnSplit,
