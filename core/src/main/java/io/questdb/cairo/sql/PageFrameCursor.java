@@ -48,7 +48,7 @@ import org.jetbrains.annotations.Nullable;
 public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
 
     /**
-     * Calculates the remaining size (number of rows) across all page frames, and updates the provided counter.
+     * Calculates the number of rows left in the cursor across all page frames, and updates the provided counter.
      * <p>
      * This method provides an efficient way to determine the number of remaining rows without having to
      * iterate through all page frames. The implementation should update the counter with the calculated
