@@ -276,7 +276,7 @@ steps:
     displayName: "Prepare Rust binaries for upload"
     condition: |
       and(
-        eq(variables['testset'], 'coverage-griffin'),
+        eq(variables['testset'], 'coverage-griffin-root'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
@@ -284,7 +284,7 @@ steps:
     displayName: "Upload Rust binaries needed to merge coverage files"
     condition: |
       and(
-        eq(variables['testset'], 'coverage-griffin'),
+        eq(variables['testset'], 'coverage-griffin-root'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
