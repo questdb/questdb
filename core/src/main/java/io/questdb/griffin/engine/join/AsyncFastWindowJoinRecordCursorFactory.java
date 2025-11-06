@@ -50,7 +50,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.DirectMapValue;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
@@ -451,8 +450,6 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
         joinRecord.of(record, slaveRecord);
 
         final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
-        final GroupByAllocator allocator = atom.getAllocator(slotId);
-        allocator.close();
         final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
         final IntList columnIndexes = atom.getGroupByColumnIndexes();
         final int columnCount = columnIndexes.size();
