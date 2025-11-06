@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.std.IntIntHashMap;
 
-public final class SingleSymbolColumnAccessHelper implements AsofJoinColumnAccessHelper {
+public final class SymbolToSymbolJoinKeyMapping implements SymbolJoinKeyMapping {
     private final CairoConfiguration config;
     private final IntIntHashMap masterKeysExistingInSlaveCache = new IntIntHashMap(16, 0.4);
     private final int masterSymbolIndex;
@@ -40,17 +40,15 @@ public final class SingleSymbolColumnAccessHelper implements AsofJoinColumnAcces
     private int maxCacheSize = 0;
     private StaticSymbolTable slaveSymbolTable;
 
-    public SingleSymbolColumnAccessHelper(CairoConfiguration config, int masterSymbolIndex, int slaveSymbolIndex) {
+    public SymbolToSymbolJoinKeyMapping(CairoConfiguration config, int masterSymbolIndex, int slaveSymbolIndex) {
+        this.config = config;
         this.masterSymbolIndex = masterSymbolIndex;
         this.slaveSymbolIndex = slaveSymbolIndex;
-        this.config = config;
-    }
-
     }
 
     @Override
     public int getSlaveKey(Record masterRecord) {
-        assert slaveSymbolTable != null : "slaveSymbolTable must be set before calling isShortCircuit";
+        assert slaveSymbolTable != null : "slaveSymbolTable must be set before calling getSlaveKey";
 
         int masterKey = masterRecord.getInt(masterSymbolIndex);
         int slaveKey = masterKeysExistingInSlaveCache.get(masterKey);

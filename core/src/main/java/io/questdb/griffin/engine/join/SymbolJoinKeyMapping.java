@@ -25,30 +25,33 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 
-public record ChainedSymbolColumnAccessHelper(
-        AsofJoinColumnAccessHelper[] shortCircuits) implements AsofJoinColumnAccessHelper {
+public interface SymbolJoinKeyMapping {
 
-    @Override
-    public int getSlaveKey(Record masterRecord) {
-        throw new UnsupportedOperationException("ChainedSymbolColumnAccessHelper doesn't have a symbol table");
+    /**
+     * When joining on a single symbol column, returns the symbol key in the slave
+     * column corresponding to the symbol in the master column. If it returns
+     * {@link StaticSymbolTable#VALUE_NOT_FOUND}, the slave column doesn't have the
+     * symbol.
+     */
+    int getSlaveKey(Record masterRecord);
+
+    /**
+     * When joining on one or more symbol columns, detects when any slave column
+     * doesn't have the symbol at all (by inspecting its int-to-symbol mapping). This
+     * allows the record cursor to avoid searching for the matching slave row.
+     */
+    default boolean isShortCircuit(Record masterRecord) {
+        return getSlaveKey(masterRecord) == StaticSymbolTable.VALUE_NOT_FOUND;
     }
 
-    @Override
-    public boolean isShortCircuit(Record masterRecord) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            if (shortCircuits[i].isShortCircuit(masterRecord)) {
-                return true;
-            }
-        }
-        return false;
+    void of(TimeFrameRecordCursor slaveCursor);
+
+    default void of(RecordCursor slaveCursor) {
+        throw new UnsupportedOperationException();
     }
 
-    @Override
-    public void of(TimeFrameRecordCursor slaveCursor) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            shortCircuits[i].of(slaveCursor);
-        }
-    }
 }

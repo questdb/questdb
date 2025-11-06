@@ -195,8 +195,7 @@ import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinSingleSymbolRecordCursorFactory;
-import io.questdb.griffin.engine.join.AsofJoinColumnAccessHelper;
-import io.questdb.griffin.engine.join.ChainedSymbolColumnAccessHelper;
+import io.questdb.griffin.engine.join.ChainedJoinKeyMapping;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
@@ -214,13 +213,14 @@ import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.NoopColumnAccessHelper;
+import io.questdb.griffin.engine.join.NoopJoinKeyMapping;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
-import io.questdb.griffin.engine.join.SingleStringColumnAccessHelper;
-import io.questdb.griffin.engine.join.SingleSymbolColumnAccessHelper;
-import io.questdb.griffin.engine.join.SingleVarcharColumnAccessHelper;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.StringToSymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.SymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
@@ -1128,20 +1128,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
-    private @NotNull AsofJoinColumnAccessHelper createAsofColumnAccessHelper(
+    private @NotNull SymbolJoinKeyMapping createAsofColumnAccessHelper(
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata,
             boolean isSelfJoin
     ) {
-        AsofJoinColumnAccessHelper columnAccessHelper = NoopColumnAccessHelper.INSTANCE;
+        SymbolJoinKeyMapping columnAccessHelper = NoopJoinKeyMapping.INSTANCE;
         assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
-        AsofJoinColumnAccessHelper[] symbolShortCircuits = null;
+        SymbolJoinKeyMapping[] symbolShortCircuits = null;
         for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
             int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
             int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
             if (slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
                 int masterColType = masterMetadata.getColumnType(masterIndex);
-                AsofJoinColumnAccessHelper newSymbolShortCircuit;
+                SymbolJoinKeyMapping newSymbolShortCircuit;
                 switch (masterColType) {
                     case SYMBOL:
                         if (isSelfJoin && masterIndex == slaveIndex) {
@@ -1155,35 +1155,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             //       would require a more complex logic, which is not worth it for now
                             continue;
                         }
-                        newSymbolShortCircuit = new SingleSymbolColumnAccessHelper(configuration, masterIndex, slaveIndex);
+                        newSymbolShortCircuit = new SymbolToSymbolJoinKeyMapping(configuration, masterIndex, slaveIndex);
                         break;
                     case VARCHAR:
-                        newSymbolShortCircuit = new SingleVarcharColumnAccessHelper(masterIndex, slaveIndex);
+                        newSymbolShortCircuit = new VarcharToSymbolJoinKeyMapping(masterIndex, slaveIndex);
                         break;
                     case STRING:
-                        newSymbolShortCircuit = new SingleStringColumnAccessHelper(masterIndex, slaveIndex);
+                        newSymbolShortCircuit = new StringToSymbolJoinKeyMapping(masterIndex, slaveIndex);
                         break;
                     default:
                         // unsupported type for short circuit
                         continue;
                 }
-                if (columnAccessHelper == NoopColumnAccessHelper.INSTANCE) {
+                if (columnAccessHelper == NoopJoinKeyMapping.INSTANCE) {
                     // ok, a single symbol short circuit
                     columnAccessHelper = newSymbolShortCircuit;
                 } else if (symbolShortCircuits == null) {
                     // 2 symbol short circuits, we need to chain them
-                    symbolShortCircuits = new AsofJoinColumnAccessHelper[2];
+                    symbolShortCircuits = new SymbolJoinKeyMapping[2];
                     symbolShortCircuits[0] = columnAccessHelper;
                     symbolShortCircuits[1] = newSymbolShortCircuit;
-                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(symbolShortCircuits);
+                    columnAccessHelper = new ChainedJoinKeyMapping(symbolShortCircuits);
                 } else {
                     // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
                     // this allocates arrays, but it should be very rare
                     int size = symbolShortCircuits.length;
-                    AsofJoinColumnAccessHelper[] newSymbolShortCircuits = new AsofJoinColumnAccessHelper[size + 1];
+                    SymbolJoinKeyMapping[] newSymbolShortCircuits = new SymbolJoinKeyMapping[size + 1];
                     System.arraycopy(symbolShortCircuits, 0, newSymbolShortCircuits, 0, size);
                     newSymbolShortCircuits[size] = newSymbolShortCircuit;
-                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(newSymbolShortCircuits);
+                    columnAccessHelper = new ChainedJoinKeyMapping(newSymbolShortCircuits);
                     symbolShortCircuits = newSymbolShortCircuits;
                 }
             }
@@ -2648,8 +2648,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
 
-                        AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, isSelfJoin);
-                        boolean isOptimizable = columnAccessHelper != NoopColumnAccessHelper.INSTANCE;
+                        SymbolJoinKeyMapping columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, isSelfJoin);
+                        boolean isOptimizable = columnAccessHelper != NoopJoinKeyMapping.INSTANCE;
                         if (isOptimizable && isSingleSymbolJoin(slaveMetadata)) {
                             int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                             slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex);
@@ -2770,8 +2770,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int joinColumnSplit = masterMetadata.getColumnCount();
                 JoinContext slaveContext = slaveModel.getJoinContext();
                 if (isSingleSymbolJoin(slaveMetadata)) {
-                    AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, isSelfJoin);
-                    if (columnAccessHelper != NoopColumnAccessHelper.INSTANCE) {
+                    SymbolJoinKeyMapping columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, isSelfJoin);
+                    if (columnAccessHelper != NoopJoinKeyMapping.INSTANCE) {
                         int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                         return new AsOfJoinSingleSymbolRecordCursorFactory(
                                 configuration,

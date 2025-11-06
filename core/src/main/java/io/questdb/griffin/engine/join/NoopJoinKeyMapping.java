@@ -25,32 +25,21 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 
-public final class SingleStringColumnAccessHelper implements AsofJoinColumnAccessHelper {
-    private final int masterStringIndex;
-    private final int slaveSymbolIndex;
-    private StaticSymbolTable slaveSymbolTable;
-
-    public SingleStringColumnAccessHelper(int masterStringIndex, int slaveSymbolIndex) {
-        this.masterStringIndex = masterStringIndex;
-        this.slaveSymbolIndex = slaveSymbolIndex;
-    }
+public class NoopJoinKeyMapping implements SymbolJoinKeyMapping {
+    public static final NoopJoinKeyMapping INSTANCE = new NoopJoinKeyMapping();
 
     @Override
     public int getSlaveKey(Record masterRecord) {
-        CharSequence masterStr = masterRecord.getStrA(masterStringIndex);
-        if (masterStr == null) {
-            return slaveSymbolTable.containsNullValue()
-                    ? StaticSymbolTable.VALUE_IS_NULL
-                    : StaticSymbolTable.VALUE_NOT_FOUND;
-        }
-        return slaveSymbolTable.keyOf(masterStr);
+        throw new UnsupportedOperationException("NoopJoinKeyMapping doesn't have a symbol table");
+    }
+
+    public boolean isShortCircuit(Record masterRecord) {
+        return false;
     }
 
     @Override
     public void of(TimeFrameRecordCursor slaveCursor) {
-        this.slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
     }
 }

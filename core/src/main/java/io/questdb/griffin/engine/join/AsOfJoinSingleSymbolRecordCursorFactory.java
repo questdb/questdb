@@ -49,7 +49,7 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
     private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
     private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
 
-    private final AsofJoinColumnAccessHelper columnAccessHelper;
+    private final SymbolJoinKeyMapping columnAccessHelper;
     private final AsOfSingleSymbolJoinRecordCursor cursor;
     private final int slaveSymbolColumnIndex;
     private final long toleranceInterval;
@@ -61,7 +61,7 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
             RecordCursorFactory slaveFactory,
             int columnSplit,
             int slaveSymbolColumnIndex,
-            AsofJoinColumnAccessHelper columnAccessHelper,
+            SymbolJoinKeyMapping columnAccessHelper,
             JoinContext joinContext,
             long toleranceInterval
     ) {

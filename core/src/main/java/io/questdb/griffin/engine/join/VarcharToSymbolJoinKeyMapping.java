@@ -30,13 +30,13 @@ import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
-public final class SingleVarcharColumnAccessHelper implements AsofJoinColumnAccessHelper {
+public final class VarcharToSymbolJoinKeyMapping implements SymbolJoinKeyMapping {
     private final int masterVarcharIndex;
     private final int slaveSymbolIndex;
     private final StringSink utf16Sink = new StringSink();
     private StaticSymbolTable slaveSymbolTable;
 
-    public SingleVarcharColumnAccessHelper(int masterVarcharIndex, int slaveSymbolIndex) {
+    public VarcharToSymbolJoinKeyMapping(int masterVarcharIndex, int slaveSymbolIndex) {
         this.masterVarcharIndex = masterVarcharIndex;
         this.slaveSymbolIndex = slaveSymbolIndex;
     }

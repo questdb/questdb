@@ -43,7 +43,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final AsofJoinColumnAccessHelper columnAccessHelper;
+    private final SymbolJoinKeyMapping columnAccessHelper;
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
@@ -57,7 +57,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             RecordCursorFactory slaveFactory,
             RecordSink slaveKeySink,
             int columnSplit,
-            AsofJoinColumnAccessHelper columnAccessHelper,
+            SymbolJoinKeyMapping columnAccessHelper,
             JoinContext joinContext,
             long toleranceInterval
     ) {

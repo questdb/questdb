@@ -48,7 +48,7 @@ import io.questdb.std.Rows;
  * instead of linear scanning through time-ordered records.
  */
 public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final AsofJoinColumnAccessHelper columnAccessHelper;
+    private final SymbolJoinKeyMapping columnAccessHelper;
     private final AsOfJoinIndexedRecordCursor cursor;
     private final int slaveSymbolColumnIndex;
     private final long toleranceInterval;
@@ -60,7 +60,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             RecordCursorFactory slaveFactory,
             int columnSplit,
             int slaveSymbolColumnIndex,
-            AsofJoinColumnAccessHelper columnAccessHelper,
+            SymbolJoinKeyMapping columnAccessHelper,
             JoinContext joinContext,
             long toleranceInterval
     ) {
