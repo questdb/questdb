@@ -268,6 +268,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
             if (cursorSizeBeforeFetch != -1) {
                 Assert.assertEquals("Cursor size before fetch and after", cursorSizeBeforeFetch, cursorSize);
             }
+        } else {
+            RecordCursor.Counter counter = new RecordCursor.Counter();
+            cursor.toTop();
+            final Rnd rnd = new Rnd();
+            final int skip = rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
+            while (counter.get() < skip && cursor.hasNext()) {
+                counter.inc();
+            }
+            cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+            Assert.assertEquals("Actual cursor records vs cursor.calculateSize()", count, counter.get());
         }
 
         TestUtils.assertEquals(expected, sink);
