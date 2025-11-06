@@ -2446,9 +2446,9 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putDecimalStr(int columnIndex, CharSequence cs, Decimal256 decimal) {
-            int type = metadata.getColumnType(columnIndex);
-            WriterRowUtils.putDecimalStr(columnIndex, decimal, cs, type, this);
+        public void putDecimalStr(int columnIndex, CharSequence decimalValue, Decimal256 decimalSink) {
+            int columnType = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalStr(columnIndex, decimalSink, decimalValue, columnType, this);
         }
 
         @Override

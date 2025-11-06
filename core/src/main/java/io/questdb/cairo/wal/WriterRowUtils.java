@@ -75,20 +75,20 @@ public class WriterRowUtils {
         putDecimal0(index, value, columnTag, row);
     }
 
-    public static void putDecimalStr(int index, Decimal256 decimal, CharSequence cs, int type, TableWriter.Row row) {
-        if (cs == null) {
-            putNullDecimal(row, index, type);
+    public static void putDecimalStr(int index, Decimal256 decimalSink, CharSequence decimalValue, int columnType, TableWriter.Row row) {
+        if (decimalValue == null) {
+            putNullDecimal(row, index, columnType);
             return;
         }
 
-        final int precision = ColumnType.getDecimalPrecision(type);
-        final int scale = ColumnType.getDecimalScale(type);
+        final int precision = ColumnType.getDecimalPrecision(columnType);
+        final int scale = ColumnType.getDecimalScale(columnType);
         try {
-            decimal.ofString(cs, precision, scale);
+            decimalSink.ofString(decimalValue, precision, scale);
         } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, type);
+            throw ImplicitCastException.inconvertibleValue(decimalValue, ColumnType.STRING, columnType);
         }
-        putDecimal0(index, decimal, ColumnType.tagOf(type), row);
+        putDecimal0(index, decimalSink, ColumnType.tagOf(columnType), row);
     }
 
     public static void putGeoHash(int index, long value, int columnType, TableWriter.Row row) {

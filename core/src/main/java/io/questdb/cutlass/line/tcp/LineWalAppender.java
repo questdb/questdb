@@ -60,8 +60,8 @@ public class LineWalAppender {
     private final Decimal256 decimal256;
     private final Long256Impl long256;
     private final int maxFileNameLength;
-    private final DirectUtf8Sink utf8Sink; // owned by LineHttpProcessorState or LineTcpMeasurementScheduler
     private final boolean stringToCharCastAllowed;
+    private final DirectUtf8Sink utf8Sink; // owned by LineHttpProcessorState or LineTcpMeasurementScheduler
     private byte timestampUnit;
 
     public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, byte timestampUnit, DirectUtf8Sink utf8Sink, int maxFileNameLength) {
@@ -506,19 +506,23 @@ public class LineWalAppender {
                         }
                         break;
                     case LineTcpParser.ENTITY_TYPE_DECIMAL:
-                        final int scale = ColumnType.getDecimalScale(colType);
                         Decimal256 decimal = ent.getDecimalValue();
-                        if (decimal.getScale() != scale) {
-                            try {
-                                decimal.rescale(scale);
-                            } catch (NumericException ignored) {
-                                throw castError(tud.getTableNameUtf16(), "DECIMAL", colType, ent.getName());
+                        if (decimal.isNull()) {
+                            DecimalUtil.storeNull(r, columnIndex, colType);
+                        } else {
+                            final int scale = ColumnType.getDecimalScale(colType);
+                            if (decimal.getScale() != scale) {
+                                try {
+                                    decimal.rescale(scale);
+                                } catch (NumericException ignored) {
+                                    throw castError(tud.getTableNameUtf16(), "DECIMAL", colType, ent.getName());
+                                }
                             }
+                            if (!decimal.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
+                                throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
+                            }
+                            DecimalUtil.storeNonNull(decimal, r, columnIndex, colType);
                         }
-                        if (!decimal.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
-                            throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
-                        }
-                        DecimalUtil.store(decimal, r, columnIndex, colType);
                         break;
                     default:
                         break; // unsupported types are ignored
