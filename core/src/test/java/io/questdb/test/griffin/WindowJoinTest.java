@@ -489,7 +489,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     true
             );
 
-/*            expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\n" +
+            expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\n" +
                     "AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t301.5\n" +
                     "AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t401.5\n" +
                     "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t501.5\n" +
@@ -532,7 +532,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "ts",
                     true,
                     true
-            );*/
+            );
         });
     }
 
