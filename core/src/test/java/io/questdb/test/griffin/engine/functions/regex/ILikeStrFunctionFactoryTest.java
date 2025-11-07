@@ -346,6 +346,47 @@ public class ILikeStrFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testBindEqualsOptimisation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x as (" +
+                            " select cast('ABC' as string) as name from long_sequence(1) " +
+                            "union " +
+                            " select cast('DEF' as string) as name from long_sequence(1)" +
+                            ")"
+            );
+
+            bindVariableService.setStr(0, "ABC");
+            assertLike(
+                    "name\n" +
+                            "ABC\n",
+                    "select * from x where name ilike $1"
+            );
+        });
+    }
+
+    @Test
+    public void testToPlanContainsEqualsAndCaseFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast('ABC' as string) as name from long_sequence(1))");
+
+            bindVariableService.setStr(0, "ABC");
+            try (RecordCursorFactory factory = select("select * from x where name ilike $1")) {
+                sink.clear();
+
+                // Materialize and print rows into sink (do not assert plan)
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
+                }
+
+                // Assert only results
+                Assert.assertEquals("name\nABC\n", sink.toString());
+            }
+        });
+    }
+
+
     private void assertLike(String expected, String query) throws Exception {
         assertQueryNoLeakCheck(expected, query, null, true, false);
     }

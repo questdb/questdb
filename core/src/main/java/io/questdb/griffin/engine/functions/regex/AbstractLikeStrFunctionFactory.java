@@ -104,6 +104,12 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             if (likeSeq != null && (len = likeSeq.length()) > 0) {
                 if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
                     final int anyCount = countChar(likeSeq, '%');
+
+                    if (anyCount == 0) {
+                        final String target = isCaseInsensitive() ? likeSeq.toString().toLowerCase() : likeSeq.toString();
+                        return new ConstEqualsStrFunction(value, target, isCaseInsensitive());
+                    }
+
                     if (anyCount == 1) {
                         if (len == 1) {
                             // LIKE '%' case
@@ -186,6 +192,8 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         private final Function value;
         private String lastPattern = null;
         private Matcher matcher;
+        private boolean useEquality = false;
+        private String exactPattern = null;
 
         public BindLikeStrFunction(Function value, Function pattern, boolean caseInsensitive) {
             this.value = value;
@@ -195,10 +203,18 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            if (matcher != null) {
+            if (useEquality) {
                 CharSequence cs = value.getStrA(rec);
+                if (cs == null) return false;
+                if (caseInsensitive) return cs.toString().toLowerCase().equals(exactPattern);
+                else return cs.toString().equals(exactPattern);
+            }
+
+            if (matcher == null) {
+                CharSequence cs = pattern.getStrA(rec);
                 return cs != null && matcher.reset(cs).matches();
             }
+
             return false;
         }
 
@@ -218,6 +234,14 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             // this is bind variable, we can use it as constant
             final CharSequence patternValue = pattern.getStrA(null);
             if (patternValue != null && patternValue.length() > 0) {
+
+                if (countChar(patternValue, '_') == 0 && countChar(patternValue, '\\') == 0 && countChar(patternValue, '%') == 0) {
+                    this.useEquality = true;
+                    this.matcher = null;
+                    this.exactPattern = caseInsensitive ? patternValue.toString().toLowerCase() : patternValue.toString();
+                    this.lastPattern = exactPattern;
+                }
+
                 String p = escapeSpecialChars(patternValue, lastPattern);
                 if (p != null) {
                     int flags = Pattern.DOTALL;
@@ -242,6 +266,15 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
+            if (useEquality) {
+                sink.val(" = ");
+                sink.val(exactPattern);
+                if (!caseInsensitive) {
+                    sink.val(" [case-sensitive]");
+                } else {
+                    sink.val(" [case-insensitive]");
+                }
+            }
             // impl is regex
             sink.val(" ~ ");
             sink.val(pattern);
@@ -467,6 +500,48 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             sink.val(" like ");
             sink.val(pattern);
             sink.val('%');
+        }
+    }
+
+    private static class ConstEqualsStrFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final Function value;
+        private final boolean caseInsensitive;
+
+        public ConstEqualsStrFunction(Function value, String pattern, boolean caseInsensitive) {
+            this.value = value;
+            this.pattern = pattern;
+            this.caseInsensitive = caseInsensitive;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = value.getStrA(rec);
+            if (cs == null) {
+                return false;
+            }
+            if (caseInsensitive) {
+                return cs.toString().toLowerCase().equals(pattern);
+            } else {
+                return cs.toString().equals(pattern);
+            }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" = ");
+            sink.val(pattern);
+            if (!caseInsensitive) {
+                sink.val(" [case-sensitive]");
+            } else {
+                sink.val(" [case-insensitive]");
+            }
         }
     }
 }
