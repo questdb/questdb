@@ -632,32 +632,32 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testDecimalInvalidPrecision() {
-        assertFail(8, "precision must be a number", "decimal(abc, 3)", new GenericRecordMetadata());
+        assertFail(8, "The precision ('abc') must be a number", "decimal(abc, 3)", new GenericRecordMetadata());
     }
 
     @Test
     public void testDecimalInvalidPrecisionTooBig() {
-        assertFail(0, "the precision must be between 1 and", "decimal(80, 3)", new GenericRecordMetadata());
+        assertFail(0, "The precision (80) must be less than 76", "decimal(80, 3)", new GenericRecordMetadata());
     }
 
     @Test
     public void testDecimalInvalidPrecisionTooSmall() {
-        assertFail(0, "the precision must be between 1 and", "decimal(0, 3)", new GenericRecordMetadata());
+        assertFail(0, "The precision (0) must be greater than zero", "decimal(0, 3)", new GenericRecordMetadata());
     }
 
     @Test
     public void testDecimalInvalidScale() {
-        assertFail(12, "scale must be a number", "decimal(18, abc)", new GenericRecordMetadata());
+        assertFail(12, "The scale ('abc') must be a number", "decimal(18, abc)", new GenericRecordMetadata());
     }
 
     @Test
     public void testDecimalInvalidScaleTooBig() {
-        assertFail(0, "scale must be between 0 and 18", "decimal(18, 19)", new GenericRecordMetadata());
+        assertFail(0, "The precision (18) must be greater than or equal to the scale (19)", "decimal(18, 19)", new GenericRecordMetadata());
     }
 
     @Test
     public void testDecimalInvalidScaleTooSmall() {
-        assertFail(12, "scale must be a number", "decimal(18, -1)", new GenericRecordMetadata());
+        assertFail(12, "The scale ('-') must be a number", "decimal(18, -1)", new GenericRecordMetadata());
     }
 
     @Test
@@ -693,32 +693,32 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testDecimalTypeRawInvalidPrecision() {
-        assertFail(5, "precision must be a number", "123::decimal_abc_3", new GenericRecordMetadata());
+        assertFail(5, "The precision ('abc') must be a number", "123::decimal_abc_3", new GenericRecordMetadata());
     }
 
     @Test
     public void testDecimalTypeRawInvalidPrecisionTooBig() {
-        assertFail(5, "the precision must be between 1 and", "123::decimal_80_3", new GenericRecordMetadata());
+        assertFail(5, "The precision (80) must be less than 76", "123::decimal_80_3", new GenericRecordMetadata());
     }
 
     @Test
     public void testDecimalTypeRawInvalidPrecisionTooSmall() {
-        assertFail(5, "the precision must be between 1 and", "123::decimal_0_3", new GenericRecordMetadata());
+        assertFail(5, "The precision (0) must be greater than zero", "123::decimal_0_3", new GenericRecordMetadata());
     }
 
     @Test
     public void testDecimalTypeRawInvalidScale() {
-        assertFail(5, "scale must be a number", "123::decimal_18_abc", new GenericRecordMetadata());
+        assertFail(5, "The scale ('abc') must be a number", "123::decimal_18_abc", new GenericRecordMetadata());
     }
 
     @Test
     public void testDecimalTypeRawInvalidScaleTooBig() {
-        assertFail(5, "scale must be between 0 and 18", "123::decimal_18_19", new GenericRecordMetadata());
+        assertFail(5, "The precision (18) must be greater than or equal to the scale (19)", "123::decimal_18_19", new GenericRecordMetadata());
     }
 
     @Test
     public void testDecimalTypeRawInvalidScaleTooSmall() {
-        assertFail(5, "scale must be a number", "123::decimal_18_-1", new GenericRecordMetadata());
+        assertFail(5, "The scale ('') must be a number", "123::decimal_18_-1", new GenericRecordMetadata());
     }
 
     @Test

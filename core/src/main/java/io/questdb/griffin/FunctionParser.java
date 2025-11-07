@@ -821,7 +821,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw SqlException.position(position)
                     .put("Invalid decimal type. The precision (")
                     .put(precision)
-                    .put(") must be greater than zero.");
+                    .put(") must be greater than zero");
         }
         if (precision > Decimals.MAX_PRECISION) {
             throw SqlException.position(position)
@@ -834,7 +834,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw SqlException.position(position)
                     .put("Invalid decimal type. The scale (")
                     .put(scale)
-                    .put(") must be greater than or equal to zero.");
+                    .put(") must be greater than or equal to zero");
         }
         if (scale > precision) {
             throw SqlException.position(position)
