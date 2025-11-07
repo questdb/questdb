@@ -3838,7 +3838,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody2, "asof_memoized(t1 t2)", "Memoized", expected2);
         });
     }
-    
+
     @Test
     public void testSingleSymbolAsOfWithDynamicSlaveSymbol() throws Exception {
         assertMemoryLeak(() -> {
