@@ -2633,9 +2633,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (slave.supportsTimeFrameCursor()) {
                         int joinColumnSplit = masterMetadata.getColumnCount();
                         JoinContext slaveContext = slaveModel.getJoinContext();
-
+                        SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, isSelfJoin);
+                        boolean isSingleSymbolJoin = symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
+                                !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
                         boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
                         if (hasDenseHint) {
+                            if (isSingleSymbolJoin) {
+
+                            }
                             return new AsOfJoinDenseRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
@@ -2649,11 +2654,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     toleranceInterval
                             );
                         }
-
-                        SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, isSelfJoin);
-                        boolean isSingleSymbolJoin =
-                                symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
-                                        !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
                         RecordSink recordCopierMaster;
                         if (isSingleSymbolJoin) {
                             int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
@@ -2693,8 +2693,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // We're falling back to the default Fast scan. We can still optimize one thing:
                             // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
                             // For that to work, we need code that maps master symbol key to slave symbol key.
-                            SymbolJoinKeyMapping joinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
-                            recordCopierMaster = new SymbolKeyMappingRecordCopier(joinKeyMapping);
+                            recordCopierMaster = new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit);
                             writeSymbolAsString.unset(slaveSymbolColumnIndex);
                         } else {
                             recordCopierMaster = createRecordCopierMaster(masterMetadata);
@@ -2786,6 +2785,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (isSingleSymbolJoin(slaveMetadata)) {
                     SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, isSelfJoin);
                     if (symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE) {
+                        SymbolJoinKeyMapping joinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
                         int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                         return new AsOfJoinSingleSymbolRecordCursorFactory(
                                 configuration,
@@ -2794,7 +2794,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 slave,
                                 joinColumnSplit,
                                 slaveSymbolColumnIndex,
-                                (SymbolJoinKeyMapping) symbolShortCircuit,
+                                joinKeyMapping,
                                 slaveContext,
                                 toleranceInterval
                         );
