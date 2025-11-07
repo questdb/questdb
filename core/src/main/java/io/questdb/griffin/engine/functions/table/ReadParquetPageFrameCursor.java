@@ -95,7 +95,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public long getRemainingRowsInPartition() {
+    public long getRemainingRowsInInterval() {
         return 0L;
     }
 

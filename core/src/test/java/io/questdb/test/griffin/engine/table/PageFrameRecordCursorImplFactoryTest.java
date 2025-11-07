@@ -529,6 +529,47 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory3_multipleIntervals() throws Exception {
+        // many partitions
+        // interval is the first partition
+        // size is greater than page frame max rows
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60;
+        final long intervalLength = 1000000L * 60 * 60 * 18;
+        final int skip = 0;
+        final long expectedNumOfRows = 3 * (1080 + 1);
+
+        final long DAY = 1000000L * 60 * 60 * 24;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{
+                0L, intervalLength,
+                DAY, DAY + intervalLength,
+                2 * DAY, 2 * DAY + intervalLength
+        }), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory3_nonZeroStart_multipleIntervals() throws Exception {
+        // many partitions
+        // interval is the first partition
+        // size is greater than page frame max rows
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60;
+        final long intervalLo = 1000000L * 60 * 60 * 4;
+        final long intervalLength = 1000000L * 60 * 60 * 18;
+        final int skip = 0;
+        final long expectedNumOfRows = 3 * (1080 + 1);
+
+        final long DAY = 1000000L * 60 * 60 * 24;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{
+                intervalLo, intervalLo + intervalLength,
+                intervalLo + DAY, intervalLo + DAY + intervalLength,
+                intervalLo + 2 * DAY, intervalLo + 2 * DAY + intervalLength
+        }), skip, expectedNumOfRows);
+    }
+
+    @Test
     public void testFactory_IntervalPartitionFrameCursorFactory3_skip() throws Exception {
         // many partitions
         // interval is the first partition
@@ -540,6 +581,47 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         final long expectedNumOfRows = 1440 + 1;
 
         testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{0L, intervalHi}), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory3_skip_multipleIntervals() throws Exception {
+        // many partitions
+        // interval is the first partition
+        // size is greater than page frame max rows
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60;
+        final long intervalLength = 1000000L * 60 * 60 * 18;
+        final int skip = 100;
+        final long expectedNumOfRows = 3 * (1080 + 1);
+
+        final long DAY = 1000000L * 60 * 60 * 24;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{
+                0L, intervalLength,
+                DAY, DAY + intervalLength,
+                2 * DAY, 2 * DAY + intervalLength
+        }), skip, expectedNumOfRows);
+    }
+
+    @Test
+    public void testFactory_IntervalPartitionFrameCursorFactory3_skip_nonZeroStart_multipleIntervals() throws Exception {
+        // many partitions
+        // interval is the first partition
+        // size is greater than page frame max rows
+        final int numOfRows = 10000;
+        final long increment = 1000000L * 60;
+        final long intervalLo = 1000000L * 60 * 60 * 2;
+        final long intervalLength = 1000000L * 60 * 60 * 18;
+        final int skip = 100;
+        final long expectedNumOfRows = 3 * (1080 + 1);
+
+        final long DAY = 1000000L * 60 * 60 * 24;
+
+        testFactory_IntervalPartitionFrameCursorFactory(numOfRows, increment, new LongList(new long[]{
+                intervalLo, intervalLo + intervalLength,
+                intervalLo + DAY, intervalLo + DAY + intervalLength,
+                intervalLo + 2 * DAY, intervalLo + 2 * DAY + intervalLength
+        }), skip, expectedNumOfRows);
     }
 
     @Test

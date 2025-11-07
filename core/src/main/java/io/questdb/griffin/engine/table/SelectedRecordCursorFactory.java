@@ -340,8 +340,8 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public long getRemainingRowsInPartition() {
-            return baseCursor.getRemainingRowsInPartition();
+        public long getRemainingRowsInInterval() {
+            return baseCursor.getRemainingRowsInInterval();
         }
 
         @Override

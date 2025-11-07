@@ -81,7 +81,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             rowCursor = null;
         }
 
-        counter.add(frameCursor.getRemainingRowsInPartition());
+        counter.add(frameCursor.getRemainingRowsInInterval());
 
         frameCursor.calculateSize(counter);
     }
