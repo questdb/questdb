@@ -66,13 +66,14 @@ pub extern "system" fn Java_io_questdb_std_Os_initRust(_env: JNIEnv, _class: JCl
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Os_rustSmokeTest(
+pub extern "system" fn Java_io_questdb_std_Os_smokeTest(
     _env: JNIEnv,
     _class: JClass,
     a: i64,
     b: i64,
 ) -> i64 {
-    a + b
+    let result = a + b;
+    result
 }
 
 #[no_mangle]
