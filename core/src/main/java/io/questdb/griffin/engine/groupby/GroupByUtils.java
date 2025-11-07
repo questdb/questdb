@@ -391,14 +391,14 @@ public class GroupByUtils {
         return func;
     }
 
-    public static boolean isBatchComputationSupported(ObjList<GroupByFunction> functions) {
+    public static boolean isBatchComputationSupported(ObjList<GroupByFunction> functions, int columnSplit) {
         if (functions == null || functions.size() == 0) {
             return false;
         }
         for (int i = 0, n = functions.size(); i < n; i++) {
             final var function = functions.getQuick(i);
             // Only UnaryFunction should support batch computation, but we're still doing a sanity check
-            if (!function.supportsBatchComputation() || !(function instanceof UnaryFunction)) {
+            if (!function.supportsBatchComputation() || !(function instanceof UnaryFunction) || function.getColumnIndex() < columnSplit) {
                 return false;
             }
         }

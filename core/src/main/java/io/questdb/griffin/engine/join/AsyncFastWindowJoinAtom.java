@@ -161,7 +161,7 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
             this.masterTsScale = masterTsScale;
             this.slaveTsScale = slaveTsScale;
-            this.vectorized = ownerJoinFilter == null && GroupByUtils.isBatchComputationSupported(ownerGroupByFunctions);
+            this.vectorized = ownerJoinFilter == null && GroupByUtils.isBatchComputationSupported(ownerGroupByFunctions, columnSplit);
             this.slaveSymbolLookupTable = new DirectIntIntHashMap(16, 0.5, StaticSymbolTable.VALUE_NOT_FOUND, MemoryTag.NATIVE_UNORDERED_MAP);
 
             this.ownerSlaveTimeFrameHelper = new AsyncTimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);

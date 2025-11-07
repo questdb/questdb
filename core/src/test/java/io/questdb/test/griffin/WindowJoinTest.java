@@ -31,6 +31,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import org.junit.Assume;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -1262,6 +1263,119 @@ public class WindowJoinTest extends AbstractCairoTest {
                     expect,
                     "select t.*, sum(p.price) window_price " +
                             "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
+                            "left join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    @Ignore("victor need to be fixed")
+    public void testWithConstantJoinFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareTable();
+            String expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\n" +
+                    "AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t300.0\n" +
+                    "AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t202.0\n" +
+                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t102.0\n" +
+                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t400.0\n" +
+                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t201.0\n" +
+                    "GOOGL\t300.0\t2023-01-01T09:05:00.000000Z\t600.0\n" +
+                    "GOOGL\t301.0\t2023-01-01T09:06:00.000000Z\t301.0\n" +
+                    "AAPL\t103.0\t2023-01-01T09:07:00.000000Z\t103.0\n" +
+                    "MSFT\t202.0\t2023-01-01T09:08:00.000000Z\t202.0\n" +
+                    "GOOGL\t302.0\t2023-01-01T09:09:00.000000Z\t302.0\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Async Window Fast Join workers: 1\n" +
+                            "      symbol: sym=sym\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.*, sum(t.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (0 = 1) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // verify result
+            assertQuery(
+                    expect,
+                    "select t.*, sum(t.price) window_price " +
+                            "from trades t " +
+                            "left join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWithOnlyAggregateLeftTableColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareTable();
+            String expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\n" +
+                    "AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t300.0\n" +
+                    "AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t202.0\n" +
+                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t102.0\n" +
+                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t400.0\n" +
+                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t201.0\n" +
+                    "GOOGL\t300.0\t2023-01-01T09:05:00.000000Z\t600.0\n" +
+                    "GOOGL\t301.0\t2023-01-01T09:06:00.000000Z\t301.0\n" +
+                    "AAPL\t103.0\t2023-01-01T09:07:00.000000Z\t103.0\n" +
+                    "MSFT\t202.0\t2023-01-01T09:08:00.000000Z\t202.0\n" +
+                    "GOOGL\t302.0\t2023-01-01T09:09:00.000000Z\t302.0\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Async Window Fast Join workers: 1\n" +
+                            "      symbol: sym=sym\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.*, sum(t.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // verify result
+            assertQuery(
+                    expect,
+                    "select t.*, sum(t.price) window_price " +
+                            "from trades t " +
                             "left join prices p " +
                             "on (t.sym = p.sym) " +
                             " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
