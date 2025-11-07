@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -50,7 +51,7 @@ public final class DataID implements Sinkable {
      * as this avoids a name clash with a potentially valid table name.
      */
     public static final CharSequence FILENAME = ".data_id";
-    public static long FILE_SIZE = Long.SIZE * 2;  // Storing UUID as binary
+    public static long FILE_SIZE = Long.BYTES * 2;  // Storing UUID as binary
     private final CairoConfiguration configuration;
     private final Uuid id;
 
@@ -68,14 +69,21 @@ public final class DataID implements Sinkable {
     public static DataID open(CairoConfiguration configuration) throws CairoException {
         long lo, hi;
 
-        // N.B.: This will create a new empty file of null `FILE_SIZE` bytes if it doesn't exist.
-        try (MemoryCMARWImpl mem = openDataIDFile(configuration)) {
-            lo = mem.getLong(0);
-            hi = mem.getLong(Long.BYTES);
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot());
+            path.concat(FILENAME);
 
-            // If we've just created the file, it will still have empty bytes.
-            // We need to represent this as a null UUID - our "uninitialized" state.
-            if ((lo == 0) && (hi == 0)) {
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (var mem = new MemoryCMRImpl(ff, path.$(), -1, MemoryTag.MMAP_DEFAULT)) {
+                if (mem.size() < FILE_SIZE) {
+                    // The file has an unexpected size, we represent this as a null UUID - our "uninitialized" state.
+                    lo = hi = Numbers.LONG_NULL;
+                } else {
+                    lo = mem.getLong(0);
+                    hi = mem.getLong(Long.BYTES);
+                }
+            } catch (CairoException e) {
+                // The file may not exists, we represent this as a null UUID - our "uninitialized" state.
                 lo = hi = Numbers.LONG_NULL;
             }
         }
