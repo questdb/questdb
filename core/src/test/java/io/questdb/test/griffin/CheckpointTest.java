@@ -379,7 +379,7 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.releaseInactive();
             Assert.assertTrue(ff.removeQuiet(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
 
-            assertException("checkpoint create", 0, "Cannot open. File does not exist");
+            assertException("checkpoint create", 0, "could not open txn file");
         });
     }
 
