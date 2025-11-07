@@ -47,7 +47,7 @@ import java.util.Collections;
 import java.util.List;
 
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
-    private static final boolean RUN_ALL_PERMUTATIONS = false;
+    private static final boolean RUN_ALL_PERMUTATIONS = true;
     private static final int RUN_N_PERMUTATIONS = 100;
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
@@ -287,7 +287,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         if (hintType == HintType.LINEAR) {
             TestUtils.assertNotContains(sink, "AsOf Join Indexed Scan");
             TestUtils.assertNotContains(sink, "AsOf Join Memoized Scan");
-            TestUtils.assertNotContains(sink, "AsOf Join Dense Scan");
+            TestUtils.assertNotContains(sink, "AsOf Join Dense ");
             TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
             TestUtils.assertNotContains(sink, "Lt Join Fast Scan");
         } else if (joinType == JoinType.ASOF_NONKEYED && numIntervalsOpt == NumIntervals.MANY) {
@@ -296,7 +296,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             String algo = switch (hintType) {
                 case INDEX -> "Indexed";
                 case MEMOIZED, MEMOIZED_DRIVEBY -> "Memoized";
-                case DENSE -> "Dense";
+                case DENSE -> "Dense Single Symbol";
                 default -> "Fast";
             };
             TestUtils.assertContains(sink, "AsOf Join " + algo + " Scan");

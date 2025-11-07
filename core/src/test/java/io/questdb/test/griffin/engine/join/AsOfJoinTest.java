@@ -432,7 +432,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
-            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense Single Symbol", expected);
         });
     }
 

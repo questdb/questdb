@@ -77,6 +77,7 @@ import io.questdb.std.Rows;
  * slave rows.
  */
 public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinRecordCursorFactory {
+    protected static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
     protected static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
     private final long toleranceInterval;
     protected AsOfJoinDenseRecordCursorBase cursor;
@@ -125,7 +126,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("AsOf Join Dense Scan");
+        putFactoryType(sink);
         sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);
@@ -138,7 +139,10 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         Misc.free(slaveFactory);
     }
 
+    protected abstract void putFactoryType(PlanSink sink);
+
     protected abstract class AsOfJoinDenseRecordCursorBase extends AbstractKeyedAsOfJoinRecordCursor {
+        protected static final int DUMMY_VALUE = -10;
 
         private final Map bwdScanKeyToRowId;
         private final Map fwdScanKeyToRowId;
@@ -214,14 +218,14 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
             // Let's see if we saw a matching symbol in forward scan
             key = fwdScanKeyToRowId.withKey();
-            putMasterJoinKey(key);
+            putSlaveKeyToFind(key, slaveKeyToFind);
             value = key.findValue();
             if (value != null) {
                 return setupSlaveRec(value.getLong(0), minSlaveTimestamp);
             }
             // Symbol not found, see if we already saw it in backward scan
             key = bwdScanKeyToRowId.withKey();
-            putMasterJoinKey(key);
+            putSlaveKeyToFind(key, slaveKeyToFind);
             value = key.findValue();
             if (value != null) {
                 return setupSlaveRec(value.getLong(0), minSlaveTimestamp);
@@ -346,14 +350,15 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             throw new UnsupportedOperationException("AsOfJoinDenseRecordCursorBase does not use performKeyMatching");
         }
 
-        protected abstract void putMasterJoinKey(MapKey key);
-
         protected abstract void putSlaveJoinKey(MapKey key);
+
+        protected abstract void putSlaveKeyToFind(MapKey key, int slaveKeyToFind);
 
         protected abstract int setupSymbolKeyToFind();
     }
 
     static {
+        TYPES_KEY.add(ColumnType.INT);
         TYPES_VALUE.add(ColumnType.LONG);
     }
 }

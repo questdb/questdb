@@ -25,9 +25,6 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -39,47 +36,41 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.model.JoinContext;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Transient;
 
-public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordCursorFactoryBase {
-    private final RecordSink masterKeyCopier;
-    private final RecordSink slaveKeyCopier;
+public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoinDenseRecordCursorFactoryBase {
 
-    public AsOfJoinDenseRecordCursorFactory(
+    private final SymbolJoinKeyMapping joinKeyMapping;
+    private final int slaveSymbolColumnIndex;
+
+    public AsOfJoinDenseSingleSymbolRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
-            RecordSink masterKeyCopier,
             RecordCursorFactory slaveFactory,
-            RecordSink slaveKeyCopier,
             int columnSplit,
-            @Transient ColumnTypes keyTypes,
+            int slaveSymbolColumnIndex,
+            SymbolJoinKeyMapping joinKeyMapping,
             JoinContext joinContext,
             long toleranceInterval
     ) {
         super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval);
-        this.masterKeyCopier = masterKeyCopier;
-        this.slaveKeyCopier = slaveKeyCopier;
+        this.joinKeyMapping = joinKeyMapping;
+        this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         Map fwdScanKeyToRowId = null;
         Map bwdScanKeyToRowId = null;
         try {
-            long maxSinkTargetHeapSize = (long)
-                    configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
-            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE);
-            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE);
-            this.cursor = new AsOfJoinDenseRecordCursor(
+            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
+            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
+            this.cursor = new AsOfJoinDenseSingleSymbolRecordCursor(
                     columnSplit,
                     fwdScanKeyToRowId,
                     bwdScanKeyToRowId,
                     NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                     masterFactory.getMetadata().getTimestampIndex(),
                     masterFactory.getMetadata().getTimestampType(),
-                    new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                     slaveFactory.getMetadata().getTimestampIndex(),
-                    slaveFactory.getMetadata().getTimestampType(),
-                    new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN)
+                    slaveFactory.getMetadata().getTimestampType()
             );
         } catch (Throwable th) {
             Misc.free(bwdScanKeyToRowId);
@@ -89,26 +80,23 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
         }
     }
 
+
     @Override
     protected void putFactoryType(PlanSink sink) {
-        sink.type("AsOf Join Dense Scan");
+        sink.type("AsOf Join Dense Single Symbol Scan");
     }
 
-    private class AsOfJoinDenseRecordCursor extends AsOfJoinDenseRecordCursorBase {
-        private final SingleRecordSink masterSinkTarget;
-        private final SingleRecordSink slaveSinkTarget;
+    private class AsOfJoinDenseSingleSymbolRecordCursor extends AsOfJoinDenseRecordCursorBase {
 
-        AsOfJoinDenseRecordCursor(
+        AsOfJoinDenseSingleSymbolRecordCursor(
                 int columnSplit,
                 Map fwdScanKeyToRowId,
                 Map bwdScanKeyToRowId,
                 Record nullRecord,
                 int masterTimestampIndex,
                 int masterTimestampType,
-                SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
-                int slaveTimestampType,
-                SingleRecordSink slaveSinkTarget
+                int slaveTimestampType
         ) {
             super(
                     columnSplit,
@@ -120,51 +108,37 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
                     slaveTimestampIndex,
                     slaveTimestampType
             );
-            this.masterSinkTarget = masterSinkTarget;
-            this.slaveSinkTarget = slaveSinkTarget;
-        }
-
-        @Override
-        public void close() {
-            Misc.free(slaveSinkTarget);
-            Misc.free(masterSinkTarget);
-            super.close();
         }
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
-            masterSinkTarget.reopen();
-            slaveSinkTarget.reopen();
+            joinKeyMapping.of(slaveCursor);
         }
 
         @Override
         protected int getSlaveJoinKey() {
-            slaveSinkTarget.clear();
-            slaveKeyCopier.copy(slaveRecB, slaveSinkTarget);
-            return DUMMY_VALUE;
+            return slaveRecB.getInt(slaveSymbolColumnIndex);
         }
 
         @Override
         protected boolean joinKeysMatch(int slaveKeyToFind, int slaveKey) {
-            return masterSinkTarget.memeq(slaveSinkTarget);
+            return slaveKeyToFind == slaveKey;
         }
 
         @Override
         protected void putSlaveJoinKey(MapKey key) {
-            key.put(slaveRecB, slaveKeyCopier);
+            key.putInt(slaveRecB.getInt(slaveSymbolColumnIndex));
         }
 
         @Override
         protected void putSlaveKeyToFind(MapKey key, int slaveKeyToFind) {
-            key.put(masterRecord, masterKeyCopier);
+            key.putInt(slaveKeyToFind);
         }
 
         @Override
         protected int setupSymbolKeyToFind() {
-            masterSinkTarget.clear();
-            masterKeyCopier.copy(masterRecord, masterSinkTarget);
-            return DUMMY_VALUE;
+            return joinKeyMapping.getSlaveKey(masterRecord);
         }
     }
 }

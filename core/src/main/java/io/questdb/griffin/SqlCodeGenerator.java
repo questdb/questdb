@@ -187,6 +187,7 @@ import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
@@ -194,7 +195,6 @@ import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.AsOfJoinSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
@@ -2629,17 +2629,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
+                SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, isSelfJoin);
+                int joinColumnSplit = masterMetadata.getColumnCount();
+                JoinContext slaveContext = slaveModel.getJoinContext();
                 if (!hasLinearHint) {
                     if (slave.supportsTimeFrameCursor()) {
-                        int joinColumnSplit = masterMetadata.getColumnCount();
-                        JoinContext slaveContext = slaveModel.getJoinContext();
-                        SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, isSelfJoin);
-                        boolean isSingleSymbolJoin = symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
-                                !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
+                        boolean isSingleSymbolJoin = isSingleSymbolJoin(symbolShortCircuit);
                         boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
                         if (hasDenseHint) {
                             if (isSingleSymbolJoin) {
-
+                                int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                                return new AsOfJoinDenseSingleSymbolRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        slave,
+                                        joinColumnSplit,
+                                        slaveSymbolColumnIndex,
+                                        (SymbolJoinKeyMapping) symbolShortCircuit,
+                                        slaveContext,
+                                        toleranceInterval
+                                );
                             }
                             return new AsOfJoinDenseRecordCursorFactory(
                                     configuration,
@@ -2656,9 +2666,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         RecordSink recordCopierMaster;
                         if (isSingleSymbolJoin) {
-                            int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                             SymbolJoinKeyMapping symbolJoinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
-
+                            int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                             boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
                             if (hasIndexHint && slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
                                 return new AsOfJoinIndexedRecordCursorFactory(
@@ -2693,8 +2702,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // We're falling back to the default Fast scan. We can still optimize one thing:
                             // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
                             // For that to work, we need code that maps master symbol key to slave symbol key.
-                            recordCopierMaster = new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit);
                             writeSymbolAsString.unset(slaveSymbolColumnIndex);
+                            recordCopierMaster = new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit);
                         } else {
                             recordCopierMaster = createRecordCopierMaster(masterMetadata);
                         }
@@ -2744,7 +2753,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // There is still chance that projectionBase is just a filter
                         // and its own base supports timeFrameCursor. let's see.
                         if (projectionBase.supportsFilterStealing()) {
-                            // ok, cool, is used only as a filter.
+                            // ok cool, it's used only as a filter.
                             RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
                             if (filterStealingBase.supportsTimeFrameCursor()) {
                                 IntList stolenCrossIndex = slave.getColumnCrossIndex();
@@ -2780,25 +2789,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                int joinColumnSplit = masterMetadata.getColumnCount();
-                JoinContext slaveContext = slaveModel.getJoinContext();
-                if (isSingleSymbolJoin(slaveMetadata)) {
-                    SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, isSelfJoin);
-                    if (symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE) {
-                        SymbolJoinKeyMapping joinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
-                        int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-                        return new AsOfJoinSingleSymbolRecordCursorFactory(
-                                configuration,
-                                joinMetadata,
-                                master,
-                                slave,
-                                joinColumnSplit,
-                                slaveSymbolColumnIndex,
-                                joinKeyMapping,
-                                slaveContext,
-                                toleranceInterval
-                        );
-                    }
+                RecordSink recordCopierMaster;
+                if (isSingleSymbolJoin(symbolShortCircuit)) {
+                    // We're falling back to the default Light scan. We can still optimize one thing:
+                    // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
+                    // For that to work, we need code that maps master symbol key to slave symbol key.
+                    int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                    writeSymbolAsString.unset(slaveSymbolColumnIndex);
+                    recordCopierMaster = new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit);
+                } else {
+                    recordCopierMaster = createRecordCopierMaster(masterMetadata);
                 }
                 // fallback for keyed join when no optimizations are applicable, or when asof_linear hint is used:
                 return new AsOfJoinLightRecordCursorFactory(
@@ -2807,7 +2807,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         master,
                         slave,
                         keyTypes,
-                        createRecordCopierMaster(masterMetadata),
+                        recordCopierMaster,
                         createRecordCopierSlave(slaveMetadata),
                         joinColumnSplit,
                         slaveContext,
@@ -6675,12 +6675,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private boolean isSingleSymbolJoin(RecordMetadata slaveMetadata) {
-        // Must be joining on exactly one column (besides timestamps)
         if (listColumnFilterA.size() != 1 || listColumnFilterB.size() != 1) {
             return false;
         }
-        int slaveIndex = listColumnFilterA.getColumnIndexFactored(0);
-        return slaveMetadata.getColumnType(slaveIndex) == SYMBOL;
+        int slaveJoinKeyIndex = listColumnFilterA.getColumnIndexFactored(0);
+        return slaveMetadata.getColumnType(slaveJoinKeyIndex) == SYMBOL;
+    }
+
+    private boolean isSingleSymbolJoin(SymbolShortCircuit symbolShortCircuit) {
+        return symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
+                !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
     }
 
     // skips skipped models until finding a WHERE clause
