@@ -255,10 +255,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         String hint = switch (hintType) {
-            case MEMOIZED -> " /*+ ASOF_MEMOIZED(t1 t2) */ ";
-            case INDEX -> " /*+ ASOF_INDEX_SEARCH(t1 t2) */ ";
-            case LINEAR -> " /*+ ASOF_LINEAR(t1 t2) */ ";
-            case DRIVEBY_CACHING -> " /*+ ASOF_DRIVEBY_CACHE(t1 t2) */ ";
+            case LINEAR -> " /*+ asof_linear(t1 t2) */ ";
+            case MEMOIZED -> " /*+ asof_memoized(t1 t2) */ ";
+            case MEMOIZED_DRIVEBY -> " /*+ asof_memoized_driveby(t1 t2) */ ";
+            case INDEX -> " /*+ asof_index(t1 t2) */ ";
             default -> "";
         };
         String query = "select " + hint + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
@@ -293,7 +293,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         } else if (joinType == JoinType.ASOF && numIntervalsOpt != NumIntervals.MANY && !exerciseFilters) {
             String algo = switch (hintType) {
                 case INDEX -> "Indexed";
-                case MEMOIZED -> "Memoized";
+                case MEMOIZED, MEMOIZED_DRIVEBY -> "Memoized";
                 default -> "Fast";
             };
             TestUtils.assertContains(sink, "AsOf Join " + algo + " Scan");
@@ -407,10 +407,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
     private enum HintType {
         NONE,
+        MEMOIZED,
+        MEMOIZED_DRIVEBY,
         INDEX,
         LINEAR,
-        MEMOIZED,
-        DRIVEBY_CACHING
     }
 
     private enum JoinType {

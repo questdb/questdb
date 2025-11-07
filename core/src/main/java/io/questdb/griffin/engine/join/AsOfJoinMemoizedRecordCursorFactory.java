@@ -79,6 +79,9 @@ import io.questdb.std.Rows;
  * @see AbstractKeyedAsOfJoinRecordCursor
  */
 public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
+    private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
+
     private final AsofJoinColumnAccessHelper columnAccessHelper;
     private final AsOfJoinMemoizedRecordCursor cursor;
     private final boolean driveByCaching;
@@ -103,15 +106,20 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         this.toleranceInterval = toleranceInterval;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         this.driveByCaching = driveByCaching;
-        this.cursor = new AsOfJoinMemoizedRecordCursor(
-                configuration,
-                columnSplit,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                masterFactory.getMetadata().getTimestampIndex(),
-                masterFactory.getMetadata().getTimestampType(),
-                slaveFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampType()
-        );
+        try {
+            this.cursor = new AsOfJoinMemoizedRecordCursor(
+                    configuration,
+                    columnSplit,
+                    NullRecordFactory.getInstance(slaveFactory.getMetadata()),
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    masterFactory.getMetadata().getTimestampType(),
+                    slaveFactory.getMetadata().getTimestampIndex(),
+                    slaveFactory.getMetadata().getTimestampType()
+            );
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override
@@ -167,8 +175,6 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         private static final int SLOT_REMEMBERED_ROWID = 0;
         private static final int SLOT_VALIDITY_PERIOD_END = 2;
         private static final int SLOT_VALIDITY_PERIOD_START = 1;
-        private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
-        private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
         private final Map rememberedSymbols;
         private long earliestRowId = Long.MIN_VALUE;
         // These track a contiguous range of slave timestamps that we've already scanned.
@@ -198,13 +204,13 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     slaveTimestampType,
                     configuration.getSqlAsOfJoinLookAhead()
             );
-            rememberedSymbols = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
+            this.rememberedSymbols = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
         }
 
         @Override
         public void close() {
+            Misc.free(rememberedSymbols);
             super.close();
-            rememberedSymbols.close();
         }
 
         @Override
@@ -486,12 +492,12 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
         }
+    }
 
-        static {
-            TYPES_KEY.add(ColumnType.INT);
-            TYPES_VALUE.add(ColumnType.LONG);
-            TYPES_VALUE.add(ColumnType.LONG);
-            TYPES_VALUE.add(ColumnType.LONG);
-        }
+    static {
+        TYPES_KEY.add(ColumnType.INT);
+        TYPES_VALUE.add(ColumnType.LONG);
+        TYPES_VALUE.add(ColumnType.LONG);
+        TYPES_VALUE.add(ColumnType.LONG);
     }
 }

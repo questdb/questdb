@@ -37,21 +37,21 @@ public class SqlHintsTest extends AbstractTest {
     public void testAsOfJoinUseDrivebyCacheHint() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             QueryModel model = new QueryModel.QueryModelFactory().newInstance();
-            Assert.assertFalse(SqlHints.hasAsOfDrivebyCacheHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAsOfMemoizedDrivebyHint(model, "tableA", "tableB"));
 
-            model.addHint(SqlHints.ASOF_DRIVEBY_CACHE_HINT, "tableA tableB");
-            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "tableA", "tableB"));
+            model.addHint(SqlHints.ASOF_MEMOIZED_DRIVEBY_HINT, "tableA tableB");
+            Assert.assertTrue(SqlHints.hasAsOfMemoizedDrivebyHint(model, "tableA", "tableB"));
 
             // case-insensitive
-            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "tablea", "tableb"));
-            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "TABLEA", "TABLEB"));
+            Assert.assertTrue(SqlHints.hasAsOfMemoizedDrivebyHint(model, "tablea", "tableb"));
+            Assert.assertTrue(SqlHints.hasAsOfMemoizedDrivebyHint(model, "TABLEA", "TABLEB"));
 
             // different order
-            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "tableB", "tableA"));
-            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "TABLEB", "TABLEA"));
+            Assert.assertTrue(SqlHints.hasAsOfMemoizedDrivebyHint(model, "tableB", "tableA"));
+            Assert.assertTrue(SqlHints.hasAsOfMemoizedDrivebyHint(model, "TABLEB", "TABLEA"));
 
             model.clear();
-            Assert.assertFalse(SqlHints.hasAsOfDrivebyCacheHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAsOfMemoizedDrivebyHint(model, "tableA", "tableB"));
         });
     }
 

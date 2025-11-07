@@ -2,7 +2,7 @@ FROM debian:bookworm AS builder
 ARG tag_name
 
 ENV GOSU_VERSION=1.19
-ENV JDK_VERSION=17.0.11.9-1
+ENV JDK_VERSION=17.0.16.8-1
 
 RUN apt-get update \
     && apt-get install --no-install-recommends git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip -y
