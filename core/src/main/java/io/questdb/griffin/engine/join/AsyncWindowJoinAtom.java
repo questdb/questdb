@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -208,7 +209,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                     if (mappedIndex == -1) {
                         groupByColumnIndexes.add(func.getColumnIndex());
                         var unary = (UnaryFunction) func;
-                        groupByColumnTypes.add(unary.getArg().getType());
+                        groupByColumnTypes.add(ColumnType.tagOf(unary.getArg().getType()));
                         groupByFunctionToColumnIndex.add(groupByColumnIndexes.size() - 1);
                     } else {
                         groupByFunctionToColumnIndex.add(mappedIndex);
