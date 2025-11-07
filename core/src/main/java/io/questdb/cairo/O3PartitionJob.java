@@ -2125,6 +2125,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             .$(", partition=").$ts(partitionTimestamp)
                                             .I$();
 
+                                    timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+
+                                    // Remove empty partition dir
+                                    Path path = Path.getThreadLocal(pathToTable);
+                                    setPathForNativePartition(path, tableWriter.getPartitionBy(), partitionTimestamp, txn);
+                                    tableWriter.getConfiguration().getFilesFacade().rmdir(path, false);
+
                                     // nothing to do, skip the partition
                                     updatePartition(
                                             tableWriter.getFilesFacade(),
@@ -2139,12 +2146,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             srcDataOldPartitionSize,
                                             0
                                     );
-                                    timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-
-                                    // Remove empty partition dir
-                                    Path path = Path.getThreadLocal(pathToTable);
-                                    setPathForNativePartition(path, tableWriter.getPartitionBy(), partitionTimestamp, txn);
-                                    tableWriter.getConfiguration().getFilesFacade().rmdir(path, false);
 
                                     return;
                                 } else {
