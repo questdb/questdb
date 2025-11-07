@@ -105,12 +105,9 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         this.toleranceInterval = toleranceInterval;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         this.driveByCaching = driveByCaching;
-        Map rememberedSymbols = null;
         try {
-            rememberedSymbols = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
             this.cursor = new AsOfJoinMemoizedRecordCursor(
                     configuration,
-                    rememberedSymbols,
                     columnSplit,
                     NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                     masterFactory.getMetadata().getTimestampIndex(),
@@ -119,7 +116,6 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     slaveFactory.getMetadata().getTimestampType()
             );
         } catch (Throwable t) {
-            Misc.free(rememberedSymbols);
             close();
             throw t;
         }
@@ -191,7 +187,6 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
         public AsOfJoinMemoizedRecordCursor(
                 CairoConfiguration configuration,
-                Map rememberedSymbols,
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
@@ -208,7 +203,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     slaveTimestampType,
                     configuration.getSqlAsOfJoinLookAhead()
             );
-            this.rememberedSymbols = rememberedSymbols;
+            this.rememberedSymbols = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
         }
 
         @Override
