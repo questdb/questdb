@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
@@ -109,6 +110,8 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                         if (!e.isFileCannotRead()) {
                             throw e;
                         } // race, table is dropped, ApplyWal2TableJob is already deleting the files
+                    } catch (TableReferenceOutOfDateException ignore) {
+                        // ignore, table was deleted if we got this exception on a table token
                     }
                 } // else table is dropped, ApplyWal2TableJob already is deleting the files
             }

@@ -46,12 +46,8 @@ import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -59,7 +55,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.ColumnType.*;
 
-@RunWith(Parameterized.class)
 abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     protected static final Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
@@ -106,15 +101,8 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     private SOCountDownLatch threadPushFinished;
     private long timestampMark = -1;
 
-    public AbstractLineTcpReceiverFuzzTest(WalMode walMode) {
-        this.walEnabled = (walMode == WalMode.WITH_WAL);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
-        });
+    public AbstractLineTcpReceiverFuzzTest() {
+        this.walEnabled = TestUtils.isWal();
     }
 
     public void runTest() throws Exception {

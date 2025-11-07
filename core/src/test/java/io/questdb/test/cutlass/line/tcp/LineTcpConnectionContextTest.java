@@ -39,7 +39,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -49,30 +48,19 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assume.assumeFalse;
 
-@RunWith(Parameterized.class)
 public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     private final boolean walEnabled;
 
-    public LineTcpConnectionContextTest(WalMode walMode, TestTimestampType timestampType) {
-        walEnabled = (walMode == WalMode.WITH_WAL);
-        this.timestampType = timestampType;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL, TestTimestampType.MICRO}, {WalMode.NO_WAL, TestTimestampType.MICRO},
-                {WalMode.WITH_WAL, TestTimestampType.NANO}, {WalMode.NO_WAL, TestTimestampType.NANO},
-        });
+    public LineTcpConnectionContextTest() {
+        Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
+        this.walEnabled = TestUtils.isWal(rnd);
+        this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
     @Before
