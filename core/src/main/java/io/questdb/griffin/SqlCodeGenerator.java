@@ -3461,6 +3461,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         );
                                     }
                                 } else {
+                                    if (!slave.recordCursorSupportsRandomAccess()) {
+                                        throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("right side of window join doesn't support random access");
+                                    }
+
                                     if (slaveModel.getOuterJoinExpressionClause() != null) {
                                         filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                     }

@@ -46,6 +46,7 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -197,14 +198,23 @@ public class WindowJoinLightFilteredRecordCursorFactory extends AbstractRecordCu
         private final int masterTimestampIndex;
         private final long masterTimestampScale;
         private final OuterJoinRecord record;
-        private final GroupByLongList rowIds = new GroupByLongList(16);
+        /**
+         * Slaves' row ids and timestamps that we have loaded so far are stored in ring buffers.
+         * {@link #slaveLo} points to the first element in the buffers and {@link #slaveHi} points
+         * after the last element.
+         * An empty buffer is indicated by {@link #slaveHi} being -1.
+         */
+        private final GroupByLongList slaveRowIds = new GroupByLongList(16);
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
+        private final GroupByLongList slaveTimestamps = new GroupByLongList(16);
+        private SqlExecutionCircuitBreaker circuitBreaker = null;
+        private boolean hasSlaves;
         private boolean isOpen;
-        private int lastSlaveHiRowIndex = -1;
-        // Bookmark to the first slave row index that could be matched by the next master row
-        private int lastSlaveLoRowIndex = -1;
         private Record masterRecord;
+        private int slaveBufferCapacity;
+        private int slaveHi = -1;
+        private int slaveLo = 0;
         private Record slaveRecord;
 
         public WindowJoinLightRecordCursor(
@@ -221,7 +231,8 @@ public class WindowJoinLightFilteredRecordCursorFactory extends AbstractRecordCu
             super(columnSplit);
             allocator = GroupByAllocatorFactory.createAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
-            rowIds.setAllocator(allocator);
+            slaveRowIds.setAllocator(allocator);
+            slaveTimestamps.setAllocator(allocator);
             this.groupByFunctions = groupByFunctions;
             this.mapValue = new SimpleMapValue(columnTypes.getColumnCount());
             record = new OuterJoinRecord(columnSplit, nullRecord);
@@ -249,9 +260,9 @@ public class WindowJoinLightFilteredRecordCursorFactory extends AbstractRecordCu
             if (isOpen) {
                 isOpen = false;
                 allocator.close();
-                rowIds.resetPtr();
+                slaveRowIds.resetPtr();
+                slaveTimestamps.resetPtr();
                 Misc.clearObjList(groupByFunctions);
-                Misc.free(filter);
                 super.close();
             }
         }
@@ -261,46 +272,69 @@ public class WindowJoinLightFilteredRecordCursorFactory extends AbstractRecordCu
             return record;
         }
 
-
         @Override
         public boolean hasNext() {
             if (!masterCursor.hasNext()) {
                 return false;
             }
-            long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
-            int slaveRowIndex = lastSlaveLoRowIndex;
-            long slaveRowId;
-            if (slaveRowIndex == -1) {
-                // The rowIds list hasn't been initialized yet, we need to fill it
-                if (!slaveCursor.hasNext()) {
-                    record.hasSlave(false);
-                    return true;
-                }
-                slaveRowId = slaveRecord.getRowId();
-                rowIds.add(slaveRowId);
-                lastSlaveLoRowIndex = lastSlaveHiRowIndex = slaveRowIndex = 0;
-            } else {
-                slaveRowId = rowIds.get(slaveRowIndex);
-                slaveCursor.recordAt(slaveRecord, slaveRowId);
+            if (!hasSlaves) {
+                return true;
             }
-            // slaveRecord is now guaranteed to be either the first element or before masterTimestamp - windowLo
-            // now we need to iterate until we arrive at the first element that is after masterTimestamp - windowLo
 
-            long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-            while (slaveTimestamp < slaveTimestampLo) {
-                if ((slaveRowId = nextSlave(++slaveRowIndex)) == Long.MIN_VALUE) {
-                    record.hasSlave(false);
-                    return true;
-                }
-                slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+            long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+            long slaveTimestampLo, slaveTimestampHi;
+            if (windowLo == Long.MAX_VALUE) {
+                slaveTimestampLo = Long.MIN_VALUE;
+            } else {
+                slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
             }
-            // todo(raphdal): implement a better data-structure (growable ring buffer?) to quickly clear rowids
-            lastSlaveLoRowIndex = slaveRowIndex;
+            if (windowHi == Long.MAX_VALUE) {
+                slaveTimestampHi = Long.MAX_VALUE;
+            } else {
+                slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
+            }
+
+            // We need to find the first slave that is be in the master window
+            int slaveIndex = -1;
+            long slaveTimestamp = 0;
+            long slaveRowId = 0;
+            if (slaveHi != -1) {
+                int currentIndex = slaveLo;
+                do {
+                    slaveTimestamp = slaveTimestamps.get(currentIndex);
+                    if (slaveTimestamp >= slaveTimestampLo) {
+                        slaveLo = slaveIndex = currentIndex;
+                        slaveRowId = slaveRowIds.get(currentIndex);
+                        slaveCursor.recordAt(slaveRecord, slaveRowId);
+                        break;
+                    }
+
+                    currentIndex = (currentIndex + 1) % slaveBufferCapacity;
+                } while (currentIndex != slaveHi);
+            }
+            if (slaveIndex == -1) {
+                // Nothing found in our buffer
+                slaveHi = -1;
+                while (true) {
+                    if (!slaveCursor.hasNext()) {
+                        hasSlaves = false;
+                        record.hasSlave(false);
+                        return true;
+                    }
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+
+                    slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+                    if (slaveTimestamp >= slaveTimestampLo) {
+                        slaveRowId = slaveRecord.getRowId();
+                        storeSlave(slaveRowId, slaveTimestamp);
+                        break;
+                    }
+                }
+            }
 
             // Each next row might be part of the current window, we need to check against every
-            // record until the end of the window
+            // record until the end of the window and store them for next masters
+
             boolean first = true;
             while (slaveTimestamp <= slaveTimestampHi) {
                 if (filter == null || filter.getBool(joinRecord)) {
@@ -316,10 +350,20 @@ public class WindowJoinLightFilteredRecordCursorFactory extends AbstractRecordCu
                     }
                 }
 
-                if ((slaveRowId = nextSlave(++slaveRowIndex)) == Long.MIN_VALUE) {
+                slaveIndex = slaveIndex != -1 ? (slaveIndex + 1) % slaveBufferCapacity : -1;
+                if (slaveIndex != -1 && slaveIndex != slaveHi) {
+                    slaveTimestamp = slaveTimestamps.get(slaveIndex);
+                    slaveRowId = slaveRowIds.get(slaveIndex);
+                    slaveCursor.recordAt(slaveRecord, slaveRowId);
+                } else if (slaveCursor.hasNext()) {
+                    slaveRowId = slaveRecord.getRowId();
+                    slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+                    storeSlave(slaveRowId, slaveTimestamp);
+                } else {
+                    // No more slaves to retrieve
                     break;
                 }
-                slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+                circuitBreaker.statefulThrowExceptionIfTripped();
             }
 
             record.hasSlave(!first);
@@ -341,28 +385,56 @@ public class WindowJoinLightFilteredRecordCursorFactory extends AbstractRecordCu
         public void toTop() {
             masterCursor.toTop();
             slaveCursor.toTop();
-            lastSlaveHiRowIndex = lastSlaveLoRowIndex = -1;
-            rowIds.clear();
+            slaveHi = -1;
+            slaveLo = 0;
+            hasSlaves = true;
         }
 
-        /**
-         * Retrieve the next slave record that will have its row id stored at {@param slaveRowIndex}
-         *
-         * @return the slave row id
-         */
-        private long nextSlave(int slaveRowIndex) {
-            if (slaveRowIndex <= lastSlaveHiRowIndex) {
-                long rowId = rowIds.get(slaveRowIndex);
-                slaveCursor.recordAt(slaveRecord, rowId);
-                return rowId;
-            } else if (slaveCursor.hasNext()) {
-                long rowId = slaveRecord.getRowId();
-                rowIds.add(rowId);
-                lastSlaveHiRowIndex = slaveRowIndex;
-                return rowId;
-            } else {
-                return Long.MIN_VALUE;
+        private void storeSlave(long rowId, long scaledTimestamp) {
+            if (slaveHi == -1) {
+                // The buffer is empty, we can get back to the start instead of resuming from slaveLo
+                slaveLo = 0;
+                slaveHi = 1 % slaveBufferCapacity;
+                slaveTimestamps.set(0, scaledTimestamp);
+                slaveRowIds.set(0, rowId);
+                return;
             }
+
+            if (slaveLo == slaveHi) {
+                // Double the buffer size, and move around the hi part if needs be
+                final int oldCapacity = slaveBufferCapacity;
+                slaveBufferCapacity *= 2;
+                slaveTimestamps.checkCapacity(slaveBufferCapacity);
+                slaveRowIds.checkCapacity(slaveBufferCapacity);
+                if (slaveHi <= slaveLo) {
+                    if (slaveHi > 0) {
+                        // Moves the end of the buffer data to after the lo part
+                        // From:
+                        // [4, 5, 6, -, 1, 2, 3, -, -, -]
+                        // To:
+                        // [-, -, -, -, 1, 2, 3, 4, 5, 6]
+                        final long endOffsetBytes = (long) oldCapacity << 3;
+                        final long hiBytes = (long) slaveHi << 3;
+                        long tsDataPtr = slaveTimestamps.dataPtr();
+                        Vect.memcpy(
+                                tsDataPtr + endOffsetBytes,
+                                tsDataPtr,
+                                hiBytes
+                        );
+                        long rowIdsDataPtr = slaveRowIds.dataPtr();
+                        Vect.memcpy(
+                                rowIdsDataPtr + endOffsetBytes,
+                                rowIdsDataPtr,
+                                hiBytes
+                        );
+                    }
+                    slaveHi = (oldCapacity + slaveHi) % slaveBufferCapacity;
+                }
+            }
+
+            slaveTimestamps.set(slaveHi, scaledTimestamp);
+            slaveRowIds.set(slaveHi, rowId);
+            slaveHi = (slaveHi + 1) % slaveBufferCapacity;
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -375,15 +447,21 @@ public class WindowJoinLightFilteredRecordCursorFactory extends AbstractRecordCu
             slaveRecord = slaveCursor.getRecord();
             joinRecord.of(masterRecord, slaveRecord);
             record.of(masterRecord, mapValue);
-            lastSlaveLoRowIndex = lastSlaveHiRowIndex = -1;
             if (filter != null) {
                 filter.init(this, sqlExecutionContext);
             }
             for (int i = 0; i < groupByCount; i++) {
                 groupByFunctions.getQuick(i).init(this, sqlExecutionContext);
             }
-            rowIds.of(0);
-            rowIds.clear();
+            slaveHi = -1;
+            slaveLo = 0;
+            slaveRowIds.of(0);
+            slaveTimestamps.of(0);
+            slaveBufferCapacity = 16;
+            slaveRowIds.checkCapacity(slaveBufferCapacity);
+            slaveTimestamps.checkCapacity(slaveBufferCapacity);
+            hasSlaves = true;
+            circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         }
     }
 }
