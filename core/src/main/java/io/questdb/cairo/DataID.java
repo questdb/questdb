@@ -69,10 +69,7 @@ public final class DataID implements Sinkable {
     public static DataID open(CairoConfiguration configuration) throws CairoException {
         long lo, hi;
 
-        try (Path path = new Path()) {
-            path.of(configuration.getDbRoot());
-            path.concat(FILENAME);
-
+        try (Path path = createDataIdPath(configuration)) {
             final FilesFacade ff = configuration.getFilesFacade();
             try (var mem = new MemoryCMRImpl(ff, path.$(), -1, MemoryTag.MMAP_DEFAULT)) {
                 if (mem.size() < FILE_SIZE) {
@@ -83,7 +80,7 @@ public final class DataID implements Sinkable {
                     hi = mem.getLong(Long.BYTES);
                 }
             } catch (CairoException e) {
-                // The file may not exists, we represent this as a null UUID - our "uninitialized" state.
+                // The file may not exist, we represent this as a null UUID - our "uninitialized" state.
                 lo = hi = Numbers.LONG_NULL;
             }
         }
@@ -118,12 +115,21 @@ public final class DataID implements Sinkable {
         if ((lo == id.getLo()) && (hi == id.getHi())) {
             return;
         }
-        try (MemoryCMARWImpl mem = openDataIDFile(configuration)) {
-            mem.putLong(lo);
-            mem.putLong(hi);
-            mem.sync(false);
+        try (Path path = createDataIdPath(configuration)) {
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (var mem = new MemoryCMARWImpl(
+                    ff,
+                    path.$(),
+                    FILE_SIZE,
+                    -1,
+                    MemoryTag.MMAP_DEFAULT, configuration.getWriterFileOpenOpts()
+            )) {
+                mem.putLong(lo);
+                mem.putLong(hi);
+                mem.sync(false);
+                this.id.of(lo, hi);
+            }
         }
-        this.id.of(lo, hi);
     }
 
     @Override
@@ -131,13 +137,16 @@ public final class DataID implements Sinkable {
         id.toSink(sink);
     }
 
-    private static MemoryCMARWImpl openDataIDFile(CairoConfiguration configuration) {
-        try (Path path = new Path()) {
+    private static Path createDataIdPath(CairoConfiguration configuration) {
+        Path path = new Path();
+        try {
             path.of(configuration.getDbRoot());
             path.concat(FILENAME);
-
-            final FilesFacade ff = configuration.getFilesFacade();
-            return new MemoryCMARWImpl(ff, path.$(), FILE_SIZE, -1, MemoryTag.MMAP_DEFAULT, configuration.getWriterFileOpenOpts());
+            return path;
+        } catch (Throwable t) {
+            path.close();
+            throw t;
         }
     }
+
 }
