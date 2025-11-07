@@ -271,7 +271,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         } else {
             RecordCursor.Counter counter = new RecordCursor.Counter();
             cursor.toTop();
-            final Rnd rnd = new Rnd();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
             final int skip = rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
             while (counter.get() < skip && cursor.hasNext()) {
                 counter.inc();
@@ -343,7 +343,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 boolean cursorExhausted = false;
                 for (int i = 0, n = target; i < n; i++) {
                     cursor.recordAt(factRec, rows.getQuick(i));
-                    // intentionally calling hasNext() twice: we want to adcanced the cursor position,
+                    // intentionally calling hasNext() twice: we want to advance the cursor position,
                     // but we do *NOT* want to call it in step-lock with recordAt()
                     if (!cursorExhausted) {
                         cursorExhausted = !cursor.hasNext();
