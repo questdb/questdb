@@ -1665,7 +1665,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "ASOF JOIN t2 ON (sym)";
 
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join Single Symbol");
+            TestUtils.assertContains(sink, "AsOf Join Light");
 
             // Execute and verify results
             printSql(query);
@@ -1705,7 +1705,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             printSql("EXPLAIN " + query);
             // Linear search should take precedence
-            TestUtils.assertContains(sink, "AsOf Join Single Symbol");
+            TestUtils.assertContains(sink, "AsOf Join Light");
         });
     }
 
@@ -3838,61 +3838,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody2, "asof_memoized(t1 t2)", "Memoized", expected2);
         });
     }
-
-    @Test
-    public void testSingleSymbolAsOf() throws Exception {
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    """
-                            create table t1 as (
-                            SELECT
-                                rnd_symbol_zipf(1_000, 2.0) AS symbol,
-                                rnd_symbol('buy', 'sell') as side,
-                                rnd_double() * 20 + 10 AS price,
-                                rnd_double() * 20 + 10 AS amount,
-                                generate_series as timestamp
-                              FROM generate_series('2025-01-01'::#TIMESTAMP, '2025-01-02', '172898983u')
-                              ) timestamp(timestamp) partition by day
-                            """,
-                    leftTableTimestampType.getTypeName()
-            );
-
-            executeWithRewriteTimestamp(
-                    """
-                            create table t2 as (
-                            SELECT
-                                  '2024-12-31T23'::#TIMESTAMP + (60*x) + rnd_long(-20, 20, 0) as ts,
-                                  rnd_symbol_zipf(1_000, 2.0) sym,
-                                  rnd_double() * 10.0 + 5.0 bid,
-                                  rnd_double() * 10.0 + 5.0 ask
-                                  FROM long_sequence(10_000)
-                            ) timestamp(ts) partition by day
-                            """,
-                    rightTableTimestampType.getTypeName()
-            );
-
-            String queryBody = "avg(bid) FROM t1 t ASOF JOIN t2 p on (t.symbol=p.sym)";
-            var queryWithLinearHint = "SELECT /*+ ASOF_LINEAR(t p) */ " + queryBody;
-            var queryWithoutHint = "SELECT " + queryBody;
-
-            printSql("EXPLAIN " + queryWithLinearHint);
-            TestUtils.assertContains(sink, "AsOf Join Single Symbol");
-            printSql("EXPLAIN " + queryWithoutHint);
-            TestUtils.assertContains(sink, "AsOf Join Fast");
-
-            assertQueryNoLeakCheck(
-                    """
-                            avg
-                            10.82018197104726
-                            """,
-                    queryWithLinearHint,
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
+    
     @Test
     public void testSingleSymbolAsOfWithDynamicSlaveSymbol() throws Exception {
         assertMemoryLeak(() -> {
