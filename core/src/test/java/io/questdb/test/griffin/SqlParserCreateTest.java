@@ -36,38 +36,43 @@ public class SqlParserCreateTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateInvalidDecimalPrecision() throws Exception {
-        assertSyntaxError("create table x (v decimal(abc))", 26, "invalid DECIMAL type, precision must be a number");
+        assertSyntaxError("create table x (v decimal(abc))", 26, "Invalid decimal type. The precision ('abc') must be a number");
     }
 
     @Test
     public void testCreateInvalidDecimalScale() throws Exception {
-        assertSyntaxError("create table x (v decimal(5,abc))", 28, "invalid DECIMAL type, scale must be a number");
+        assertSyntaxError("create table x (v decimal(5,abc))", 28, "Invalid decimal type. The scale ('abc') must be a number");
     }
 
     @Test
     public void testCreateMissingDecimalClosingParen() throws Exception {
-        assertSyntaxError("create table x (v decimal(5", 26, "invalid DECIMAL type, missing ')'");
+        assertSyntaxError("create table x (v decimal(5", 26, "Invalid decimal type. Missing ')'");
     }
 
     @Test
     public void testCreateMissingDecimalPrecision() throws Exception {
-        assertSyntaxError("create table x (v decimal())", 26, "invalid DECIMAL type, missing precision");
-        assertSyntaxError("create table x (v decimal(", 25, "invalid DECIMAL type, missing precision");
+        assertSyntaxError("create table x (v decimal())", 26, "Invalid decimal type. The precision is missing");
+        assertSyntaxError("create table x (v decimal(", 25, "Invalid decimal type. The precision is missing");
     }
 
     @Test
     public void testCreateMissingDecimalScale() throws Exception {
-        assertSyntaxError("create table x (v decimal(5,))", 28, "invalid DECIMAL type, missing scale");
-        assertSyntaxError("create table x (v decimal(5,", 27, "invalid DECIMAL type, missing scale");
+        assertSyntaxError("create table x (v decimal(5,))", 28, "Invalid decimal type. The scale is missing");
+        assertSyntaxError("create table x (v decimal(5,", 27, "Invalid decimal type. The scale is missing");
     }
 
     @Test
     public void testCreatePrecisionTooBig() throws Exception {
-        assertSyntaxError("create table x (v decimal(80, 6))", 25, "invalid DECIMAL type, the precision must be between 1 and");
+        assertSyntaxError("create table x (v decimal(80, 6))", 25, "Invalid decimal type. The precision (80) must be less than ");
+    }
+
+    @Test
+    public void testCreatePrecisionTooSmall() throws Exception {
+        assertSyntaxError("create table x (v decimal(0, 6))", 25, "Invalid decimal type. The precision (0) must be greater than zero");
     }
 
     @Test
     public void testCreateScalingGreaterPrecision() throws Exception {
-        assertSyntaxError("create table x (v decimal(5, 6))", 25, "invalid DECIMAL type, the scale must be between 0 and 5");
+        assertSyntaxError("create table x (v decimal(5, 6))", 25, "Invalid decimal type. The precision (5) must be greater than or equal to the scale (6)");
     }
 }

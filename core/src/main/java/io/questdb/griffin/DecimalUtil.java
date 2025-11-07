@@ -436,7 +436,9 @@ public final class DecimalUtil {
             return Numbers.parseInt(cs, lo, hi);
         } catch (NumericException e) {
             throw SqlException.position(position)
-                    .put("invalid DECIMAL type, precision must be a number");
+                    .put("Invalid decimal type. The precision ('")
+                    .put(cs, lo, hi)
+                    .put("') must be a number");
         }
     }
 
@@ -451,7 +453,9 @@ public final class DecimalUtil {
             return Numbers.parseInt(cs, lo, hi);
         } catch (NumericException e) {
             throw SqlException.position(position)
-                    .put("invalid DECIMAL type, scale must be a number");
+                    .put("Invalid decimal type. The scale ('")
+                    .put(cs, lo, hi)
+                    .put("') must be a number");
         }
     }
 

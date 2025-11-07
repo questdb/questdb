@@ -188,7 +188,7 @@ public class SqlParser {
 
         tok = SqlUtil.fetchNext(lexer);
         if (tok == null || tok.charAt(0) == ')') {
-            throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing precision");
+            throw SqlException.$(lexer.lastTokenPosition(), "Invalid decimal type. The precision is missing");
         }
         int precision = DecimalUtil.parsePrecision(lexer.lastTokenPosition(), tok, 0, tok.length());
         int scale = precision < 8 ? 0 : 3;
@@ -199,25 +199,43 @@ public class SqlParser {
         if (tok != null && tok.charAt(0) == ',') {
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null || tok.charAt(0) == ')') {
-                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing scale value");
+                throw SqlException.$(lexer.lastTokenPosition(), "Invalid decimal type. The scale is missing");
             }
             scale = DecimalUtil.parseScale(lexer.lastTokenPosition(), tok, 0, tok.length());
             tok = SqlUtil.fetchNext(lexer);
         }
 
         if (tok == null || tok.charAt(0) != ')') {
-            throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing ')'");
+            throw SqlException.$(lexer.lastTokenPosition(), "Invalid decimal type. Missing ')'");
         }
 
-        if (precision <= 0 || precision > Decimals.MAX_PRECISION) {
+
+        if (precision <= 0) {
             throw SqlException.position(previousTokenPosition)
-                    .put("invalid DECIMAL type, the precision must be between 1 and ")
+                    .put("Invalid decimal type. The precision (")
+                    .put(precision)
+                    .put(") must be greater than zero");
+        }
+        if (precision > Decimals.MAX_PRECISION) {
+            throw SqlException.position(previousTokenPosition)
+                    .put("Invalid decimal type. The precision (")
+                    .put(precision)
+                    .put(") must be less than ")
                     .put(Decimals.MAX_PRECISION);
         }
-        if (scale < 0 || scale > precision) {
+        if (scale < 0) {
             throw SqlException.position(previousTokenPosition)
-                    .put("invalid DECIMAL type, the scale must be between 0 and ")
-                    .put(precision);
+                    .put("Invalid decimal type. The scale (")
+                    .put(scale)
+                    .put(") must be greater than or equal to zero");
+        }
+        if (scale > precision) {
+            throw SqlException.position(previousTokenPosition)
+                    .put("Invalid decimal type. The precision (")
+                    .put(precision)
+                    .put(") must be greater than or equal to the scale (")
+                    .put(scale)
+                    .put(")");
         }
 
         return ColumnType.getDecimalType(precision, scale);

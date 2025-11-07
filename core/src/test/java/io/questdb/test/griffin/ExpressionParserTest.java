@@ -476,14 +476,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCastDecimalInvalidPrecision() {
         assertFail("cast('123.45' as DECIMAL(abc))",
                 25,
-                "invalid DECIMAL type, precision must be a number");
+                "Invalid decimal type. The precision ('abc') must be a number");
     }
 
     @Test
     public void testCastDecimalMissingPrecision() {
         assertFail("cast('123.45' as DECIMAL())",
                 25,
-                "invalid DECIMAL type, missing precision");
+                "Invalid decimal type. The precision is missing");
     }
 
     @Test
@@ -759,28 +759,28 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testDecimalEmptyParentheses() {
         assertFail("DECIMAL()",
                 8,
-                "invalid DECIMAL type, missing precision");
+                "Invalid decimal type. The precision is missing");
     }
 
     @Test
     public void testDecimalEmptyScale() {
         assertFail("DECIMAL(10,)",
                 11,
-                "invalid DECIMAL type, scale must be a number");
+                "Invalid decimal type. The scale (')') must be a number");
     }
 
     @Test
     public void testDecimalFailInvalidPrecision() {
         assertFail("DECIMAL(abc)",
                 8,
-                "invalid DECIMAL type, precision must be a number");
+                "Invalid decimal type. The precision ('abc') must be a number");
     }
 
     @Test
     public void testDecimalFailInvalidScale() {
         assertFail("DECIMAL(10,xyz)",
                 11,
-                "invalid DECIMAL type, scale must be a number");
+                "Invalid decimal type. The scale ('xyz') must be a number");
     }
 
     @Test
@@ -797,14 +797,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testDecimalMissingPrecision() {
         assertFail("DECIMAL(",
                 7,
-                "invalid DECIMAL type, missing precision");
+                "Invalid decimal type. The precision is missing");
     }
 
     @Test
     public void testDecimalMissingScale() {
         assertFail("DECIMAL(10,",
                 10,
-                "invalid DECIMAL type, missing scale value");
+                "Invalid decimal type. The scale is missing");
     }
 
     @Test
@@ -826,7 +826,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testDecimalUnbalancedParentheses() {
         assertFail("DECIMAL(10",
                 8,
-                "invalid DECIMAL type, missing ')'");
+                "Invalid decimal type. Missing ')'");
     }
 
     @Test

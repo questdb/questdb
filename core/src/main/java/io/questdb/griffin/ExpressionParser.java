@@ -703,7 +703,7 @@ public class ExpressionParser {
                             }
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok == null || tok.charAt(0) == ')') {
-                                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing precision");
+                                throw SqlException.$(lexer.lastTokenPosition(), "Invalid decimal type. The precision is missing");
                             }
                             DecimalUtil.parsePrecision(lexer.lastTokenPosition(), tok, 0, tok.length());
                             CharSequence precisionTok = GenericLexer.immutableOf(tok);
@@ -711,7 +711,7 @@ public class ExpressionParser {
                             // The user is not mandated to provide a scale value (defaults to 0)
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok == null) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing ')'");
+                                throw SqlException.$(lexer.lastTokenPosition(), "Invalid decimal type. Missing ')'");
                             } else if (tok.charAt(0) == ')') {
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.CONSTANT,
@@ -722,7 +722,7 @@ public class ExpressionParser {
                             } else if (tok.charAt(0) == ',') {
                                 tok = SqlUtil.fetchNext(lexer);
                                 if (tok == null) {
-                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing scale value");
+                                    throw SqlException.$(lexer.lastTokenPosition(), "Invalid decimal type. The scale is missing");
                                 }
                                 DecimalUtil.parseScale(lexer.lastTokenPosition(), tok, 0, tok.length());
                                 opStack.push(expressionNodePool.next().of(
@@ -733,10 +733,10 @@ public class ExpressionParser {
                                 ));
                                 tok = SqlUtil.fetchNext(lexer);
                                 if (tok == null || tok.charAt(0) != ')') {
-                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing ')'");
+                                    throw SqlException.$(lexer.lastTokenPosition(), "Invalid decimal type. Missing ')'");
                                 }
                             } else {
-                                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, expected ',' or ')' after precision");
+                                throw SqlException.$(lexer.lastTokenPosition(), "Invalid decimal type. Expected ',' or ')' after precision");
                             }
                             thisBranch = BRANCH_DECIMAL;
                             break;
@@ -1233,8 +1233,7 @@ public class ExpressionParser {
                                 // leverage the fact '*' is dedicated token, and it returned from cache
                                 // therefore lexer.tokenHi does not move when * follows dot without whitespace
                                 // e.g. 'a.*'
-                                if (en.token instanceof GenericLexer.FloatingSequence) {
-                                    GenericLexer.FloatingSequence fs = (GenericLexer.FloatingSequence) en.token;
+                                if (en.token instanceof GenericLexer.FloatingSequence fs) {
                                     fs.setHi(lastPos + 1);
                                 } else {
                                     // "foo".* or 'foo'.*

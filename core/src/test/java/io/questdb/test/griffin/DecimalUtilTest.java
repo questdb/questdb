@@ -1080,7 +1080,7 @@ public class DecimalUtilTest extends AbstractCairoTest {
             DecimalUtil.parsePrecision(0, "", 0, 0);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "invalid DECIMAL type, precision must be a number");
+            TestUtils.assertContains(e.getMessage(), "Invalid decimal type. The precision ('') must be a number");
         }
     }
 
@@ -1090,7 +1090,7 @@ public class DecimalUtilTest extends AbstractCairoTest {
             DecimalUtil.parsePrecision(0, "abc", 0, 3);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "invalid DECIMAL type, precision must be a number");
+            TestUtils.assertContains(e.getMessage(), "Invalid decimal type. The precision ('abc') must be a number");
         }
     }
 
@@ -1124,7 +1124,7 @@ public class DecimalUtilTest extends AbstractCairoTest {
             DecimalUtil.parseScale(0, "", 0, 0);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "invalid DECIMAL type, scale must be a number");
+            TestUtils.assertContains(e.getMessage(), "Invalid decimal type. The scale ('') must be a number");
         }
     }
 
@@ -1134,7 +1134,7 @@ public class DecimalUtilTest extends AbstractCairoTest {
             DecimalUtil.parseScale(0, "xyz", 0, 3);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "invalid DECIMAL type, scale must be a number");
+            TestUtils.assertContains(e.getMessage(), "Invalid decimal type. The scale ('xyz') must be a number");
         }
     }
 

@@ -817,15 +817,32 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
 
-        if (precision <= 0 || precision > Decimals.MAX_PRECISION) {
+        if (precision <= 0) {
             throw SqlException.position(position)
-                    .put("invalid DECIMAL type, the precision must be between 1 and ")
+                    .put("Invalid decimal type. The precision (")
+                    .put(precision)
+                    .put(") must be greater than zero.");
+        }
+        if (precision > Decimals.MAX_PRECISION) {
+            throw SqlException.position(position)
+                    .put("Invalid decimal type. The precision (")
+                    .put(precision)
+                    .put(") must be less than ")
                     .put(Decimals.MAX_PRECISION);
         }
-        if (scale < 0 || scale > precision) {
+        if (scale < 0) {
             throw SqlException.position(position)
-                    .put("invalid DECIMAL type, the scale must be between 0 and ")
-                    .put(precision);
+                    .put("Invalid decimal type. The scale (")
+                    .put(scale)
+                    .put(") must be greater than or equal to zero.");
+        }
+        if (scale > precision) {
+            throw SqlException.position(position)
+                    .put("Invalid decimal type. The precision (")
+                    .put(precision)
+                    .put(") must be greater than or equal to the scale (")
+                    .put(scale)
+                    .put(")");
         }
 
         return new DecimalTypeConstant(precision, scale);
