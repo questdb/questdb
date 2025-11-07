@@ -3517,6 +3517,66 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelfJoinWithTimeOffsetGetsOptimizedOnHint() throws Exception {
+        String tsSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("""
+                    CREATE TABLE t (
+                        ts #TIMESTAMP,
+                        i INT,
+                        s SYMBOL INDEX
+                    ) timestamp(ts) partition by day bypass wal""", leftTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO t values
+                        ('2022-10-05T00:00:00.000000Z', 0, 'a'),
+                        ('2022-10-05T08:16:00.000000Z', 1, 'a'),
+                        ('2022-10-05T08:16:00.000000Z', 3, 'a'),
+                        ('2022-10-05T23:59:59.999999Z', 4, 'a'),
+                        ('2022-10-05T23:59:59.999999Z', 4, 'b'),
+                        ('2022-10-06T00:00:00.000000Z', 5, 'a'),
+                        ('2022-10-06T00:01:00.000000Z', 6, 'a'),
+                        ('2022-10-06T00:01:00.000000Z', 6, 'c'),
+                        ('2022-10-06T00:02:00.000000Z', 7, 'a');
+                    """);
+
+            String queryBody1 = "* from t as t1 asof join t as t2 on s;";
+            String expected1 = String.format("""
+                    ts	i	s	ts1	i1	s1
+                    2022-10-05T00:00:00.000000%1$s	0	a	2022-10-05T00:00:00.000000%1$s	0	a
+                    2022-10-05T08:16:00.000000%1$s	1	a	2022-10-05T08:16:00.000000%1$s	3	a
+                    2022-10-05T08:16:00.000000%1$s	3	a	2022-10-05T08:16:00.000000%1$s	3	a
+                    2022-10-05T23:59:59.999999%1$s	4	a	2022-10-05T23:59:59.999999%1$s	4	a
+                    2022-10-05T23:59:59.999999%1$s	4	b	2022-10-05T23:59:59.999999%1$s	4	b
+                    2022-10-06T00:00:00.000000%1$s	5	a	2022-10-06T00:00:00.000000%1$s	5	a
+                    2022-10-06T00:01:00.000000%1$s	6	a	2022-10-06T00:01:00.000000%1$s	6	a
+                    2022-10-06T00:01:00.000000%1$s	6	c	2022-10-06T00:01:00.000000%1$s	6	c
+                    2022-10-06T00:02:00.000000%1$s	7	a	2022-10-06T00:02:00.000000%1$s	7	a
+                    """, tsSuffix);
+            assertAlgoAndResult(queryBody1, "", "Fast", expected1);
+            assertAlgoAndResult(queryBody1, "asof_index(t1 t2)", "Fast", expected1);
+            assertAlgoAndResult(queryBody1, "asof_memoized(t1 t2)", "Fast", expected1);
+
+
+            String queryBody2 = "* from (SELECT * FROM (SELECT dateadd('s', 1, ts) AS ts, i, s FROM t) TIMESTAMP(ts)) as t1 asof join t as t2 on s;";
+            String expected2 = String.format("""
+                    ts	i	s	ts1	i1	s1
+                    2022-10-05T00:00:01.000000%1$s	0	a	2022-10-05T00:00:00.000000%1$s	0	a
+                    2022-10-05T08:16:01.000000%1$s	1	a	2022-10-05T08:16:00.000000%1$s	3	a
+                    2022-10-05T08:16:01.000000%1$s	3	a	2022-10-05T08:16:00.000000%1$s	3	a
+                    2022-10-06T00:00:00.999999%1$s	4	a	2022-10-06T00:00:00.000000%1$s	5	a
+                    2022-10-06T00:00:00.999999%1$s	4	b	2022-10-05T23:59:59.999999%1$s	4	b
+                    2022-10-06T00:00:01.000000%1$s	5	a	2022-10-06T00:00:00.000000%1$s	5	a
+                    2022-10-06T00:01:01.000000%1$s	6	a	2022-10-06T00:01:00.000000%1$s	6	a
+                    2022-10-06T00:01:01.000000%1$s	6	c	2022-10-06T00:01:00.000000%1$s	6	c
+                    2022-10-06T00:02:01.000000%1$s	7	a	2022-10-06T00:02:00.000000%1$s	7	a
+                    """, tsSuffix);
+            assertAlgoAndResult(queryBody2, "", "Fast", expected2);
+            assertAlgoAndResult(queryBody2, "asof_index(t1 t2)", "Index", expected2);
+            assertAlgoAndResult(queryBody2, "asof_memoized(t1 t2)", "Memoized", expected2);
+        });
+    }
+
+    @Test
     public void testSingleSymbolAsOf() throws Exception {
         assertMemoryLeak(
                 (TestUtils.LeakProneCode) () -> {
