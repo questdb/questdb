@@ -80,7 +80,7 @@ public class GroupByColumnSink {
     }
 
     public void put(JoinRecord record, int colIndex, int colTag) {
-        switch (colTag) {
+        switch (ColumnType.tagOf(colTag)) {
             case ColumnType.BYTE:
                 putByte(record.getByte(colIndex));
                 break;

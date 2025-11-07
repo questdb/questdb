@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -74,7 +73,8 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledMasterFilter;
     private final IntList groupByColumnIndexes;
-    private final short[] groupByColumnTags;
+    private final IntList groupByColumnTypes;
+    private final IntList groupByFunctionToColumnIndex;
     private final JoinSymbolTableSource joinSymbolTableSource;
     private final long joinWindowHi;
     private final long joinWindowLo;
@@ -163,12 +163,6 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             this.slaveTsScale = slaveTsScale;
             this.vectorized = ownerJoinFilter == null && GroupByUtils.isBatchComputationSupported(ownerGroupByFunctions);
             this.slaveSymbolLookupTable = new DirectIntIntHashMap(16, 0.5, StaticSymbolTable.VALUE_NOT_FOUND, MemoryTag.NATIVE_UNORDERED_MAP);
-            // Combined storage with 4 values: rowIds ptr, timestamps ptr, rowLos value, columnSink ptr
-            this.ownerSlaveData = new DirectIntMultiLongHashMap(16, 0.5, 0, vectorized ? 2 + ownerGroupByFunctions.size() : 3, MemoryTag.NATIVE_UNORDERED_MAP);
-            this.perWorkerSlaveData = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
-                perWorkerSlaveData.extendAndSet(i, new DirectIntMultiLongHashMap(16, 0.5, 0, vectorized ? 4 : 3, MemoryTag.NATIVE_UNORDERED_MAP));
-            }
 
             this.ownerSlaveTimeFrameHelper = new AsyncTimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
@@ -227,21 +221,23 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
                 perWorkerGroupByValues.extendAndSet(i, DirectMapValueFactory.createDirectMapValue(valueTypes));
             }
 
-            // TODO: validate that all group by function support batch computation and that they
-            //  have slave table's columns as arguments; if that's not the case, we should not use
-            //  vectorized reducer
-
             if (vectorized) {
                 final int groupByFunctionSize = ownerGroupByFunctions.size();
-                // TODO: deduplicate columns we have to copy, i.e. for min(int_col), max(int_col),
-                //  we should do a single copy of the int_col
-                this.groupByColumnIndexes = new IntList(ownerGroupByFunctions.size());
-                this.groupByColumnTags = new short[groupByFunctionSize];
+                this.groupByColumnIndexes = new IntList(groupByFunctionSize);
+                this.groupByColumnTypes = new IntList(groupByFunctionSize);
+                this.groupByFunctionToColumnIndex = new IntList(groupByFunctionSize);
                 for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
                     var func = ownerGroupByFunctions.getQuick(i);
-                    groupByColumnIndexes.add(func.getColumnIndex());
-                    var unary = (UnaryFunction) func;
-                    groupByColumnTags[i] = ColumnType.tagOf(unary.getArg().getType());
+                    int index = func.getColumnIndex();
+                    int mappedIndex = groupByColumnIndexes.indexOf(index);
+                    if (mappedIndex == -1) {
+                        groupByColumnIndexes.add(func.getColumnIndex());
+                        var unary = (UnaryFunction) func;
+                        groupByColumnTypes.add(unary.getArg().getType());
+                        groupByFunctionToColumnIndex.add(groupByColumnIndexes.size() - 1);
+                    } else {
+                        groupByFunctionToColumnIndex.add(mappedIndex);
+                    }
                 }
                 this.ownerColumnSink = new GroupByColumnSink(INITIAL_COLUMN_SINK_CAPACITY);
                 ownerColumnSink.setAllocator(ownerAllocator);
@@ -253,9 +249,18 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
                 }
             } else {
                 this.groupByColumnIndexes = null;
-                this.groupByColumnTags = null;
+                this.groupByColumnTypes = null;
                 this.ownerColumnSink = null;
                 this.perWorkerColumnSinks = null;
+                this.groupByFunctionToColumnIndex = null;
+            }
+
+            int slaveDataLen = vectorized ? 2 + groupByColumnIndexes.size() : 3;
+            // Combined storage with 4 values: rowIds ptr, timestamps ptr, rowLos value, columnSink ptr
+            this.ownerSlaveData = new DirectIntMultiLongHashMap(16, 0.5, 0, slaveDataLen, MemoryTag.NATIVE_UNORDERED_MAP);
+            this.perWorkerSlaveData = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerSlaveData.extendAndSet(i, new DirectIntMultiLongHashMap(16, 0.5, 0, slaveDataLen, MemoryTag.NATIVE_UNORDERED_MAP));
             }
         } catch (Throwable th) {
             close();
@@ -333,8 +338,12 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
         return groupByColumnIndexes;
     }
 
-    public short[] getGroupByColumnTags() {
-        return groupByColumnTags;
+    public IntList getGroupByColumnTypes() {
+        return groupByColumnTypes;
+    }
+
+    public IntList getGroupByFunctionToColumnIndex() {
+        return groupByFunctionToColumnIndex;
     }
 
     public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {

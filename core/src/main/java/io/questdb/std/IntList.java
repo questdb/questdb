@@ -53,11 +53,6 @@ public class IntList implements Mutable, Sinkable {
         addAll(source);
     }
 
-    public void add(int value) {
-        checkCapacity(pos + 1);
-        data[pos++] = value;
-    }
-
     @SuppressWarnings("ForLoopReplaceableByForEach")
     public static IntList createWithValues(int... values) {
         IntList list = new IntList();
@@ -65,6 +60,11 @@ public class IntList implements Mutable, Sinkable {
             list.add(values[i]);
         }
         return list;
+    }
+
+    public void add(int value) {
+        checkCapacity(pos + 1);
+        data[pos++] = value;
     }
 
     public void addAll(IntList that) {
@@ -213,6 +213,10 @@ public class IntList implements Mutable, Sinkable {
             }
         }
         return -1;
+    }
+
+    public int indexOf(int v) {
+        return indexOf(v, 0, pos);
     }
 
     public void insert(int index, int element) {

@@ -151,7 +151,6 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public boolean supportsBatchComputation() {
-//        return false;
         return getColumnIndex() != -1;
     }
 
