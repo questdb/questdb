@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -189,6 +190,11 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     ? Long.MIN_VALUE
                     : masterTimestamp - toleranceInterval;
             int slaveKeyToFind = setupSymbolKeyToFind();
+            if (slaveKeyToFind == SymbolTable.VALUE_NOT_FOUND) {
+                record.hasSlave(false);
+                isMasterHasNextPending = true;
+                return true;
+            }
 
             if (forwardRowId == -1) {
                 // No scanning done yet, initialize state of forward and backward scans
