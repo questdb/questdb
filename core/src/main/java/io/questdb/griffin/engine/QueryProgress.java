@@ -60,6 +60,7 @@ import org.jetbrains.annotations.Nullable;
 
 // Factory that adds query to registry on getCursor() and removes on cursor close().
 public class QueryProgress extends AbstractRecordCursorFactory implements ResourcePoolSupervisor<ReaderPool.R> {
+    // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(QueryProgress.class);
     private final RecordCursorFactory base;
