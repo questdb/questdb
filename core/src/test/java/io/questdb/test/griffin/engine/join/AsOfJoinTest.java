@@ -3227,17 +3227,22 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testSelfJoin() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE t (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType.getTypeName());
-            execute("INSERT INTO t values ('2022-10-05T00:00:00.000000Z', 0, 'a');");
-            execute("INSERT INTO t values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
-            execute("INSERT INTO t values ('2022-10-05T08:16:00.000000Z', 3, 'a');");
-            execute("INSERT INTO t values ('2022-10-05T23:59:59.999999Z', 4, 'a');");
-            execute("INSERT INTO t values ('2022-10-05T23:59:59.999999Z', 4, 'b');");
-            execute("INSERT INTO t values ('2022-10-06T00:00:00.000000Z', 5, 'a');");
-            execute("INSERT INTO t values ('2022-10-06T00:01:00.000000Z', 6, 'a');");
-            execute("INSERT INTO t values ('2022-10-06T00:01:00.000000Z', 6, 'c');");
-            execute("INSERT INTO t values ('2022-10-06T00:02:00.000000Z', 7, 'a');");
+            execute("""
+                    INSERT INTO t values
+                        ('2022-10-05T00:00:00.000000Z', 0, 'a'),
+                        ('2022-10-05T08:16:00.000000Z', 1, 'a'),
+                        ('2022-10-05T08:16:00.000000Z', 3, 'a'),
+                        ('2022-10-05T23:59:59.999999Z', 4, 'a'),
+                        ('2022-10-05T23:59:59.999999Z', 4, 'b'),
+                        ('2022-10-06T00:00:00.000000Z', 5, 'a'),
+                        ('2022-10-06T00:01:00.000000Z', 6, 'a'),
+                        ('2022-10-06T00:01:00.000000Z', 6, 'c'),
+                        ('2022-10-06T00:02:00.000000Z', 7, 'a');
+                    """);
 
             assertResultSetsMatch("t as t1", "t as t2");
+            assertResultSetsMatch("(SELECT * FROM (SELECT dateadd('s', 1, ts) AS ts, i, s FROM t) TIMESTAMP(ts)) as t1", "t as t2");
+            assertResultSetsMatch("(SELECT * FROM (SELECT dateadd('s', -1, ts) AS ts, i, s FROM t) TIMESTAMP(ts)) as t1", "t as t2");
         });
     }
 
