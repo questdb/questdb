@@ -101,7 +101,7 @@ public class FilesFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.type("files(").val(path).val(')');
+            sink.type("filesystem scan: ").val(path);
         }
 
         @Override
