@@ -701,7 +701,11 @@ public class TxReader implements Closeable, Mutable {
             }
             return;
         }
-        throw CairoException.fileNotFound().put("could not open txn file [path=").put(path).put(", len=").put(len).put(']');
+        throw CairoException.fileNotFound()
+                .put("could not open txn file [path=").put(path)
+                .put(", len=").put(len)
+                .put(", errno=").put(ff.errno())
+                .put(']');
     }
 
     private void unsafeLoadPartitions(long prevPartitionTableVersion, long prevColumnVersion, int partitionTableSize) {
