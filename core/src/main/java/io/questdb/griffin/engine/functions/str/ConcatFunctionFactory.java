@@ -41,6 +41,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -305,8 +306,8 @@ public class ConcatFunctionFactory implements FunctionFactory {
 
         public ConstConcatFunction(ObjList<Function> functions, IntList argPositions) throws SqlException {
             this.functions = functions;
-            Decimal128 decimal128 = new Decimal128();
-            Decimal256 decimal256 = new Decimal256();
+            Decimal128 decimal128 = Misc.getThreadLocalDecimal128();
+            Decimal256 decimal256 = Misc.getThreadLocalDecimal256();
 
             final int functionCount = functions.size();
             final ObjList<TypeAdapter> adapters = new ObjList<>(functionCount);

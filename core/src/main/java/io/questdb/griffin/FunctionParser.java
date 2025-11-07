@@ -1483,7 +1483,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof Decimal128Constant) {
                     return function;
                 } else {
-                    Decimal128 d = new Decimal128();
+                    Decimal128 d = Misc.getThreadLocalDecimal128();
                     function.getDecimal128(null, d);
                     return new Decimal128Constant(
                             d.getHigh(),
@@ -1495,7 +1495,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof Decimal256Constant) {
                     return function;
                 } else {
-                    Decimal256 d = new Decimal256();
+                    Decimal256 d = Misc.getThreadLocalDecimal256();
                     function.getDecimal256(null, d);
                     return new Decimal256Constant(
                             d.getHh(),
