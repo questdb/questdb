@@ -90,6 +90,7 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final DirectMapValue ownerGroupByValue;
+    private final Function ownerJoinFilter;
     private final JoinRecord ownerJoinRecord;
     private final Function ownerMasterFilter;
     private final DirectIntMultiLongHashMap ownerSlaveData;
@@ -99,6 +100,7 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<DirectMapValue> perWorkerGroupByValues;
+    private final ObjList<Function> perWorkerJoinFilters;
     private final ObjList<JoinRecord> perWorkerJoinRecords;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<Function> perWorkerMasterFilters;
@@ -117,6 +119,8 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull RecordCursorFactory slaveFactory,
+            @Nullable Function ownerJoinFilter,
+            @Nullable ObjList<Function> perWorkerJoinFilters,
             int masterSymbolIndex,
             int slaveSymbolIndex,
             long joinWindowLo,
@@ -135,10 +139,13 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             long slaveTsScale,
             int workerCount
     ) {
+        assert perWorkerJoinFilters == null || perWorkerJoinFilters.size() == workerCount;
         assert perWorkerMasterFilters == null || perWorkerMasterFilters.size() == workerCount;
 
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
+            this.ownerJoinFilter = ownerJoinFilter;
+            this.perWorkerJoinFilters = perWorkerJoinFilters;
             this.masterSymbolIndex = masterSymbolIndex;
             this.slaveSymbolIndex = slaveSymbolIndex;
             this.joinWindowLo = joinWindowLo;
@@ -154,7 +161,7 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
             this.masterTsScale = masterTsScale;
             this.slaveTsScale = slaveTsScale;
-            this.vectorized = GroupByUtils.isBatchComputationSupported(ownerGroupByFunctions);
+            this.vectorized = ownerJoinFilter == null && GroupByUtils.isBatchComputationSupported(ownerGroupByFunctions);
             this.slaveSymbolLookupTable = new DirectIntIntHashMap(16, 0.5, StaticSymbolTable.VALUE_NOT_FOUND, MemoryTag.NATIVE_UNORDERED_MAP);
             // Combined storage with 4 values: rowIds ptr, timestamps ptr, rowLos value, columnSink ptr
             this.ownerSlaveData = new DirectIntMultiLongHashMap(16, 0.5, 0, vectorized ? 2 + ownerGroupByFunctions.size() : 3, MemoryTag.NATIVE_UNORDERED_MAP);
@@ -272,6 +279,8 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
 
     @Override
     public void close() {
+        Misc.free(ownerJoinFilter);
+        Misc.freeObjList(perWorkerJoinFilters);
         Misc.free(slaveSymbolLookupTable);
         Misc.free(ownerSlaveData);
         Misc.free(ownerSlaveTimeFrameHelper);
@@ -333,6 +342,13 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             return ownerGroupByFunctions;
         }
         return perWorkerGroupByFunctions.getQuick(slotId);
+    }
+
+    public Function getJoinFilter(int slotId) {
+        if (slotId == -1 || perWorkerJoinFilters == null) {
+            return ownerJoinFilter;
+        }
+        return perWorkerJoinFilters.getQuick(slotId);
     }
 
     public JoinRecord getJoinRecord(int slotId) {
@@ -489,6 +505,20 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
                 for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                     Function.init(perWorkerGroupByFunctions.getQuick(i), joinSymbolTableSource, executionContext, null);
                 }
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
+
+        if (ownerJoinFilter != null) {
+            ownerJoinFilter.init(joinSymbolTableSource, executionContext);
+        }
+
+        if (perWorkerJoinFilters != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                Function.init(perWorkerJoinFilters, joinSymbolTableSource, executionContext, ownerJoinFilter);
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }

@@ -137,7 +137,6 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
-import io.questdb.griffin.engine.functions.eq.EqSymFunctionFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -414,6 +413,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final IntList recordFunctionPositions = new IntList();
     private final PageFrameReduceTaskFactory reduceTaskFactory;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
+    private final ArrayDeque<ExpressionNode> sqlNodeStack2 = new ArrayDeque<>();
     private final WhereClauseSymbolEstimator symbolEstimator = new WhereClauseSymbolEstimator();
     private final IntList tempAggIndex = new IntList();
     private final ObjList<QueryColumn> tempColumnsList = new ObjList<>();
@@ -3279,10 +3279,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         validateSampleByFillType
                                 );
 
-                                if (slaveModel.getOuterJoinExpressionClause() != null) {
-                                    filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
-                                }
-
+                                // is parallel windowJoin?
                                 if (slave.supportsTimeFrameCursor() && (master.supportsPageFrameCursor() ||
                                         (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor()))) {
                                     // steal master filter
@@ -3302,32 +3299,96 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         filterFactory.halfClose();
                                     }
 
-                                    // TODO(puzpuzpuz): replace this hack with something better
-                                    if (filter instanceof EqSymFunctionFactory.Func eqSymFunc) {
+                                    // try to extract symbols equal function from join filter
+                                    ExpressionNode node = slaveModel.getOuterJoinExpressionClause();
+                                    int leftSymbolIndex = -1;
+                                    int rightSymbolIndex = -1;
+                                    ExpressionNode parent = null;
+                                    if (node != null) {
                                         final int columnSplit = master.getMetadata().getColumnCount();
-                                        final int leftSymbolIndex = ((SymbolColumn) eqSymFunc.getLeft()).getColumnIndex();
-                                        final int rightSymbolIndex = ((SymbolColumn) eqSymFunc.getRight()).getColumnIndex();
-                                        final int masterSymbolIndex;
-                                        final int slaveSymbolIndex;
-                                        if (leftSymbolIndex < columnSplit) {
-                                            masterSymbolIndex = leftSymbolIndex;
-                                            slaveSymbolIndex = rightSymbolIndex - columnSplit;
-                                        } else {
-                                            masterSymbolIndex = rightSymbolIndex;
-                                            slaveSymbolIndex = leftSymbolIndex - columnSplit;
+                                        ExpressionNode nn = slaveModel.getOuterJoinExpressionClause();
+                                        sqlNodeStack.clear();
+                                        sqlNodeStack2.clear();
+                                        boolean isLeft = false;
+                                        while (!sqlNodeStack.isEmpty() || nn != null) {
+                                            if (nn != null) {
+                                                if (Chars.equals(nn.token, "=")) {
+                                                    ExpressionNode l = nn.lhs;
+                                                    ExpressionNode r = nn.rhs;
+                                                    if (l != null && r != null && l.type == ExpressionNode.LITERAL && r.type == ExpressionNode.LITERAL) {
+                                                        int index1 = joinMetadata.getColumnIndexQuiet(l.token);
+                                                        int index2 = joinMetadata.getColumnIndexQuiet(r.token);
+                                                        if (index1 >= 0 && index2 >= 0) {
+                                                            boolean index1IsSymbol = joinMetadata.getColumnType(index1) == ColumnType.SYMBOL;
+                                                            boolean index2IsSymbol = joinMetadata.getColumnType(index2) == ColumnType.SYMBOL;
+                                                            boolean index1IsLeft = index1 < columnSplit;
+                                                            boolean index2IsLeft = index2 < columnSplit;
+                                                            isLeft = parent != null && parent.lhs == nn;
+
+                                                            if (index1IsSymbol && index2IsSymbol && index1IsLeft != index2IsLeft) {
+                                                                leftSymbolIndex = index1IsLeft ? index1 : index2;
+                                                                rightSymbolIndex = index1IsLeft ? index2 : index1;
+                                                                rightSymbolIndex = rightSymbolIndex - columnSplit;
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    nn = null;
+                                                } else if (Chars.equals(nn.token, "and")) {
+                                                    if (nn.rhs != null) {
+                                                        sqlNodeStack.push(nn.rhs);
+                                                        sqlNodeStack2.push(nn);
+                                                    }
+                                                    parent = nn;
+                                                    nn = nn.lhs;
+                                                } else {
+                                                    nn = null;
+                                                }
+                                            } else {
+                                                nn = sqlNodeStack.poll();
+                                                parent = sqlNodeStack2.pop();
+                                            }
                                         }
-                                        Misc.free(filter);
+
+                                        // extract success!
+                                        if (leftSymbolIndex != -1) {
+                                            if (parent != null && Chars.equals(parent.token, "and")) {
+                                                if (isLeft) {
+                                                    parent.copyFrom(parent.rhs);
+                                                } else {
+                                                    parent.copyFrom(parent.lhs);
+                                                }
+                                                parent = node;
+                                            } else {
+                                                parent = null;
+                                            }
+                                        }
+                                        if (parent != null) {
+                                            filter = compileJoinFilter(parent, joinMetadata, executionContext);
+                                        }
+                                    }
+
+                                    if (leftSymbolIndex != -1) {
                                         master = new AsyncFastWindowJoinRecordCursorFactory(
                                                 executionContext.getCairoEngine(),
                                                 asm,
                                                 configuration,
                                                 executionContext.getMessageBus(),
+                                                joinMetadata,
                                                 outerProjectionMetadata,
                                                 columnIndex,
                                                 master,
                                                 slave,
-                                                masterSymbolIndex,
-                                                slaveSymbolIndex,
+                                                filter,
+                                                compileWorkerFilterConditionally(
+                                                        executionContext,
+                                                        filter,
+                                                        executionContext.getSharedQueryWorkerCount(),
+                                                        parent,
+                                                        joinMetadata
+                                                ),
+                                                leftSymbolIndex,
+                                                rightSymbolIndex,
                                                 lo,
                                                 hi,
                                                 valueTypes,
@@ -3398,8 +3459,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 executionContext.getSharedQueryWorkerCount()
                                         );
                                     }
-                                    joinMetadata = Misc.free(joinMetadata);
                                 } else {
+                                    if (slaveModel.getOuterJoinExpressionClause() != null) {
+                                        filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                    }
                                     master = new WindowJoinLightFilteredRecordCursorFactory(
                                             configuration,
                                             outerProjectionMetadata,

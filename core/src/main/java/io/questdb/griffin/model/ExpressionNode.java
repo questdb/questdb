@@ -155,6 +155,24 @@ public class ExpressionNode implements Mutable, Sinkable {
         innerPredicate = false;
     }
 
+    public ExpressionNode copyFrom(final ExpressionNode other) {
+        this.clear();
+        for (int i = 0, n = other.args.size(); i < n; i++) {
+            this.args.add(other.args.get(i));
+        }
+        this.token = other.token;
+        this.queryModel = other.queryModel;
+        this.precedence = other.precedence;
+        this.position = other.position;
+        this.lhs = other.lhs;
+        this.rhs = other.rhs;
+        this.type = other.type;
+        this.paramCount = other.paramCount;
+        this.intrinsicValue = other.intrinsicValue;
+        this.innerPredicate = other.innerPredicate;
+        return this;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

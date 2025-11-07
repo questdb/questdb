@@ -88,6 +88,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncFastWindowJoinRecordCursor cursor;
     private final PageFrameSequence<AsyncFastWindowJoinAtom> frameSequence;
+    private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
     private final int workerCount;
@@ -97,10 +98,13 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
-            @NotNull RecordMetadata joinMetadata,
+            @NotNull JoinRecordMetadata joinMetadata,
+            @NotNull RecordMetadata outMetadata,
             @Nullable IntList columnIndex,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
+            @Nullable Function joinFilter,
+            @Nullable ObjList<Function> perWorkerJoinFilters,
             int masterSymbolIndex,
             int slaveSymbolIndex,
             long joinWindowLo,
@@ -116,8 +120,8 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             int workerCount
     ) {
-        super(joinMetadata);
-
+        super(outMetadata);
+        this.joinMetadata = joinMetadata;
         assert masterFactory.supportsPageFrameCursor();
         assert slaveFactory.supportsTimeFrameCursor();
 
@@ -145,6 +149,8 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                 asm,
                 configuration,
                 slaveFactory,
+                joinFilter,
+                perWorkerJoinFilters,
                 masterSymbolIndex,
                 slaveSymbolIndex,
                 joinWindowLo,
@@ -222,10 +228,15 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
         sink.type("Async Window Fast Join");
         sink.meta("workers").val(workerCount);
         final AsyncFastWindowJoinAtom atom = frameSequence.getAtom();
-        sink.attr("join filter")
+        sink.attr("symbol")
                 .val(masterFactory.getMetadata().getColumnName(atom.getMasterSymbolIndex()))
                 .val("=")
                 .val(slaveFactory.getMetadata().getColumnName(atom.getSlaveSymbolIndex()));
+        if (atom.getJoinFilter(0) != null) {
+            sink.setMetadata(joinMetadata);
+            sink.attr("join filter").val(atom.getJoinFilter(0));
+            sink.setMetadata(null);
+        }
         sink.val(atom);
         if (atom.getMasterFilter(0) != null) {
             sink.attr("master filter").val(atom.getMasterFilter(0), masterFactory);
@@ -271,6 +282,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
         final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+        Function joinFilter = atom.getJoinFilter(workerId);
 
         final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
         final GroupByLongList rowIds = atom.getRowIdsGroupByList(slotId);
@@ -398,14 +410,19 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                     long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                     if (rowLo < rowHi) {
-                        slaveRowId = rowIds.get(rowLo);
-                        slaveTimeFrameHelper.recordAt(slaveRowId);
-                        functionUpdater.updateNew(value, joinRecord, slaveRowId);
-                        value.setNew(false);
-                        for (long i = rowLo + 1; i < rowHi; i++) {
+                        boolean isNew = true;
+                        for (long i = rowLo; i < rowHi; i++) {
                             slaveRowId = rowIds.get(i);
                             slaveTimeFrameHelper.recordAt(slaveRowId);
-                            functionUpdater.updateExisting(value, joinRecord, slaveRowId);
+                            if (joinFilter == null || joinFilter.getBool(joinRecord)) {
+                                if (isNew) {
+                                    functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                                    isNew = false;
+                                    value.setNew(false);
+                                } else {
+                                    functionUpdater.updateExisting(value, joinRecord, slaveRowId);
+                                }
+                            }
                         }
                     }
                 }
@@ -638,10 +655,10 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
                 final JoinRecord joinRecord = atom.getJoinRecord(slotId);
                 joinRecord.of(record, slaveRecord);
+                Function joinFilter = atom.getJoinFilter(slotId);
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
                 final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
-
                 final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
                 final GroupByLongList rowIds = atom.getRowIdsGroupByList(slotId);
                 final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
@@ -766,14 +783,19 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                         long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                         if (rowLo < rowHi) {
-                            slaveRowId = rowIds.get(rowLo);
-                            slaveTimeFrameHelper.recordAt(slaveRowId);
-                            functionUpdater.updateNew(value, joinRecord, slaveRowId);
-                            value.setNew(false);
-                            for (long i = rowLo + 1; i < rowHi; i++) {
+                            boolean isNew = true;
+                            for (long i = rowLo; i < rowHi; i++) {
                                 slaveRowId = rowIds.get(i);
                                 slaveTimeFrameHelper.recordAt(slaveRowId);
-                                functionUpdater.updateExisting(value, joinRecord, slaveRowId);
+                                if (joinFilter == null || joinFilter.getBool(joinRecord)) {
+                                    if (isNew) {
+                                        functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                                        isNew = false;
+                                        value.setNew(false);
+                                    } else {
+                                        functionUpdater.updateExisting(value, joinRecord, slaveRowId);
+                                    }
+                                }
                             }
                         }
                     }
@@ -977,5 +999,6 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
         Misc.free(slaveFactory);
         Misc.free(frameSequence);
         Misc.free(cursor);
+        Misc.free(joinMetadata);
     }
 }
