@@ -2789,30 +2789,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                RecordSink recordCopierMaster;
+                // fallback for keyed join when no optimizations are applicable, or when asof_linear hint is used:
                 if (isSingleSymbolJoin(symbolShortCircuit)) {
                     // We're falling back to the default Light scan. We can still optimize one thing:
                     // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
                     // For that to work, we need code that maps master symbol key to slave symbol key.
                     int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                     writeSymbolAsString.unset(slaveSymbolColumnIndex);
-                    recordCopierMaster = new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit);
+                    SymbolJoinKeyMapping joinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
+                    return new AsOfJoinLightRecordCursorFactory(
+                            configuration,
+                            joinMetadata,
+                            master,
+                            slave,
+                            keyTypes,
+                            new SymbolKeyMappingRecordCopier(joinKeyMapping),
+                            createRecordCopierSlave(slaveMetadata),
+                            joinKeyMapping,
+                            joinColumnSplit,
+                            slaveContext,
+                            toleranceInterval
+                    );
                 } else {
-                    recordCopierMaster = createRecordCopierMaster(masterMetadata);
+                    return new AsOfJoinLightRecordCursorFactory(
+                            configuration,
+                            joinMetadata,
+                            master,
+                            slave,
+                            keyTypes,
+                            createRecordCopierMaster(masterMetadata),
+                            createRecordCopierSlave(slaveMetadata),
+                            null,
+                            joinColumnSplit,
+                            slaveContext,
+                            toleranceInterval
+                    );
                 }
-                // fallback for keyed join when no optimizations are applicable, or when asof_linear hint is used:
-                return new AsOfJoinLightRecordCursorFactory(
-                        configuration,
-                        joinMetadata,
-                        master,
-                        slave,
-                        keyTypes,
-                        recordCopierMaster,
-                        createRecordCopierSlave(slaveMetadata),
-                        joinColumnSplit,
-                        slaveContext,
-                        toleranceInterval
-                );
             }
 
             // reaching this point means the join is non-keyed
