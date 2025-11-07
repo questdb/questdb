@@ -76,9 +76,6 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
-// TODO(puzpuzpuz): support "small" page frame size mode in page frame cursor and use it for window join factories;
-//                  when it's on, separate min/max page frame config props should be used,
-//                  10x smaller than the current defaults, i.e. 10k/100k
 public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer AGGREGATE = AsyncFastWindowJoinRecordCursorFactory::aggregate;
     private static final PageFrameReducer AGGREGATE_VECT = AsyncFastWindowJoinRecordCursorFactory::aggregateVect;

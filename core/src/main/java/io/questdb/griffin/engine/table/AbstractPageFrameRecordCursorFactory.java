@@ -44,10 +44,10 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
     protected final IntList columnIndexes;
     protected final IntList columnSizeShifts;
-    protected final int pageFrameMaxRows;
-    protected final int pageFrameMinRows;
     protected final PartitionFrameCursorFactory partitionFrameCursorFactory;
     protected TablePageFrameCursor pageFrameCursor;
+    protected int pageFrameMaxRows;
+    protected int pageFrameMinRows;
 
     public AbstractPageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -83,6 +83,12 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
     @Override
     public TableToken getTableToken() {
         return partitionFrameCursorFactory.getTableToken();
+    }
+
+    @Override
+    public void setSmalePageFrameRows(int min, int max) {
+        this.pageFrameMinRows = min;
+        this.pageFrameMaxRows = max;
     }
 
     @Override

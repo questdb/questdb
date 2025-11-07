@@ -3299,6 +3299,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         filterFactory.halfClose();
                                     }
 
+                                    master.setSmalePageFrameRows(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
                                     // try to extract symbols equal function from join filter
                                     ExpressionNode node = slaveModel.getOuterJoinExpressionClause();
                                     int leftSymbolIndex = -1;

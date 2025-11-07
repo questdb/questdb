@@ -188,6 +188,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public void setSmalePageFrameRows(int min, int max) {
+        base.setSmalePageFrameRows(min, max);
+    }
+
+    @Override
     public boolean supportsPageFrameCursor() {
         return base.supportsPageFrameCursor();
     }
