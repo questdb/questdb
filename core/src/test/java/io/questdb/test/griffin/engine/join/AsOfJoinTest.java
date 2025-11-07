@@ -39,7 +39,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
 public class AsOfJoinTest extends AbstractCairoTest {
@@ -127,7 +126,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinDynamicTimestamp() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table positions2 as (" +
@@ -167,7 +165,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinForSelectWithTimestamps() throws Exception {
         assertMemoryLeak(() -> {
-            Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
 
             final String expected = "tag\thi\tlo\tts\tts1\n" +
@@ -205,7 +202,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinForSelectWithoutTimestamp() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         final String expected = """
                 tag\thi\tlo
                 AA\t315515118\t315515118
@@ -253,7 +249,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinForSelectWithoutTimestampAndWithWhereStatementAsOuter() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         final String expected = """
                 hi\tlo
                 2\t1
@@ -312,7 +307,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinForSelectWithoutTimestampAndWithWhereStatementV2() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         final String expected = "tag\thi\tlo\n";
 
         executeWithRewriteTimestamp(
@@ -976,7 +970,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinOnNullSymbolKeys() throws Exception {
         assertMemoryLeak(() -> {
-            Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
             final String expected = """
                     tag\thi\tlo
                     AA\t315515118\t315515118
@@ -1768,7 +1761,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testIssue2976() throws Exception {
         assertMemoryLeak(() -> {
-            Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
                 executeWithRewriteTimestamp("""
@@ -2053,7 +2045,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinForEqTimestamps() throws Exception {
         assertMemoryLeak(() -> {
-            Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
             executeWithRewriteTimestamp("create table tank(ts #TIMESTAMP, SequenceNumber int) timestamp(ts)", leftTableTimestampType.getTypeName());
             execute("insert into tank values('2021-07-26T02:36:02.566000Z',1)");
             execute("insert into tank values('2021-07-26T02:36:03.094000Z',2)");
@@ -2082,7 +2073,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testLtJoinForSelectWithoutTimestampAndWithWhereStatement() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         final String expected = """
                 hi\tlo
                 18116\t18114
@@ -2264,7 +2254,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testLtJoinKeyed() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
         final String expected = "tag\thi\tlo\tts\tts1\n" +
                 "AA\t315515118\tnull\t1970-01-03T00:00:00.000000" + leftSuffix + "\t\n" +
@@ -2351,7 +2340,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
     // select a.seq hi, b.seq lo from tab a lt join b where hi > lo + 1
     @Test
     public void testLtJoinNoTimestamp() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         final String expected = """
                 tag\thi\tlo
                 AA\t315515118\tnull
@@ -2531,7 +2519,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testLtJoinOnRandomlyGeneratedColumn() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         final String expected = """
                 tag\thi\tlo
                 CC\t592859671\t-948263339
@@ -2651,7 +2638,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinOneTableKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             // tabY
             executeWithRewriteTimestamp("create table tabY (tag symbol, x long, ts #TIMESTAMP) timestamp(ts)", leftTableTimestampType.getTypeName());
@@ -2724,7 +2710,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinSequenceGap() throws Exception {
         assertMemoryLeak(() -> {
-            Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
             // create table
             execute("create table tab as " +
                     "(" +
@@ -2779,7 +2764,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testLtJoinSequenceGapOnKey() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             // create table
             execute("create table tab as " +
@@ -2956,7 +2940,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
                 String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
                 executeWithRewriteTimestamp("""
                                 CREATE TABLE 'tests' (
@@ -3017,7 +3000,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
                 String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
                 executeWithRewriteTimestamp("""
                                 CREATE TABLE 'tests' (
@@ -3078,7 +3060,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
                 String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
                 executeWithRewriteTimestamp(
                         "CREATE TABLE 'tests' (\n" +
@@ -3244,7 +3225,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testSelfJoin() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE t (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType.getTypeName());
             execute("INSERT INTO t values ('2022-10-05T00:00:00.000000Z', 0, 'a');");
@@ -3263,7 +3243,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testSelfJoinOnSymbolKey1() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE trades (pair SYMBOL, ts #TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
@@ -3316,7 +3295,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testSelfJoinOnSymbolKey2() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE trades (pair SYMBOL, ts #TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
@@ -3372,7 +3350,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testSelfJoinOnSymbolKey3() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (pair SYMBOL, side SYMBOL, ts #TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
             execute("""
@@ -3429,7 +3406,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testSelfJoinOnSymbolKey4() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE x (sym1 SYMBOL, sym2 SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
 
@@ -3486,7 +3462,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testSelfJoinOnSymbolKey5() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (pair SYMBOL, ts #TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
 
@@ -3711,7 +3686,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testWithIntrisifiedTimestampFilter() throws Exception {
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (pair SYMBOL, ts #TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY YEAR", leftTableTimestampType.getTypeName());
 
