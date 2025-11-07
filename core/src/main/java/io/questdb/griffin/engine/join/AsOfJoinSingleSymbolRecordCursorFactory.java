@@ -69,12 +69,10 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         this.columnAccessHelper = columnAccessHelper;
         this.toleranceInterval = toleranceInterval;
-        Map joinKeyMap = null;
         try {
-            joinKeyMap = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
             this.cursor = new AsOfSingleSymbolJoinRecordCursor(
+                    configuration,
                     columnSplit,
-                    joinKeyMap,
                     NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                     masterFactory.getMetadata().getTimestampIndex(),
                     slaveFactory.getMetadata().getTimestampIndex(),
@@ -82,7 +80,6 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
                     slaveFactory.getMetadata().getTimestampType()
             );
         } catch (Throwable th) {
-            Misc.free(joinKeyMap);
             close();
             throw th;
         }
@@ -150,8 +147,8 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
         private long slaveTimestamp = Long.MIN_VALUE;
 
         public AsOfSingleSymbolJoinRecordCursor(
+                CairoConfiguration configuration,
                 int columnSplit,
-                Map joinKeyMap,
                 Record nullRecord,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
@@ -160,7 +157,6 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
         ) {
             super(columnSplit);
             record = new OuterJoinRecord(columnSplit, nullRecord);
-            this.joinKeyMap = joinKeyMap;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             isOpen = true;
@@ -170,6 +166,7 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
                 masterTimestampScale = ColumnType.getTimestampDriver(masterTimestampType).toNanosScale();
                 slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
             }
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
         }
 
         @Override
