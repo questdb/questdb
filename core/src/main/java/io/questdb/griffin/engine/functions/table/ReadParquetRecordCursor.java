@@ -34,6 +34,7 @@ import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
@@ -132,6 +133,11 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        counter.add(decoder.metadata().getRowCount());
+    }
+
+    @Override
     public void close() {
         Misc.free(decoder);
         Misc.free(rowGroupBuffers);
@@ -154,6 +160,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() throws DataUnavailableException {
+        if (addr == 0) {
+            return false;
+        }
+
         if (++currentRowInRowGroup < rowGroupRowCount) {
             return true;
         }
@@ -189,6 +199,22 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                 columns.add(parquetType);
             }
             toTop();
+        } catch (DataUnavailableException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void ofMetadata(LPSZ path) {
+        try {
+            // Reopen the file, it could have changed
+            this.fd = TableUtils.openRO(ff, path, LOG);
+            this.fileSize = ff.length(fd);
+            this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            if (metadataHasChanged(metadata, decoder)) {
+                // We need to recompile the factory as the Parquet metadata has changed.
+                throw TableReferenceOutOfDateException.of(path);
+            }
         } catch (DataUnavailableException e) {
             throw new RuntimeException(e);
         }
@@ -234,6 +260,49 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         }
         return false;
     }
+
+    private boolean switchToRowGroup(int index) {
+        dataPtrs.clear();
+        auxPtrs.clear();
+        if (++index < decoder.metadata().getRowGroupCount()) {
+            final int rowGroupSize = decoder.metadata().getRowGroupSize(index);
+            rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, index, 0, rowGroupSize);
+
+            for (int i = 0, n = (int) (columns.size() / 2); i < n; i++) {
+                dataPtrs.add(rowGroupBuffers.getChunkDataPtr(i));
+                auxPtrs.add(rowGroupBuffers.getChunkAuxPtr(i));
+            }
+            currentRowInRowGroup = 0;
+            return true;
+        }
+        return false;
+    }
+
+//    @Override
+//    void skipRows(Counter rowCount) throws DataUnavailableException {
+//        final long totalRowCount = decoder.metadata().getRowCount();
+//        if (totalRowCount <= rowCount.get()) {
+//            rowCount.dec(totalRowCount);
+//            return;
+//        }
+//
+//        final long rowGroupCount = decoder.metadata().getRowGroupCount();
+//        for (int i = 0; i < rowGroupCount; i++) {
+//            int rowGroupSize = decoder.metadata().getRowGroupSize(i);
+//            if (rowGroupSize <= rowCount.get()) {
+//                rowCount.dec(rowGroupSize);
+//            } else {
+//                switchToRowGroup(rowGroupSize);
+//            }
+//        }
+//        while (decoder.metadata().getRowCount() < rowCount.get()) {
+//        }
+//
+//
+//        while (rowCount.get() > 0 && hasNext()) {
+//            rowCount.dec();
+//        }
+//    }
 
     private class ParquetRecord implements Record, QuietCloseable {
         private final ObjList<BorrowedArray> arrayBuffers;

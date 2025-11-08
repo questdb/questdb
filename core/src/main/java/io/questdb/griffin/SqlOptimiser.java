@@ -53,6 +53,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLev
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.table.HivePartitionedReadParquetRecordCursorFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
@@ -3425,7 +3426,8 @@ public class SqlOptimiser implements Mutable {
 
         final RecordCursorFactory existingFactory = model.getTableNameFunction();
         if (!(existingFactory instanceof ReadParquetPageFrameRecordCursorFactory)
-                && !(existingFactory instanceof ReadParquetRecordCursorFactory)) {
+                && !(existingFactory instanceof ReadParquetRecordCursorFactory)
+                && !(existingFactory instanceof HivePartitionedReadParquetRecordCursorFactory)) {
             return;
         }
 
@@ -3447,9 +3449,13 @@ public class SqlOptimiser implements Mutable {
         RecordCursorFactory projectedFactory;
         if (existingFactory instanceof ReadParquetPageFrameRecordCursorFactory oldFactory) {
             projectedFactory = new ReadParquetPageFrameRecordCursorFactory(configuration, oldFactory.getPath(), projectionMetadata);
-        } else {
-            ReadParquetRecordCursorFactory oldFactory = (ReadParquetRecordCursorFactory) existingFactory;
+        } else if (existingFactory instanceof ReadParquetRecordCursorFactory oldFactory) {
             projectedFactory = new ReadParquetRecordCursorFactory(oldFactory.getPath(), projectionMetadata, configuration.getFilesFacade());
+        } else if (existingFactory instanceof HivePartitionedReadParquetRecordCursorFactory oldFactory) {
+            projectedFactory = new HivePartitionedReadParquetRecordCursorFactory(configuration,
+                    oldFactory.globCursorFactory, oldFactory.nonGlobbedRoot, oldFactory.globbedRoot, projectionMetadata);
+        } else {
+            throw new UnsupportedOperationException();
         }
 
         existingFactory.close();

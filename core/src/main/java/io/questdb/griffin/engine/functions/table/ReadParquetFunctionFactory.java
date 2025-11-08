@@ -30,6 +30,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -91,7 +92,8 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             newArgs.add(new StrConstant(path.toString()));
             // get file infos
             Function f = new GlobFilesFunctionFactory().newInstance(position, newArgs, argPos, configuration, context);
-            RecordCursor cursor2 = f.getRecordCursorFactory().getCursor(context);
+            RecordCursorFactory globFactory = f.getRecordCursorFactory();
+            RecordCursor cursor2 = globFactory.getCursor(context);
             if (!cursor2.hasNext()) {
                 throw SqlException.$(argPos.getQuick(0), "glob did not return any readable parquet files [glob=")
                         .put(filePath).put(']');
@@ -120,7 +122,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                         throw SqlException.$(argPos.getQuick(0), "no supported columns found in parquet file: ").put(filePath);
                     }
 
-                    return new CursorFunction(new ReadParquetHivePartitionedRecordCursorFactory(configuration, f, metadata));
+                    return new CursorFunction(new HivePartitionedReadParquetRecordCursorFactory(configuration, globFactory, nonGlobbedRoot, filePath, metadata));
                 } finally {
                     ff.close(fd);
                     if (addr != 0) {

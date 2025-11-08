@@ -26,90 +26,75 @@ package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
-import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
-import io.questdb.std.Misc;
-import io.questdb.std.Transient;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
-import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
-
-
 /**
- * Factory for parallel read_parquet() SQL function.
+ * Factory for reading multiple parquet files matching a glob pattern.
+ * Iterates through files and returns their rows sequentially.
  */
 public class HivePartitionedReadParquetRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final PageFrameRecordCursorImpl cursor;
-    private final ReadParquetPageFrameCursor pageFrameCursor;
-    private Path path;
+    public final RecordCursorFactory globCursorFactory;
+    public final CharSequence globbedRoot;
+    public final CharSequence nonGlobbedRoot;
+    private final CairoConfiguration configuration;
 
     public HivePartitionedReadParquetRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
-            @Transient Path path,
+            @NotNull RecordCursorFactory globCursorFactory,
+            @NotNull CharSequence nonGlobbedRoot,
+            @NotNull CharSequence globbedRoot,
             RecordMetadata metadata
     ) {
         super(metadata);
-        this.path = new Path().of(path);
-        this.cursor = new PageFrameRecordCursorImpl(
-                configuration,
-                metadata,
-                new PageFrameRowCursorFactory(ORDER_ASC),
-                true,
-                null
-        );
-        this.pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), metadata);
+        this.configuration = configuration;
+        this.globCursorFactory = globCursorFactory;
+        this.nonGlobbedRoot = nonGlobbedRoot.toString();
+        this.globbedRoot = globbedRoot.toString();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        pageFrameCursor.of(path.$());
-        try {
-            cursor.of(pageFrameCursor, executionContext);
-            return cursor;
-        } catch (Throwable e) {
-            pageFrameCursor.close();
-            throw e;
-        }
+        // Get the cursor from the glob cursor factory
+        RecordCursor globCursor = globCursorFactory.getCursor(executionContext);
+
+        // Create a single-file parquet reader that we'll reuse for each file
+        ReadParquetRecordCursor parquetCursor = new ReadParquetRecordCursor(
+                configuration.getFilesFacade(),
+                getMetadata()
+        );
+
+        // Create the hive partitioned cursor that wraps both
+        return new HivePartitionedReadParquetRecordCursor(
+                globCursor,
+                parquetCursor,
+                configuration.getFilesFacade(),
+                nonGlobbedRoot
+        );
     }
 
-    @Override
-    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
-        assert order != ORDER_DESC;
-        pageFrameCursor.of(path.$());
-        return pageFrameCursor;
-    }
-
-    public Path getPath() {
-        return path;
+    public RecordCursorFactory getGlobCursorFactory() {
+        return globCursorFactory;
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return true;
-    }
-
-    @Override
-    public boolean supportsPageFrameCursor() {
-        return true;
+        return false;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("parquet page frame scan");
+        sink.type("Parquet Scan")
+                .attr("glob").val(globbedRoot);
     }
 
     @Override
     protected void _close() {
-        Misc.free(cursor);
-        Misc.free(pageFrameCursor);
-        path = Misc.free(path);
+        // glob function is managed elsewhere
     }
 }
