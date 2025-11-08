@@ -29,10 +29,12 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -44,6 +46,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 
 public class ReadParquetFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(ReadParquetFunctionFactory.class);
@@ -71,6 +74,66 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), e.getFlyweightMessage());
         }
+
+        CharSequence nonGlobFileRoot = GlobFilesFunctionFactory.extractNonGlobPrefix(filePath);
+        if (!Chars.equals(nonGlobFileRoot, filePath)) {
+            // glob path to read
+
+            Path path = Path.getThreadLocal2("");
+
+            if (nonGlobFileRoot.charAt(0) != '/') {
+                // need to use input root
+                path.of(configuration.getSqlCopyInputRoot());
+            }
+            path.concat(filePath);
+
+            ObjList<Function> newArgs = new ObjList<>();
+            newArgs.add(new StrConstant(path.toString()));
+            // get file infos
+            Function f = new GlobFilesFunctionFactory().newInstance(position, newArgs, argPos, configuration, context);
+            RecordCursor cursor2 = f.getRecordCursorFactory().getCursor(context);
+            if (!cursor2.hasNext()) {
+                throw SqlException.$(argPos.getQuick(0), "glob did not return any readable parquet files [glob=")
+                        .put(filePath).put(']');
+            }
+
+            CharSequence nonGlobbedRoot = GlobFilesFunctionFactory.extractNonGlobPrefix(path.toString());
+            Utf8Sequence firstGlobbedPath = cursor2.getRecord().getVarcharA(0);
+
+
+            try {
+                path = Path.getThreadLocal2("");
+                path.of(nonGlobbedRoot).concat(firstGlobbedPath);
+//                checkPathIsSafeToRead(path, firstGlobbedPath.asAsciiCharSequence(), argPos.getQuick(0), configuration);
+                final FilesFacade ff = configuration.getFilesFacade();
+                final long fd = TableUtils.openRO(ff, path.$(), LOG);
+                long addr = 0;
+                long fileSize = 0;
+                try (PartitionDecoder decoder = new PartitionDecoder()) {
+                    fileSize = ff.length(fd);
+                    addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                    decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    final GenericRecordMetadata metadata = new GenericRecordMetadata();
+                    // `read_parquet` function will request symbols to be converted to varchar
+                    decoder.metadata().copyToSansUnsupported(metadata, true);
+                    if (metadata.getColumnCount() == 0) {
+                        throw SqlException.$(argPos.getQuick(0), "no supported columns found in parquet file: ").put(filePath);
+                    }
+
+                    return new CursorFunction(new ReadParquetHivePartitionedRecordCursorFactory(configuration, f, metadata));
+                } finally {
+                    ff.close(fd);
+                    if (addr != 0) {
+                        ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                    }
+                }
+            } catch (CairoException e) {
+                throw SqlException.$(argPos.getQuick(0), "error reading parquet file ").put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage());
+            } catch (Throwable e) {
+                throw SqlException.$(argPos.getQuick(0), "failed to read parquet file: ").put(filePath).put(": ").put(e.getMessage());
+            }
+        }
+
 
         try {
             final Path path = Path.getThreadLocal2("");

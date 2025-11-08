@@ -24,33 +24,21 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.catalogue.FilesFunctionFactory;
-import io.questdb.griffin.engine.functions.catalogue.FilesRecordCursor;
-import io.questdb.griffin.engine.functions.catalogue.ImportFilesFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.regex.GlobStrFunctionFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
 
 // SELECT * FROM glob('./import/table/file_*.parquet');
@@ -61,8 +49,6 @@ import io.questdb.std.str.StringSink;
  * Provides a pseudo table returning file data based on a glob pattern.
  */
 public class GlobFilesFunctionFactory implements FunctionFactory {
-    StringSink sink = new StringSink();
-
     /**
      * Extracts the non-glob prefix from a glob pattern.
      * <p>
@@ -80,7 +66,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
      * @return the non-glob prefix (everything up to and including the last separator before the first glob char)
      */
     public static CharSequence extractNonGlobPrefix(CharSequence globPattern) {
-        if (globPattern == null || globPattern.length() == 0) {
+        if (Chars.isBlank(globPattern)) {
             return "";
         }
 
@@ -139,69 +125,5 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         Function globFunc = new GlobStrFunctionFactory().newInstance(position, newArgs, argPositions, configuration, sqlExecutionContext);
 
         return new CursorFunction(new FilteredRecordCursorFactory(filesCursor, globFunc));
-    }
-
-    /*
-     * Factory for single-threaded read_parquet() SQL function.
-     */
-    public static class GlobFilesRecordCursorFactory extends AbstractRecordCursorFactory {
-        private GlobFilesRecordCursor cursor;
-        private CharSequence glob;
-        private Path path;
-
-
-        public GlobFilesRecordCursorFactory(CharSequence glob) {
-            super(ImportFilesFunctionFactory.METADATA);
-            this.glob = glob;
-        }
-
-        @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-//            cursor.of(path.$());
-            return cursor;
-        }
-
-        public Path getPath() {
-            return path;
-        }
-
-        @Override
-        public boolean recordCursorSupportsRandomAccess() {
-            return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.type("glob filesystem sequential scan");
-        }
-
-        @Override
-        protected void _close() {
-            cursor = Misc.free(cursor);
-            path = Misc.free(path);
-        }
-
-        static {
-            final GenericRecordMetadata metadata = new GenericRecordMetadata();
-            metadata.add(new TableColumnMetadata("path", ColumnType.STRING));
-
-//            METADATA = metadata;
-        }
-    }
-
-    public class GlobFilesRecordCursor extends FilesRecordCursor {
-
-        public GlobFilesRecordCursor(FilesFacade ff, Path rootPath, int rootPathLen) {
-            super(ff, rootPath, rootPathLen);
-        }
-
-        @Override
-        public boolean hasNext() {
-            if (super.hasNext()) {
-//                final CharSequence filepath = getRecord().getStrA()
-
-            }
-            return false;
-        }
     }
 }
