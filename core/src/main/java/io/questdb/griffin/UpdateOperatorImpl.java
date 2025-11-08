@@ -174,15 +174,16 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         final int rowPartitionIndex = Rows.toPartitionIndex(rowId);
                         final long currentRow = Rows.toLocalRowID(rowId);
 
+                        // Skip rows in read-only partitions (e.g., Parquet partitions)
+                        if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
+                            LOG.info()
+                                    .$("skipping row in read-only partition [table=").$(tableToken.getTableName())
+                                    .$(", partitionTimestamp=").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                    .I$();
+                            continue;
+                        }
+
                         if (rowPartitionIndex != partitionIndex) {
-                            if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
-                                throw CairoException.critical(0)
-                                        .put("cannot update read-only partition [table=").put(tableToken.getTableName())
-                                        .put(", partitionTimestamp=").ts(
-                                                tableWriter.getTimestampType(),
-                                                tableWriter.getPartitionTimestamp(rowPartitionIndex))
-                                        .put(']');
-                            }
                             if (partitionIndex > -1) {
                                 LOG.info()
                                         .$("updating partition [partitionIndex=").$(partitionIndex)

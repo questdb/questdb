@@ -3748,6 +3748,57 @@ public class UpdateTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUpdateSkipsParquetPartitions() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (" +
+                    "id SYMBOL CAPACITY 10 NOCACHE, " +
+                    "mySymbol SYMBOL, " +
+                    "dateTime TIMESTAMP) " +
+                    "timestamp(dateTime) PARTITION BY DAY WAL");
+
+            execute("insert into test VALUES ('1', NULL, '2025-10-01T07:20:06.948000Z')");
+            execute("insert into test VALUES ('2', NULL, '2025-10-02T07:20:06.948000Z')");
+
+            drainWalQueue();
+
+            // Convert first partition to Parquet
+            execute("alter table test CONVERT PARTITION TO PARQUET WHERE dateTime <= '2025-10-01'");
+
+            drainWalQueue();
+
+            // Verify partition is Parquet
+            try (TableReader reader = getReader("test")) {
+                TxReader txFile = reader.getTxFile();
+                Assert.assertTrue("First partition should be Parquet", txFile.isPartitionReadOnly(0));
+                Assert.assertFalse("Second partition should not be Parquet", txFile.isPartitionReadOnly(1));
+            }
+
+            // Update should skip the Parquet partition and only update the native partition
+            long rowsUpdated = update("update test set mySymbol='TEST' where mySymbol is NULL");
+
+            drainWalQueue();
+
+            // Only one row should be updated (the one in the native partition)
+            Assert.assertEquals("Should update only rows in non-Parquet partitions", 1, rowsUpdated);
+
+            // Verify the table is not suspended and results are correct
+            assertSql("id\tmySymbol\tdateTime\n" +
+                    "1\t\t2025-10-01T07:20:06.948000Z\n" +
+                    "2\tTEST\t2025-10-02T07:20:06.948000Z\n", "test");
+
+            // Verify table is still usable (not suspended)
+            execute("insert into test VALUES ('3', 'NEW', '2025-10-03T07:20:06.948000Z')");
+            drainWalQueue();
+
+            assertSql("id\tmySymbol\tdateTime\n" +
+                    "1\t\t2025-10-01T07:20:06.948000Z\n" +
+                    "2\tTEST\t2025-10-02T07:20:06.948000Z\n" +
+                    "3\tNEW\t2025-10-03T07:20:06.948000Z\n", "test");
+        });
+    }
+
     @Override
     protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
         if (walEnabled) {
