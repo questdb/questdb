@@ -112,6 +112,19 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
         return -1;
     }
 
+    @Override
+    public void skipRows(Counter counter) {
+        globCursor.toTop();
+        while (counter.get() > 0) {
+            if (!globCursor.hasNext()) {
+                break;
+            }
+            switchToNextParquetFileMetadata();
+
+            parquetCursor.skipRows(counter);
+        }
+    }
+
     public void switchToNextParquetFile() {
         // Get path to next file from glob cursor
         Utf8Sequence relativePath = globCursor.getRecord().getVarcharA(0);

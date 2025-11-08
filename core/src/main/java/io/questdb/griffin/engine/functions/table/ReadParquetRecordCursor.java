@@ -77,6 +77,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final ParquetRecord record;
     private final RowGroupBuffers rowGroupBuffers;
     private long addr = 0;
+    private boolean buffersInitialised;
     private int currentRowInRowGroup;
     private long fd = -1;
     private long fileSize = 0;
@@ -175,29 +176,75 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
+    public void initBuffers() {
+        rowGroupBuffers.reopen();
+        columns.reopen();
+        final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
+
+        columns.setCapacity(2L * metadata.getColumnCount());
+        for (int metadataIndex = 0, n = metadata.getColumnCount(); metadataIndex < n; metadataIndex++) {
+            final CharSequence metadataName = metadata.getColumnName(metadataIndex);
+            final int parquetIndex = parquetMetadata.getColumnIndex(metadataName);
+            final int parquetType = parquetMetadata.getColumnType(parquetIndex);
+            columns.add(parquetIndex);
+            columns.add(parquetType);
+        }
+        buffersInitialised = true;
+    }
+
+    public boolean maybeSkipRestOfRowGroup(Counter rowCount) {
+        if (this.currentRowInRowGroup >= 0 && this.rowGroupIndex >= 0) {
+            final long rowGroupCount = decoder.metadata().getRowGroupCount();
+            long remaining = rowGroupCount - currentRowInRowGroup;
+            if (remaining <= rowCount.get()) {
+                rowCount.dec(remaining);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean maybeSkipWholeFile(Counter rowCount) {
+        if (this.currentRowInRowGroup <= 0 && rowGroupIndex <= 0) {
+            final long totalRowCount = decoder.metadata().getRowCount();
+            if (totalRowCount <= rowCount.get()) {
+                rowCount.dec(totalRowCount);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean maybeSkipWholeRowGroup(Counter rowCount) {
+        if (this.currentRowInRowGroup <= 0 && rowGroupIndex < decoder.metadata().getRowGroupCount()) {
+            if (this.rowGroupIndex < 0) {
+                this.rowGroupIndex = 0;
+            }
+            final long rowGroupCount = decoder.metadata().getRowGroupSize(rowGroupIndex);
+            if (rowGroupCount <= rowCount.get()) {
+                rowCount.dec(rowGroupCount);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public void maybeSkipWithinRowGroup(Counter rowCount) {
+        if (currentRowInRowGroup >= 0 && rowGroupIndex >= 0) {
+            int prior_offset = currentRowInRowGroup;
+            switchToRowGroup(rowGroupIndex);
+            currentRowInRowGroup = prior_offset;
+            while (rowCount.get() > 0 && hasNext()) {
+                rowCount.dec();
+            }
+            currentRowInRowGroup--;
+        }
+    }
+
     public void of(LPSZ path) {
         try {
-            // Reopen the file, it could have changed
-            this.fd = TableUtils.openRO(ff, path, LOG);
-            this.fileSize = ff.length(fd);
-            this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            if (metadataHasChanged(metadata, decoder)) {
-                // We need to recompile the factory as the Parquet metadata has changed.
-                throw TableReferenceOutOfDateException.of(path);
-            }
-            rowGroupBuffers.reopen();
-            columns.reopen();
-            final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
-
-            columns.setCapacity(2L * metadata.getColumnCount());
-            for (int metadataIndex = 0, n = metadata.getColumnCount(); metadataIndex < n; metadataIndex++) {
-                final CharSequence metadataName = metadata.getColumnName(metadataIndex);
-                final int parquetIndex = parquetMetadata.getColumnIndex(metadataName);
-                final int parquetType = parquetMetadata.getColumnType(parquetIndex);
-                columns.add(parquetIndex);
-                columns.add(parquetType);
-            }
+            ofMetadata(path);
+            initBuffers();
             toTop();
         } catch (DataUnavailableException e) {
             throw new RuntimeException(e);
@@ -205,18 +252,14 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     public void ofMetadata(LPSZ path) {
-        try {
-            // Reopen the file, it could have changed
-            this.fd = TableUtils.openRO(ff, path, LOG);
-            this.fileSize = ff.length(fd);
-            this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            if (metadataHasChanged(metadata, decoder)) {
-                // We need to recompile the factory as the Parquet metadata has changed.
-                throw TableReferenceOutOfDateException.of(path);
-            }
-        } catch (DataUnavailableException e) {
-            throw new RuntimeException(e);
+        // Reopen the file, it could have changed
+        this.fd = TableUtils.openRO(ff, path, LOG);
+        this.fileSize = ff.length(fd);
+        this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+        decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+        if (metadataHasChanged(metadata, decoder)) {
+            // We need to recompile the factory as the Parquet metadata has changed.
+            throw TableReferenceOutOfDateException.of(path);
         }
     }
 
@@ -228,6 +271,23 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public long size() throws DataUnavailableException {
         return decoder.metadata().getRowCount();
+    }
+
+    @Override
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        maybeSkipRestOfRowGroup(rowCount);
+
+        if (maybeSkipWholeFile(rowCount)) {
+            return;
+        }
+
+        while (maybeSkipWholeRowGroup(rowCount)) {
+            currentRowInRowGroup = 0;
+            rowGroupIndex++;
+        }
+
+        initBuffers();
+        maybeSkipWithinRowGroup(rowCount);
     }
 
     @Override
@@ -245,6 +305,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private boolean switchToNextRowGroup() {
+        if (!buffersInitialised) {
+            initBuffers();
+        }
+
         dataPtrs.clear();
         auxPtrs.clear();
         if (++rowGroupIndex < decoder.metadata().getRowGroupCount()) {
@@ -264,7 +328,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private boolean switchToRowGroup(int index) {
         dataPtrs.clear();
         auxPtrs.clear();
-        if (++index < decoder.metadata().getRowGroupCount()) {
+        if (index < decoder.metadata().getRowGroupCount()) {
             final int rowGroupSize = decoder.metadata().getRowGroupSize(index);
             rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, index, 0, rowGroupSize);
 
@@ -277,32 +341,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         }
         return false;
     }
-
-//    @Override
-//    void skipRows(Counter rowCount) throws DataUnavailableException {
-//        final long totalRowCount = decoder.metadata().getRowCount();
-//        if (totalRowCount <= rowCount.get()) {
-//            rowCount.dec(totalRowCount);
-//            return;
-//        }
-//
-//        final long rowGroupCount = decoder.metadata().getRowGroupCount();
-//        for (int i = 0; i < rowGroupCount; i++) {
-//            int rowGroupSize = decoder.metadata().getRowGroupSize(i);
-//            if (rowGroupSize <= rowCount.get()) {
-//                rowCount.dec(rowGroupSize);
-//            } else {
-//                switchToRowGroup(rowGroupSize);
-//            }
-//        }
-//        while (decoder.metadata().getRowCount() < rowCount.get()) {
-//        }
-//
-//
-//        while (rowCount.get() > 0 && hasNext()) {
-//            rowCount.dec();
-//        }
-//    }
 
     private class ParquetRecord implements Record, QuietCloseable {
         private final ObjList<BorrowedArray> arrayBuffers;
