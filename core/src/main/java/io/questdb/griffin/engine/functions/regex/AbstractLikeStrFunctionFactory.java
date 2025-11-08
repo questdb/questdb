@@ -106,8 +106,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                     final int anyCount = countChar(likeSeq, '%');
 
                     if (anyCount == 0) {
-                        final String target = isCaseInsensitive() ? likeSeq.toString().toLowerCase() : likeSeq.toString();
-                        return new ConstEqualsStrFunction(value, target, isCaseInsensitive());
+                        return new ConstEqualsStrFunction(value, likeSeq, isCaseInsensitive());
                     }
 
                     if (anyCount == 1) {
@@ -184,6 +183,25 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         return count;
     }
 
+    private static boolean equalsLowerCase(CharSequence a, CharSequence b) {
+        if (a == null || b == null) return false;
+        final int n = a.length();
+        if (n != b.length()) return false;
+        for (int i = 0; i < n; i++) {
+            char ca = a.charAt(i);
+            char cb = b.charAt(i);
+            if (ca == cb) continue;
+            if (ca <= 0x7F && cb <= 0x7F) {
+                int la = ca | 32;
+                int lb = cb | 32;
+                if (la == lb) continue;
+                return false;
+            }
+            if (Character.toLowerCase(ca) != Character.toLowerCase(cb)) return false;
+        }
+        return true;
+    }
+
     protected abstract boolean isCaseInsensitive();
 
     static class BindLikeStrFunction extends BooleanFunction implements BinaryFunction {
@@ -206,11 +224,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             if (useEquality) {
                 CharSequence cs = value.getStrA(rec);
                 if (cs == null) return false;
-                if (caseInsensitive) return cs.toString().toLowerCase().equals(exactPattern);
-                else return cs.toString().equals(exactPattern);
+                if (caseInsensitive) return equalsLowerCase(cs, exactPattern);
+                else return Chars.equals(cs, exactPattern);
             }
 
-            if (matcher == null) {
+            if (matcher != null) {
                 CharSequence cs = pattern.getStrA(rec);
                 return cs != null && matcher.reset(cs).matches();
             }
@@ -504,11 +522,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
     }
 
     private static class ConstEqualsStrFunction extends BooleanFunction implements UnaryFunction {
-        private final String pattern;
+        private final CharSequence pattern;
         private final Function value;
         private final boolean caseInsensitive;
 
-        public ConstEqualsStrFunction(Function value, String pattern, boolean caseInsensitive) {
+        public ConstEqualsStrFunction(Function value, CharSequence pattern, boolean caseInsensitive) {
             this.value = value;
             this.pattern = pattern;
             this.caseInsensitive = caseInsensitive;
@@ -519,17 +537,26 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             return value;
         }
 
+
         @Override
         public boolean getBool(Record rec) {
             CharSequence cs = value.getStrA(rec);
             if (cs == null) {
                 return false;
             }
-            if (caseInsensitive) {
-                return cs.toString().toLowerCase().equals(pattern);
-            } else {
-                return cs.toString().equals(pattern);
+            final int n = pattern.length();
+            if (cs.length() != n) {
+                return false;
             }
+            if (!caseInsensitive) {
+                for (int i = 0; i < n; i++) {
+                    if (cs.charAt(i) != pattern.charAt(i)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            return equalsLowerCase(cs, pattern);
         }
 
         @Override

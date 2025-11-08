@@ -1,8 +1,7 @@
-// java
 /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
- *   | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
@@ -67,6 +66,12 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             if (pattern.isConstant()) {
                 final CharSequence likeSeq = pattern.getStrA(null);
                 int len;
+
+//                Treating "LIKE NULL" as "IS NULL"
+                if (likeSeq == null) {
+                    return new EqSymStrFunctionFactory.NullCheckFunc(value);
+                }
+
                 if (likeSeq != null && (len = likeSeq.length()) > 0) {
                     if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
                         final int anyCount = countChar(likeSeq, '%');
@@ -151,20 +156,47 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
         assert symbolTable != null;
         symbolKeys.clear();
-        if (matcher != null) {
+
+        if (matcher == null) {
             for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
-                final CharSequence s = symbolTable.valueOf(i);
-                if (s == null) {
-                    continue;
-                }
-                if (matcher.reset(s).matches()) {
+                if (symbolTable.valueOf(i) == null) {
                     symbolKeys.add(i);
                 }
+            }
+            return;
+        }
+
+        for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+            final CharSequence s = symbolTable.valueOf(i);
+            if (s == null) {
+                continue;
+            }
+            if (matcher.reset(s).matches()) {
+                symbolKeys.add(i);
             }
         }
     }
 
     protected abstract boolean isCaseInsensitive();
+
+    private static boolean equalsLowerCase(CharSequence a, CharSequence b) {
+        if (a == null || b == null) return false;
+        final int n = a.length();
+        if (n != b.length()) return false;
+        for (int i = 0; i < n; i++) {
+            char ca = a.charAt(i);
+            char cb = b.charAt(i);
+            if (ca == cb) continue;
+            if (ca <= 0x7F && cb <= 0x7F) {
+                int la = ca | 32;
+                int lb = cb | 32;
+                if (la != lb) return false;
+                return false;
+            }
+            if (Character.toLowerCase(ca) != Character.toLowerCase(cb)) return false;
+        }
+        return true;
+    }
 
     private static class BindLikeStaticSymbolTableFunction extends BooleanFunction implements BinaryFunction {
         private final boolean caseInsensitive;
@@ -209,8 +241,21 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             this.stateShared = false;
             // this is bind variable, we can use it as constant
             final CharSequence patternValue = pattern.getStrA(null);
-            if (patternValue != null && patternValue.length() > 0) {
 
+            if (patternValue == null) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (symbolTable.valueOf(i) == null) {
+                        symbolKeys.add(i);
+                    }
+                }
+                lastPattern = null;
+                return;
+            }
+
+            if (patternValue.length() > 0) {
                 if (countChar(patternValue, '_') == 0 && countChar(patternValue, '\\') == 0 && countChar(patternValue, '%') == 0) {
                     this.useEquality = true;
                     this.exactPattern = caseInsensitive ? patternValue.toString().toLowerCase() : patternValue.toString();
@@ -224,7 +269,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                             continue;
                         }
                         if (caseInsensitive) {
-                            if (s.toString().toLowerCase().equals(exactPattern)) {
+                            if (equalsLowerCase(s, exactPattern)) {
                                 symbolKeys.add(i);
                             }
                         } else {
@@ -869,7 +914,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             symbolKeys.clear();
             for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
                 // explicit lower-case comparison because Chars.equalsLowerCase(...) doesn't exist
-                if (symbolTable.valueOf(i).toString().toLowerCase().equals(pattern)) {
+                if (equalsLowerCase(symbolTable.valueOf(i), pattern)) {
                     symbolKeys.add(i);
                 }
             }
