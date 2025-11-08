@@ -546,94 +546,53 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     /**
-     * Generates a pseudo-random {@link Decimal128} value that conforms to the specified
-     * {@code precision} and {@code scale}, writing the result into the provided {@code sink}.
+     * Generates a pseudo-random {@code Decimal128} that conforms to the specified
+     * {@code precision} and {@code scale}, writing the result into {@code sink}.
      * <p>
-     * This method uses only {@link Decimal128} arithmetic and the built-in power-of-ten tables
-     * for performance and precision. It does not allocate any intermediate objects.
-     * The caller must provide a reusable {@code intermediateP10} instance for temporary
-     * calculations of powers of ten.
+     * This method uses only {@code Decimal128} arithmetic and the built-in power-of-ten tables.
+     * It does not allocate intermediate objects; the caller supplies {@code intermediateP10}
+     * as a reusable temporary to materialize powers of ten during trimming.
      *
-     * <h3>Overview</h3>
+     * <p><b>Overview</b></p>
      * <ul>
-     *   <li>Two 64-bit pseudo-random words are drawn from {@link Rnd} to form a 128-bit integer.</li>
-     *   <li>The number is normalized to a non-negative magnitude.</li>
-     *   <li>The decimal digit count is estimated via binary search against the built-in 10<sup>k</sup> table.</li>
-     *   <li>If the magnitude has more digits than {@code precision}, it is reduced by dividing
-     *       by 10<sup>(digits−precision)</sup> using the specified {@link RoundingMode}.</li>
-     *   <li>A sign is applied according to {@link SignMode}.</li>
-     *   <li>The requested {@code scale} is then assigned (metadata only).</li>
+     *   <li>Draw two 64-bit words from {@code rnd} to form a 128-bit two’s-complement integer; set {@code scale = 0}.</li>
+     *   <li>Normalize to magnitude (absolute value).</li>
+     *   <li>Estimate the decimal digit count via binary search against 10^k values
+     *       (compared using the internal power-of-ten tables).</li>
+     *   <li>If the magnitude has more digits than {@code precision}, divide by
+     *       10^(digits − precision) using {@code rounding}.</li>
+     *   <li>Apply the requested sign policy and then set the final {@code scale} (metadata only).</li>
      * </ul>
      *
-     * <h3>Uniformity</h3>
-     * The generated value is uniformly distributed in 128-bit integer space, not strictly
-     * in the base-10 range. This means the decimal magnitudes are approximately uniform but not exact.
-     * For test and fuzzing purposes this method is ideal; for mathematically uniform base-10
-     * distributions, use rejection sampling based on the 10<sup>precision</sup> range.
+     * <p><b>Uniformity</b></p>
+     * <p>
+     * The source bits are uniform in 128-bit integer space and are then “shrunk-to-fit”
+     * the requested precision. This is ideal for fuzzing and randomized tests; it is not a strictly
+     * uniform sampler over the base-10 range {@code [0, 10^precision - 1]}.
+     * </p>
      *
-     * <h3>Performance</h3>
+     * <p><b>Performance</b></p>
      * <ul>
-     *   <li>Digit estimation: O(log₁₀ p) (binary search over 39 power-of-ten constants).</li>
-     *   <li>Division for scaling: O(1) using internal 128-bit division.</li>
-     *   <li>No heap allocations (caller reuses {@code sink} and {@code intermediateP10}).</li>
+     *   <li>Digit estimation: O(log₁₀(p)) comparisons (binary search up to the max precision).</li>
+     *   <li>Trimming: a single division by 10^e with the chosen rounding mode.</li>
+     *   <li>No heap allocations (mutates {@code sink}; reuses {@code intermediateP10}).</li>
      * </ul>
      *
-     * <h3>Usage Example</h3>
-     * <pre>{@code
-     * Rnd rnd = new Rnd(12345); // any 64-bit pseudo-random generator
-     * Decimal128 value = new Decimal128();
-     * Decimal128 tmp = new Decimal128();
+     * <p><b>Thread safety</b></p>
+     * <p>
+     * Thread-safe if each thread supplies its own {@code sink} and {@code intermediateP10}. Sharing must be synchronized.
+     * </p>
      *
-     * Decimal128.random(
-     *     rnd,
-     *     28,                       // precision
-     *     9,                        // scale
-     *     RoundingMode.HALF_UP,     // rounding mode when trimming precision
-     *     Decimal128.SignMode.RANDOM, // sign policy
-     *     value,
-     *     tmp                       // temporary workspace for 10^n
-     * );
-     *
-     * System.out.println("Random Decimal128: " + value);
-     * }</pre>
-     *
-     * <h3>Implementation Details</h3>
-     * <ol>
-     *   <li><b>Raw integer generation</b> — combines two {@code long} values from {@link Rnd}
-     *       into a 128-bit integer via {@link #ofRaw(long, long)} and sets {@code scale=0}.</li>
-     *   <li><b>Magnitude normalization</b> — converts negative values to positive using {@link #negate()}.</li>
-     *   <li><b>Digit counting</b> — finds the largest {@code k} where 10<sup>k</sup> ≤ |x| using binary search over
-     *       {@link #TEN_POWERS_TABLE_HIGH} / {@link #TEN_POWERS_TABLE_LOW} via {@code digitsFloorIndex()}.</li>
-     *   <li><b>Precision reduction</b> — if too many digits, divides by 10<sup>excess</sup> using
-     *       {@link #divide(Decimal128, int, RoundingMode)} and a precomputed 10<sup>excess</sup> constant
-     *       written into {@code intermediateP10} via {@code pow10Into()}.</li>
-     * zx     *   <li><b>Sign application</b> — determined by {@link SignMode}:
-     *       <ul>
-     *         <li>{@link SignMode#NONNEG}: always positive</li>
-     *         <li>{@link SignMode#RANDOM}: 50% chance of negative</li>
-     *         <li>{@link SignMode#KEEP}: sign of the high random word</li>
-     *       </ul>
-     *   </li>
-     *   <li><b>Final scale assignment</b> — sets {@code scale} without rescaling or value change.</li>
-     * </ol>
-     *
-     * <h3>Thread Safety</h3>
-     * This method is thread-safe if and only if each thread provides its own
-     * {@code sink} and {@code intermediateP10} instances. Reuse between threads must be synchronized.
-     *
-     * @param rnd             the pseudo-random generator used to produce 64-bit values
-     * @param precision       total number of significant digits (1 ≤ precision ≤ {@link #MAX_PRECISION})
-     * @param scale           number of digits to the right of the decimal point (0 ≤ scale ≤ precision)
-     * @param rounding        rounding mode used when reducing precision (e.g. {@link RoundingMode#DOWN})
-     * @param signMode        sign selection policy: {@link SignMode#KEEP}, {@link SignMode#NONNEG}, or {@link SignMode#RANDOM}
-     * @param sink            destination {@link Decimal128} that will receive the random value (modified in place)
-     * @param intermediateP10 reusable temporary {@link Decimal128} used for constructing 10ⁿ constants (must be non-null)
+     * @param rnd             source of randomness (provides 64-bit values)
+     * @param precision       total significant digits; must be in {@code [1, Decimal128.MAX_PRECISION]}
+     * @param scale           digits to the right of the decimal point; must be in {@code [0, precision]}
+     * @param rounding        rounding mode used when trimming excess digits
+     * @param signMode        sign policy: {@code KEEP} (inherit from the top random word),
+     *                        {@code NONNEG} (always non-negative), or {@code RANDOM} (random sign)
+     * @param sink            destination decimal; will be overwritten with the generated value
+     * @param intermediateP10 reusable workspace decimal used to materialize powers of ten (must be non-null)
      * @throws IllegalArgumentException if {@code precision} or {@code scale} are out of range
-     * @see Decimal128#MAX_PRECISION
-     * @see Decimal128#MAX_SCALE
-     * @see Rnd
-     * @see SignMode
-     * @see RoundingMode
+     * @see java.math.RoundingMode
      */
     public static void random(Rnd rnd, int precision, int scale, RoundingMode rounding, SignMode signMode, Decimal128 sink, Decimal128 intermediateP10) {
         if (precision < 1 || precision > MAX_PRECISION) {
@@ -1447,7 +1406,12 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     /**
-     * Binary search for largest k in [0,38] with 10^k <= n (all scale==0).
+     * Returns the largest {@code k} such that {@code 10^k <= n} when {@code n.scale == 0}.
+     * Implements a binary search over {@code k} in {@code [0, Decimal128.MAX_PRECISION - 1]},
+     * comparing against the internal power-of-ten table.
+     *
+     * @param n non-negative magnitude with {@code scale == 0}
+     * @return the floor index {@code k} where {@code 10^k <= n < 10^(k+1)}
      */
     private static int digitsFloorIndex(Decimal128 n) {
         int lo = 0, hi = 38;
@@ -1463,7 +1427,11 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     /**
-     * Write 10^e (e in [0,38]) into {@code dst} with scale==0 using TEN_POWERS_TABLE_* constants.
+     * Writes 10^e into {@code dst} with {@code scale == 0} using the internal power-of-ten tables.
+     * This sets the high/low words directly for the requested exponent and clears the scale.
+     *
+     * @param e   non-negative exponent (typically ≤ {@code Decimal128.MAX_PRECISION - 1})
+     * @param dst destination decimal (mutated)
      */
     private static void pow10Into(int e, Decimal128 dst) {
         if (e <= 19) {

@@ -697,35 +697,53 @@ public class Decimal256 implements Sinkable, Decimal {
 
     /**
      * Generates a pseudo-random {@code Decimal256} that conforms to the specified
-     * {@code (precision, scale)}, writing the result into {@code sink}.
+     * {@code precision} and {@code scale}, writing the result into {@code sink}.
      * <p>
-     * No {@code BigInteger/BigDecimal} are used; all math stays inside Decimal256.
-     * To avoid allocations, the caller supplies a reusable temporary {@code tmpPow10}.
+     * This method uses only {@code Decimal256} arithmetic and a caller-provided
+     * temporary {@code tmpPow10} (to materialize powers of ten) and does not allocate
+     * intermediate objects.
      *
-     * <h3>Overview</h3>
-     * <ol>
-     *   <li>Draw 4×64-bit words from {@link Rnd} to form a 256-bit integer; set {@code scale=0}.</li>
-     *   <li>Normalize to magnitude and estimate digit count via binary search on 10^k
-     *       (each 10^k is built by {@code ofLong(1,0)} + {@code rescale(k)} then {@code setScale(0)}).</li>
-     *   <li>If digits exceed {@code precision}, divide by 10^(digits−precision) with the given {@link RoundingMode}.</li>
-     *   <li>Apply the sign policy and assign the requested {@code scale}.</li>
-     * </ol>
+     * <p><b>Overview</b></p>
+     * <ul>
+     *   <li>Draw 256 bits from {@code rnd} (4 × 64-bit words) to form an unscaled integer; set {@code scale = 0}.</li>
+     *   <li>Normalize to magnitude (absolute value).</li>
+     *   <li>Estimate the decimal digit count via binary search against 10^k values
+     *       (each 10^k is built into {@code tmpPow10}).</li>
+     *   <li>If the magnitude has more digits than {@code precision}, divide by
+     *       10^(digits − precision) using the specified {@code rounding}.</li>
+     *   <li>Apply the requested sign policy and then set the final {@code scale} (metadata only).</li>
+     * </ul>
      *
-     * <h3>Uniformity</h3>
-     * Uniform in 256-bit integer space, then “shrink-to-fit” in base-10. For strict base-10 uniformity
-     * over [0, 10^precision−1], use rejection sampling; for fuzzing/tests this is ideal.
+     * <p><b>Uniformity</b></p>
+     * <p>
+     * The source bits are uniform in 256-bit two’s-complement space and are then “shrunk-to-fit”
+     * the requested precision. This is ideal for fuzzing and randomized tests; it is not a strictly
+     * uniform sampler over the base-10 range {@code [0, 10^precision - 1]}.
+     * </p>
      *
-     * <h3>Complexity</h3>
-     * Digit estimation is O(log₁₀ P) (at most ~7–8 iterations up to ~77 digits). One division if trimming.
+     * <p><b>Complexity</b></p>
+     * <ul>
+     *   <li>Digit estimation: O(log₁₀(p)) comparisons (binary search up to the max precision).</li>
+     *   <li>Trimming: a single division by 10^e with the chosen rounding mode.</li>
+     *   <li>No heap allocations (mutates {@code sink}; reuses {@code tmpPow10}).</li>
+     * </ul>
      *
-     * @param rnd       source of randomness
-     * @param precision total significant digits (1 ≤ precision ≤ {@code Decimal256.MAX_PRECISION})
-     * @param scale     fractional digits (0 ≤ scale ≤ precision)
-     * @param rounding  rounding mode when trimming precision (e.g. {@link RoundingMode#DOWN})
-     * @param signMode  sign policy: {@code KEEP}, {@code NONNEG}, or {@code RANDOM}
-     * @param sink      destination decimal (mutated in place)
-     * @param tmpPow10  reusable workspace decimal; used to materialize 10^k values (must be non-null)
-     * @throws IllegalArgumentException if precision/scale are out of range
+     * <p><b>Thread safety</b></p>
+     * <p>
+     * Thread-safe if each thread supplies its own {@code sink} and {@code tmpPow10}. Sharing must be synchronized.
+     * </p>
+     *
+     * @param rnd        source of randomness (provides 64-bit values)
+     * @param precision  total significant digits; must be in {@code [1, Decimal256.MAX_PRECISION]}
+     * @param scale      digits to the right of the decimal point; must be in {@code [0, precision]}
+     * @param rounding   rounding mode used when trimming excess digits
+     * @param signMode   sign policy: {@code KEEP} (inherit from the top random word),
+     *                   {@code NONNEG} (always non-negative), or {@code RANDOM} (random sign)
+     * @param sink       destination decimal; will be overwritten with the generated value
+     * @param tmpPow10   reusable workspace decimal used to materialize powers of ten (must be non-null)
+     *
+     * @throws IllegalArgumentException if {@code precision} or {@code scale} are out of range
+     * @see java.math.RoundingMode
      */
     public static void random(Rnd rnd,
                               int precision,

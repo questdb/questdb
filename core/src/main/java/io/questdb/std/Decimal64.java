@@ -242,56 +242,54 @@ public class Decimal64 implements Sinkable, Decimal {
     }
 
     /**
-     * Generates a pseudo-random {@link Decimal64} value that conforms to the specified
+     * Generates a pseudo-random {@code Decimal64} that conforms to the specified
      * {@code precision} and {@code scale}, writing the result into {@code sink}.
      * <p>
-     * This method uses only {@link Decimal64} arithmetic and the built-in base-10 power table.
-     * It does not allocate intermediate objects.
+     * This method uses only {@code Decimal64} arithmetic and the built-in base-10
+     * power table. It does not allocate intermediate objects and mutates the
+     * provided {@code sink} in place.
      *
-     * <h3>Overview</h3>
+     * <p><b>Overview</b></p>
      * <ul>
-     *   <li>Draw a 64-bit pseudo-random word from {@link Rnd} to form the unscaled integer.</li>
-     *   <li>Estimate the decimal digit count via binary search against {@code 10^k} (k∈[0,18]).</li>
+     *   <li>Draw one 64-bit word from {@code rnd} and interpret it as an unscaled integer; set {@code scale = 0}.</li>
+     *   <li>Normalize to magnitude (absolute value).</li>
+     *   <li>Estimate the number of decimal digits by binary search against 10^k values in the internal power table.</li>
      *   <li>If the magnitude has more digits than {@code precision}, divide by
-     *       10<sup>(digits−precision)</sup> using the provided {@link RoundingMode}.</li>
-     *   <li>Apply the desired sign according to {@link SignMode} and set the final {@code scale}.</li>
+     *       10^(digits − precision) using the specified {@code rounding}.</li>
+     *   <li>Apply the chosen sign policy and assign the final {@code scale} (metadata only).</li>
      * </ul>
      *
-     * <h3>Uniformity</h3>
-     * The source bits are uniform in 64-bit integer space and then “shrunk-to-fit” the requested
-     * precision. This is fast and great for randomized testing/fuzzing, but it is not a mathematically
-     * perfect uniform sampler over the base-10 range {@code [0, 10^precision-1]}. If you need strict
-     * base-10 uniformity, prefer rejection sampling on the 10^p range.
+     * <p><b>Uniformity</b></p>
+     * <p>
+     * The underlying random bits are uniform in 64-bit integer space and then “shrunk-to-fit”
+     * the requested precision. This produces a high-quality pseudo-random sample for fuzzing
+     * and testing, but it is not a mathematically exact uniform sampler over the base-10
+     * range {@code [0, 10^precision − 1]}.
+     * </p>
      *
-     * <h3>Performance</h3>
+     * <p><b>Performance</b></p>
      * <ul>
-     *   <li>Digit estimation: O(log₁₀ p) (binary search over ≤19 powers).</li>
-     *   <li>Scaling: single {@link #divide(long, int, int, RoundingMode)} call.</li>
-     *   <li>No heap allocations (mutates {@code sink} in place).</li>
+     *   <li>Digit estimation: O(log₁₀(p)) comparisons (binary search up to 19 powers of ten).</li>
+     *   <li>Trimming: a single division by 10^e using the selected rounding mode.</li>
+     *   <li>No heap allocations (mutates {@code sink} only).</li>
      * </ul>
      *
-     * <h3>Example</h3>
-     * <pre>{@code
-     * Rnd rnd = new Rnd(12345);
-     * Decimal64 x = new Decimal64();
-     * Decimal64.random(rnd, 12, 4, RoundingMode.HALF_UP, Decimal64.SignMode.RANDOM, x);
-     * System.out.println(x);
-     * }</pre>
+     * <p><b>Thread safety</b></p>
+     * <p>
+     * Thread-safe if each thread uses its own {@code sink}. Concurrent reuse must be synchronized.
+     * </p>
      *
-     * <h3>Thread Safety</h3>
-     * Thread-safe as long as each thread uses its own {@code sink}.
-     *
-     * @param rnd       the pseudo-random generator that supplies 64-bit values
-     * @param precision total significant digits (1 ≤ precision ≤ {@link #MAX_PRECISION})
-     * @param scale     digits to the right of the decimal point (0 ≤ scale ≤ precision)
+     * @param rnd       source of randomness that provides 64-bit values
+     * @param precision total significant digits; must be in {@code [1, Decimal64.MAX_PRECISION]}
+     * @param scale     digits to the right of the decimal point; must be in {@code [0, precision]}
      * @param rounding  rounding mode used when trimming excess digits
-     * @param signMode  sign policy: {@link SignMode#KEEP}, {@link SignMode#NONNEG}, or {@link SignMode#RANDOM}
-     * @param sink      destination {@link Decimal64} (modified in place)
+     * @param signMode  sign policy:
+     *                  {@code KEEP} (use the sign of the random word),
+     *                  {@code NONNEG} (always non-negative), or
+     *                  {@code RANDOM} (randomly choose sign)
+     * @param sink      destination decimal; will be overwritten with the generated value
      * @throws IllegalArgumentException if {@code precision} or {@code scale} are out of range
-     * @see #MAX_PRECISION
-     * @see #MAX_SCALE
-     * @see Rnd
-     * @see RoundingMode
+     * @see java.math.RoundingMode
      */
     public static void random(Rnd rnd,
                               int precision,
@@ -984,6 +982,9 @@ public class Decimal64 implements Sinkable, Decimal {
     /**
      * Returns the largest {@code k} in [0,18] such that 10^k ≤ |v|.
      * For {@code v == 0}, the caller should treat the digit count as 1.
+     *
+     * @param v the unscaled 64-bit integer
+     * @return the floor index {@code k} where {@code 10^k ≤ |v| < 10^(k+1)}
      */
     private static int digitsFloorIndex64(long v) {
         if (v == 0) return 0;
