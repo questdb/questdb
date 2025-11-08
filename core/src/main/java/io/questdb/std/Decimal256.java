@@ -696,6 +696,96 @@ public class Decimal256 implements Sinkable, Decimal {
     }
 
     /**
+     * Generates a pseudo-random {@code Decimal256} that conforms to the specified
+     * {@code (precision, scale)}, writing the result into {@code sink}.
+     * <p>
+     * No {@code BigInteger/BigDecimal} are used; all math stays inside Decimal256.
+     * To avoid allocations, the caller supplies a reusable temporary {@code tmpPow10}.
+     *
+     * <h3>Overview</h3>
+     * <ol>
+     *   <li>Draw 4×64-bit words from {@link Rnd} to form a 256-bit integer; set {@code scale=0}.</li>
+     *   <li>Normalize to magnitude and estimate digit count via binary search on 10^k
+     *       (each 10^k is built by {@code ofLong(1,0)} + {@code rescale(k)} then {@code setScale(0)}).</li>
+     *   <li>If digits exceed {@code precision}, divide by 10^(digits−precision) with the given {@link RoundingMode}.</li>
+     *   <li>Apply the sign policy and assign the requested {@code scale}.</li>
+     * </ol>
+     *
+     * <h3>Uniformity</h3>
+     * Uniform in 256-bit integer space, then “shrink-to-fit” in base-10. For strict base-10 uniformity
+     * over [0, 10^precision−1], use rejection sampling; for fuzzing/tests this is ideal.
+     *
+     * <h3>Complexity</h3>
+     * Digit estimation is O(log₁₀ P) (at most ~7–8 iterations up to ~77 digits). One division if trimming.
+     *
+     * @param rnd       source of randomness
+     * @param precision total significant digits (1 ≤ precision ≤ {@code Decimal256.MAX_PRECISION})
+     * @param scale     fractional digits (0 ≤ scale ≤ precision)
+     * @param rounding  rounding mode when trimming precision (e.g. {@link RoundingMode#DOWN})
+     * @param signMode  sign policy: {@code KEEP}, {@code NONNEG}, or {@code RANDOM}
+     * @param sink      destination decimal (mutated in place)
+     * @param tmpPow10  reusable workspace decimal; used to materialize 10^k values (must be non-null)
+     * @throws IllegalArgumentException if precision/scale are out of range
+     */
+    public static void random(Rnd rnd,
+                              int precision,
+                              int scale,
+                              RoundingMode rounding,
+                              SignMode signMode,
+                              Decimal256 sink,
+                              Decimal256 tmpPow10) {
+        if (precision < 1 || precision > Decimals.MAX_PRECISION) {
+            throw new IllegalArgumentException("precision must be in [1," + Decimals.MAX_PRECISION + "]");
+        }
+        if (scale < 0 || scale > precision) {
+            throw new IllegalArgumentException("scale must be in [0, precision]");
+        }
+        if (rounding == null) rounding = RoundingMode.DOWN;
+        if (signMode == null) signMode = SignMode.KEEP;
+
+        // 1) Raw 256-bit integer from PRNG -> sink (scale=0)
+        final long h3 = rnd.nextLong();
+        final long h2 = rnd.nextLong();
+        final long h1 = rnd.nextLong();
+        final long h0 = rnd.nextLong();
+
+        // Prefer a raw setter if available; otherwise use of(..., scale=0).
+        // If your Decimal256 exposes `ofRaw(h3,h2,h1,h0)`, call that instead of `of(...)`.
+        sink.of(h3, h2, h1, h0, 0);
+
+        // Decide sign policy based on the top word (KEEP) or random coin flip
+        final boolean desiredNegative =
+                signMode != SignMode.NONNEG && ((signMode == SignMode.RANDOM) ? ((rnd.nextLong() & 1L) != 0L)
+                        : (h3 < 0)); // KEEP
+
+        // Work with magnitude
+        if (sink.isNegative()) {
+            sink.negate();
+        }
+        if (sink.isZero()) {
+            sink.setScale(scale);
+            return;
+        }
+
+        // 2) Digit count: largest k with 10^k <= sink (scale==0), via binary search.
+        final int k = digitsFloorIndex256(sink, tmpPow10);
+        final int digits = k + 1;
+
+        // 3) Trim if necessary
+        if (digits > precision) {
+            final int excess = digits - precision;
+            pow10Into256(excess, tmpPow10);       // tmpPow10 = 10^excess (scale==0)
+            sink.divide(tmpPow10, 0, rounding);   // keep scale at 0 while trimming
+        }
+
+        // 4) Reapply sign (avoid negative zero), attach final scale
+        if (desiredNegative && !sink.isZero()) {
+            sink.negate();
+        }
+        sink.setScale(scale);
+    }
+
+    /**
      * Static subtraction method.
      *
      * @param a      the first operand
@@ -1869,6 +1959,32 @@ public class Decimal256 implements Sinkable, Decimal {
         return Long.compareUnsigned(aLL, bLL);
     }
 
+    /**
+     * Returns the largest {@code k} such that 10^k ≤ {@code n} (with {@code n.scale==0}).
+     * Uses a binary search over k ∈ [0, MAX_PRECISION-1], constructing 10^mid in {@code tmp}.
+     */
+    private static int digitsFloorIndex256(Decimal256 n, Decimal256 tmp) {
+        int lo = 0, hi = Decimals.MAX_PRECISION - 1; // typically 76 or 77 depending on your impl
+        while (lo < hi) {
+            int mid = (lo + hi + 1) >>> 1;
+            pow10Into256(mid, tmp);
+            int cmp = n.compareTo(tmp);
+            if (cmp >= 0) lo = mid;
+            else hi = mid - 1;
+        }
+        return lo;
+    }
+
+    /**
+     * Writes 10^e into {@code dst} with scale==0 using only public Decimal256 API.
+     * Implementation: dst = 1; dst.rescale(e); dst.setScale(0).
+     */
+    private static void pow10Into256(int e, Decimal256 dst) {
+        dst.ofLong(1, 0);   // numeric value 1, scale 0
+        if (e > 0) dst.rescale(e); // multiply by 10^e (scale becomes e)
+        dst.setScale(0);    // interpret as raw integer 10^e
+    }
+
     private static void putLongIntoBytes(byte[] bytes, int offset, long value) {
         for (int i = 0; i < 8; i++) {
             bytes[offset + i] = (byte) (value >>> ((7 - i) * 8));
@@ -2685,6 +2801,8 @@ public class Decimal256 implements Sinkable, Decimal {
         this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
         this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
     }
+
+    /* --------------------- helpers (no private tables required) --------------------- */
 
     private void multiply64By64(long multiplier) {
         // Perform 64-bit × 64-bit multiplication

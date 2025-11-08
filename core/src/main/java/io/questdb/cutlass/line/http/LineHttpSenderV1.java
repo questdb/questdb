@@ -33,7 +33,6 @@ import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
-import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -125,16 +124,6 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
     public void at(Instant timestamp) {
         request.putAscii(' ').put(NanosTimestampDriver.INSTANCE.from(timestamp));
         atNow();
-    }
-
-    @Override
-    public Sender decimalColumn(CharSequence name, Decimal256 value) {
-        throw new LineSenderException("current protocol version does not support decimal");
-    }
-
-    @Override
-    public Sender decimalColumn(CharSequence name, CharSequence value) {
-        throw new LineSenderException("current protocol version does not support decimal");
     }
 
     @Override

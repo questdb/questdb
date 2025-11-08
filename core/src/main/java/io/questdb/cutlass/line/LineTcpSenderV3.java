@@ -29,7 +29,9 @@ import io.questdb.cutlass.line.array.ArrayBufferAppender;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
@@ -76,6 +78,35 @@ public class LineTcpSenderV3 extends LineTcpSenderV2 implements ArrayBufferAppen
         putLong(Long.reverseBytes(value.getHl()));
         putLong(Long.reverseBytes(value.getLh()));
         putLong(Long.reverseBytes(value.getLl()));
+        return this;
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal128 value) {
+        if (value.isNull()) {
+            return this;
+        }
+        writeFieldName(name)
+                .putAsciiInternal('=')
+                .put(LineTcpParser.ENTITY_TYPE_DECIMAL)
+                .put((byte) value.getScale())
+                .put((byte) 16); // Length
+        putLong(Long.reverseBytes(value.getHigh()));
+        putLong(Long.reverseBytes(value.getLow()));
+        return this;
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal64 value) {
+        if (value.isNull()) {
+            return this;
+        }
+        writeFieldName(name)
+                .putAsciiInternal('=')
+                .put(LineTcpParser.ENTITY_TYPE_DECIMAL)
+                .put((byte) value.getScale())
+                .put((byte) 8); // Length
+        putLong(Long.reverseBytes(value.getValue()));
         return this;
     }
 

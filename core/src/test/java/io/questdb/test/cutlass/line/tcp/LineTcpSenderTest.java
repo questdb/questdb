@@ -618,8 +618,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             }
 
             try (TableReader reader = getReader("decimal_test")) {
-                TestUtils.assertReader("a\ttimestamp\n" +
-                        "123.450\t1970-01-02T03:46:40.000000Z\n", reader, sink);
+                TestUtils.assertReader("""
+                        a\ttimestamp
+                        123.450\t1970-01-02T03:46:40.000000Z
+                        """, reader, sink);
             }
         });
     }

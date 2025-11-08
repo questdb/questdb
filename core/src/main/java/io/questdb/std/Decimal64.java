@@ -242,6 +242,106 @@ public class Decimal64 implements Sinkable, Decimal {
     }
 
     /**
+     * Generates a pseudo-random {@link Decimal64} value that conforms to the specified
+     * {@code precision} and {@code scale}, writing the result into {@code sink}.
+     * <p>
+     * This method uses only {@link Decimal64} arithmetic and the built-in base-10 power table.
+     * It does not allocate intermediate objects.
+     *
+     * <h3>Overview</h3>
+     * <ul>
+     *   <li>Draw a 64-bit pseudo-random word from {@link Rnd} to form the unscaled integer.</li>
+     *   <li>Estimate the decimal digit count via binary search against {@code 10^k} (k∈[0,18]).</li>
+     *   <li>If the magnitude has more digits than {@code precision}, divide by
+     *       10<sup>(digits−precision)</sup> using the provided {@link RoundingMode}.</li>
+     *   <li>Apply the desired sign according to {@link SignMode} and set the final {@code scale}.</li>
+     * </ul>
+     *
+     * <h3>Uniformity</h3>
+     * The source bits are uniform in 64-bit integer space and then “shrunk-to-fit” the requested
+     * precision. This is fast and great for randomized testing/fuzzing, but it is not a mathematically
+     * perfect uniform sampler over the base-10 range {@code [0, 10^precision-1]}. If you need strict
+     * base-10 uniformity, prefer rejection sampling on the 10^p range.
+     *
+     * <h3>Performance</h3>
+     * <ul>
+     *   <li>Digit estimation: O(log₁₀ p) (binary search over ≤19 powers).</li>
+     *   <li>Scaling: single {@link #divide(long, int, int, RoundingMode)} call.</li>
+     *   <li>No heap allocations (mutates {@code sink} in place).</li>
+     * </ul>
+     *
+     * <h3>Example</h3>
+     * <pre>{@code
+     * Rnd rnd = new Rnd(12345);
+     * Decimal64 x = new Decimal64();
+     * Decimal64.random(rnd, 12, 4, RoundingMode.HALF_UP, Decimal64.SignMode.RANDOM, x);
+     * System.out.println(x);
+     * }</pre>
+     *
+     * <h3>Thread Safety</h3>
+     * Thread-safe as long as each thread uses its own {@code sink}.
+     *
+     * @param rnd       the pseudo-random generator that supplies 64-bit values
+     * @param precision total significant digits (1 ≤ precision ≤ {@link #MAX_PRECISION})
+     * @param scale     digits to the right of the decimal point (0 ≤ scale ≤ precision)
+     * @param rounding  rounding mode used when trimming excess digits
+     * @param signMode  sign policy: {@link SignMode#KEEP}, {@link SignMode#NONNEG}, or {@link SignMode#RANDOM}
+     * @param sink      destination {@link Decimal64} (modified in place)
+     * @throws IllegalArgumentException if {@code precision} or {@code scale} are out of range
+     * @see #MAX_PRECISION
+     * @see #MAX_SCALE
+     * @see Rnd
+     * @see RoundingMode
+     */
+    public static void random(Rnd rnd,
+                              int precision,
+                              int scale,
+                              RoundingMode rounding,
+                              SignMode signMode,
+                              Decimal64 sink) {
+        if (precision < 1 || precision > MAX_PRECISION) {
+            throw new IllegalArgumentException("precision must be in [1," + MAX_PRECISION + "]");
+        }
+        if (scale < 0 || scale > precision) {
+            throw new IllegalArgumentException("scale must be in [0, precision]");
+        }
+        if (rounding == null) rounding = RoundingMode.DOWN;
+        if (signMode == null) signMode = SignMode.KEEP;
+
+        // 1) Raw 64-bit integer from PRNG, treat as unscaled (scale=0)
+        final long raw = rnd.nextLong();
+        sink.ofRaw(raw);
+        sink.setScale(0);
+
+        // 2) Decide final sign policy now (before we possibly modify the value)
+        final boolean desiredNegative =
+                signMode != SignMode.NONNEG && ((signMode == SignMode.RANDOM) ? ((rnd.nextLong() & 1L) != 0L) :
+                        (raw < 0)); // KEEP: keep the sign of the random draw
+
+        // 3) Estimate digit count from |raw| using powers of 10 table
+        final int k = digitsFloorIndex64(raw); // largest k with 10^k <= |raw|
+        final int digits = (raw == 0L) ? 1 : (k + 1);
+
+        // 4) If too many digits, trim by dividing by 10^(excess) with rounding
+        if (digits > precision) {
+            final int excess = digits - precision;
+            // divide by 10^excess; resultScale remains 0
+            sink.divide(TEN_POWERS_TABLE[excess], /*otherScale*/0, /*resultScale*/0, rounding);
+        }
+
+        // 5) Apply the chosen sign (avoid negative zero)
+        if (sink.value < 0) {
+            sink.value = -sink.value; // normalize positive; safe for all values present here
+        }
+        if (desiredNegative && sink.value != 0) {
+            sink.value = -sink.value;
+        }
+
+        // 6) Set final scale (metadata only)
+        sink.setScale(scale);
+    }
+
+    /**
      * Subtract two Decimal64 numbers and store the result in sink (a - b -> sink)
      */
     public static void subtract(Decimal64 a, Decimal64 b, Decimal64 sink) {
@@ -879,6 +979,29 @@ public class Decimal64 implements Sinkable, Decimal {
             return divisorOdd ? -1 : 0;
         }
         return cmp;
+    }
+
+    /**
+     * Returns the largest {@code k} in [0,18] such that 10^k ≤ |v|.
+     * For {@code v == 0}, the caller should treat the digit count as 1.
+     */
+    private static int digitsFloorIndex64(long v) {
+        if (v == 0) return 0;
+        long a;
+        if (v == Long.MIN_VALUE) {
+            // |MIN| = 9223372036854775808, which is > 10^18; treat as slightly larger than Long.MAX_VALUE.
+            a = Long.MAX_VALUE;
+        } else {
+            a = (v < 0) ? -v : v;
+        }
+        int lo = 0, hi = 18;
+        while (lo < hi) {
+            int mid = (lo + hi + 1) >>> 1;
+            if (a >= TEN_POWERS_TABLE[mid]) lo = mid;
+            else hi = mid - 1;
+        }
+        // For v == Long.MIN_VALUE, digits should be 19 (k==18 is correct, caller adds +1)
+        return lo;
     }
 
     private static long scaleUp(long value, int scaleDiff) {

@@ -41,7 +41,9 @@ import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -275,13 +277,37 @@ public interface Sender extends Closeable, ArraySender<Sender> {
     void close();
 
     /**
-     * Add a column with a Decimal value serialized using the binary format.
+     * Add a column with a Decimal256 value serialized using the binary format.
      *
      * @param name  name of the column
      * @param value value to add
      * @return this instance for method chaining
      */
-    Sender decimalColumn(CharSequence name, Decimal256 value);
+    default Sender decimalColumn(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    /**
+     * Add a column with a Decimal128 value serialized using the binary format.
+     *
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
+     */
+    default Sender decimalColumn(CharSequence name, Decimal128 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    /**
+     * Add a column with a Decimal128 value serialized using the binary format.
+     *
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
+     */
+    default Sender decimalColumn(CharSequence name, Decimal64 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
 
     /**
      * Add a column with a Decimal value serialized using the text format.
@@ -290,7 +316,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
      * @param value value to add
      * @return this instance for method chaining
      */
-    Sender decimalColumn(CharSequence name, CharSequence value);
+    default Sender decimalColumn(CharSequence name, CharSequence value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
 
     /**
      * Add a column with a floating point value.

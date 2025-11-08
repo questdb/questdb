@@ -339,43 +339,26 @@ public class LineTcpEventBuffer {
 
     public long columnValueLength(byte entityType, long offset) {
         CharSequence cs;
-        switch (entityType) {
-            case LineTcpParser.ENTITY_TYPE_TAG:
-            case LineTcpParser.ENTITY_TYPE_STRING:
-            case LineTcpParser.ENTITY_TYPE_LONG256:
+        return switch (entityType) {
+            case LineTcpParser.ENTITY_TYPE_TAG, LineTcpParser.ENTITY_TYPE_STRING, LineTcpParser.ENTITY_TYPE_LONG256 -> {
                 cs = readUtf16Chars(offset);
-                return cs.length() * 2L + Integer.BYTES;
-            case LineTcpParser.ENTITY_TYPE_BYTE:
-            case LineTcpParser.ENTITY_TYPE_GEOBYTE:
-            case LineTcpParser.ENTITY_TYPE_BOOLEAN:
-                return Byte.BYTES;
-            case LineTcpParser.ENTITY_TYPE_SHORT:
-            case LineTcpParser.ENTITY_TYPE_GEOSHORT:
-                return Short.BYTES;
-            case LineTcpParser.ENTITY_TYPE_CHAR:
-                return Character.BYTES;
-            case LineTcpParser.ENTITY_TYPE_CACHED_TAG:
-            case LineTcpParser.ENTITY_TYPE_INTEGER:
-            case LineTcpParser.ENTITY_TYPE_GEOINT:
-                return Integer.BYTES;
-            case LineTcpParser.ENTITY_TYPE_LONG:
-            case LineTcpParser.ENTITY_TYPE_GEOLONG:
-            case LineTcpParser.ENTITY_TYPE_DATE:
-            case LineTcpParser.ENTITY_TYPE_TIMESTAMP:
-                return Long.BYTES;
-            case LineTcpParser.ENTITY_TYPE_FLOAT:
-                return Float.BYTES;
-            case LineTcpParser.ENTITY_TYPE_DOUBLE:
-                return Double.BYTES;
-            case LineTcpParser.ENTITY_TYPE_UUID:
-                return Long128.BYTES;
-            case LineTcpParser.ENTITY_TYPE_ARRAY:
-                return readInt(offset);
-            case ENTITY_TYPE_NULL:
-                return 0;
-            default:
-                throw new UnsupportedOperationException("entityType " + entityType + " is not implemented!");
-        }
+                yield cs.length() * 2L + Integer.BYTES;
+            }
+            case LineTcpParser.ENTITY_TYPE_BYTE, LineTcpParser.ENTITY_TYPE_GEOBYTE, LineTcpParser.ENTITY_TYPE_BOOLEAN ->
+                    Byte.BYTES;
+            case LineTcpParser.ENTITY_TYPE_SHORT, LineTcpParser.ENTITY_TYPE_GEOSHORT -> Short.BYTES;
+            case LineTcpParser.ENTITY_TYPE_CHAR -> Character.BYTES;
+            case LineTcpParser.ENTITY_TYPE_CACHED_TAG, LineTcpParser.ENTITY_TYPE_INTEGER,
+                 LineTcpParser.ENTITY_TYPE_GEOINT -> Integer.BYTES;
+            case LineTcpParser.ENTITY_TYPE_LONG, LineTcpParser.ENTITY_TYPE_GEOLONG, LineTcpParser.ENTITY_TYPE_DATE,
+                 LineTcpParser.ENTITY_TYPE_TIMESTAMP -> Long.BYTES;
+            case LineTcpParser.ENTITY_TYPE_FLOAT -> Float.BYTES;
+            case LineTcpParser.ENTITY_TYPE_DOUBLE -> Double.BYTES;
+            case LineTcpParser.ENTITY_TYPE_UUID -> Long128.BYTES;
+            case LineTcpParser.ENTITY_TYPE_ARRAY -> readInt(offset);
+            case ENTITY_TYPE_NULL -> 0;
+            default -> throw new UnsupportedOperationException("entityType " + entityType + " is not implemented!");
+        };
     }
 
     public long getAddress() {

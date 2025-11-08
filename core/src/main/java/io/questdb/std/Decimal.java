@@ -162,4 +162,9 @@ public interface Decimal {
      * @param decimal the Decimal256 instance to write the converted value into
      */
     void toDecimal256(Decimal256 decimal);
+
+    /**
+     * Sign policy for random generation.
+     */
+    enum SignMode {KEEP, NONNEG, RANDOM}
 }

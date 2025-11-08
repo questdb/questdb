@@ -30,7 +30,9 @@ import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -139,6 +141,37 @@ public class LineHttpSenderV3 extends LineHttpSenderV2 {
         request.putLong(Long.reverseBytes(value.getHl()));
         request.putLong(Long.reverseBytes(value.getLh()));
         request.putLong(Long.reverseBytes(value.getLl()));
+        return this;
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal128 value) {
+        if (value.isNull()) {
+            return this;
+        }
+
+        var request = writeFieldName(name)
+                .putAscii('=')
+                .put(LineTcpParser.ENTITY_TYPE_DECIMAL)
+                .put((byte) value.getScale())
+                .put((byte) 16); // Length
+        request.putLong(Long.reverseBytes(value.getHigh()));
+        request.putLong(Long.reverseBytes(value.getLow()));
+        return this;
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal64 value) {
+        if (value.isNull()) {
+            return this;
+        }
+
+        var request = writeFieldName(name)
+                .putAscii('=')
+                .put(LineTcpParser.ENTITY_TYPE_DECIMAL)
+                .put((byte) value.getScale())
+                .put((byte) 8); // Length
+        request.putLong(Long.reverseBytes(value.getValue()));
         return this;
     }
 }
