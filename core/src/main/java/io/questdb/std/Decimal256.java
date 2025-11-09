@@ -733,15 +733,14 @@ public class Decimal256 implements Sinkable, Decimal {
      * Thread-safe if each thread supplies its own {@code sink} and {@code tmpPow10}. Sharing must be synchronized.
      * </p>
      *
-     * @param rnd        source of randomness (provides 64-bit values)
-     * @param precision  total significant digits; must be in {@code [1, Decimal256.MAX_PRECISION]}
-     * @param scale      digits to the right of the decimal point; must be in {@code [0, precision]}
-     * @param rounding   rounding mode used when trimming excess digits
-     * @param signMode   sign policy: {@code KEEP} (inherit from the top random word),
-     *                   {@code NONNEG} (always non-negative), or {@code RANDOM} (random sign)
-     * @param sink       destination decimal; will be overwritten with the generated value
-     * @param tmpPow10   reusable workspace decimal used to materialize powers of ten (must be non-null)
-     *
+     * @param rnd       source of randomness (provides 64-bit values)
+     * @param precision total significant digits; must be in {@code [1, Decimal256.MAX_PRECISION]}
+     * @param scale     digits to the right of the decimal point; must be in {@code [0, precision]}
+     * @param rounding  rounding mode used when trimming excess digits
+     * @param signMode  sign policy: {@code KEEP} (inherit from the top random word),
+     *                  {@code NONNEG} (always non-negative), or {@code RANDOM} (random sign)
+     * @param sink      destination decimal; will be overwritten with the generated value
+     * @param tmpPow10  reusable workspace decimal used to materialize powers of ten (must be non-null)
      * @throws IllegalArgumentException if {@code precision} or {@code scale} are out of range
      * @see java.math.RoundingMode
      */
@@ -773,7 +772,7 @@ public class Decimal256 implements Sinkable, Decimal {
 
         // Decide sign policy based on the top word (KEEP) or random coin flip
         final boolean desiredNegative =
-                signMode != SignMode.NONNEG && ((signMode == SignMode.RANDOM) ? ((rnd.nextLong() & 1L) != 0L)
+                signMode != SignMode.NONNEG && ((signMode == SignMode.RANDOM) ? ((h0 & 1L) != 0L)
                         : (h3 < 0)); // KEEP
 
         // Work with magnitude
