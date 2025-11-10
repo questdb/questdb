@@ -34,8 +34,8 @@ public abstract class AbstractOffsetCharSequenceHashSet implements Mutable {
     protected final double loadFactor;
     protected int capacity;
     protected int free;
-    protected int[] offsets;
     protected int mask;
+    protected int[] offsets;
 
     public AbstractOffsetCharSequenceHashSet(int initialCapacity, double loadFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
@@ -64,10 +64,6 @@ public abstract class AbstractOffsetCharSequenceHashSet implements Mutable {
         return keyIndex(key) > -1;
     }
 
-    protected long keyAt(int index) {
-        return offsets[-index-1];
-    }
-
     /**
      * Returns the index of a free slot where this key can be placed.
      * Returns the negative index of the key if it's already present.
@@ -85,7 +81,7 @@ public abstract class AbstractOffsetCharSequenceHashSet implements Mutable {
      * Returns the index of a free slot where this key can be placed.
      * Returns the negative index of the key if it's already present.
      *
-     * @param key the key whose slot to look for
+     * @param key      the key whose slot to look for
      * @param hashCode the hashCode of the key
      * @return the index of a free slot where this key can be placed,
      * or the negative index of the key if it's already present.
@@ -119,4 +115,8 @@ public abstract class AbstractOffsetCharSequenceHashSet implements Mutable {
     }
 
     abstract protected boolean areKeysEquals(int offset, @NotNull CharSequence key, int keyHashCode);
+
+    protected long keyAt(int index) {
+        return offsets[-index - 1];
+    }
 }

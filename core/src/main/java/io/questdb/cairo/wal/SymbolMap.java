@@ -38,11 +38,11 @@ import java.util.Arrays;
 public class SymbolMap extends AbstractOffsetCharSequenceHashSet implements Closeable {
     public static final int NO_ENTRY_VALUE = -1;
     private final int noEntryValue;
-    private int[] values;
+    private final DirectString sview = new DirectString();
     private long address;
     private long charsCapacity;
     private int currentOffset = 0;
-    private final DirectString sview = new DirectString();
+    private int[] values;
 
     public SymbolMap() {
         this(8);
@@ -71,8 +71,53 @@ public class SymbolMap extends AbstractOffsetCharSequenceHashSet implements Clos
         this.currentOffset = 0;
     }
 
+    @Override
+    public void close() {
+        if (this.address != 0) {
+            Unsafe.free(address, this.charsCapacity, MemoryTag.NATIVE_DEFAULT);
+            this.address = 0;
+            this.charsCapacity = 0;
+        }
+    }
+
     public int get(@NotNull CharSequence key) {
         return valueAt(keyIndex(key));
+    }
+
+    public CharSequence get(int offset) {
+        final long lo = address + ((long) offset << 2);
+        final int len = Unsafe.getUnsafe().getInt(lo + 4);
+        return sview.of(lo + 8, len);
+    }
+
+    /**
+     * Returns the offset of the next char sequence inserted the map.
+     * Returns -1 if there are no more values.
+     *
+     * @param offset the last offset that was returned
+     * @return the offset of the next char sequence inserted the map
+     * or -1 if there are no more values.
+     */
+    public int nextOffset(int offset) {
+        final long lo = address + ((long) offset << 2);
+        final int len = Unsafe.getUnsafe().getInt(lo + 4);
+        final int off = offset + ((((len << 1) + 11) & ~3) >> 2);
+        if (off == this.currentOffset) {
+            return -1;
+        }
+        return off;
+    }
+
+    /**
+     * Returns the first offset of the map or -1 if the map is empty.
+     *
+     * @return the first offset of the map or -1 if the map is empty
+     */
+    public int nextOffset() {
+        if (this.currentOffset == 0) {
+            return -1;
+        }
+        return 0;
     }
 
     public void put(@NotNull CharSequence key, int value) {
@@ -83,39 +128,6 @@ public class SymbolMap extends AbstractOffsetCharSequenceHashSet implements Clos
     public void putAt(int index, @NotNull CharSequence key, int value, int hashCode) {
         final int offset = this.writeKey(key, hashCode);
         putAt0(index, offset, value, hashCode);
-    }
-
-    private int writeKey(@NotNull CharSequence key, int keyHashCode) {
-        int requiredCapacity = ((key.length() << 1) + 11) & ~3;
-        if (charsCapacity < ((long) currentOffset << 2) + requiredCapacity) {
-            final long oldSize = charsCapacity;
-            charsCapacity = Numbers.ceilPow2(charsCapacity + (long) requiredCapacity);
-            address = Unsafe.realloc(address, oldSize, charsCapacity, MemoryTag.NATIVE_DEFAULT);
-        }
-        final long lo = address + ((long) currentOffset << 2);
-        Unsafe.getUnsafe().putInt(lo, keyHashCode);
-        Unsafe.getUnsafe().putInt(lo + 4, key.length());
-        for (int i = 0; i < key.length(); i++) {
-            Unsafe.getUnsafe().putChar(lo + 8 + ((long) i << 1), key.charAt(i));
-        }
-
-        final int oldOffset = currentOffset;
-        currentOffset += requiredCapacity >> 2;
-
-        return oldOffset;
-    }
-
-    public int valueAt(int index) {
-        int index1 = -index - 1;
-        return index < 0 ? values[index1] : noEntryValue;
-    }
-
-    private void putAt0(int index, int offset, int value, int hashCode) {
-        offsets[index] = offset;
-        values[index] = value;
-        if (--free == 0) {
-            rehash();
-        }
     }
 
     public void rehash() {
@@ -142,45 +154,42 @@ public class SymbolMap extends AbstractOffsetCharSequenceHashSet implements Clos
         }
     }
 
-    public CharSequence get(int offset) {
-        final long lo = address + ((long) offset << 2);
-        final int len = Unsafe.getUnsafe().getInt(lo + 4);
-        return sview.of(lo + 8, len);
+    public int valueAt(int index) {
+        int index1 = -index - 1;
+        return index < 0 ? values[index1] : noEntryValue;
     }
 
-    /**
-     * Returns the offset of the next char sequence inserted the map.
-     * Returns -1 if there are no more values.
-     *
-     * @param offset the last offset that was returned
-     * @return the offset of the next char sequence inserted the map
-     *         or -1 if there are no more values.
-     */
-    public int nextOffset(int offset) {
-        final long lo = address + ((long) offset << 2);
-        final int len = Unsafe.getUnsafe().getInt(lo + 4);
-        final int off = offset + ((((len << 1) + 11) & ~3) >> 2);
-        if (off == this.currentOffset) {
-            return -1;
+    private void putAt0(int index, int offset, int value, int hashCode) {
+        offsets[index] = offset;
+        values[index] = value;
+        if (--free == 0) {
+            rehash();
         }
-        return off;
     }
 
-    /**
-     * Returns the first offset of the map or -1 if the map is empty.
-     *
-     * @return the first offset of the map or -1 if the map is empty
-     */
-    public int nextOffset() {
-        if (this.currentOffset == 0) {
-            return -1;
+    private int writeKey(@NotNull CharSequence key, int keyHashCode) {
+        int requiredCapacity = ((key.length() << 1) + 11) & ~3;
+        if (charsCapacity < ((long) currentOffset << 2) + requiredCapacity) {
+            final long oldSize = charsCapacity;
+            charsCapacity = Numbers.ceilPow2(charsCapacity + (long) requiredCapacity);
+            address = Unsafe.realloc(address, oldSize, charsCapacity, MemoryTag.NATIVE_DEFAULT);
         }
-        return 0;
+        final long lo = address + ((long) currentOffset << 2);
+        Unsafe.getUnsafe().putInt(lo, keyHashCode);
+        Unsafe.getUnsafe().putInt(lo + 4, key.length());
+        for (int i = 0; i < key.length(); i++) {
+            Unsafe.getUnsafe().putChar(lo + 8 + ((long) i << 1), key.charAt(i));
+        }
+
+        final int oldOffset = currentOffset;
+        currentOffset += requiredCapacity >> 2;
+
+        return oldOffset;
     }
 
     @Override
     protected boolean areKeysEquals(int offset, @NotNull CharSequence key, int keyHashCode) {
-        long lo = address + (offset << 2);
+        long lo = address + ((long) offset << 2);
         final int hashCode = Unsafe.getUnsafe().getInt(lo);
         if (hashCode != keyHashCode) {
             return false;
@@ -195,14 +204,5 @@ public class SymbolMap extends AbstractOffsetCharSequenceHashSet implements Clos
             }
         }
         return true;
-    }
-
-    @Override
-    public void close() {
-        if (this.address != 0) {
-            Unsafe.free(address, this.charsCapacity, MemoryTag.NATIVE_DEFAULT);
-            this.address = 0;
-            this.charsCapacity = 0;
-        }
     }
 }
