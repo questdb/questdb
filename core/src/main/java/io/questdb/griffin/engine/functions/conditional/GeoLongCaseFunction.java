@@ -30,6 +30,7 @@ import io.questdb.griffin.engine.functions.GeoLongFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.ObjList;
 
+@SuppressWarnings("resource")
 public class GeoLongCaseFunction extends GeoLongFunction implements MultiArgFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
@@ -41,7 +42,7 @@ public class GeoLongCaseFunction extends GeoLongFunction implements MultiArgFunc
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

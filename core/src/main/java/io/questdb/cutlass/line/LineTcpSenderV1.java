@@ -34,6 +34,7 @@ import org.jetbrains.annotations.NotNull;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
+@SuppressWarnings("resource")
 public class LineTcpSenderV1 extends AbstractLineTcpSender {
     public LineTcpSenderV1(LineChannel channel, int bufferCapacity, int maxNameLength) {
         super(channel, bufferCapacity, maxNameLength);

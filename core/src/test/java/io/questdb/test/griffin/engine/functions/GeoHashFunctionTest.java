@@ -81,6 +81,36 @@ public class GeoHashFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal128() {
+        nullFunction.getDecimal128(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal16() {
+        nullFunction.getDecimal16(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256() {
+        nullFunction.getDecimal256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal32() {
+        nullFunction.getDecimal32(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal64() {
+        nullFunction.getDecimal64(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal8() {
+        nullFunction.getDecimal8(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetDouble() {
         nullFunction.getDouble(null);
     }

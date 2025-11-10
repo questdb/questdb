@@ -452,6 +452,29 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelDecimalKeyGroupBy() throws Exception {
+        testParallelDecimalKeyGroupBy(
+                "SELECT key, " +
+                        "sum(d8) sum_d8,     avg(d8) avg_d8,     avg(d8,1) avg2_d8,     min(d8) min_d8,     max(d8) max_d8,     first(d8) first_d8,     last(d8) last_d8,     first_not_null(d8) firstn_d8,     last_not_null(d8) lastn_d8, " +
+                        "sum(d16) sum_d16,   avg(d16) avg_d16,   avg(d16,2) avg2_d16,   min(d16) min_d16,   max(d16) max_d16,   first(d16) first_d16,   last(d16) last_d16,   first_not_null(d16) firstn_d16,   last_not_null(d16) lastn_d16, " +
+                        "sum(d32) sum_d32,   avg(d32) avg_d32,   avg(d32,3) avg2_d32,   min(d32) min_d32,   max(d32) max_d32,   first(d32) first_d32,   last(d32) last_d32,   first_not_null(d32) firstn_d32,   last_not_null(d32) lastn_d32, " +
+                        "sum(d64) sum_d64,   avg(d64) avg_d64,   avg(d64,5) avg2_d64,   min(d64) min_d64,   max(d64) max_d64,   first(d64) first_d64,   last(d64) last_d64,   first_not_null(d64) firstn_d64,   last_not_null(d64) lastn_d64, " +
+                        "sum(d128) sum_d128, avg(d128) avg_d128, avg(d128,1) avg2_d128, min(d128) min_d128, max(d128) max_d128, first(d128) first_d128, last(d128) last_d128, first_not_null(d128) firstn_d128, last_not_null(d128) lastn_d128, " +
+                        "sum(d256) sum_d256, avg(d256) avg_d256, avg(d256,1) avg2_d256, min(d256) min_d256, max(d256) max_d256, first(d256) first_d256, last(d256) last_d256, first_not_null(d256) firstn_d256, last_not_null(d256) lastn_d256 " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                """
+                        key\tsum_d8\tavg_d8\tavg2_d8\tmin_d8\tmax_d8\tfirst_d8\tlast_d8\tfirstn_d8\tlastn_d8\tsum_d16\tavg_d16\tavg2_d16\tmin_d16\tmax_d16\tfirst_d16\tlast_d16\tfirstn_d16\tlastn_d16\tsum_d32\tavg_d32\tavg2_d32\tmin_d32\tmax_d32\tfirst_d32\tlast_d32\tfirstn_d32\tlastn_d32\tsum_d64\tavg_d64\tavg2_d64\tmin_d64\tmax_d64\tfirst_d64\tlast_d64\tfirstn_d64\tlastn_d64\tsum_d128\tavg_d128\tavg2_d128\tmin_d128\tmax_d128\tfirst_d128\tlast_d128\tfirstn_d128\tlastn_d128\tsum_d256\tavg_d256\tavg2_d256\tmin_d256\tmax_d256\tfirst_d256\tlast_d256\tfirstn_d256\tlastn_d256
+                        0\t400\t0\t0.5\t0\t1\t1\t0\t1\t0\t2000.0\t2.5\t2.50\t0.0\t5.0\t5.0\t0.0\t5.0\t0.0\t6000.0\t7.5\t7.500\t0.0\t15.0\t5.0\t0.0\t5.0\t0.0\t9990.00\t12.49\t12.48750\t0.00\t25.00\t5.00\t10.00\t5.00\t10.00\t14000.000\t17.500\t17.5\t0.000\t35.000\t5.000\t0.000\t5.000\t0.000\t38000.000000\t47.500000\t47.5\t0.000000\t95.000000\t5.000000\t0.000000\t5.000000\t0.000000
+                        1\t400\t0\t0.5\t0\t1\t1\t0\t1\t0\t2800.0\t3.5\t3.50\t1.0\t6.0\t1.0\t6.0\t1.0\t6.0\t6800.0\t8.5\t8.500\t1.0\t16.0\t1.0\t16.0\t1.0\t16.0\t10780.00\t13.48\t13.47500\t1.00\t26.00\t1.00\t6.00\t1.00\t6.00\t14800.000\t18.500\t18.5\t1.000\t36.000\t1.000\t36.000\t1.000\t36.000\t38800.000000\t48.500000\t48.5\t1.000000\t96.000000\t1.000000\t96.000000\t1.000000\t96.000000
+                        2\t400\t0\t0.5\t0\t1\t0\t1\t0\t1\t3600.0\t4.5\t4.50\t2.0\t7.0\t2.0\t7.0\t2.0\t7.0\t7600.0\t9.5\t9.500\t2.0\t17.0\t2.0\t17.0\t2.0\t17.0\t11580.00\t14.48\t14.47500\t2.00\t27.00\t2.00\t7.00\t2.00\t7.00\t15600.000\t19.500\t19.5\t2.000\t37.000\t2.000\t37.000\t2.000\t37.000\t39600.000000\t49.500000\t49.5\t2.000000\t97.000000\t2.000000\t97.000000\t2.000000\t97.000000
+                        3\t400\t0\t0.5\t0\t1\t1\t0\t1\t0\t4400.0\t5.5\t5.50\t3.0\t8.0\t3.0\t8.0\t3.0\t8.0\t8400.0\t10.5\t10.500\t3.0\t18.0\t3.0\t18.0\t3.0\t18.0\t12380.00\t15.48\t15.47500\t3.00\t28.00\t3.00\t8.00\t3.00\t8.00\t16400.000\t20.500\t20.5\t3.000\t38.000\t3.000\t38.000\t3.000\t38.000\t40400.000000\t50.500000\t50.5\t3.000000\t98.000000\t3.000000\t98.000000\t3.000000\t98.000000
+                        4\t400\t0\t0.5\t0\t1\t0\t1\t0\t1\t5200.0\t6.5\t6.50\t4.0\t9.0\t4.0\t9.0\t4.0\t9.0\t9200.0\t11.5\t11.500\t4.0\t19.0\t4.0\t19.0\t4.0\t19.0\t13180.00\t16.48\t16.47500\t4.00\t29.00\t4.00\t9.00\t4.00\t9.00\t17200.000\t21.500\t21.5\t4.000\t39.000\t4.000\t39.000\t4.000\t39.000\t41200.000000\t51.500000\t51.5\t4.000000\t99.000000\t4.000000\t99.000000\t4.000000\t99.000000
+                        """
+        );
+    }
+
+    @Test
     public void testParallelFunctionKeyExplicitGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -1861,6 +1884,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByDecimalFunctions() throws Exception {
+        testParallelDecimalKeyGroupBy(
+                "SELECT " +
+                        "sum(d8) sum_d8,     avg(d8) avg_d8,     avg(d8,1) avg2_d8,     min(d8) min_d8,     max(d8) max_d8,     first(d8) first_d8,     last(d8) last_d8,     first_not_null(d8) firstn_d8,     last_not_null(d8) lastn_d8, " +
+                        "sum(d16) sum_d16,   avg(d16) avg_d16,   avg(d16,2) avg2_d16,   min(d16) min_d16,   max(d16) max_d16,   first(d16) first_d16,   last(d16) last_d16,   first_not_null(d16) firstn_d16,   last_not_null(d16) lastn_d16, " +
+                        "sum(d32) sum_d32,   avg(d32) avg_d32,   avg(d32,3) avg2_d32,   min(d32) min_d32,   max(d32) max_d32,   first(d32) first_d32,   last(d32) last_d32,   first_not_null(d32) firstn_d32,   last_not_null(d32) lastn_d32, " +
+                        "sum(d64) sum_d64,   avg(d64) avg_d64,   avg(d64,5) avg2_d64,   min(d64) min_d64,   max(d64) max_d64,   first(d64) first_d64,   last(d64) last_d64,   first_not_null(d64) firstn_d64,   last_not_null(d64) lastn_d64, " +
+                        "sum(d128) sum_d128, avg(d128) avg_d128, avg(d128,1) avg2_d128, min(d128) min_d128, max(d128) max_d128, first(d128) first_d128, last(d128) last_d128, first_not_null(d128) firstn_d128, last_not_null(d128) lastn_d128, " +
+                        "sum(d256) sum_d256, avg(d256) avg_d256, avg(d256,1) avg2_d256, min(d256) min_d256, max(d256) max_d256, first(d256) first_d256, last(d256) last_d256, first_not_null(d256) firstn_d256, last_not_null(d256) lastn_d256 " +
+                        "FROM tab",
+                """
+                        sum_d8\tavg_d8\tavg2_d8\tmin_d8\tmax_d8\tfirst_d8\tlast_d8\tfirstn_d8\tlastn_d8\tsum_d16\tavg_d16\tavg2_d16\tmin_d16\tmax_d16\tfirst_d16\tlast_d16\tfirstn_d16\tlastn_d16\tsum_d32\tavg_d32\tavg2_d32\tmin_d32\tmax_d32\tfirst_d32\tlast_d32\tfirstn_d32\tlastn_d32\tsum_d64\tavg_d64\tavg2_d64\tmin_d64\tmax_d64\tfirst_d64\tlast_d64\tfirstn_d64\tlastn_d64\tsum_d128\tavg_d128\tavg2_d128\tmin_d128\tmax_d128\tfirst_d128\tlast_d128\tfirstn_d128\tlastn_d128\tsum_d256\tavg_d256\tavg2_d256\tmin_d256\tmax_d256\tfirst_d256\tlast_d256\tfirstn_d256\tlastn_d256
+                        2000\t0\t0.5\t0\t1\t1\t0\t1\t0\t18000.0\t4.5\t4.50\t0.0\t9.0\t1.0\t0.0\t1.0\t0.0\t38000.0\t9.5\t9.500\t0.0\t19.0\t1.0\t0.0\t1.0\t0.0\t57910.00\t14.48\t14.47750\t0.00\t29.00\t1.00\t10.00\t1.00\t10.00\t78000.000\t19.500\t19.5\t0.000\t39.000\t1.000\t0.000\t1.000\t0.000\t198000.000000\t49.500000\t49.5\t0.000000\t99.000000\t1.000000\t0.000000\t1.000000\t0.000000
+                        """
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByFaultTolerance() throws Exception {
         testParallelGroupByFaultTolerance("select vwap(price, quantity) from tab where npe();");
     }
@@ -1976,6 +2017,54 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 """
                         count_distinct\tapprox_count_distinct
                         4000\t4000
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithBasicDoubleFunctions() throws Exception {
+        Assume.assumeFalse(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT min(adouble), max(adouble), round(avg(adouble)*count(adouble)), round(sum(adouble)), first(adouble), last(adouble) FROM tab",
+                """
+                        min\tmax\tround\tround1\tfirst\tlast
+                        2.0456303844185175E-4\t0.9999182937007105\t1679.0\t1679.0\t0.8799634725391621\t0.15322992873721464
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithBasicFloatFunctions() throws Exception {
+        Assume.assumeFalse(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT min(afloat), max(afloat), round(avg(afloat)*count(afloat)), round(sum(afloat)), first(afloat), last(afloat) FROM tab",
+                """
+                        min\tmax\tround\tround1\tfirst\tlast
+                        1.6343594E-4\t0.9997715\t1665.0\t1665.0\t0.87567717\t0.030083895
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithBasicIntFunctions() throws Exception {
+        Assume.assumeFalse(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT min(anint), max(anint), round(avg(anint)*count(anint)), sum(anint), first(anint), last(anint) FROM tab",
+                """
+                        min\tmax\tround\tsum\tfirst\tlast
+                        -2147365666\t2146394077\t-4.9631313424E10\t-49631313424\t-85170055\t1033747429
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithBasicLongFunctions() throws Exception {
+        Assume.assumeFalse(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT min(along), max(along), round(avg(along)*count(along)), sum(along), first(along), last(along) FROM tab",
+                """
+                        min\tmax\tround\tsum\tfirst\tlast
+                        -9220264229979566148\t9222440717001210457\t-9.223372036854776E18\t-8085484953408325183\t8416773233910814357\t6812734169481155056
                         """
         );
     }
@@ -3812,6 +3901,47 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         // Compare the results.
                         TestUtils.assertEquals(sink, sinkB);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelDecimalKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        engine.execute(
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  key DECIMAL(2,0)," +
+                                        "  d8 DECIMAL(2,0)," +
+                                        "  d16 DECIMAL(4,1)," +
+                                        "  d32 DECIMAL(7,1)," +
+                                        "  d64 DECIMAL(15,2)," +
+                                        "  d128 DECIMAL(32,3)," +
+                                        "  d256 DECIMAL(76,6)" +
+                                        ") timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "insert into tab select (x * 864000000)::timestamp ts," +
+                                        " cast((x % 5) as decimal(2,0)) key, " +
+                                        " cast((x % 2) as decimal(2,0)) d8, " +
+                                        " cast((x % 10) as decimal(4,1)) d16, " +
+                                        " cast((x % 20) as decimal(7,1)) d32, " +
+                                        " cast((x % 30) as decimal(15,2)) d64, " +
+                                        " cast((x % 40) as decimal(32,3)) d128, " +
+                                        " cast((x % 100) as decimal(76,6)) d256 " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
                     LOG

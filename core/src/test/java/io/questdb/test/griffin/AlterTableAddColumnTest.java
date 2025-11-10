@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -409,6 +410,87 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     );
                 }
         );
+    }
+
+    @Test
+    public void testAddDecimalsColumnsWithColTopsSelect() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute(
+                    "create table x (ts timestamp) timestamp (ts)" +
+                            " partition by day" +
+                            (isWal ? " wal" : "") +
+                            ";"
+            );
+
+            execute("insert into x values('2024-01-01')");
+            execute("insert into x values('2024-01-02')");
+            execute("insert into x values('2024-01-03')");
+            execute("insert into x values('2024-01-04')");
+
+            // We never insert new data to the first 2 partitions to keep the coltops
+
+            execute("alter table x add column dec8 decimal(2, 0)");
+            execute("insert into x values('2024-01-03', 12m)");
+            execute("alter table x add column dec16 decimal(4, 1)");
+            execute("insert into x values('2024-01-04', 12m, 123.4m)");
+            execute("alter table x add column dec32 decimal(9, 2)");
+            execute("insert into x values('2024-01-03', 12m, 123.4m, 123456.78m)");
+            execute("alter table x add column dec64 decimal(18, 3)");
+            execute("insert into x values('2024-01-04', 12m, 123.4m, 123456.78m, 12345678.901m)");
+            execute("alter table x add column dec128 decimal(38, 4)");
+            execute("insert into x values('2024-01-03', 12m, 123.4m, 123456.78m, 12345678.901m, 1234567890.1234m)");
+            execute("alter table x add column dec256 decimal(76, 5)");
+            execute("insert into x values('2024-01-04', 12m, 123.4m, 123456.78m, 12345678.901m, 1234567890.1234m, 1234567890123.45678m)");
+
+            drainWalQueue();
+
+            assertQuery(
+                    """
+                            ts\tdec8\tdec16\tdec32\tdec64\tdec128\tdec256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-02T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-03T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-03T00:00:00.000000Z\t12\t\t\t\t\t
+                            2024-01-03T00:00:00.000000Z\t12\t123.4\t123456.78\t\t\t
+                            2024-01-03T00:00:00.000000Z\t12\t123.4\t123456.78\t12345678.901\t1234567890.1234\t
+                            2024-01-04T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-04T00:00:00.000000Z\t12\t123.4\t\t\t\t
+                            2024-01-04T00:00:00.000000Z\t12\t123.4\t123456.78\t12345678.901\t\t
+                            2024-01-04T00:00:00.000000Z\t12\t123.4\t123456.78\t12345678.901\t1234567890.1234\t1234567890123.45678
+                            """,
+                    "x",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testAddDefaultDecimalColumn() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute(
+                    "create table x (ts timestamp) timestamp (ts)" +
+                            " partition by day" +
+                            (isWal ? " wal" : "") +
+                            ";"
+            );
+            execute("alter table x add column dec decimal");
+            execute("insert into x values('2024-01-01', 123.456m)");
+
+            drainWalQueue();
+
+            assertQuery(
+                    """
+                            ts\tdec
+                            2024-01-01T00:00:00.000000Z\t123.456
+                            """,
+                    "x",
+                    "ts",
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
