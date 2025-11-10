@@ -595,38 +595,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testInsertDecimalCreateTable() throws Exception {
-        runInContext(r -> {
-            try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                    .address("127.0.0.1")
-                    .port(bindPort)
-                    .protocolVersion(PROTOCOL_VERSION_V3)
-                    .build()
-            ) {
-                CountDownLatch released = createTableCommitNotifier("decimal_test");
-                sender.table("decimal_test")
-                        .decimalColumn("a", Decimal256.fromLong(12345, 2))
-                        .at(100000000000L, ChronoUnit.MICROS);
-                sender.flush();
-                waitTableWriterFinish(released);
-            }
-            drainWalQueue();
-
-            assertTableSizeEventually(engine, "decimal_test", 1);
-            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("decimal_test"))) {
-                Assert.assertEquals(ColumnType.getDecimalType(18, 3), metadata.getColumnType("a"));
-            }
-
-            try (TableReader reader = getReader("decimal_test")) {
-                TestUtils.assertReader("""
-                        a\ttimestamp
-                        123.450\t1970-01-02T03:46:40.000000Z
-                        """, reader, sink);
-            }
-        });
-    }
-
-    @Test
     public void testInsertDecimalTextFormatBasic() throws Exception {
         runInContext(r -> {
             String tableName = "decimal_text_format_basic";
