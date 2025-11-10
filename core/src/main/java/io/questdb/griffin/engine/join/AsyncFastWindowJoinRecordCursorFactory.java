@@ -83,8 +83,8 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
     private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT = AsyncFastWindowJoinRecordCursorFactory::filterAndAggregateVect;
 
     private final SCSequence collectSubSeq = new SCSequence();
-    private final AsyncFastWindowJoinRecordCursor cursor;
-    private final PageFrameSequence<AsyncFastWindowJoinAtom> frameSequence;
+    private final AsyncWindowJoinRecordCursor cursor;
+    private final PageFrameSequence<AbstractWindowJoinAtom> frameSequence;
     private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
@@ -125,7 +125,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         final int columnSplit = masterFactory.getMetadata().getColumnCount();
-        this.cursor = new AsyncFastWindowJoinRecordCursor(
+        this.cursor = new AsyncWindowJoinRecordCursor(
                 configuration,
                 groupByFunctions,
                 slaveFactory.getMetadata(),
@@ -182,7 +182,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
-    public PageFrameSequence<AsyncFastWindowJoinAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<AbstractWindowJoinAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(masterFactory, executionContext, collectSubSeq, order);
     }
 
@@ -224,7 +224,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
     public void toPlan(PlanSink sink) {
         sink.type("Async Window Fast Join");
         sink.meta("workers").val(workerCount);
-        final AsyncFastWindowJoinAtom atom = frameSequence.getAtom();
+        final AsyncFastWindowJoinAtom atom = (AsyncFastWindowJoinAtom) frameSequence.getAtom();
         sink.attr("symbol")
                 .val(masterFactory.getMetadata().getColumnName(atom.getMasterSymbolIndex()))
                 .val("=")
