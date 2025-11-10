@@ -34,9 +34,9 @@ import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class FirstNonNullArrayGroupByFunction extends FirstArrayGroupByFunction {
+public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction {
 
-    public FirstNonNullArrayGroupByFunction(@NotNull Function arg) {
+    public FirstNotNullArrayGroupByFunction(@NotNull Function arg) {
         super(arg);
     }
 
@@ -80,7 +80,7 @@ public class FirstNonNullArrayGroupByFunction extends FirstArrayGroupByFunction 
 
     @Override
     public String getName() {
-        return "first_non_null";
+        return "first_not_null";
     }
 
     @Override

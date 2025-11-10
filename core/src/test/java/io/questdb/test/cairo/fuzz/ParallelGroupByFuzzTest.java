@@ -840,8 +840,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelGroupByArray() throws Exception {
         Assume.assumeFalse(convertToParquet);
         testParallelGroupByArray(
-                "SELECT first(darr), last(darr), first_non_null(darr), key FROM tab order by key",
-                "first\tlast\tfirst_non_null\tkey\n" +
+                "SELECT first(darr), last(darr), first_not_null(darr), key FROM tab order by key",
+                "first\tlast\tfirst_not_null\tkey\n" +
                         "[[null,null,null],[null,0.7883065830055033,null]]\t[[0.8522582952903538,0.6179906752583175],[null,null],[null,null]]\t[[null,null,null],[null,0.7883065830055033,null]]\tk0\n" +
                         "[[null,0.20447441837877756],[null,null]]\t[[null,null],[null,0.9164539569237466],[null,null]]\t[[null,0.20447441837877756],[null,null]]\tk1\n" +
                         "[[0.3491070363730514,0.7611029514995744],[0.4217768841969397,null],[0.7261136209823622,0.4224356661645131]]\t[[0.47845408543565093,null,0.19197284817490712],[null,null,0.21496623812935467]]\t[[0.3491070363730514,0.7611029514995744],[0.4217768841969397,null],[0.7261136209823622,0.4224356661645131]]\tk2\n" +

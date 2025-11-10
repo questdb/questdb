@@ -27,7 +27,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class FirstNonNullArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
+public class FirstNotNullArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullArray() throws Exception {
@@ -38,7 +38,7 @@ public class FirstNonNullArrayGroupByFunctionFactoryTest extends AbstractCairoTe
             assertQuery(
                     "arr\n" +
                             "[1.0,2.0]\n",
-                    "select first_non_null(arr) arr from tab",
+                    "select first_not_null(arr) arr from tab",
                     null,
                     false,
                     true
@@ -55,7 +55,7 @@ public class FirstNonNullArrayGroupByFunctionFactoryTest extends AbstractCairoTe
             assertQuery(
                     "arr\n" +
                             "[3.0,null,5.0]\n",
-                    "select first_non_null(arr) arr from tab",
+                    "select first_not_null(arr) arr from tab",
                     null,
                     false,
                     true
@@ -71,7 +71,7 @@ public class FirstNonNullArrayGroupByFunctionFactoryTest extends AbstractCairoTe
             assertQuery(
                     "arr\n" +
                             "[1.0,2.0]\n",
-                    "select first_non_null(arr) arr from tab",
+                    "select first_not_null(arr) arr from tab",
                     null,
                     false,
                     true
@@ -88,7 +88,7 @@ public class FirstNonNullArrayGroupByFunctionFactoryTest extends AbstractCairoTe
             assertQuery(
                     "arr\n" +
                             "null\n",
-                    "select first_non_null(arr) arr from tab",
+                    "select first_not_null(arr) arr from tab",
                     null,
                     false,
                     true
@@ -108,7 +108,7 @@ public class FirstNonNullArrayGroupByFunctionFactoryTest extends AbstractCairoTe
                     "grp\tarr\n" +
                             "1\t[10.0,11.0]\n" +
                             "2\t[20.0,21.0]\n",
-                    "select grp, first_non_null(arr) arr from tab order by grp",
+                    "select grp, first_not_null(arr) arr from tab order by grp",
                     null,
                     true,
                     true
@@ -127,7 +127,7 @@ public class FirstNonNullArrayGroupByFunctionFactoryTest extends AbstractCairoTe
             assertQuery(
                     "arr\n" +
                             "[1.0,2.0]\n",
-                    "select first_non_null(arr) arr from tab",
+                    "select first_not_null(arr) arr from tab",
                     null,
                     false,
                     true
@@ -146,7 +146,7 @@ public class FirstNonNullArrayGroupByFunctionFactoryTest extends AbstractCairoTe
                     "grp\tarr\n" +
                             "1\tnull\n" +
                             "2\t[20.0,21.0]\n",
-                    "select grp, first_non_null(arr) arr from tab order by grp",
+                    "select grp, first_not_null(arr) arr from tab order by grp",
                     null,
                     true,
                     true

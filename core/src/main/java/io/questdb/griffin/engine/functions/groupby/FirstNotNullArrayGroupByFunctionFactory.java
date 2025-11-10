@@ -31,10 +31,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class FirstNonNullArrayGroupByFunctionFactory implements FunctionFactory {
+public class FirstNotNullArrayGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "first_non_null(D[])";
+        return "first_not_null(D[])";
     }
 
     @Override
@@ -50,6 +50,6 @@ public class FirstNonNullArrayGroupByFunctionFactory implements FunctionFactory 
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new FirstNonNullArrayGroupByFunction(args.getQuick(0));
+        return new FirstNotNullArrayGroupByFunction(args.getQuick(0));
     }
 }
