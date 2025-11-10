@@ -114,6 +114,7 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final long slaveTsScale;
     private final long valueSizeInBytes;
     private final boolean vectorized;
+    private boolean onlyFiltered = false;
 
     public AsyncFastWindowJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,

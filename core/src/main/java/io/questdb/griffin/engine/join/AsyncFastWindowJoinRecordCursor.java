@@ -219,77 +219,42 @@ class AsyncFastWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
-    private int initializeSlaveTimeFrameCache() {
-        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
-        slaveTimeFramePartitionIndexes.clear();
-        slaveTimeFrameRowCounts.clear();
-
-        int frameCount = 0;
-        PageFrame frame;
-        while ((frame = slaveFrameCursor.next()) != null) {
-            slaveTimeFramePartitionIndexes.add(frame.getPartitionIndex());
-            slaveTimeFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-            slaveTimeFrameAddressCache.add(frameCount++, frame);
-        }
-        return frameCount;
-    }
-
-    private void populateSlavePartitionTimestamps() {
-        slavePartitionTimestamps.clear();
-        final TableReader reader = slaveFrameCursor.getTableReader();
-        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
-            slavePartitionTimestamps.add(reader.getPartitionTimestampByIndex(i));
-        }
-    }
-
-    private void initializeTimeFrameCursors(int frameCount) {
-        try {
-            masterFrameSequence.getAtom().initTimeFrameCursors(
-                    executionContext,
-                    masterFrameSequence.getSymbolTableSource(),
-                    slaveFrameCursor,
-                    slaveTimeFrameAddressCache,
-                    slaveTimeFramePartitionIndexes,
-                    slaveTimeFrameRowCounts,
-                    slavePartitionTimestamps,
-                    frameCount
-            );
-        } catch (SqlException e) {
-            throw CairoException.nonCritical().put(e.getFlyweightMessage());
-        }
-    }
-
-    // TODO(puzpuzpuz): skip filter&aggregation for all new tasks we publish here
     private void calculateSizeFiltered(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        if (frameIndex == -1) {
-            fetchNextFrame();
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-        }
+        boolean old = masterFrameSequence.getAtom().isOnlyFiltered();
+        masterFrameSequence.getAtom().setOnlyFiltered(true);
+        try {
+            if (frameIndex == -1) {
+                fetchNextFrame();
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            }
 
-        // We have rows in the current frame we still need to dispatch
-        if (frameRowIndex < frameRowCount) {
-            counter.add(frameRowCount - frameRowIndex);
-            frameRowIndex = frameRowCount;
-        }
-
-        // Release the previous queue item.
-        // There is no identity check here because this check
-        // had been done when 'cursor' was assigned.
-        collectCursor(false);
-
-        while (frameIndex < frameLimit) {
-            fetchNextFrame();
-            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+            // We have rows in the current frame we still need to dispatch
+            if (frameRowIndex < frameRowCount) {
                 counter.add(frameRowCount - frameRowIndex);
                 frameRowIndex = frameRowCount;
-                collectCursor(false);
             }
 
-            if (!allFramesActive) {
-                throwTimeoutException();
-            }
+            // Release the previous queue item.
+            // There is no identity check here because this check
+            // had been done when 'cursor' was assigned.
+            collectCursor(false);
 
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            while (frameIndex < frameLimit) {
+                fetchNextFrame();
+                if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+                    counter.add(frameRowCount - frameRowIndex);
+                    frameRowIndex = frameRowCount;
+                    collectCursor(false);
+                }
+
+                if (!allFramesActive) {
+                    throwTimeoutException();
+                }
+
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            }
+        } finally {
+            masterFrameSequence.getAtom().setOnlyFiltered(old);
         }
     }
 
@@ -468,6 +433,46 @@ class AsyncFastWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             throwTimeoutException();
         }
         return false;
+    }
+
+    private int initializeSlaveTimeFrameCache() {
+        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
+        slaveTimeFramePartitionIndexes.clear();
+        slaveTimeFrameRowCounts.clear();
+
+        int frameCount = 0;
+        PageFrame frame;
+        while ((frame = slaveFrameCursor.next()) != null) {
+            slaveTimeFramePartitionIndexes.add(frame.getPartitionIndex());
+            slaveTimeFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            slaveTimeFrameAddressCache.add(frameCount++, frame);
+        }
+        return frameCount;
+    }
+
+    private void initializeTimeFrameCursors(int frameCount) {
+        try {
+            masterFrameSequence.getAtom().initTimeFrameCursors(
+                    executionContext,
+                    masterFrameSequence.getSymbolTableSource(),
+                    slaveFrameCursor,
+                    slaveTimeFrameAddressCache,
+                    slaveTimeFramePartitionIndexes,
+                    slaveTimeFrameRowCounts,
+                    slavePartitionTimestamps,
+                    frameCount
+            );
+        } catch (SqlException e) {
+            throw CairoException.nonCritical().put(e.getFlyweightMessage());
+        }
+    }
+
+    private void populateSlavePartitionTimestamps() {
+        slavePartitionTimestamps.clear();
+        final TableReader reader = slaveFrameCursor.getTableReader();
+        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+            slavePartitionTimestamps.add(reader.getPartitionTimestampByIndex(i));
+        }
     }
 
     private void throwTimeoutException() {

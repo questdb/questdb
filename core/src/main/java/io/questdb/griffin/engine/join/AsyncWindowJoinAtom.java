@@ -107,6 +107,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final long slaveTsScale;
     private final long valueSizeInBytes;
     private final boolean vectorized;
+    private boolean onlyFiltered = false;
 
     public AsyncWindowJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -526,6 +527,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
     }
 
+    public boolean isOnlyFiltered() {
+        return onlyFiltered;
+    }
+
     public boolean isVectorized() {
         return vectorized;
     }
@@ -546,6 +551,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
     public void release(int slotId) {
         perWorkerLocks.releaseSlot(slotId);
+    }
+
+    public void setOnlyFiltered(boolean onlyFiltered) {
+        this.onlyFiltered = onlyFiltered;
     }
 
     @Override
