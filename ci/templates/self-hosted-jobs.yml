@@ -3,6 +3,21 @@ jobs:
     workspace:
       clean: all
     displayName: "on linux-arm64"
+    strategy:
+      matrix:
+        arm64-griffin-base:
+          testset: "all"
+          includeTests: "**/griffin/*"
+          # Exclude O3 tests: run in windows-other-2
+          # Exclude Fuzz tests: run in windows-fuzz1 (cairo) and windows-fuzz2 (non-cairo)
+          excludeTests: "**/O3*Test**,**/**Fuzz**"
+        arm64-griffin-sub:
+          testset: "all"
+          includeTests: "**/griffin/**/*"
+          # Exclude O3 tests: run in windows-other-2
+          # Exclude Fuzz tests: run in windows-fuzz1 (cairo) and windows-fuzz2 (non-cairo)
+          # Exclude base package: run in windows-griffin-base
+          excludeTests: "**/griffin/*,**/O3*Test**,**/**Fuzz**"
     pool:
       name: "hetzner-docker-arm"
     timeoutInMinutes: 60
