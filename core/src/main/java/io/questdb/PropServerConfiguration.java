@@ -2911,14 +2911,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    public static class ValidationResult {
-        public final boolean isError;
-        public final String message;
-
-        private ValidationResult(boolean isError, String message) {
-            this.isError = isError;
-            this.message = message;
-        }
+    public record ValidationResult(boolean isError, String message) {
     }
 
     class PropCairoConfiguration implements CairoConfiguration {

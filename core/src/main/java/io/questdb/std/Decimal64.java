@@ -242,104 +242,6 @@ public class Decimal64 implements Sinkable, Decimal {
     }
 
     /**
-     * Generates a pseudo-random {@code Decimal64} that conforms to the specified
-     * {@code precision} and {@code scale}, writing the result into {@code sink}.
-     * <p>
-     * This method uses only {@code Decimal64} arithmetic and the built-in base-10
-     * power table. It does not allocate intermediate objects and mutates the
-     * provided {@code sink} in place.
-     *
-     * <p><b>Overview</b></p>
-     * <ul>
-     *   <li>Draw one 64-bit word from {@code rnd} and interpret it as an unscaled integer; set {@code scale = 0}.</li>
-     *   <li>Normalize to magnitude (absolute value).</li>
-     *   <li>Estimate the number of decimal digits by binary search against 10^k values in the internal power table.</li>
-     *   <li>If the magnitude has more digits than {@code precision}, divide by
-     *       10^(digits − precision) using the specified {@code rounding}.</li>
-     *   <li>Apply the chosen sign policy and assign the final {@code scale} (metadata only).</li>
-     * </ul>
-     *
-     * <p><b>Uniformity</b></p>
-     * <p>
-     * The underlying random bits are uniform in 64-bit integer space and then “shrunk-to-fit”
-     * the requested precision. This produces a high-quality pseudo-random sample for fuzzing
-     * and testing, but it is not a mathematically exact uniform sampler over the base-10
-     * range {@code [0, 10^precision − 1]}.
-     * </p>
-     *
-     * <p><b>Performance</b></p>
-     * <ul>
-     *   <li>Digit estimation: O(log₁₀(p)) comparisons (binary search up to 19 powers of ten).</li>
-     *   <li>Trimming: a single division by 10^e using the selected rounding mode.</li>
-     *   <li>No heap allocations (mutates {@code sink} only).</li>
-     * </ul>
-     *
-     * <p><b>Thread safety</b></p>
-     * <p>
-     * Thread-safe if each thread uses its own {@code sink}. Concurrent reuse must be synchronized.
-     * </p>
-     *
-     * @param rnd       source of randomness that provides 64-bit values
-     * @param precision total significant digits; must be in {@code [1, Decimal64.MAX_PRECISION]}
-     * @param scale     digits to the right of the decimal point; must be in {@code [0, precision]}
-     * @param rounding  rounding mode used when trimming excess digits
-     * @param signMode  sign policy:
-     *                  {@code KEEP} (use the sign of the random word),
-     *                  {@code NONNEG} (always non-negative), or
-     *                  {@code RANDOM} (randomly choose sign)
-     * @param sink      destination decimal; will be overwritten with the generated value
-     * @throws IllegalArgumentException if {@code precision} or {@code scale} are out of range
-     * @see java.math.RoundingMode
-     */
-    public static void random(Rnd rnd,
-                              int precision,
-                              int scale,
-                              RoundingMode rounding,
-                              SignMode signMode,
-                              Decimal64 sink) {
-        if (precision < 1 || precision > MAX_PRECISION) {
-            throw new IllegalArgumentException("precision must be in [1," + MAX_PRECISION + "]");
-        }
-        if (scale < 0 || scale > precision) {
-            throw new IllegalArgumentException("scale must be in [0, precision]");
-        }
-        if (rounding == null) rounding = RoundingMode.DOWN;
-        if (signMode == null) signMode = SignMode.KEEP;
-
-        // 1) Raw 64-bit integer from PRNG, treat as unscaled (scale=0)
-        final long raw = rnd.nextLong();
-        sink.ofRaw(raw);
-        sink.setScale(0);
-
-        // 2) Decide final sign policy now (before we possibly modify the value)
-        final boolean desiredNegative =
-                signMode != SignMode.NONNEG && ((signMode == SignMode.RANDOM) ? ((rnd.nextLong() & 1L) != 0L) :
-                        (raw < 0)); // KEEP: keep the sign of the random draw
-
-        // 3) Estimate digit count from |raw| using powers of 10 table
-        final int k = digitsFloorIndex64(raw); // largest k with 10^k <= |raw|
-        final int digits = (raw == 0L) ? 1 : (k + 1);
-
-        // 4) If too many digits, trim by dividing by 10^(excess) with rounding
-        if (digits > precision) {
-            final int excess = digits - precision;
-            // divide by 10^excess; resultScale remains 0
-            sink.divide(TEN_POWERS_TABLE[excess], /*otherScale*/0, /*resultScale*/0, rounding);
-        }
-
-        // 5) Apply the chosen sign (avoid negative zero)
-        if (sink.value < 0) {
-            sink.value = -sink.value; // normalize positive; safe for all values present here
-        }
-        if (desiredNegative && sink.value != 0) {
-            sink.value = -sink.value;
-        }
-
-        // 6) Set final scale (metadata only)
-        sink.setScale(scale);
-    }
-
-    /**
      * Subtract two Decimal64 numbers and store the result in sink (a - b -> sink)
      */
     public static void subtract(Decimal64 a, Decimal64 b, Decimal64 sink) {
@@ -977,32 +879,6 @@ public class Decimal64 implements Sinkable, Decimal {
             return divisorOdd ? -1 : 0;
         }
         return cmp;
-    }
-
-    /**
-     * Returns the largest {@code k} in [0,18] such that 10^k ≤ |v|.
-     * For {@code v == 0}, the caller should treat the digit count as 1.
-     *
-     * @param v the unscaled 64-bit integer
-     * @return the floor index {@code k} where {@code 10^k ≤ |v| < 10^(k+1)}
-     */
-    private static int digitsFloorIndex64(long v) {
-        if (v == 0) return 0;
-        long a;
-        if (v == Long.MIN_VALUE) {
-            // |MIN| = 9223372036854775808, which is > 10^18; treat as slightly larger than Long.MAX_VALUE.
-            a = Long.MAX_VALUE;
-        } else {
-            a = (v < 0) ? -v : v;
-        }
-        int lo = 0, hi = 18;
-        while (lo < hi) {
-            int mid = (lo + hi + 1) >>> 1;
-            if (a >= TEN_POWERS_TABLE[mid]) lo = mid;
-            else hi = mid - 1;
-        }
-        // For v == Long.MIN_VALUE, digits should be 19 (k==18 is correct, caller adds +1)
-        return lo;
     }
 
     private static long scaleUp(long value, int scaleDiff) {

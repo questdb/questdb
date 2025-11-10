@@ -1281,69 +1281,32 @@ public class BindVariableServiceImpl implements BindVariableService {
     private static void setStr0(Function function, CharSequence value, int index, @Nullable CharSequence name) throws SqlException {
         final int type = function.getType();
         switch (ColumnType.tagOf(type)) {
-            case ColumnType.BOOLEAN:
-                ((BooleanBindVariable) function).value = value != null && SqlKeywords.isTrueKeyword(value);
-                break;
-            case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = SqlUtil.implicitCastStrAsByte(value);
-                break;
-            case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = SqlUtil.implicitCastStrAsShort(value);
-                break;
-            case ColumnType.CHAR:
-                ((CharBindVariable) function).value = SqlUtil.implicitCastStrAsChar(value);
-                break;
-            case ColumnType.IPv4:
-                ((IPv4BindVariable) function).value = SqlUtil.implicitCastStrAsIPv4(value);
-                break;
-            case ColumnType.INT:
-                ((IntBindVariable) function).value = SqlUtil.implicitCastStrAsInt(value);
-                break;
-            case ColumnType.LONG:
-                ((LongBindVariable) function).value = SqlUtil.implicitCastStrAsLong(value);
-                break;
-            case ColumnType.TIMESTAMP:
-                ((TimestampBindVariable) function).value = ColumnType.getTimestampDriver(type).implicitCast(value);
-                break;
-            case ColumnType.DATE:
-                ((DateBindVariable) function).value = MillsTimestampDriver.INSTANCE.implicitCast(value);
-                break;
-            case ColumnType.FLOAT:
-                ((FloatBindVariable) function).value = SqlUtil.implicitCastStrAsFloat(value);
-                break;
-            case ColumnType.DOUBLE:
-                ((DoubleBindVariable) function).value = SqlUtil.implicitCastStrAsDouble(value);
-                break;
-            case ColumnType.STRING:
-                ((StrBindVariable) function).setValue(value);
-                break;
-            case ColumnType.VARCHAR:
-                ((VarcharBindVariable) function).setValue(value);
-                break;
-            case ColumnType.LONG256:
-                SqlUtil.implicitCastStrAsLong256(value, ((Long256BindVariable) function).value);
-                break;
-            case ColumnType.UUID:
-                SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
-                break;
-            case ColumnType.ARRAY:
-                ((ArrayBindVariable) function).parseArray(value);
-                break;
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-            case ColumnType.DECIMAL128:
-            case ColumnType.DECIMAL256:
-                ((DecimalBindVariable) function).value.ofString(
-                        value,
-                        ColumnType.getDecimalPrecision(type),
-                        ColumnType.getDecimalScale(type)
-                );
-                break;
-            default:
-                reportError(function, ColumnType.STRING, index, name);
-                break;
+            case ColumnType.BOOLEAN ->
+                    ((BooleanBindVariable) function).value = value != null && SqlKeywords.isTrueKeyword(value);
+            case ColumnType.BYTE -> ((ByteBindVariable) function).value = SqlUtil.implicitCastStrAsByte(value);
+            case ColumnType.SHORT -> ((ShortBindVariable) function).value = SqlUtil.implicitCastStrAsShort(value);
+            case ColumnType.CHAR -> ((CharBindVariable) function).value = SqlUtil.implicitCastStrAsChar(value);
+            case ColumnType.IPv4 -> ((IPv4BindVariable) function).value = SqlUtil.implicitCastStrAsIPv4(value);
+            case ColumnType.INT -> ((IntBindVariable) function).value = SqlUtil.implicitCastStrAsInt(value);
+            case ColumnType.LONG -> ((LongBindVariable) function).value = SqlUtil.implicitCastStrAsLong(value);
+            case ColumnType.TIMESTAMP ->
+                    ((TimestampBindVariable) function).value = ColumnType.getTimestampDriver(type).implicitCast(value);
+            case ColumnType.DATE ->
+                    ((DateBindVariable) function).value = MillsTimestampDriver.INSTANCE.implicitCast(value);
+            case ColumnType.FLOAT -> ((FloatBindVariable) function).value = SqlUtil.implicitCastStrAsFloat(value);
+            case ColumnType.DOUBLE -> ((DoubleBindVariable) function).value = SqlUtil.implicitCastStrAsDouble(value);
+            case ColumnType.STRING -> ((StrBindVariable) function).setValue(value);
+            case ColumnType.VARCHAR -> ((VarcharBindVariable) function).setValue(value);
+            case ColumnType.LONG256 -> SqlUtil.implicitCastStrAsLong256(value, ((Long256BindVariable) function).value);
+            case ColumnType.UUID -> SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
+            case ColumnType.ARRAY -> ((ArrayBindVariable) function).parseArray(value);
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> ((DecimalBindVariable) function).value.ofString(
+                    value,
+                    ColumnType.getDecimalPrecision(type),
+                    ColumnType.getDecimalScale(type)
+            );
+            default -> reportError(function, ColumnType.STRING, index, name);
         }
     }
 
