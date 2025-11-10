@@ -134,8 +134,6 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                         intervalsLo1++;
                     }
                     continue;
-                } else {
-                    System.out.println("sdsd: " + (lo - hi));
                 }
                 // interval yielded empty partition frame
                 partitionLimit1 = hi;
