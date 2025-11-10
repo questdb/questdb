@@ -73,8 +73,6 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
-// TODO(puzpuzpuz): consider implementing limit and negative limit
-// TODO(puzpuzpuz): consider applying time intrinsic intervals/table min/max ts from left-hand to right-hand
 public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer AGGREGATE = AsyncWindowJoinRecordCursorFactory::aggregate;
     private static final PageFrameReducer AGGREGATE_VECT = AsyncWindowJoinRecordCursorFactory::aggregateVect;
@@ -511,7 +509,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
                 }
 
-                if (timestamps != null && timestamps.size() > 0) {
+                if (timestamps.size() > 0) {
                     long newRowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     newRowLo = newRowLo < 0 ? -newRowLo - 1 : newRowLo;
                     rowLo = newRowLo;
