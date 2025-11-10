@@ -1675,7 +1675,7 @@ public class ExpressionParser {
             }
 
             while ((node = opStack.pop()) != null) {
-                if (node.token.length() != 0 && node.token.charAt(0) == '(') {
+                if (!node.token.isEmpty() && node.token.charAt(0) == '(') {
                     throw SqlException.$(node.position, "unbalanced (");
                 }
 

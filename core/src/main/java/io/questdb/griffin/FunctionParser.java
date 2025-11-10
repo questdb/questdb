@@ -438,6 +438,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         positionStack.push(node.position);
     }
 
+    private static void handleExpectedAndActual(@Transient IntList argPositions, SqlException ex, int i, int expectedType, int actualType) {
+        ex.put(" expected: ").put(ColumnType.nameOf(expectedType));
+        if (expectedType == actualType) {
+            ex.put(" constant");
+        }
+        ex.put(", actual: ").put(ColumnType.nameOf(actualType));
+        ex.setPosition(argPositions.getQuick(i));
+    }
+
     private static SqlException invalidArgument(
             ExpressionNode node,
             @Nullable ObjList<Function> args,
@@ -479,12 +488,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                             break;
                         } else {
                             if (expectedType != actualType || (expectedConstant && !actualConstant)) {
-                                ex.put(" expected: ").put(ColumnType.nameOf(expectedType));
-                                if (expectedType == actualType) {
-                                    ex.put(" constant");
-                                }
-                                ex.put(", actual: ").put(ColumnType.nameOf(actualType));
-                                ex.setPosition(argPositions.getQuick(i));
+                                handleExpectedAndActual(argPositions, ex, i, expectedType, actualType);
                                 break;
                             }
                         }
@@ -500,13 +504,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                         if (expectedType != actualType || (expectedConstant && !actualConstant)) {
                             ex.put(" at #").put(i + 1);
-                            ex.put(" expected: ").put(ColumnType.nameOf(expectedType));
-                            if (expectedType == actualType) {
-                                ex.put(" constant");
-                            }
-                            ex.put(", actual: ").put(ColumnType.nameOf(actualType));
-                            ex.setPosition(argPositions.getQuick(i));
-                            break;
+                            handleExpectedAndActual(argPositions, ex, i, expectedType, actualType);
                         }
                     }
                 }

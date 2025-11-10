@@ -3369,14 +3369,13 @@ public class SqlParser {
                         validateIdentifier(lexer, aliasTok);
                         boolean unquoting = Chars.indexOf(aliasTok, '.') == -1;
                         alias = unquoting ? unquote(aliasTok) : aliasTok;
-                        aliasPosition = lexer.lastTokenPosition();
                     } else {
                         validateIdentifier(lexer, tok);
                         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                         boolean unquoting = Chars.indexOf(tok, '.') == -1;
                         alias = GenericLexer.immutableOf(unquoting ? unquote(tok) : tok);
-                        aliasPosition = lexer.lastTokenPosition();
                     }
+                    aliasPosition = lexer.lastTokenPosition();
 
                     if (col.getAst().isWildcard()) {
                         throw err(lexer, null, "wildcard cannot have alias");
