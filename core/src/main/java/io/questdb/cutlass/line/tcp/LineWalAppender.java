@@ -302,24 +302,28 @@ public class LineWalAppender {
                             case ColumnType.DECIMAL256:
                                 final int precision = ColumnType.getDecimalPrecision(colType);
                                 final int scale = ColumnType.getDecimalScale(colType);
-                                try {
-                                    if (ent.isBinaryFormat()) {
-                                        double d = ent.getFloatValue();
-                                        if (Numbers.isNull(d)) {
-                                            DecimalUtil.storeNull(r, columnIndex, colType);
-                                            break;
-                                        } else {
-                                            utf8Sink.clear();
-                                            Numbers.append(utf8Sink, ent.getFloatValue());
-                                            decimal256.ofString(utf8Sink.asAsciiCharSequence(), precision, scale);
-                                            DecimalUtil.storeNonNull(decimal256, r, columnIndex, colType);
-                                        }
+                                if (ent.isBinaryFormat()) {
+                                    double d = ent.getFloatValue();
+                                    if (Numbers.isNull(d)) {
+                                        DecimalUtil.storeNull(r, columnIndex, colType);
+                                        break;
                                     } else {
-                                        decimal256.ofString(ent.getValue().asAsciiCharSequence(), precision, scale);
-                                        DecimalUtil.store(decimal256, r, columnIndex, colType);
+                                        utf8Sink.clear();
+                                        Numbers.append(utf8Sink, ent.getFloatValue());
+                                        try {
+                                            decimal256.ofString(utf8Sink.asAsciiCharSequence(), precision, scale);
+                                        } catch (NumericException ignored) {
+                                            throw precisionLossError(tud.getTableNameUtf16(), ent.getName(), utf8Sink, colType);
+                                        }
+                                        DecimalUtil.storeNonNull(decimal256, r, columnIndex, colType);
                                     }
-                                } catch (NumericException ignored) {
-                                    throw castError(tud.getTableNameUtf16(), "FLOAT", colType, ent.getName());
+                                } else {
+                                    try {
+                                        decimal256.ofString(ent.getValue().asAsciiCharSequence(), precision, scale);
+                                    } catch (NumericException ignored) {
+                                        throw precisionLossError(tud.getTableNameUtf16(), ent.getName(), ent.getValue(), colType);
+                                    }
+                                    DecimalUtil.store(decimal256, r, columnIndex, colType);
                                 }
                                 break;
                             case ColumnType.SYMBOL:
@@ -400,7 +404,7 @@ public class LineWalAppender {
                                     try {
                                         decimal256.ofString(entityValue.asAsciiCharSequence(), precision, scale);
                                     } catch (NumericException ignored) {
-                                        throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
+                                        throw valueError(tud.getTableNameUtf16(), colType, entityValue, ent.getName());
                                     }
                                     DecimalUtil.store(decimal256, r, columnIndex, colType);
                                     break;
@@ -515,11 +519,11 @@ public class LineWalAppender {
                                 try {
                                     decimal.rescale(scale);
                                 } catch (NumericException ignored) {
-                                    throw castError(tud.getTableNameUtf16(), "DECIMAL", colType, ent.getName());
+                                    throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(), ent.getName().asAsciiCharSequence());
                                 }
                             }
                             if (!decimal.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
-                                throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
+                                throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(), ent.getName().asAsciiCharSequence());
                             }
                             DecimalUtil.storeNonNull(decimal, r, columnIndex, colType);
                         }

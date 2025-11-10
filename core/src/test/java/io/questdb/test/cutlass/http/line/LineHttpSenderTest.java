@@ -1982,7 +1982,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .at(100000000000L, ChronoUnit.MICROS);
                     flushAndAssertError(
                             sender,
-                            "cast error from protocol type: FLOAT to column type: DECIMAL(6,3)");
+                            "value error: converting 1.2345 to DECIMAL(6,3) will result in loss of precision");
 
                     sender.reset();
                     // Floating points with a precision greater than expected.
@@ -1991,7 +1991,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .at(100000000000L, ChronoUnit.MICROS);
                     flushAndAssertError(
                             sender,
-                            "cast error from protocol type: FLOAT to column type: DECIMAL(6,3)");
+                            "value error: converting 12345.678 to DECIMAL(6,3) will result in loss of precision");
 
                     sender.reset();
                     // String that is not a valid decimal.
@@ -2000,15 +2000,16 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .at(100000000000L, ChronoUnit.MICROS);
                     flushAndAssertError(
                             sender,
-                            "cast error from protocol type: STRING to column type: DECIMAL(6,3)");
+                            "value error: abc cannot be converted to column type: DECIMAL(6,3)");
 
+                    sender.reset();
                     // String that has a too big precision.
                     sender.table(tableName)
                             .stringColumn("x", "1E8")
                             .at(100000000000L, ChronoUnit.MICROS);
                     flushAndAssertError(
                             sender,
-                            "cast error from protocol type: STRING to column type: DECIMAL(6,3)");
+                            "value error: 1E8 cannot be converted to column type: DECIMAL(6,3)");
 
                     sender.reset();
                     // Decimal with a too big precision.
@@ -2026,7 +2027,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .at(100000000000L, ChronoUnit.MICROS);
                     flushAndAssertError(
                             sender,
-                            "cast error from protocol type: DECIMAL to column type: DECIMAL(76,73)");
+                            "12345 is out bounds of column type: DECIMAL(76,73)");
                 }
             }
         });
