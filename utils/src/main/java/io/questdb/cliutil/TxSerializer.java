@@ -49,7 +49,7 @@ import static io.questdb.cairo.TableUtils.*;
 
 public class TxSerializer {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final FilesFacade ff = new FilesFacadeImpl();
+    private static final FilesFacade ff = new FilesFacadeImpl(null);
 
     /*
      * Reads _txn file and prints to std output JSON translation.

@@ -47,6 +47,7 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.SPSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -85,6 +86,7 @@ public class LogFactoryTest {
 
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
+    private final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
     @Test
     public void testBadWriter() {
@@ -153,7 +155,7 @@ public class LogFactoryTest {
         try {
             factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> new LogWriter() {
                 @Override
-                public void bindProperties(LogFactory factory) {
+                public void bindProperties(LogFactory factory, FilesFacade ff) {
                 }
 
                 @Override
@@ -173,7 +175,7 @@ public class LogFactoryTest {
             // Misbehaving Logger
             factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> new LogWriter() {
                 @Override
-                public void bindProperties(LogFactory factory) {
+                public void bindProperties(LogFactory factory, FilesFacade ff) {
                 }
 
                 @Override
@@ -327,7 +329,7 @@ public class LogFactoryTest {
 
             factory.add(new LogWriterConfig(LogLevel.ALL, (ring, seq, level) -> new LogWriter() {
                 @Override
-                public void bindProperties(LogFactory factory) {
+                public void bindProperties(LogFactory factory, FilesFacade ff) {
                 }
 
                 @Override
@@ -603,7 +605,7 @@ public class LogFactoryTest {
             writer.setLocation(logFile);
             writer.setRollSize("1m");
             writer.setBufferSize("64k");
-            writer.bindProperties(LogFactory.getInstance());
+            writer.bindProperties(LogFactory.getInstance(), ff);
 
             AtomicBoolean running = new AtomicBoolean(true);
             SOCountDownLatch halted = new SOCountDownLatch();
@@ -996,7 +998,7 @@ public class LogFactoryTest {
         )) {
             writer.setLocation(logFile);
             writer.setRollEvery("day  ");
-            writer.bindProperties(LogFactory.getInstance());
+            writer.bindProperties(LogFactory.getInstance(), ff);
 
             Assert.assertNotEquals(Long.MAX_VALUE, writer.getRollDeadlineFunction().getDeadline());
             Assert.assertEquals(1430697600000000L, writer.getRollDeadlineFunction().getDeadline());
@@ -1011,7 +1013,7 @@ public class LogFactoryTest {
         )) {
             writer.setLocation(logFile);
             writer.setRollEvery(" minute ");
-            writer.bindProperties(LogFactory.getInstance());
+            writer.bindProperties(LogFactory.getInstance(), ff);
 
             Assert.assertNotEquals(Long.MAX_VALUE, writer.getRollDeadlineFunction().getDeadline());
             Assert.assertEquals(1430649360000000L, writer.getRollDeadlineFunction().getDeadline());
@@ -1117,7 +1119,7 @@ public class LogFactoryTest {
         AtomicReference<LogRollingFileWriter> writerRef = new AtomicReference<>();
         try (LogFactory factory = new LogFactory()) {
             LogWriterConfig config = new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
+                LogRollingFileWriter w = new LogRollingFileWriter(new FilesFacadeImpl(temp.toString()), clock, ring, seq, level);
                 w.setLocation(logFile);
                 w.setSpinBeforeFlush("10");
                 w.setRollEvery("day");

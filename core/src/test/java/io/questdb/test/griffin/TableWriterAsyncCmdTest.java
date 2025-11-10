@@ -204,7 +204,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
                 if (Utf8s.containsAscii(name, "2020-01-01")) {
                     throw CairoException.critical(11).put("could not remove [path=").put(name).put(']');
                 }
-                return super.rmdir(name, lazy);
+                return super.rmdir(name);
             }
         };
         assertMemoryLeak(ff, () -> {

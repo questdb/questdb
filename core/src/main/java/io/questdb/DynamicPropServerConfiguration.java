@@ -43,9 +43,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.datetime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
@@ -187,26 +185,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                 filesFacade,
                 microsecondClock,
                 fpf,
-                true
-        );
-    }
-
-    public DynamicPropServerConfiguration(
-            String installRoot,
-            Properties properties,
-            @Nullable Map<String, String> env,
-            Log log,
-            BuildInformation buildInformation
-    ) throws ServerConfigurationException, JsonException {
-        this(
-                installRoot,
-                properties,
-                env,
-                log,
-                buildInformation,
-                FilesFacadeImpl.INSTANCE,
-                MicrosecondClockImpl.INSTANCE,
-                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
                 true
         );
     }

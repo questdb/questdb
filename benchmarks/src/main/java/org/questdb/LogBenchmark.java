@@ -25,6 +25,8 @@
 package org.questdb;
 
 import io.questdb.log.*;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -58,7 +60,7 @@ public class LogBenchmark {
     public void setUp() {
         factory = new LogFactory();
         factory.add(new LogWriterConfig(LogLevel.INFO, (queue, subSeq, level) -> {
-            LogRollingFileWriter w = new LogRollingFileWriter(queue, subSeq, level);
+            LogRollingFileWriter w = new LogRollingFileWriter(new FilesFacadeImpl(""), MicrosecondClockImpl.INSTANCE, queue, subSeq, level);
             w.setLocation("log-bench1.log");
             return w;
         }));

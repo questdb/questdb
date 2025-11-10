@@ -580,7 +580,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                         deleteAttempts.incrementAndGet();
                         return false;
                     }
-                    return super.rmdir(name, lazy);
+                    return super.rmdir(name);
                 }
             };
 
@@ -617,7 +617,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                             return false;
                         }
                     }
-                    return super.rmdir(name, lazy);
+                    return super.rmdir(name);
                 }
             };
 

@@ -67,6 +67,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final long databaseIdHi;
     private final long databaseIdLo;
     private final String dbRoot;
+    private final FilesFacadeImpl ff;
     private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
     private final String installRoot;
     private final CharSequence legacyCheckpointRoot;
@@ -90,6 +91,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
         this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(dbRoot);
+        this.ff = new FilesFacadeImpl(dbRoot);
     }
 
     @Override
@@ -363,7 +365,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public @NotNull FilesFacade getFilesFacade() {
-        return FilesFacadeImpl.INSTANCE;
+        return ff;
     }
 
     @Override

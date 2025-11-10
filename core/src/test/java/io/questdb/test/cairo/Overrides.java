@@ -35,7 +35,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -201,7 +200,7 @@ public class Overrides {
                     new HashMap<>(),
                     LOG,
                     buildInformationHolder,
-                    FilesFacadeImpl.INSTANCE,
+                    null,
                     MicrosecondClockImpl.INSTANCE,
                     (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
                     false

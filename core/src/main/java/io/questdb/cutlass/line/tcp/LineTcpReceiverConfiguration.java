@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
@@ -63,8 +62,6 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
     boolean getDisconnectOnError();
 
     FactoryProvider getFactoryProvider();
-
-    FilesFacade getFilesFacade();
 
     /**
      * Interval in milliseconds to perform writer maintenance. Such maintenance can

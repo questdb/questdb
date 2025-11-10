@@ -245,7 +245,7 @@ public class HttpServer implements Closeable {
             }
         });
 
-        server.bind(new StaticContentProcessorFactory(httpServerConfiguration));
+        server.bind(new StaticContentProcessorFactory(httpServerConfiguration, serverConfiguration.getCairoConfiguration().getFilesFacade()));
     }
 
     public static Utf8Sequence normalizeUrl(DirectUtf8String url) {

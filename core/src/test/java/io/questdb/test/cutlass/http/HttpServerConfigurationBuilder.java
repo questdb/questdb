@@ -36,13 +36,11 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
-import io.questdb.test.std.TestFilesFacadeImpl;
 
 public class HttpServerConfigurationBuilder {
     private final int rerunProcessingQueueSize = 4096;
@@ -83,11 +81,6 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public FilesFacade getFilesFacade() {
-                    return TestFilesFacadeImpl.INSTANCE;
-                }
-
-                @Override
                 public CharSequence getKeepAliveHeader() {
                     return "Keep-Alive: timeout=5, max=10000\r\n";
                 }
@@ -108,11 +101,6 @@ public class HttpServerConfigurationBuilder {
                 }
             };
             private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return TestFilesFacadeImpl.INSTANCE;
-                }
-
                 @Override
                 public String getKeepAliveHeader() {
                     return null;

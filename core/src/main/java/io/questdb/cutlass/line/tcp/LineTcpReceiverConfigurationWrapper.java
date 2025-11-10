@@ -34,7 +34,6 @@ import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
@@ -157,11 +156,6 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public FactoryProvider getFactoryProvider() {
         return getDelegate().getFactoryProvider();
-    }
-
-    @Override
-    public FilesFacade getFilesFacade() {
-        return getDelegate().getFilesFacade();
     }
 
     @Override

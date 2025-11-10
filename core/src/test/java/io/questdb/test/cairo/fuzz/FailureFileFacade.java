@@ -470,6 +470,22 @@ public class FailureFileFacade implements FilesFacade {
         return ff.rmdir(name, haltOnError);
     }
 
+    @Override
+    public boolean rmdirDbRoot(Path path) {
+        if (checkForFailure()) {
+            return false;
+        }
+        return ff.rmdirDbRoot(path);
+    }
+
+    @Override
+    public boolean rmdirTable(Path path) {
+        if (checkForFailure()) {
+            return false;
+        }
+        return ff.rmdirTable(path);
+    }
+
     public void setToFailAfter(int ioFailureCallCount) {
         int osCalls;
 

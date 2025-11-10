@@ -51,7 +51,7 @@ public class LineTCPSenderMainVarLenStrings {
 
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
-        FilesFacade ff = new FilesFacadeImpl();
+        FilesFacade ff = new FilesFacadeImpl(null);
         try (Path path = new Path()) {
             long logFd = -1;
             if (args.length == 1) {

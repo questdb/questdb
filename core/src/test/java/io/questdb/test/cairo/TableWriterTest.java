@@ -938,7 +938,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     // Access denied, file is open
                     return false;
                 }
-                return super.rmdir(name, lazy);
+                return super.rmdir(name);
             }
         };
 
@@ -1193,7 +1193,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     if (active) {
                         return false;
                     }
-                    return super.rmdir(name, lazy);
+                    return super.rmdir(name);
                 }
             };
 

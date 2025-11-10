@@ -77,7 +77,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
@@ -1962,8 +1961,7 @@ public final class TestUtils {
         }
 
         // could not remove file, logging error
-        final FilesFacade ff = FilesFacadeImpl.INSTANCE;
-        LOG.error().$("Could not remove file [path=").$safe(lpsz).$(", errno=").$(ff.errno()).I$();
+        LOG.error().$("Could not remove file [path=").$safe(lpsz).$(", errno=").$(Os.errno()).I$();
         return false;
     }
 
@@ -1972,7 +1970,7 @@ public final class TestUtils {
             path.of(root);
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             path.slash();
-            if (ff.exists(path.$()) && !ff.rmdir(path, true)) {
+            if (ff.exists(path.$()) && !Files.rmdir(path, false, 0, 10)) {
                 StringSink dir = new StringSink();
                 dir.put(path.$());
                 Assert.fail("Test dir " + dir + " cleanup error: " + ff.errno());
