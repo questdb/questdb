@@ -370,12 +370,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String query = "SELECT * FROM master ASOF JOIN slave y ON(vch) TOLERANCE 1s";
             printSql("EXPLAIN " + query, true);
-            TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertNotContains(sink, "AsOf Join Fast");
             printSql(query, true);
             String fullFatResult = sink.toString();
 
             printSql("EXPLAIN " + query, false);
-            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertContains(sink, "AsOf Join Fast");
             printSql(query, false);
             String lightResult = sink.toString();
             TestUtils.assertEquals(fullFatResult, lightResult);
@@ -884,7 +884,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String expectedPlan = "QUERY PLAN\n" +
                     "SelectedRecord\n" +
                     "    Filter filter: oRdERS.price<MD.bid\n" +
-                    "        Filtered AsOf Join Fast Scan\n" +
+                    "        Filtered AsOf Join Fast\n" +
                     "          filter: market_Data_symbol='sym_1'\n" +
                     "            PageFrame\n" +
                     "                Row forward scan\n" +
@@ -1140,7 +1140,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 assertQueryNoLeakCheck(compiler, expected, queryWithDenseHint, "ts", false, sqlExecutionContext, true);
 
                 printSql("EXPLAIN " + queryWithoutHint);
-                TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+                TestUtils.assertContains(sink, "AsOf Join Fast");
                 printSql("EXPLAIN " + queryWithDenseHint);
                 TestUtils.assertContains(sink, "AsOf Join Dense");
             }
@@ -1240,7 +1240,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 2s;";
             // sanity check: uses AsOfJoinFastRecordCursorFactory
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertContains(sink, "AsOf Join Fast");
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
             String expected = String.format("""
@@ -1262,7 +1262,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) ON id TOLERANCE 2s;";
             // sanity check: uses FilteredAsOfJoinFastRecordCursorFactory
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
@@ -1285,13 +1285,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     10\t1970-01-01T00:00:10.000010%1$s\tnull\t
                     """, leftSuffix, rightSuffix);
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertContains(sink, "AsOf Join Fast");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             // non-keyed join, slave has a filter, no hint -> should also use FilteredAsOfJoinNoKeyFastRecordCursorFactory
             query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             // non-keyed join, slave has a filter, linear hint -> should also use AsOfJoinNoKeyRecordCursorFactory
@@ -1605,7 +1605,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String expectedPlan = "QUERY PLAN\n" +
                     "SelectedRecord\n" +
                     "    Filter filter: oRdERS.price<MD.bid\n" +
-                    "        Filtered AsOf Join Fast Scan\n" +
+                    "        Filtered AsOf Join Fast\n" +
                     "          filter: market_Data_symbol='sym_1'\n" +
                     "            PageFrame\n" +
                     "                Row forward scan\n" +
@@ -3107,7 +3107,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
 
 
-            // non-keyed join and slave supports timeframe -> should use Lt Join Fast Scan
+            // non-keyed join and slave supports timeframe -> should use Lt Join Fast
             query = "SELECT * FROM t1 LT JOIN t2 TOLERANCE 2s;";
             expected = String.format("""
                     id\tts\tid1\tts1
@@ -3123,7 +3123,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     10\t1970-01-01T00:00:10.000010%1$s\tnull\t
                     """, leftSuffix, rightSuffix);
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "Lt Join Fast Scan");
+            TestUtils.assertContains(sink, "Lt Join Fast");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             // non-keyed join, slave supports timeframe but avoid BINARY_SEARCH hint -> should use Lt Join (full fat)

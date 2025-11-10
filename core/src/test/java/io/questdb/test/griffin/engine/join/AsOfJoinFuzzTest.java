@@ -285,19 +285,19 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         sink.clear();
         printSql("EXPLAIN " + query, false);
         if (hintType == HintType.LINEAR) {
-            TestUtils.assertNotContains(sink, "AsOf Join Indexed Scan");
-            TestUtils.assertNotContains(sink, "AsOf Join Memoized Scan");
+            TestUtils.assertNotContains(sink, "AsOf Join Indexed");
+            TestUtils.assertNotContains(sink, "AsOf Join Memoized");
             TestUtils.assertNotContains(sink, "AsOf Join Dense");
-            TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
-            TestUtils.assertNotContains(sink, "Lt Join Fast Scan");
+            TestUtils.assertNotContains(sink, "AsOf Join Fast");
+            TestUtils.assertNotContains(sink, "Lt Join Fast");
         } else if (joinType == JoinType.ASOF_NONKEYED && numIntervalsOpt == NumIntervals.MANY) {
-            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertContains(sink, "AsOf Join Fast");
         } else if (joinType == JoinType.ASOF && numIntervalsOpt != NumIntervals.MANY && !exerciseFilters) {
             String algo = switch (hintType) {
-                case INDEX -> "Indexed Scan";
-                case MEMOIZED, MEMOIZED_DRIVEBY -> "Memoized Scan";
+                case INDEX -> "Indexed";
+                case MEMOIZED, MEMOIZED_DRIVEBY -> "Memoized";
                 case DENSE -> "Dense Single Symbol";
-                default -> "Fast Scan";
+                default -> "Fast";
             };
             TestUtils.assertContains(sink, "AsOf Join " + algo);
         }
