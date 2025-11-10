@@ -43,10 +43,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final AsofJoinColumnAccessHelper columnAccessHelper;
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
+    private final SymbolShortCircuit symbolShortCircuit;
     private final long toleranceInterval;
 
     public AsOfJoinFastRecordCursorFactory(
@@ -57,7 +57,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             RecordCursorFactory slaveFactory,
             RecordSink slaveKeySink,
             int columnSplit,
-            AsofJoinColumnAccessHelper columnAccessHelper,
+            SymbolShortCircuit symbolShortCircuit,
             JoinContext joinContext,
             long toleranceInterval
     ) {
@@ -77,7 +77,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
-        this.columnAccessHelper = columnAccessHelper;
+        this.symbolShortCircuit = symbolShortCircuit;
         this.toleranceInterval = toleranceInterval;
     }
 
@@ -113,7 +113,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("AsOf Join Fast Scan");
+        sink.type("AsOf Join Fast");
         sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);
@@ -159,12 +159,12 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             super.of(masterCursor, slaveCursor, circuitBreaker);
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
-            columnAccessHelper.of(slaveCursor);
+            symbolShortCircuit.of(slaveCursor);
         }
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            if (columnAccessHelper.isShortCircuit(masterRecord)) {
+            if (symbolShortCircuit.isShortCircuit(masterRecord)) {
                 // the master record's symbol does not match any symbol in the slave table, so we can skip the key matching part
                 // and report no match.
                 record.hasSlave(false);

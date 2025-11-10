@@ -36,10 +36,10 @@ import java.util.Arrays;
 import java.util.Collection;
 
 @RunWith(Parameterized.class)
-public class MatViewOomTest extends AbstractCairoTest {
+public class MatViewRefreshRetryTest extends AbstractCairoTest {
     private final TestTimestampType timestampType;
 
-    public MatViewOomTest(TestTimestampType timestampType) {
+    public MatViewRefreshRetryTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
     }
 
@@ -47,6 +47,56 @@ public class MatViewOomTest extends AbstractCairoTest {
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
                 {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
+
+    @Test
+    public void testLargeTransaction() throws Exception {
+        // Here, we're reproducing scenario when the sample by iterator step estimation was
+        // too generous, and we ended up with large transactions even in a single iteration.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, 100);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1000);
+        assertMemoryLeak(() -> {
+            CharSequence sqlText = "create table base_price (" +
+                    "sym varchar, price double, ts #TIMESTAMP" +
+                    ") timestamp(ts) partition by DAY WAL;";
+
+            sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType.getTypeName());
+            engine.execute(sqlText, sqlExecutionContext);
+
+            execute(
+                    "insert into base_price select " +
+                            "  rnd_symbol(10000,4,32,100) sym, " +
+                            "  rnd_double() price, " +
+                            "  timestamp_sequence(400000000000, 1000000) ts " +
+                            "from long_sequence(10000);"
+            );
+            drainWalAndMatViewQueues();
+
+            execute(
+                    "create materialized view price_1h as (" +
+                            "  select ts, sym, avg(price) as avg_price from base_price sample by 10s" +
+                            ") partition by hour"
+            );
+
+            drainWalAndMatViewQueues();
+            assertQueryNoLeakCheck(
+                    """
+                            view_name\tview_status
+                            price_1h\tvalid
+                            """,
+                    "select view_name, view_status from materialized_views",
+                    null,
+                    false
+            );
+
+            assertSql(
+                    """
+                            count
+                            56
+                            """,
+                    "select count() from wal_transactions('price_1h')"
+            );
         });
     }
 
@@ -64,7 +114,6 @@ public class MatViewOomTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 1);
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(enableParallelSql));
         assertMemoryLeak(() -> {
-
             CharSequence sqlText = "create table base_price (" +
                     "sym varchar, price double, ts #TIMESTAMP" +
                     ") timestamp(ts) partition by DAY WAL;";
@@ -91,8 +140,10 @@ public class MatViewOomTest extends AbstractCairoTest {
             Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 500 * 1024); // 500KB gap
             drainWalAndMatViewQueues();
             assertQueryNoLeakCheck(
-                    "view_name\tview_status\n" +
-                            "price_1h\tinvalid\n",
+                    """
+                            view_name\tview_status
+                            price_1h\tinvalid
+                            """,
                     "select view_name, view_status from materialized_views",
                     null,
                     false
@@ -103,8 +154,10 @@ public class MatViewOomTest extends AbstractCairoTest {
             execute("refresh materialized view price_1h full;");
             drainWalAndMatViewQueues();
             assertQueryNoLeakCheck(
-                    "view_name\tview_status\n" +
-                            "price_1h\tvalid\n",
+                    """
+                            view_name\tview_status
+                            price_1h\tvalid
+                            """,
                     "select view_name, view_status from materialized_views",
                     null,
                     false

@@ -28,41 +28,20 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
 
-/**
- * When joining on a single symbol column, detects when the slave column doesn't have
- * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
- * in that case.
- */
-public interface AsofJoinColumnAccessHelper {
-    @Transient
-    CharSequence getMasterValue(Record masterRecord);
+public interface SymbolJoinKeyMapping {
 
     /**
-     * Used when joining on a single symbol column, returns the symbol key in the slave
-     * column corresponding to the symbol key in the master column. If it returns
-     * {@link StaticSymbolTable#VALUE_NOT_FOUND}, the slave column doesn't have the symbol.
+     * When joining on a single symbol column, returns the symbol key in the slave
+     * column corresponding to the symbol in the master column. If it returns
+     * {@link StaticSymbolTable#VALUE_NOT_FOUND}, the slave column doesn't have the
+     * symbol.
      */
     int getSlaveKey(Record masterRecord);
-
-    @NotNull
-    StaticSymbolTable getSlaveSymbolTable();
-
-    /**
-     * Used when joining on a single symbol column, detects when the slave column doesn't
-     * have the symbol at all (by inspecting its int-to-symbol mapping). This allows the
-     * record cursor to skip any searching for the matching slave row.
-     */
-    default boolean isShortCircuit(Record masterRecord) {
-        return getSlaveKey(masterRecord) == StaticSymbolTable.VALUE_NOT_FOUND;
-    }
 
     void of(TimeFrameRecordCursor slaveCursor);
 
     default void of(RecordCursor slaveCursor) {
         throw new UnsupportedOperationException();
     }
-
 }
