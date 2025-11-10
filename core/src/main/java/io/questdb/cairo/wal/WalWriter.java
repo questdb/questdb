@@ -70,7 +70,6 @@ import io.questdb.log.LogRecord;
 import io.questdb.std.AtomicIntList;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
-import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -130,7 +129,7 @@ public class WalWriter implements TableWriterAPI {
     private final TableSequencerAPI sequencer;
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
-    private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
+    private final ObjList<SymbolMap> symbolMaps = new ObjList<>();
     private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
@@ -1099,7 +1098,7 @@ public class WalWriter implements TableWriterAPI {
         initialSymbolCounts.extendAndSet(columnWriterIndex, 0);
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, false);
-        symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        symbolMaps.extendAndSet(columnWriterIndex, new SymbolMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         utf8SymbolMaps.extendAndSet(columnWriterIndex, new Utf8StringIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
     }
 
@@ -1188,7 +1187,7 @@ public class WalWriter implements TableWriterAPI {
         );
 
         symbolMapReaders.extendAndSet(columnWriterIndex, symbolMapReader);
-        symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        symbolMaps.extendAndSet(columnWriterIndex, new SymbolMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         utf8SymbolMaps.extendAndSet(columnWriterIndex, new Utf8StringIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         initialSymbolCounts.extendAndSet(columnWriterIndex, symbolCount);
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
@@ -1314,6 +1313,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void freeSymbolMapReaders() {
         Misc.freeObjListIfCloseable(symbolMapReaders);
+        Misc.freeObjListIfCloseable(symbolMaps);
     }
 
     private MemoryMA getAuxColumn(int column) {
@@ -1575,7 +1575,11 @@ public class WalWriter implements TableWriterAPI {
 
     private void removeSymbolMapReader(int index) {
         Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(index, null));
-        symbolMaps.setQuick(index, null);
+        SymbolMap map = symbolMaps.getQuick(index);
+        if (map != null) {
+            map.close();
+            symbolMaps.setQuick(index, null);
+        }
         utf8SymbolMaps.setQuick(index, null);
         initialSymbolCounts.set(index, -1);
         localSymbolIds.set(index, 0);
@@ -1619,7 +1623,7 @@ public class WalWriter implements TableWriterAPI {
     private void resetSymbolMaps() {
         final int numOfColumns = symbolMaps.size();
         for (int i = 0; i < numOfColumns; i++) {
-            final CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(i);
+            final SymbolMap symbolMap = symbolMaps.getQuick(i);
             if (symbolMap != null) {
                 symbolMap.clear();
             }
@@ -1842,7 +1846,7 @@ public class WalWriter implements TableWriterAPI {
     private static class ConversionSymbolMapWriter implements SymbolMapWriterLite {
         private int columnIndex;
         private IntList localSymbolIds;
-        private CharSequenceIntHashMap symbolHashMap;
+        private SymbolMap symbolHashMap;
         private SymbolMapReader symbolMapReader;
 
         @Override
@@ -1853,8 +1857,9 @@ public class WalWriter implements TableWriterAPI {
         private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
             int key;
             if (utf16Value != null) {
-                final CharSequenceIntHashMap utf16Map = symbolHashMap;
-                final int index = utf16Map.keyIndex(utf16Value);
+                final SymbolMap utf16Map = symbolHashMap;
+                final int hashCode = Chars.hashCode(utf16Value);
+                final int index = utf16Map.keyIndex(utf16Value, hashCode);
                 if (index > -1) {
                     key = symbolMapReader.keyOf(utf16Value);
                     if (key == SymbolTable.VALUE_NOT_FOUND) {
@@ -1862,8 +1867,7 @@ public class WalWriter implements TableWriterAPI {
                         // Locally added symbols must have a continuous range of keys
                         key = localSymbolIds.postIncrement(columnIndex);
                     }
-                    // Chars.toString used as value is a parser buffer memory slice or mapped memory of symbolMapReader
-                    utf16Map.putAt(index, Chars.toString(utf16Value), key);
+                    utf16Map.putAt(index, utf16Value, key, hashCode);
                 } else {
                     key = utf16Map.valueAt(index);
                 }
@@ -1885,7 +1889,7 @@ public class WalWriter implements TableWriterAPI {
     private static class ConversionSymbolTable implements SymbolTable {
         private final IntList symbols = new IntList();
         private int symbolCountWatermark;
-        private CharSequenceIntHashMap symbolHashMap;
+        private SymbolMap symbolHashMap;
         private SymbolMapReader symbolMapReader;
 
         @Override
@@ -1901,8 +1905,8 @@ public class WalWriter implements TableWriterAPI {
             if (key < symbolCountWatermark) {
                 return symbolMapReader.valueOf(key);
             } else {
-                int keyIndex = symbols.get(key - symbolCountWatermark);
-                return symbolHashMap.keys().get(keyIndex);
+                int keyOffset = symbols.get(key - symbolCountWatermark);
+                return symbolHashMap.get(keyOffset);
             }
         }
 
@@ -1916,11 +1920,11 @@ public class WalWriter implements TableWriterAPI {
             int remapSize = writer.localSymbolIds.get(columnIndex);
             if (remapSize > 0) {
                 symbols.setPos(remapSize);
-                for (int i = 0, n = symbolHashMap.size(); i < n; i++) {
-                    CharSequence symbolValue = symbolHashMap.keys().get(i);
+                for (int offset = symbolHashMap.nextOffset(); offset >= 0; offset = symbolHashMap.nextOffset(offset)) {
+                    CharSequence symbolValue = symbolHashMap.get(offset);
                     int index = symbolHashMap.get(symbolValue);
                     if (index >= symbolCountWatermark) {
-                        symbols.extendAndSet(index - symbolCountWatermark, i);
+                        symbols.extendAndSet(index - symbolCountWatermark, offset);
                     }
                 }
             }
@@ -2626,8 +2630,9 @@ public class WalWriter implements TableWriterAPI {
         private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
             int key;
             if (utf16Value != null) {
-                final CharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
-                final int index = utf16Map.keyIndex(utf16Value);
+                final SymbolMap utf16Map = symbolMaps.getQuick(columnIndex);
+                final int hashCode = Chars.hashCode(utf16Value);
+                final int index = utf16Map.keyIndex(utf16Value, hashCode);
                 if (index > -1) {
                     key = symbolMapReader.keyOf(utf16Value);
                     if (key == SymbolTable.VALUE_NOT_FOUND) {
@@ -2636,8 +2641,7 @@ public class WalWriter implements TableWriterAPI {
                         final int initialSymCount = initialSymbolCounts.get(columnIndex);
                         key = initialSymCount + localSymbolIds.postIncrement(columnIndex);
                     }
-                    // Chars.toString used as value is a parser buffer memory slice or mapped memory of symbolMapReader
-                    utf16Map.putAt(index, Chars.toString(utf16Value), key);
+                    utf16Map.putAt(index, utf16Value, key, hashCode);
                 } else {
                     key = utf16Map.valueAt(index);
                 }
