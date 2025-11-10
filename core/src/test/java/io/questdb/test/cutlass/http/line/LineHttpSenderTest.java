@@ -1321,7 +1321,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testInsertDecimalCreateTable() throws Exception {
+    public void testInsertDecimalCreateTableAutomatically() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
@@ -1336,17 +1336,11 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     sender.table("decimal_test")
                             .decimalColumn("a", Decimal256.fromLong(12345, 2))
                             .at(100000000000L, ChronoUnit.MICROS);
-                    sender.flush();
+                    flushAndAssertError(
+                            sender,
+                            "decimal columns must be created manually: a"
+                    );
                 }
-
-                serverMain.awaitTable("decimal_test");
-                var engine = serverMain.getEngine();
-                try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("decimal_test"))) {
-                    Assert.assertEquals(ColumnType.getDecimalType(18, 3), metadata.getColumnType("a"));
-                }
-
-                serverMain.assertSql("SELECT * FROM decimal_test", "a\ttimestamp\n" +
-                        "123.450\t1970-01-02T03:46:40.000000Z\n");
             }
         });
     }

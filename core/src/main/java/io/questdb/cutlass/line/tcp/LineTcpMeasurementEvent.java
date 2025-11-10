@@ -62,12 +62,12 @@ public class LineTcpMeasurementEvent implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
     private final boolean autoCreateNewColumns;
     private final LineTcpEventBuffer buffer;
+    private final Decimal256 decimal256 = new Decimal256();
     private final DefaultColumnTypes defaultColumnTypes;
     private final int maxColumnNameLength;
     private final PrincipalOnlySecurityContext principalOnlySecurityContext = new PrincipalOnlySecurityContext();
     private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
     private final StringSink stringSink = new StringSink(16);
-    private final Decimal256 decimal256 = new Decimal256();
     private final boolean stringToCharCastAllowed;
     private final byte timestampUnit;
     private boolean commitOnWriterClose;
