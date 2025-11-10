@@ -1837,9 +1837,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testImplicitTimestampPropagationWontCauseAmbiguity() throws Exception {
         assertMemoryLeak(() -> {
+            String leftTsTypeName = leftTableTimestampType.getTypeName();
             executeWithRewriteTimestamp(
                     "create table t1 (x int, ts #TIMESTAMP) timestamp(ts) partition by day",
-                    leftTableTimestampType.getTypeName()
+                    leftTsTypeName
             );
 
             execute("insert into t1 values (1, '2022-10-05T08:15:00.000000Z')");
@@ -1854,10 +1855,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("insert into t2 values (5, '2022-10-05T08:19:00.000000Z')");
             execute("insert into t2 values (6, '2023-10-05T09:00:00.000000Z')");
 
-            assertQuery("ts\n" +
-                            "2022-10-05T08:15:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\n" +
-                            "2022-10-05T08:17:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\n" +
-                            "2022-10-05T08:21:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\n",
+            String leftSuffix = getTimestampSuffix(leftTsTypeName);
+            assertQuery(String.format("""
+                            ts
+                            2022-10-05T08:15:00.000000%1$s
+                            2022-10-05T08:17:00.000000%1$s
+                            2022-10-05T08:21:00.000000%1$s
+                            """, leftSuffix),
                     "select ts from t1 asof join (select x from t2)",
                     null, "ts", false, true);
         });
