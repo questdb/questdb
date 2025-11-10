@@ -147,7 +147,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     public boolean hasError() {
-        return errorMsg.length() > 0;
+        return !errorMsg.isEmpty();
     }
 
     public boolean isCancelled() {
@@ -217,12 +217,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         frameMemory = null;
     }
 
-    // same as clear(), but also releases frame pool memory
-    public void reset() {
-        clear();
-        releaseFrameMemory();
-    }
-
     public void setErrorMsg(Throwable th) {
         if (th instanceof FlyweightMessageContainer) {
             errorMsg.put(((FlyweightMessageContainer) th).getFlyweightMessage());
@@ -231,8 +225,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             errorMsg.put(msg != null ? msg : exceptionMessage);
         }
 
-        if (th instanceof CairoException) {
-            final CairoException ce = (CairoException) th;
+        if (th instanceof CairoException ce) {
             isCancelled = ce.isCancellation();
             isOutOfMemory = ce.isOutOfMemory();
             errorMessagePosition = ce.getPosition();
@@ -264,7 +257,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         // is 32 items. If our particular producer resizes queue items to 10x of the initial size
         // we let these sizes stick until produce starts to wind down.
         if (forceCollect || frameIndex >= frameCount - frameQueueCapacity) {
-            reset();
+            clear();
+        } else {
+            // Never keep parquet buffers around to avoid OOM even if there is an ongoing query.
+            releaseFrameMemory();
         }
     }
 }

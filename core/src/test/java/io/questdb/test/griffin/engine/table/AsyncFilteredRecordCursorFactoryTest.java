@@ -747,7 +747,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         for (int i = 0; i < tasks.getCycle(); i++) {
             PageFrameReduceTask task = tasks.get(i);
             Assert.assertTrue("Row id list capacity exceeds max page frame rows", task.getFilteredRows().getCapacity() <= maxPageFrameRows);
-            task.reset();
+            task.clear();
         }
     }
 
