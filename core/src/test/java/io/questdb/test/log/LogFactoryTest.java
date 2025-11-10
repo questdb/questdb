@@ -48,7 +48,7 @@ import io.questdb.mp.SPSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -595,7 +595,6 @@ public class LogFactoryTest {
         pubSeq.then(subSeq).then(pubSeq);
 
         try (final LogRollingFileWriter writer = new LogRollingFileWriter(
-                TestFilesFacadeImpl.INSTANCE,
                 clock,
                 queue,
                 subSeq,
@@ -666,7 +665,7 @@ public class LogFactoryTest {
             final MicrosecondClock clock = new TestMicrosecondClock(MicrosFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1, MicrosTimestampDriver.floor("2015-05-04"));
 
             factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                LogRollingFileWriter w = new LogRollingFileWriter(TestFilesFacadeImpl.INSTANCE, clock, ring, seq, level);
+                LogRollingFileWriter w = new LogRollingFileWriter(clock, ring, seq, level);
                 w.setLocation(logFile);
                 return w;
             }));
@@ -711,7 +710,7 @@ public class LogFactoryTest {
             }
 
             factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                LogRollingFileWriter w = new LogRollingFileWriter(TestFilesFacadeImpl.INSTANCE, clock, ring, seq, level);
+                LogRollingFileWriter w = new LogRollingFileWriter(clock, ring, seq, level);
                 w.setLocation(logFile);
                 w.setSpinBeforeFlush("1000000");
                 return w;
@@ -990,7 +989,6 @@ public class LogFactoryTest {
         pubSeq.then(subSeq).then(pubSeq);
 
         try (final LogRollingFileWriter writer = new LogRollingFileWriter(
-                TestFilesFacadeImpl.INSTANCE,
                 clock,
                 queue,
                 subSeq,
@@ -1005,7 +1003,6 @@ public class LogFactoryTest {
         }
 
         try (final LogRollingFileWriter writer = new LogRollingFileWriter(
-                TestFilesFacadeImpl.INSTANCE,
                 clock,
                 queue,
                 subSeq,
@@ -1119,7 +1116,7 @@ public class LogFactoryTest {
         AtomicReference<LogRollingFileWriter> writerRef = new AtomicReference<>();
         try (LogFactory factory = new LogFactory()) {
             LogWriterConfig config = new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                LogRollingFileWriter w = new LogRollingFileWriter(new FilesFacadeImpl(temp.toString()), clock, ring, seq, level);
+                LogRollingFileWriter w = new LogRollingFileWriter(clock, ring, seq, level);
                 w.setLocation(logFile);
                 w.setSpinBeforeFlush("10");
                 w.setRollEvery("day");
@@ -1259,7 +1256,7 @@ public class LogFactoryTest {
         String logFile = base + fileTemplate;
         try (LogFactory factory = new LogFactory()) {
             factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                LogRollingFileWriter w = new LogRollingFileWriter(TestFilesFacadeImpl.INSTANCE, clock, ring, seq, level);
+                LogRollingFileWriter w = new LogRollingFileWriter(clock, ring, seq, level);
                 w.setLocation(logFile);
                 // 1Mb log file limit, we will create 4 of them
                 w.setBufferSize("4k");

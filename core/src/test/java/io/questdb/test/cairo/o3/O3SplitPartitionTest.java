@@ -32,7 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
@@ -499,7 +499,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
         executeWithPool(
                 workerCount,
                 (engine, compiler, executionContext, timestampTypeName) -> {
-                    FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                    FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
                     engine.execute(
                             "create table x as (" +
                                     "select" +
@@ -557,7 +557,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
         executeWithPool(
                 workerCount,
                 (engine, compiler, executionContext, timestampTypeName) -> {
-                    FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                    FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
                     engine.execute(
                             "create table x as (" +
                                     "select" +

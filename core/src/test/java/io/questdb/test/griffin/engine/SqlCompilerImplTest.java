@@ -55,7 +55,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.MemoryTag;
@@ -3300,7 +3300,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 File table = new File(target);
                 Assert.assertTrue(table.exists());
                 Assert.assertTrue(table.isDirectory());
-                Assert.assertTrue(FilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash()));
+                Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash()));
                 Assert.assertTrue(volume.delete());
             }
         });

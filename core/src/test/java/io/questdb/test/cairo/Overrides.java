@@ -78,15 +78,11 @@ public class Overrides {
     }
 
     public CairoConfiguration getConfiguration(String root) {
-        if (!properties.isEmpty()) {
-            if (changed) {
-                this.propsConfig = getTestConfiguration(root, defaultProperties, properties);
-                changed = false;
-            }
-            return this.propsConfig;
-        } else {
-            return getDefaultConfiguration(root);
+        if (changed || !root.equals(this.propsConfig.getInstallRoot())) {
+            this.propsConfig = getTestConfiguration(root, defaultProperties, properties);
+            changed = false;
         }
+        return this.propsConfig;
     }
 
     public Map<String, String> getEnv() {
@@ -138,8 +134,8 @@ public class Overrides {
         factoryProvider = null;
         env = null;
         isHiddenTelemetryTable = false;
+        changed = properties.size() > 0;
         properties.clear();
-        changed = true;
         spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
         freeLeakedReaders = false;
     }

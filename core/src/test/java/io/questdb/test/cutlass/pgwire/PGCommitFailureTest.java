@@ -28,7 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
@@ -51,7 +51,7 @@ public class PGCommitFailureTest extends BasePGTest {
             FilesFacade ffTmp = ff;
             try {
                 AtomicInteger counter = new AtomicInteger(2);
-                ff = new FilesFacadeImpl() {
+                ff = new TestFilesFacadeImpl() {
                     long addr = 0;
                     long fd = 0;
 
@@ -110,7 +110,7 @@ public class PGCommitFailureTest extends BasePGTest {
             FilesFacade ffTmp = ff;
             try {
                 AtomicInteger counter = new AtomicInteger(2);
-                ff = new FilesFacadeImpl() {
+                ff = new TestFilesFacadeImpl() {
                     long addr = 0;
                     long fd = 0;
 
@@ -167,7 +167,7 @@ public class PGCommitFailureTest extends BasePGTest {
             FilesFacade ffTmp = ff;
             try {
                 AtomicInteger counter = new AtomicInteger(2);
-                ff = new FilesFacadeImpl() {
+                ff = new TestFilesFacadeImpl() {
                     long addr = 0;
                     long fd = 0;
 

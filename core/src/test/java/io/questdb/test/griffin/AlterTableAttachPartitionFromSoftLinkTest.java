@@ -38,7 +38,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -93,7 +93,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testAddColumn() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, ignore -> {
                         try {
@@ -126,7 +126,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Test
     public void testDetachPartitionAttachedFromSoftLink() throws Exception {
         Assume.assumeFalse(Os.isWindows());
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "SNOW", tableToken -> {
                         try {
@@ -172,7 +172,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testDropIndex() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, ignore -> {
                         try {
@@ -206,7 +206,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Test
     public void testDropPartition() throws Exception {
         Assume.assumeFalse(Os.isWindows());
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "IGLOO", tableToken -> {
                         try {
@@ -238,7 +238,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Test
     public void testDropPartitionWhileThereIsAReader() throws Exception {
         Assume.assumeFalse(Os.isWindows());
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "FINLAND", tableToken -> {
                         try {
@@ -278,7 +278,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Test
     public void testDropPartitionWhileThereIsAReaderWindows() throws Exception {
         Assume.assumeTrue(Os.isWindows()); // for consistency with the test's name
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, tableToken -> {
                         TestUtils.unchecked(() -> {
@@ -311,7 +311,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Test
     public void testDropPartitionWindows() throws Exception {
         Assume.assumeTrue(Os.isWindows()); // for consistency with the test's name
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, ignore -> {
                         try {
@@ -332,7 +332,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testInsertInTransaction() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, tableToken -> {
                         try {
@@ -407,7 +407,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testInsertLastPartitionIsReadOnly() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
             TableToken tableToken = createPopulateTable(tableName, 5);
@@ -572,7 +572,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testInsertMultiRowAllPartitionsAreReadOnlyNo03() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
             TableToken tableToken = createPopulateTable(tableName, 5);
@@ -615,7 +615,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testInsertMultiRowAllPartitionsAreReadOnlyWith03() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
             TableToken tableToken = createPopulateTable(tableName, 5);
@@ -658,7 +658,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testInsertUpdate() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, ignore -> {
                         try {
@@ -718,7 +718,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Test
     public void testPurgePartitions() throws Exception {
         Assume.assumeFalse(Os.isWindows());
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             String tableName = testName.getMethodName();
             String[] partitionName = {
                     "2022-10-17",
@@ -824,7 +824,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Test
     public void testRemoveColumn() throws Exception {
         Assume.assumeFalse(Os.isWindows());
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "REFRIGERATOR", tableToken -> {
                         TestUtils.unchecked(() -> {
@@ -884,7 +884,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Test
     public void testRemoveColumnWindows() throws Exception {
         Assume.assumeTrue(Os.isWindows()); // for consistency with the test's name
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, ignore -> {
                         TestUtils.unchecked(() -> {
@@ -915,7 +915,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testRenameColumn() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, ignore -> {
                         try {
@@ -946,7 +946,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Test
     public void testTruncateTable() throws Exception {
         Assume.assumeFalse(Os.isWindows());
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "FRIO_DEL_15", tableToken -> {
                         try {
@@ -978,7 +978,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Test
     public void testTruncateTableWindows() throws Exception {
         Assume.assumeTrue(Os.isWindows()); // for consistency with the test's name
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, tableToken -> {
                         try {
@@ -999,7 +999,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Test
     public void testUpdate() throws Exception {
         Assume.assumeFalse(Os.isWindows());
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "LEGEND", ignore -> {
                         try {
@@ -1037,7 +1037,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Test
     public void testUpdateWindows() throws Exception {
         Assume.assumeTrue(Os.isWindows()); // for consistency with the test's name
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, ignore -> {
                         try {
@@ -1111,7 +1111,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     private void attachPartitionFromSoftLink(String tableName, String otherLocation, Function<TableToken, Void> test) throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             TableToken tableToken = createPopulateTable(tableName, 2);
             assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
                     expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
@@ -1200,7 +1200,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     private void createTableWithReadOnlyPartition(String tableName, Function<TableToken, Void> test) throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             TableToken tableToken = createPopulateTable(tableName, 2);
             // the read-only flag is only set when a partition is attached from soft link
             try (TableWriter writer = getWriter(tableToken)) {

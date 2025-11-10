@@ -52,7 +52,7 @@ import io.questdb.std.BitmapIndexUtilsNative;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
@@ -298,7 +298,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             create(configuration, path.trimTo(plen), "x", 1024);
 
-            class CountingFacade extends FilesFacadeImpl {
+            class CountingFacade extends TestFilesFacadeImpl {
                 private int count = 0;
 
                 @Override
@@ -907,7 +907,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             create(configuration, path.trimTo(plen), "x", 1024);
 
-            class CountingFacade extends FilesFacadeImpl {
+            class CountingFacade extends TestFilesFacadeImpl {
                 private int count = 0;
 
                 @Override

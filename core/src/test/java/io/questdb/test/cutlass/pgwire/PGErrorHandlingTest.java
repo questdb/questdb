@@ -34,7 +34,7 @@ import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.network.Socket;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
@@ -74,7 +74,7 @@ public class PGErrorHandlingTest extends AbstractBootstrapTest {
                                 getEnv(),
                                 bootstrap.getLog(),
                                 bootstrap.getBuildInformation(),
-                                new FilesFacadeImpl() {
+                                new TestFilesFacadeImpl() {
                                     @Override
                                     public long openRW(LPSZ name, int opts) {
                                         if (Utf8s.endsWithAscii(name, "x" + Files.SEPARATOR + "_meta")) {
@@ -117,7 +117,7 @@ public class PGErrorHandlingTest extends AbstractBootstrapTest {
                                 getEnv(),
                                 bootstrap.getLog(),
                                 bootstrap.getBuildInformation(),
-                                FilesFacadeImpl.INSTANCE,
+                                TestFilesFacadeImpl.INSTANCE,
                                 bootstrap.getMicrosecondClock(),
                                 (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
                                     @Override

@@ -571,7 +571,7 @@ public class FilesFacadeImpl implements FilesFacade {
         // against installation root dir to avoid catastrophic mistakes
         Path pathSecureCopy = SecurePath.PATH.get().of(path);
         if (installationRootDir != null && !Utf8s.startsWith(pathSecureCopy, installationRootDir)) {
-            var exception = new IllegalArgumentException("Refusing to rmdir outside installation root [path=" + path + ']');
+            var exception = new IllegalArgumentException("Refusing to rmdir outside installation root [path=" + path + ", root=" + installationRootDir + ']');
             // Log stack trace for further analysis, don't rely on the caller to log it
             log.critical().$(exception).I$();
             throw exception;

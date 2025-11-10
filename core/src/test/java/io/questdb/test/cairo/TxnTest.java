@@ -38,7 +38,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -49,7 +49,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -77,7 +76,7 @@ public class TxnTest extends AbstractCairoTest {
                 }
             };
 
-            FilesFacadeImpl cleanFf = new TestFilesFacadeImpl();
+            var cleanFf = new TestFilesFacadeImpl();
             assertMemoryLeak(() -> {
                 String tableName = "txntest";
                 TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);

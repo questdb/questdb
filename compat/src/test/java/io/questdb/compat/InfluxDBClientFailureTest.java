@@ -56,7 +56,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
 
     @Test
     public void testAppendErrors() {
-        final FilesFacade filesFacade = new FilesFacadeImpl() {
+        final FilesFacade filesFacade = new FilesFacadeImpl(null) {
             private final AtomicInteger attempt = new AtomicInteger();
 
             @Override
@@ -96,7 +96,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
 
     @Test
     public void testAppendExceptions() {
-        final FilesFacade filesFacade = new FilesFacadeImpl() {
+        final FilesFacade filesFacade = new FilesFacadeImpl(null) {
             private final AtomicInteger attempt = new AtomicInteger();
 
             @Override
@@ -136,7 +136,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
 
     @Test
     public void testCommitFailed() {
-        final FilesFacade filesFacade = new FilesFacadeImpl() {
+        final FilesFacade filesFacade = new FilesFacadeImpl(null) {
             private final AtomicInteger counter = new AtomicInteger(1);
 
             @Override
@@ -185,7 +185,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
     @Test
     public void testDropTableWhileAppend() {
         AtomicReference<ServerMain> server = new AtomicReference<>();
-        final FilesFacade filesFacade = new FilesFacadeImpl() {
+        final FilesFacade filesFacade = new FilesFacadeImpl(null) {
             private final AtomicInteger attempt = new AtomicInteger();
 
             @Override
@@ -225,7 +225,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
     @Test
     public void testDropTableWhileWrite() throws Exception {
         AtomicReference<ServerMain> server = new AtomicReference<>();
-        final FilesFacade filesFacade = new FilesFacadeImpl() {
+        final FilesFacade filesFacade = new FilesFacadeImpl(null) {
             private final AtomicInteger attempt = new AtomicInteger();
 
             @Override
@@ -313,7 +313,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
 
     @Test
     public void testTableColumnAddFailedDoesNotCommit() throws Exception {
-        final FilesFacade filesFacade = new FilesFacadeImpl() {
+        final FilesFacade filesFacade = new FilesFacadeImpl(null) {
             private final AtomicInteger counter = new AtomicInteger(0);
 
             @Override
@@ -362,7 +362,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
     @Test
     public void testTableIsDroppedWhileColumnIsAdded() throws Exception {
         AtomicReference<ServerMain> server = new AtomicReference<>();
-        final FilesFacade filesFacade = new FilesFacadeImpl() {
+        final FilesFacade filesFacade = new FilesFacadeImpl(null) {
             private final AtomicInteger attempt = new AtomicInteger();
 
             @Override

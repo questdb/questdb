@@ -40,7 +40,7 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -74,7 +74,7 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                 getEnv(),
                                 bootstrap.getLog(),
                                 bootstrap.getBuildInformation(),
-                                new FilesFacadeImpl() {
+                                new TestFilesFacadeImpl() {
                                     @Override
                                     public long openRW(LPSZ name, int opts) {
                                         if (Utf8s.endsWithAscii(name, "x" + Files.SEPARATOR + "_meta")) {
@@ -114,7 +114,7 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                 getEnv(),
                                 bootstrap.getLog(),
                                 bootstrap.getBuildInformation(),
-                                FilesFacadeImpl.INSTANCE,
+                                TestFilesFacadeImpl.INSTANCE,
                                 bootstrap.getMicrosecondClock(),
                                 (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
                                     @Override

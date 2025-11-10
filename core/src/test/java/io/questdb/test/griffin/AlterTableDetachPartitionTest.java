@@ -43,7 +43,7 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -56,7 +56,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
@@ -187,7 +186,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testAttachFailsCopyMeta() throws Exception {
-        FilesFacadeImpl ff1 = new TestFilesFacadeImpl() {
+        var ff1 = new TestFilesFacadeImpl() {
             int i = 0;
 
             @Override
@@ -247,7 +246,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testAttachFailsRetried() throws Exception {
-        FilesFacadeImpl ff1 = new TestFilesFacadeImpl() {
+        var ff1 = new TestFilesFacadeImpl() {
             int i = 0;
 
             @Override
@@ -751,7 +750,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testCannotUndoRenameAfterBrokenCopyMeta() throws Exception {
-        FilesFacadeImpl ff1 = new TestFilesFacadeImpl() {
+        var ff1 = new TestFilesFacadeImpl() {
             private boolean copyCalled = false;
 
             @Override
@@ -810,7 +809,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testDetachAttachAnotherDrive() throws Exception {
-        FilesFacadeImpl ff1 = new TestFilesFacadeImpl() {
+        var ff1 = new TestFilesFacadeImpl() {
             @Override
             public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
                 return 100018;
@@ -870,7 +869,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testDetachAttachAnotherDriveFailsToCopy() throws Exception {
-        FilesFacadeImpl ff1 = new TestFilesFacadeImpl() {
+        var ff1 = new TestFilesFacadeImpl() {
             @Override
             public int copyRecursive(Path src, Path dst, int dirMode) {
                 return 100018;
@@ -919,7 +918,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testDetachAttachAnotherDriveFailsToHardLink() throws Exception {
-        FilesFacadeImpl ff1 = new TestFilesFacadeImpl() {
+        var ff1 = new TestFilesFacadeImpl() {
             @Override
             public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
                 return 100018;

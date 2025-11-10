@@ -30,6 +30,6 @@ public class SecurePath {
     static final io.questdb.std.ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
 
     public static void clearThreadLocals() {
-        PATH.remove();
+        PATH.close();
     }
 }

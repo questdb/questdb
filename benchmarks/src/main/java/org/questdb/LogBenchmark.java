@@ -60,7 +60,7 @@ public class LogBenchmark {
     public void setUp() {
         factory = new LogFactory();
         factory.add(new LogWriterConfig(LogLevel.INFO, (queue, subSeq, level) -> {
-            LogRollingFileWriter w = new LogRollingFileWriter(new FilesFacadeImpl(""), MicrosecondClockImpl.INSTANCE, queue, subSeq, level);
+            LogRollingFileWriter w = new LogRollingFileWriter(MicrosecondClockImpl.INSTANCE, queue, subSeq, level);
             w.setLocation("log-bench1.log");
             return w;
         }));

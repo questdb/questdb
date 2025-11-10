@@ -2856,7 +2856,7 @@ public class IODispatcherTest extends AbstractTest {
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration, configuration.getFilesFacade()));
                 httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
@@ -3529,7 +3529,7 @@ public class IODispatcherTest extends AbstractTest {
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration, configuration.getFilesFacade()));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 workerPool.start(LOG);
@@ -5543,7 +5543,7 @@ public class IODispatcherTest extends AbstractTest {
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration, configuration.getFilesFacade()));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 workerPool.start(LOG);
@@ -5772,7 +5772,7 @@ public class IODispatcherTest extends AbstractTest {
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration, configuration.getFilesFacade()));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 workerPool.start(LOG);
@@ -5822,7 +5822,7 @@ public class IODispatcherTest extends AbstractTest {
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration, configuration.getFilesFacade()));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 workerPool.start(LOG);
@@ -5891,7 +5891,7 @@ public class IODispatcherTest extends AbstractTest {
             try (CairoEngine engine = new CairoEngine(cairoConfiguration);
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration, configuration.getFilesFacade()));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 TestUtils.setupWorkerPool(workerPool, engine);
@@ -6787,7 +6787,7 @@ public class IODispatcherTest extends AbstractTest {
             try (
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration, configuration.getFilesFacade()));
 
                 workerPool.start(LOG);
 
@@ -6913,7 +6913,7 @@ public class IODispatcherTest extends AbstractTest {
             try (
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration, configuration.getFilesFacade()));
 
                 workerPool.start(LOG);
 
@@ -7046,7 +7046,7 @@ public class IODispatcherTest extends AbstractTest {
             try (
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration, configuration.getFilesFacade()));
 
                 workerPool.start(LOG);
 
@@ -9077,7 +9077,7 @@ public class IODispatcherTest extends AbstractTest {
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
                  SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration, configuration.getFilesFacade()));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
                 WorkerPoolUtils.setupQueryJobs(workerPool, engine);

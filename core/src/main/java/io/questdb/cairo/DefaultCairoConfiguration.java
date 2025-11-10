@@ -81,6 +81,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     public DefaultCairoConfiguration(CharSequence dbRoot, CharSequence installRoot) {
+        this.ff = new FilesFacadeImpl(dbRoot);
         this.dbRoot = Chars.toString(dbRoot);
         this.installRoot = Chars.toString(installRoot);
         this.confRoot = PropServerConfiguration.rootSubdir(dbRoot, PropServerConfiguration.CONFIG_DIRECTORY);
@@ -91,7 +92,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
         this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(dbRoot);
-        this.ff = new FilesFacadeImpl(dbRoot);
     }
 
     @Override

@@ -1269,7 +1269,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 });
                 // load mime types
                 path.of(new File(new File(installRoot, CONFIG_DIRECTORY), "mime.types").getAbsolutePath());
-                this.mimeTypesCache = new MimeTypesCache(filesFacade, path.$());
+                this.mimeTypesCache = new MimeTypesCache(this.filesFacade, path.$());
             }
 
             this.maxRerunWaitCapMs = getMillis(properties, env, PropertyKey.HTTP_BUSY_RETRY_MAXIMUM_WAIT_BEFORE_RETRY, 1000);

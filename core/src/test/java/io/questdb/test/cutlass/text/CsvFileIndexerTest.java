@@ -34,7 +34,7 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
@@ -124,7 +124,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
 
     @Test
     public void testIndexFileFailsWhenIndexFileAlreadyExists() {
-        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
+        var ff = new TestFilesFacadeImpl() {
             final String partition = "2022-05-10" + File.separator + "0_1";
 
             @Override
@@ -141,7 +141,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
 
     @Test
     public void testIndexFileFailsWhenItCantCreatePartitionDirectory() {
-        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
+        var ff = new TestFilesFacadeImpl() {
             final String partition = "2022-05-10" + File.separator;
 
             @Override

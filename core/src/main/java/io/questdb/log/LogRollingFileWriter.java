@@ -41,6 +41,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
@@ -57,7 +58,6 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private static final int INITIAL_LOG_FILE_LIST_SIZE = 1024;
     private static final int INITIAL_LOG_FILE_NAME_SINK_SIZE = 64 * 1024;
     private final MicrosecondClock clock;
-    private final FilesFacade ff;
     private final int level;
     private final TemplateParser locationParser = new TemplateParser();
     private final DirectUtf8StringZ logFileName = new DirectUtf8StringZ();
@@ -71,6 +71,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private String bufferSize;
     private long currentSize;
     private long fd = -1;
+    private FilesFacade ff;
     private long idleSpinCount = 0;
     private String lifeDuration;
     private long lim;
@@ -97,8 +98,11 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private final QueueConsumer<LogRecordUtf8Sink> copyToBufferRef = this::copyToBuffer;
     private String spinBeforeFlush;
 
+    public LogRollingFileWriter(RingQueue<LogRecordUtf8Sink> ring, SCSequence subSeq, int level) {
+        this(MicrosecondClockImpl.INSTANCE, ring, subSeq, level);
+    }
+
     public LogRollingFileWriter(
-            FilesFacade ff,
             MicrosecondClock clock,
             RingQueue<LogRecordUtf8Sink> ring,
             SCSequence subSeq,
@@ -107,7 +111,6 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         try {
             this.path = new Path();
             this.renameToPath = new Path();
-            this.ff = ff;
             this.clock = clock;
             this.ring = ring;
             this.subSeq = subSeq;
@@ -120,6 +123,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public void bindProperties(LogFactory factory, FilesFacade ff) {
+        this.ff = ff;
         if (location == null) {
             throw CairoException.nonCritical().put("rolling log file location not set [location=null]");
         }

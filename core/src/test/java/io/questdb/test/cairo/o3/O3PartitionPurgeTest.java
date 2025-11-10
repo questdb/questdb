@@ -617,7 +617,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                             return false;
                         }
                     }
-                    return super.rmdir(name);
+                    return super.rmdir(name, lazy);
                 }
             };
 
