@@ -76,7 +76,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
-@SuppressWarnings("SameParameterValue")
+@SuppressWarnings({"SameParameterValue", "resource"})
 public class WalTableSqlTest extends AbstractCairoTest {
 
     @BeforeClass
