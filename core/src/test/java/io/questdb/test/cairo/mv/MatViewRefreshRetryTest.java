@@ -81,11 +81,21 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
 
             drainWalAndMatViewQueues();
             assertQueryNoLeakCheck(
-                    "view_name\tview_status\n" +
-                            "price_1h\tvalid\n",
+                    """
+                            view_name\tview_status
+                            price_1h\tvalid
+                            """,
                     "select view_name, view_status from materialized_views",
                     null,
                     false
+            );
+
+            assertSql(
+                    """
+                            count
+                            56
+                            """,
+                    "select count() from wal_transactions('price_1h')"
             );
         });
     }
@@ -130,8 +140,10 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
             Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 500 * 1024); // 500KB gap
             drainWalAndMatViewQueues();
             assertQueryNoLeakCheck(
-                    "view_name\tview_status\n" +
-                            "price_1h\tinvalid\n",
+                    """
+                            view_name\tview_status
+                            price_1h\tinvalid
+                            """,
                     "select view_name, view_status from materialized_views",
                     null,
                     false
@@ -142,8 +154,10 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
             execute("refresh materialized view price_1h full;");
             drainWalAndMatViewQueues();
             assertQueryNoLeakCheck(
-                    "view_name\tview_status\n" +
-                            "price_1h\tvalid\n",
+                    """
+                            view_name\tview_status
+                            price_1h\tvalid
+                            """,
                     "select view_name, view_status from materialized_views",
                     null,
                     false
