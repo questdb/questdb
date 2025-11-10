@@ -212,42 +212,50 @@ class AsyncFastWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     private void buildSlaveTimeFrameCacheConditionally() {
         if (!isSlaveTimeFrameCacheBuilt) {
-            slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
-            slaveTimeFramePartitionIndexes.clear();
-            slaveTimeFrameRowCounts.clear();
-
-            // TODO(puzpuzpuz): building page frame cache assumes opening all partitions;
-            //                  we should open partitions lazily (for now, it's ok)
-            int frameCount = 0;
-            PageFrame frame;
-            while ((frame = slaveFrameCursor.next()) != null) {
-                slaveTimeFramePartitionIndexes.add(frame.getPartitionIndex());
-                slaveTimeFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-                slaveTimeFrameAddressCache.add(frameCount++, frame);
-            }
-
-            slavePartitionTimestamps.clear();
-            final TableReader reader = slaveFrameCursor.getTableReader();
-            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
-                slavePartitionTimestamps.add(reader.getPartitionTimestampByIndex(i));
-            }
-
-            // TODO(puzpuzpuz): this is a bit ugly
-            try {
-                masterFrameSequence.getAtom().initTimeFrameCursors(
-                        executionContext,
-                        masterFrameSequence.getSymbolTableSource(),
-                        slaveFrameCursor,
-                        slaveTimeFrameAddressCache,
-                        slaveTimeFramePartitionIndexes,
-                        slaveTimeFrameRowCounts,
-                        slavePartitionTimestamps,
-                        frameCount
-                );
-            } catch (SqlException e) {
-                throw CairoException.nonCritical().put(e.getFlyweightMessage());
-            }
+            final int frameCount = initializeSlaveTimeFrameCache();
+            populateSlavePartitionTimestamps();
+            initializeTimeFrameCursors(frameCount);
             isSlaveTimeFrameCacheBuilt = true;
+        }
+    }
+
+    private int initializeSlaveTimeFrameCache() {
+        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
+        slaveTimeFramePartitionIndexes.clear();
+        slaveTimeFrameRowCounts.clear();
+
+        int frameCount = 0;
+        PageFrame frame;
+        while ((frame = slaveFrameCursor.next()) != null) {
+            slaveTimeFramePartitionIndexes.add(frame.getPartitionIndex());
+            slaveTimeFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            slaveTimeFrameAddressCache.add(frameCount++, frame);
+        }
+        return frameCount;
+    }
+
+    private void populateSlavePartitionTimestamps() {
+        slavePartitionTimestamps.clear();
+        final TableReader reader = slaveFrameCursor.getTableReader();
+        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+            slavePartitionTimestamps.add(reader.getPartitionTimestampByIndex(i));
+        }
+    }
+
+    private void initializeTimeFrameCursors(int frameCount) {
+        try {
+            masterFrameSequence.getAtom().initTimeFrameCursors(
+                    executionContext,
+                    masterFrameSequence.getSymbolTableSource(),
+                    slaveFrameCursor,
+                    slaveTimeFrameAddressCache,
+                    slaveTimeFramePartitionIndexes,
+                    slaveTimeFrameRowCounts,
+                    slavePartitionTimestamps,
+                    frameCount
+            );
+        } catch (SqlException e) {
+            throw CairoException.nonCritical().put(e.getFlyweightMessage());
         }
     }
 

@@ -3166,6 +3166,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 IntList columnIndex = new IntList(cols.size());
                                 int groupByCnt = 0;
                                 int splitIndex = masterMetadata.getColumnCount();
+                                int timestampIndex = -1;
 
                                 for (int j = 0, m = cols.size(); j < m; j++) {
                                     ExpressionNode ast = cols.get(j).getAst();
@@ -3176,6 +3177,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         }
                                         if (colIndex >= splitIndex) {
                                             throw SqlException.position(ast.position).put("WINDOW join cannot reference right table non-aggregate column: ").put(ast.token);
+                                        }
+                                        if (colIndex == masterMetadata.getTimestampIndex()) {
+                                            timestampIndex = colIndex;
                                         }
                                         columnIndex.add(colIndex);
                                     } else {
@@ -3230,6 +3234,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         null,
                                         validateSampleByFillType
                                 );
+                                outerProjectionMetadata.setTimestampIndex(timestampIndex);
 
                                 ExpressionNode node = slaveModel.getOuterJoinExpressionClause();
                                 ExpressionNode constFilterExpr = model.getConstWhereClause();
