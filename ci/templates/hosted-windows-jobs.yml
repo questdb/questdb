@@ -3,57 +3,6 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        mac-griffin:
-          imageName: "macos-14"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.17"
-          testset: "all"
-          includeTests: "**/griffin/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        mac-cairo:
-          imageName: "macos-14"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.17"
-          testset: "all"
-          includeTests: "**/cairo/**"
-          # Exclude cairo fuzz tests: run in mac-cairo-fuzz
-          excludeTests: "**/cairo/fuzz/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        mac-cairo-fuzz:
-          imageName: "macos-14"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.17"
-          testset: "all"
-          includeTests: "**/cairo/fuzz/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        mac-pgwire:
-          imageName: "macos-14"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.17"
-          testset: "all"
-          includeTests: "**/pgwire/**/*.java"
-          javadoc_step: ""
-          javadoc_profile: ""
-        mac-other:
-          imageName: "macos-14"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.17"
-          testset: "all"
-          # Exclude griffin: run in mac-griffin
-          # Exclude cairo: run in mac-cairo and mac-cairo-fuzz
-          # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
-          # Exclude pgwire: run in mac-pgwire
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
-          javadoc_step: ""
-          javadoc_profile: ""
         windows-griffin-base:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"

@@ -45,12 +45,19 @@ stages:
     variables:
       excludeTests: "**/griffin/**,**/cairo/**"
 
-  - stage: HostedRunTestsBranches
-    displayName: "Hosted Running tests"
+  - stage: HostedMacRunTestsBranches
+    displayName: "Hosted Mac Running tests"
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/hosted-jobs.yml
+      - template: templates/hosted-mac-jobs.yml
+
+  - stage: HostedWindowsRunTestsBranches
+    displayName: "Hosted Windows Running tests"
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/hosted-windows-jobs.yml
 
   - stage: SelfHostedRunTestsCoverageBranches
     displayName: "SelfHosted Running tests with cover"
