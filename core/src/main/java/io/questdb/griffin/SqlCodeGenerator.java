@@ -237,6 +237,7 @@ import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexRowCursorFactory;
+import io.questdb.griffin.engine.table.ExtraNullColumnCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnExcludedValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
@@ -314,6 +315,7 @@ import java.util.ArrayDeque;
 import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
+import static io.questdb.griffin.SqlOptimiser.concatFilters;
 import static io.questdb.griffin.SqlOptimiser.evalNonNegativeLongConstantOrDie;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.*;
@@ -3229,6 +3231,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         validateSampleByFillType
                                 );
 
+                                ExpressionNode node = slaveModel.getOuterJoinExpressionClause();
+                                ExpressionNode constFilterExpr = model.getConstWhereClause();
+                                boolean alwaysTrue = false;
+                                if (constFilterExpr != null) {
+                                    Function constFilter = functionParser.parseFunction(constFilterExpr, null, executionContext);
+                                    try {
+                                        if (!isBoolean(constFilter.getType())) {
+                                            throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
+                                        }
+                                        constFilter.init(null, executionContext);
+                                        if (constFilter.isConstant()) {
+                                            if (!constFilter.getBool(null)) {
+                                                GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(masterMetadata);
+                                                for (int k = 0; k < groupByCnt; k++) {
+                                                    metadata.add(new TableColumnMetadata(groupByFunctions.get(k).getName(), groupByFunctions.get(k).getType()));
+                                                }
+                                                RecordCursorFactory factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master);
+                                                if (columnIndex != null) {
+                                                    factory = new SelectedRecordCursorFactory(outerProjectionMetadata, columnIndex, factory);
+                                                }
+                                                Misc.free(slave);
+                                                Misc.free(joinMetadata);
+                                                return factory;
+                                            } else {
+                                                alwaysTrue = true;
+                                            }
+                                        }
+                                    } finally {
+                                        Misc.free(constFilter);
+                                    }
+                                    if (!alwaysTrue) {
+                                        node = concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, node, constFilterExpr);
+                                    }
+                                    model.setConstWhereClause(null);
+                                }
+
                                 // is parallel windowJoin?
                                 if (slave.supportsTimeFrameCursor() && (master.supportsPageFrameCursor() ||
                                         (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor()))) {
@@ -3251,13 +3289,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                     master.setSmalePageFrameRows(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
                                     // try to extract symbols equal function from join filter
-                                    ExpressionNode node = slaveModel.getOuterJoinExpressionClause();
                                     int leftSymbolIndex = -1;
                                     int rightSymbolIndex = -1;
                                     ExpressionNode parent = null;
                                     if (node != null) {
                                         final int columnSplit = master.getMetadata().getColumnCount();
-                                        ExpressionNode nn = slaveModel.getOuterJoinExpressionClause();
+                                        ExpressionNode nn = node;
                                         sqlNodeStack.clear();
                                         sqlNodeStack2.clear();
                                         boolean isLeft = false;
@@ -3313,6 +3350,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             } else {
                                                 parent = null;
                                             }
+                                        } else {
+                                            parent = node;
                                         }
                                         if (parent != null) {
                                             filter = compileJoinFilter(parent, joinMetadata, executionContext);
@@ -3381,7 +3420,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         executionContext,
                                                         filter,
                                                         executionContext.getSharedQueryWorkerCount(),
-                                                        slaveModel.getOuterJoinExpressionClause(),
+                                                        node,
                                                         joinMetadata
                                                 ),
                                                 lo,
@@ -3415,8 +3454,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("right side of window join doesn't support random access");
                                     }
 
-                                    if (slaveModel.getOuterJoinExpressionClause() != null) {
-                                        filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                    if (node != null) {
+                                        filter = compileJoinFilter(node, joinMetadata, executionContext);
                                     }
                                     master = new WindowJoinLightFilteredRecordCursorFactory(
                                             configuration,

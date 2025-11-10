@@ -232,6 +232,19 @@ public class SqlOptimiser implements Mutable {
         return appearsInArgs;
     }
 
+    public static ExpressionNode concatFilters(boolean cairoSqlLegacyOperatorPrecedence, ObjectPool<ExpressionNode> expressionNodePool, ExpressionNode old, ExpressionNode filter) {
+        if (old == null) {
+            return filter;
+        } else {
+            OperatorExpression andOp = OperatorExpression.chooseRegistry(cairoSqlLegacyOperatorPrecedence).getOperatorDefinition("and");
+            ExpressionNode node = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, filter.position);
+            node.paramCount = 2;
+            node.lhs = old;
+            node.rhs = filter;
+            return node;
+        }
+    }
+
     public void clear() {
         clearForUnionModelInJoin();
         contextPool.clear();
@@ -673,7 +686,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void addOuterJoinExpression(QueryModel parent, QueryModel model, int joinIndex, ExpressionNode node) {
-        model.setOuterJoinExpressionClause(concatFilters(model.getOuterJoinExpressionClause(), node));
+        model.setOuterJoinExpressionClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, model.getOuterJoinExpressionClause(), node));
         // add dependency to prevent previous model reordering (left/right outer joins are not symmetric)
         if (joinIndex > 0) {
             linkDependencies(parent, joinIndex - 1, joinIndex);
@@ -681,7 +694,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void addPostJoinWhereClause(QueryModel model, ExpressionNode node) {
-        model.setPostJoinWhereClause(concatFilters(model.getPostJoinWhereClause(), node));
+        model.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, model.getPostJoinWhereClause(), node));
     }
 
     private void addTimestampToProjection(
@@ -822,7 +835,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void addWhereNode(QueryModel model, ExpressionNode node) {
-        model.setWhereClause(concatFilters(model.getWhereClause(), node));
+        model.setWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, model.getWhereClause(), node));
     }
 
     /**
@@ -1065,7 +1078,7 @@ public class SqlOptimiser implements Mutable {
                 if (rs == 0) {
                     // condition has no table references
                     postFilterRemoved.add(k);
-                    parent.setConstWhereClause(concatFilters(parent.getConstWhereClause(), node));
+                    parent.setConstWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, parent.getConstWhereClause(), node));
                 } else if (rs == 1 && // single table reference and this table is not joined via OUTER or ASOF
                         joinBarriers.excludes(parent.getJoinModels().getQuick(refs.get(0)).getJoinType())) {
                     // get single table reference out of the way right away
@@ -1084,7 +1097,7 @@ public class SqlOptimiser implements Mutable {
                     if (qualifies) {
                         postFilterRemoved.add(k);
                         QueryModel m = parent.getJoinModels().getQuick(index);
-                        m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), node));
+                        m.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, m.getPostJoinWhereClause(), node));
                     }
                 }
             }
@@ -1344,19 +1357,6 @@ public class SqlOptimiser implements Mutable {
         // it's only a duplicate if its being applied to a different model.
         if (parent != model) {
             throw SqlException.position(alias.position).put("Duplicate table or alias: ").put(alias.token);
-        }
-    }
-
-    private ExpressionNode concatFilters(ExpressionNode old, ExpressionNode filter) {
-        if (old == null) {
-            return filter;
-        } else {
-            OperatorExpression andOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
-            ExpressionNode node = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, filter.position);
-            node.paramCount = 2;
-            node.lhs = old;
-            node.rhs = filter;
-            return node;
         }
     }
 
@@ -2866,6 +2866,7 @@ public class SqlOptimiser implements Mutable {
                 model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT
                         // in theory, we could push down predicates as long as they align with ALL partition by clauses and remove whole partition(s)
                         && model.getSelectModelType() != QueryModel.SELECT_MODEL_WINDOW
+                        && model.getSelectModelType() != QueryModel.SELECT_MODEL_WINDOW_JOIN
         ) {
             model.getParsedWhere().clear();
             final ObjList<ExpressionNode> nodes = model.parseWhereClause();
@@ -2902,7 +2903,7 @@ public class SqlOptimiser implements Mutable {
                     } else if (distinctIndexes > 1) {
                         int greatest = tempIntList.get(distinctIndexes - 1);
                         final QueryModel m = model.getJoinModels().get(greatest);
-                        m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), nodes.getQuick(i)));
+                        m.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, m.getPostJoinWhereClause(), nodes.getQuick(i)));
                         continue;
                     }
 
@@ -2917,7 +2918,7 @@ public class SqlOptimiser implements Mutable {
                             && (joinBarriers.contains(joinType))
                     ) {
                         QueryModel joinModel = model.getJoinModels().getQuick(tableIndex);
-                        joinModel.setPostJoinWhereClause(concatFilters(joinModel.getPostJoinWhereClause(), node));
+                        joinModel.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, joinModel.getPostJoinWhereClause(), node));
                         continue;
                     }
 
@@ -4349,7 +4350,7 @@ public class SqlOptimiser implements Mutable {
             node.lhs = nullExpr;
             node.rhs = distinctExpr;
 
-            nested.setWhereClause(concatFilters(nested.getWhereClause(), node));
+            nested.setWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, nested.getWhereClause(), node));
             middle.addGroupBy(distinctExpr);
 
             countDistinctExpr.token = "count";
