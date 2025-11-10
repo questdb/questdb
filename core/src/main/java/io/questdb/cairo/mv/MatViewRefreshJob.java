@@ -756,7 +756,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             if (insertedRows > batchSize && i < maxRetries && intervalStep > 1) {
                                 // Yes, the transaction is large, thus try once again with a proportionally smaller step.
                                 final double transactionRatio = (double) batchSize / insertedRows;
-                                intervalStep = Math.max((int) (transactionRatio * intervalStep), 1);
+                                intervalStep = Math.max((int) (transactionRatio * intervalStep) - 1, 1);
                                 walWriter.rollback();
                                 LOG.info().$("inserted too many rows in a single iteration, retrying with a reduced step [view=").$(viewTableToken)
                                         .$(", insertedRows=").$(insertedRows)
