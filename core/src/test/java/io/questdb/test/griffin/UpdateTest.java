@@ -936,6 +936,39 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateDecimalColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as decimal(2, 1)) d8," +
+                    " cast(x as decimal(4, 0)) d16," +
+                    " cast(x as decimal(9, 3)) d32," +
+                    " cast(x as decimal(15, 12)) d64," +
+                    " cast(x as decimal(35, 0)) d128," +
+                    " cast(x as decimal(64, 18)) d256" +
+                    " from long_sequence(2))" +
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+
+            update("UPDATE up " +
+                    "SET " +
+                    "d8 = 3.30m, " +
+                    "d16 = 0m, " +
+                    "d32 = 128L, " +
+                    "d64 = 123m, " +
+                    "d128 = 123456789L, " +
+                    "d256 = 123.456789m " +
+                    "WHERE ts >= '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+
+            assertSql(
+                    "ts\td8\td16\td32\td64\td128\td256\n" +
+                            "1970-01-01T00:00:00.000000Z\t1.0\t1\t1.000\t1.000000000000\t1\t1.000000000000000000\n" +
+                            "1970-01-01T00:00:01.000000Z\t3.3\t0\t128.000\t123.000000000000\t123456789\t123.456789000000000000\n",
+                    "up"
+            );
+        });
+    }
+
+    @Test
     public void testUpdateDifferentColumnTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table up as" +

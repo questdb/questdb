@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.ObjList;
 
+@SuppressWarnings("resource")
 class DoubleCaseFunction extends DoubleFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
@@ -39,7 +40,7 @@ class DoubleCaseFunction extends DoubleFunction implements CaseFunction {
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

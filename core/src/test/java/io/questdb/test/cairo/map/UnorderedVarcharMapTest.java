@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.map;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.SingleColumnType;
@@ -33,16 +34,21 @@ import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.UnorderedVarcharMap;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongLongAscList;
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
@@ -53,9 +59,188 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.HashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class UnorderedVarcharMapTest extends AbstractCairoTest {
+    Decimal128 decimal128 = new Decimal128();
+    Decimal256 decimal256 = new Decimal256();
+
+    @Test
+    public void testAllValueTypes() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.BYTE);
+            valueTypes.add(ColumnType.SHORT);
+            valueTypes.add(ColumnType.CHAR);
+            valueTypes.add(ColumnType.INT);
+            valueTypes.add(ColumnType.LONG);
+            valueTypes.add(ColumnType.FLOAT);
+            valueTypes.add(ColumnType.DOUBLE);
+            valueTypes.add(ColumnType.BOOLEAN);
+            valueTypes.add(ColumnType.DATE);
+            valueTypes.add(ColumnType.TIMESTAMP);
+            valueTypes.add(ColumnType.getGeoHashTypeWithBits(20));
+            valueTypes.add(ColumnType.LONG256);
+            valueTypes.add(ColumnType.UUID);
+            valueTypes.add(ColumnType.getDecimalType(2, 0)); // DECIMAL8
+            valueTypes.add(ColumnType.getDecimalType(4, 0)); // DECIMAL16
+            valueTypes.add(ColumnType.getDecimalType(8, 0)); // DECIMAL32
+            valueTypes.add(ColumnType.getDecimalType(16, 0)); // DECIMAL64
+            valueTypes.add(ColumnType.getDecimalType(32, 0)); // DECIMAL128
+            valueTypes.add(ColumnType.getDecimalType(64, 0)); // DECIMAL256
+
+            try (UnorderedVarcharMap map = new UnorderedVarcharMap(valueTypes, 64, 0.8, 24, 128 * 1024, 4 * Numbers.SIZE_1GB)) {
+                final int N = 100;
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putVarchar(String.valueOf(rnd.nextLong()));
+
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+
+                    value.putByte(0, rnd.nextByte());
+                    value.putShort(1, rnd.nextShort());
+                    value.putChar(2, rnd.nextChar());
+                    value.putInt(3, rnd.nextInt());
+                    value.putLong(4, rnd.nextLong());
+                    value.putFloat(5, rnd.nextFloat());
+                    value.putDouble(6, rnd.nextDouble());
+                    value.putBool(7, rnd.nextBoolean());
+                    value.putDate(8, rnd.nextLong());
+                    value.putTimestamp(9, rnd.nextLong());
+                    value.putInt(10, rnd.nextInt());
+                    Long256Impl long256 = new Long256Impl();
+                    long256.fromRnd(rnd);
+                    value.putLong256(11, long256);
+                    value.putLong128(12, rnd.nextLong(), rnd.nextLong());
+                    value.putByte(13, rnd.nextByte());
+                    value.putShort(14, rnd.nextShort());
+                    value.putInt(15, rnd.nextInt());
+                    value.putLong(16, rnd.nextLong());
+                    decimal128.ofRaw(
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    value.putDecimal128(17, decimal128);
+                    decimal256.ofRaw(
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    value.putDecimal256(18, decimal256);
+                }
+
+                rnd.reset();
+
+                // assert that all values are good
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putVarchar(String.valueOf(rnd.nextLong()));
+
+                    MapValue value = key.createValue();
+                    Assert.assertFalse(value.isNew());
+
+                    Assert.assertEquals(rnd.nextByte(), value.getByte(0));
+                    Assert.assertEquals(rnd.nextShort(), value.getShort(1));
+                    Assert.assertEquals(rnd.nextChar(), value.getChar(2));
+                    Assert.assertEquals(rnd.nextInt(), value.getInt(3));
+                    Assert.assertEquals(rnd.nextLong(), value.getLong(4));
+                    Assert.assertEquals(rnd.nextFloat(), value.getFloat(5), 0.000000001f);
+                    Assert.assertEquals(rnd.nextDouble(), value.getDouble(6), 0.000000001d);
+                    Assert.assertEquals(rnd.nextBoolean(), value.getBool(7));
+                    Assert.assertEquals(rnd.nextLong(), value.getDate(8));
+                    Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
+                    Assert.assertEquals(rnd.nextInt(), value.getInt(10));
+                    Long256Impl long256 = new Long256Impl();
+                    long256.fromRnd(rnd);
+                    Assert.assertEquals(long256, value.getLong256A(11));
+                    Assert.assertEquals(rnd.nextLong(), value.getLong128Lo(12));
+                    Assert.assertEquals(rnd.nextLong(), value.getLong128Hi(12));
+                    Assert.assertEquals(rnd.nextByte(), value.getDecimal8(13));
+                    Assert.assertEquals(rnd.nextShort(), value.getDecimal16(14));
+                    Assert.assertEquals(rnd.nextInt(), value.getDecimal32(15));
+                    Assert.assertEquals(rnd.nextLong(), value.getDecimal64(16));
+                    value.getDecimal128(17, decimal128);
+                    Assert.assertEquals(rnd.nextLong(), decimal128.getHigh());
+                    Assert.assertEquals(rnd.nextLong(), decimal128.getLow());
+                    value.getDecimal256(18, decimal256);
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getHh());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getHl());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getLh());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getLl());
+                }
+
+                try (RecordCursor cursor = map.getCursor()) {
+                    HashMap<String, Long> keyToRowIds = new HashMap<>();
+                    LongList rowIds = new LongList();
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        // key part, comes after value part in records
+                        int col = 19;
+                        Utf8Sequence sequence = record.getVarcharA(col);
+                        String key = sequence.toString();
+                        keyToRowIds.put(key, record.getRowId());
+                        rowIds.add(record.getRowId());
+                    }
+
+                    // Validate that we get the same sequence after toTop.
+                    cursor.toTop();
+                    int i = 0;
+                    while (cursor.hasNext()) {
+                        int col = 19;
+                        Utf8Sequence sequence = record.getVarcharA(col);
+                        String key = sequence.toString();
+                        Assert.assertEquals((long) keyToRowIds.get(key), record.getRowId());
+                        Assert.assertEquals(rowIds.getQuick(i++), record.getRowId());
+                    }
+
+                    // Validate that recordAt jumps to what we previously inserted.
+                    rnd.reset();
+                    for (i = 0; i < N; i++) {
+                        String key = String.valueOf(rnd.nextLong());
+                        long rowId = keyToRowIds.get(key);
+                        cursor.recordAt(record, rowId);
+
+                        // value part, it comes first in record
+                        int col = 0;
+                        Assert.assertEquals(rnd.nextByte(), record.getByte(col++));
+                        Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
+                        Assert.assertEquals(rnd.nextChar(), record.getChar(col++));
+                        Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
+                        Assert.assertEquals(rnd.nextLong(), record.getLong(col++));
+                        Assert.assertEquals(rnd.nextFloat(), record.getFloat(col++), 0.000000001f);
+                        Assert.assertEquals(rnd.nextDouble(), record.getDouble(col++), 0.000000001d);
+                        Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
+                        Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
+                        Assert.assertEquals(rnd.nextLong(), record.getTimestamp(col++));
+                        Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
+                        Long256Impl long256 = new Long256Impl();
+                        long256.fromRnd(rnd);
+                        Assert.assertEquals(long256, record.getLong256A(col++));
+                        Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
+                        Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col++));
+                        Assert.assertEquals(rnd.nextByte(), record.getDecimal8(col++));
+                        Assert.assertEquals(rnd.nextShort(), record.getDecimal16(col++));
+                        Assert.assertEquals(rnd.nextInt(), record.getDecimal32(col++));
+                        Assert.assertEquals(rnd.nextLong(), record.getDecimal64(col++));
+                        record.getDecimal128(col++, decimal128);
+                        Assert.assertEquals(rnd.nextLong(), decimal128.getHigh());
+                        Assert.assertEquals(rnd.nextLong(), decimal128.getLow());
+                        record.getDecimal256(col, decimal256);
+                        Assert.assertEquals(rnd.nextLong(), decimal256.getHh());
+                        Assert.assertEquals(rnd.nextLong(), decimal256.getHl());
+                        Assert.assertEquals(rnd.nextLong(), decimal256.getLh());
+                        Assert.assertEquals(rnd.nextLong(), decimal256.getLl());
+                    }
+                }
+            }
+        });
+    }
+
 
     @Test
     public void testBlankKey() {

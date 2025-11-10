@@ -473,6 +473,35 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastDecimalInvalidPrecision() {
+        assertFail("cast('123.45' as DECIMAL(abc))",
+                25,
+                "Invalid decimal type. The precision ('abc') must be a number");
+    }
+
+    @Test
+    public void testCastDecimalMissingPrecision() {
+        assertFail("cast('123.45' as DECIMAL())",
+                25,
+                "Invalid decimal type. The precision is missing");
+    }
+
+    @Test
+    public void testCastDecimalWithPrecision() throws SqlException {
+        x("'123.45' DECIMAL_10 cast", "cast('123.45' as DECIMAL(10))");
+    }
+
+    @Test
+    public void testCastDecimalWithPrecisionAndScale() throws SqlException {
+        x("'123.45' DECIMAL_10_2 cast", "cast('123.45' as DECIMAL(10,2))");
+    }
+
+    @Test
+    public void testCastDecimalWithSpaces() throws SqlException {
+        x("'123.45' DECIMAL_10_2 cast", "cast('123.45' as DECIMAL ( 10 , 2 ))");
+    }
+
+    @Test
     public void testCastFunctionCall() throws SqlException {
         x("1 10 20 30 f + short cast", "cast(1+f(10,20,30) as short)");
     }
@@ -714,6 +743,106 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 3,
                 "dangling expression"
         );
+    }
+
+    @Test
+    public void testDecimalCast() throws SqlException {
+        x("'123.456' decimal cast", "cast('123.456' as decimal)");
+    }
+
+    @Test
+    public void testDecimalDifferentPrecision() throws SqlException {
+        x("DECIMAL_15", "DECIMAL(15)");
+    }
+
+    @Test
+    public void testDecimalEmptyParentheses() {
+        assertFail("DECIMAL()",
+                8,
+                "Invalid decimal type. The precision is missing");
+    }
+
+    @Test
+    public void testDecimalEmptyScale() {
+        assertFail("DECIMAL(10,)",
+                11,
+                "Invalid decimal type. The scale (')') must be a number");
+    }
+
+    @Test
+    public void testDecimalFailInvalidPrecision() {
+        assertFail("DECIMAL(abc)",
+                8,
+                "Invalid decimal type. The precision ('abc') must be a number");
+    }
+
+    @Test
+    public void testDecimalFailInvalidScale() {
+        assertFail("DECIMAL(10,xyz)",
+                11,
+                "Invalid decimal type. The scale ('xyz') must be a number");
+    }
+
+    @Test
+    public void testDecimalMaxPrecision() throws SqlException {
+        x("DECIMAL_76", "DECIMAL(76)");
+    }
+
+    @Test
+    public void testDecimalMaxPrecisionAndScale() throws SqlException {
+        x("DECIMAL_76_76", "DECIMAL(76,76)");
+    }
+
+    @Test
+    public void testDecimalMissingPrecision() {
+        assertFail("DECIMAL(",
+                7,
+                "Invalid decimal type. The precision is missing");
+    }
+
+    @Test
+    public void testDecimalMissingScale() {
+        assertFail("DECIMAL(10,",
+                10,
+                "Invalid decimal type. The scale is missing");
+    }
+
+    @Test
+    public void testDecimalPrecisionAndScale() throws SqlException {
+        x("DECIMAL_10_2", "DECIMAL(10,2)");
+    }
+
+    @Test
+    public void testDecimalPrecisionAndScaleWithSpaces() throws SqlException {
+        x("DECIMAL_10_2", "DECIMAL(10, 2)");
+    }
+
+    @Test
+    public void testDecimalPrecisionOnly() throws SqlException {
+        x("DECIMAL_10", "DECIMAL(10)");
+    }
+
+    @Test
+    public void testDecimalUnbalancedParentheses() {
+        assertFail("DECIMAL(10",
+                8,
+                "Invalid decimal type. Missing ')'");
+    }
+
+    @Test
+    public void testDecimalWithExtraSpaces() throws SqlException {
+        x("DECIMAL_10_2", "DECIMAL ( 10 , 2 )");
+    }
+
+    @Test
+    public void testDecimalWithNewlines() throws SqlException {
+        x("DECIMAL_10_2", " DECIMAL\r\n  (\n 10\n,\n 2\n" +
+                "       )  ");
+    }
+
+    @Test
+    public void testDecimalZeroScale() throws SqlException {
+        x("DECIMAL_10_0", "DECIMAL(10,0)");
     }
 
     @Test

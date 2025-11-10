@@ -160,7 +160,7 @@ public class Decimal128AddBenchmark {
             case "MIXED_128_64":
                 // Addition of 128-bit and 64-bit values: large 128-bit + normal 64-bit
                 decimal128Addend1 = new Decimal128();
-                decimal128Addend1.set(123456789L, 987654321098765432L, 6);
+                decimal128Addend1.of(123456789L, 987654321098765432L, 6);
                 decimal128Addend2 = Decimal128.fromDouble(789.123, 3);
                 bigDecimalAddend1 = new BigDecimal("123456789987654321098.765432");
                 bigDecimalAddend2 = new BigDecimal("789.123");
