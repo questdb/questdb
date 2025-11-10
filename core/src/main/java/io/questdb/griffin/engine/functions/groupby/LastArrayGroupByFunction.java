@@ -40,9 +40,9 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private final GroupByArraySink sink;
-    private int valueIndex;
+    protected final Function arg;
+    protected final GroupByArraySink sink;
+    protected int valueIndex;
 
     public LastArrayGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
