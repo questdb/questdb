@@ -78,7 +78,6 @@ public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction 
         return "first_not_null";
     }
 
-
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         if (srcValue.getLong(valueIndex + 1) == 0) {
