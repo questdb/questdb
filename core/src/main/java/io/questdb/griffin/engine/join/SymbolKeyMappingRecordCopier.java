@@ -30,12 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.ObjList;
 
-public class SymbolKeyMappingRecordCopier implements RecordSink {
-    private final SymbolJoinKeyMapping symbolKeyMapping;
-
-    public SymbolKeyMappingRecordCopier(SymbolJoinKeyMapping symbolKeyMapping) {
-        this.symbolKeyMapping = symbolKeyMapping;
-    }
+public record SymbolKeyMappingRecordCopier(SymbolJoinKeyMapping symbolKeyMapping) implements RecordSink {
 
     @Override
     public void copy(Record r, RecordSinkSPI w) {

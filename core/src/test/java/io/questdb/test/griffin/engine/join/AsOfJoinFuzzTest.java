@@ -153,22 +153,17 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         String join;
         String onSuffix = "";
         switch (joinType) {
-            case ASOF:
+            case ASOF -> {
                 join = " ASOF";
                 onSuffix = (projectionType == ProjectionType.RENAME_COLUMN) ? " on t1.s = t2.s2 " : " on s ";
-                break;
-            case ASOF_NONKEYED:
-                join = " ASOF";
-                break;
-            case LT_NONKEYED:
-                join = " LT";
-                break;
-            case LT:
+            }
+            case ASOF_NONKEYED -> join = " ASOF";
+            case LT_NONKEYED -> join = " LT";
+            case LT -> {
                 join = " LT";
                 onSuffix = (projectionType == ProjectionType.RENAME_COLUMN) ? " on t1.s = t2.s2 " : " on s ";
-                break;
-            default:
-                throw new IllegalArgumentException("Unexpected join type: " + joinType);
+            }
+            default -> throw new IllegalArgumentException("Unexpected join type: " + joinType);
         }
 
         final long toleranceSeconds;

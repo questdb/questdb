@@ -6686,14 +6686,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
     }
 
-    private boolean isSingleSymbolJoin(RecordMetadata slaveMetadata) {
-        if (listColumnFilterA.size() != 1 || listColumnFilterB.size() != 1) {
-            return false;
-        }
-        int slaveJoinKeyIndex = listColumnFilterA.getColumnIndexFactored(0);
-        return slaveMetadata.getColumnType(slaveJoinKeyIndex) == SYMBOL;
-    }
-
     private boolean isSingleSymbolJoin(SymbolShortCircuit symbolShortCircuit) {
         return symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
                 !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
