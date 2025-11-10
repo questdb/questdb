@@ -66,30 +66,18 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
 
 import static io.questdb.test.tools.TestUtils.assertEquals;
 
-@RunWith(Parameterized.class)
 public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private final boolean convertToParquet;
 
-    public DedupInsertFuzzTest(boolean convertToParquet) {
-        this.convertToParquet = convertToParquet;
-    }
-
-    @Parameterized.Parameters(name = "parquet={0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {true},
-                {false},
-        });
+    public DedupInsertFuzzTest() {
+        this.convertToParquet = TestUtils.generateRandom(LOG).nextBoolean();
     }
 
     @Test
@@ -164,8 +152,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testDedupWithRandomShiftAndStepAndSymbolKeyAndColumnTops() throws Exception {
-        // TODO(eugene): Enable this test when adding columns after Parquet conversion is supported
-        Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
             Rnd rnd = generateRandomAndProps();
 

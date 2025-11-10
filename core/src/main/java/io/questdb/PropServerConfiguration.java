@@ -907,8 +907,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         // this is when their version moves. This new version is stored in a NEW slot, in column version file.
         // This slot WILL NOT be read by older versions, hence rolling back QuestDB version will be problematic, but not
         // impossible. Old version will not find new files, the new files will have to be renamed manually. To avoid
-        // possible rollback havoc, we have auto-scaling as opt-in. It will be opt-out in the release after 9.1.0
-        this.cairoAutoScaleSymbolCapacity = getBoolean(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, false);
+        // possible rollback havoc, we have auto-scaling as opt-in. It will be opt-out in the release after 9.1.1
+        this.cairoAutoScaleSymbolCapacity = getBoolean(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, true);
         this.cairoAutoScaleSymbolCapacityThreshold = getDouble(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD, "0.8");
         if (cairoAutoScaleSymbolCapacityThreshold <= 0 || !Double.isFinite(cairoAutoScaleSymbolCapacityThreshold)) {
             throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD.getPropertyPath() + " has to be a positive non-zero real number.");

@@ -31,7 +31,6 @@ stages:
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
     variables:
       includeTests: "**/griffin/**,**/cairo/**"
@@ -42,7 +41,6 @@ stages:
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
     variables:
       excludeTests: "**/griffin/**,**/cairo/**"
@@ -104,12 +102,14 @@ stages:
           - template: templates/install-llvm.yml
             parameters:
               shouldRun: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+
           - task: Cache@2
             continueOnError: true
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
               key: '"questdb_main" | "maven"'
               path: $(MAVEN_CACHE_FOLDER)
+
           - task: Maven@3
             displayName: "Compile with Maven"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -119,6 +119,7 @@ stages:
               goals: "compile"
               options: "--batch-mode -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: $(jdk)
+
           - task: Maven@3
             displayName: "Merge partial JaCoCo reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -131,6 +132,7 @@ stages:
                 -DcoverDiff=$(COVERAGE_DIFF)
                 -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: $(jdk)
+
           - bash: |
               set -eux
               export PATH=$LLVM_TOOLS_PATH:$PATH
@@ -138,32 +140,30 @@ stages:
 
               # Merge partial profdata files into the complete report
               llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
-
-              # Compile the merged coverage report into an HTML report
-              llvm-cov show \
-                --format=html \
-                --output-dir=rust-llvm-coverage \
-                --ignore-filename-regex='(\.cargo/registry|rustc/.*\.rs)' \
-                --instr-profile=questdbr.profdata \
-                --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
-                --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary
-
+              
               # Export the merged coverage report to LCOV format
+              # NOTE: We have to use --path-equivalence to remap paths collected on self-hosted runners
               llvm-cov export \
-                --format=lcov \
-                --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-                --instr-profile=questdbr.profdata \
-                --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
-                --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary \
-                > questdbr.lcov.dat
-
+              --format=lcov \
+              --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+              --path-equivalence=/azp/_work/1/s,$(Build.SourcesDirectory) \
+              --instr-profile=questdbr.profdata \
+              --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
+              --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary \
+              > questdbr.lcov.dat
+              
               # Convert LCOV coverage results to Cobertura XML format
               # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
               curl -LsSf https://astral.sh/uv/install.sh | sh
+              
+              # NOTE: We use a hard-coded path '/azp/_work/1/s' instead of $(Build.SourcesDirectory) because:
+              # 1. Coverage data is generated on self-hosted runners (which always use /azp/_work/1/s)
+              # 2. This conversion to Cobertura format runs on Azure-hosted runners (where $(Build.SourcesDirectory) differs)
+              # 3. The --base-dir must match the path where coverage was originally generated for correct source mapping
               uv run --with lcov_cobertura python3 -m lcov_cobertura \
-                  questdbr.lcov.dat \
-                  --output cobertura.xml \
-                  --base-dir core/rust/qdbr/src
+              questdbr.lcov.dat \
+              --output cobertura.xml \
+              --base-dir /azp/_work/1/s/core/rust/qdbr/src
             displayName: "Merge partial Rust reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
 

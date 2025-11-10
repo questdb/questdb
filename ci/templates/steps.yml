@@ -8,7 +8,9 @@ steps:
     condition: |
       and(
         eq(variables['os'], 'Linux'),
-        ne(variables['poolName'], 'hetzner-docker')
+        ne(variables['poolName'], 'hetzner-docker'),
+        ne(variables['poolName'], 'hetzner-docker-arm'),
+        ne(variables['poolName'], 'hetzner-docker-zfs')
       )
   - bash: |
       sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
@@ -18,7 +20,19 @@ steps:
       echo "JAVA_HOME will be set to: $JAVA_PATH"
     displayName: "Install JDK and Maven"
     condition: |
-      eq(variables['poolName'], 'hetzner-docker')
+      or(
+        eq(variables['poolName'], 'hetzner-docker'),
+        eq(variables['poolName'], 'hetzner-docker-zfs')
+      )
+  - bash: |
+      sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
+      JAVA_PATH="/usr/lib/jvm/java-17-openjdk-arm64"
+      echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+      echo "JAVA_HOME will be set to: $JAVA_PATH"
+    displayName: "Install JDK and Maven"
+    condition: |
+      eq(variables['poolName'], 'hetzner-docker-arm')
   - task: Cache@2
     displayName: "Cache non-default Maven"
     continueOnError: true
@@ -29,7 +43,9 @@ steps:
     condition: |
       and(
         ne(variables['MAVEN_VERSION_OPTION'], 'Default'),
-        ne(variables['poolName'], 'hetzner-docker')
+        ne(variables['poolName'], 'hetzner-docker'),
+        ne(variables['poolName'], 'hetzner-docker-arm'),
+        ne(variables['poolName'], 'hetzner-docker-zfs')
       )
   - task: Cache@2
     displayName: "Cache .m2/repository"
@@ -37,7 +53,12 @@ steps:
     inputs:
       key: '"questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"'
       path: $(MAVEN_CACHE_FOLDER)
-    condition: ne(variables['poolName'], 'hetzner-docker')
+    condition: |
+      and(
+        ne(variables['poolName'], 'hetzner-docker'),
+        ne(variables['poolName'], 'hetzner-docker-arm'),
+        ne(variables['poolName'], 'hetzner-docker-zfs')
+      )
   - task: Cache@2
     displayName: "Cache .cargo/registry"
     continueOnError: true
@@ -50,7 +71,9 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        ne(variables['poolName'], 'hetzner-docker')
+        ne(variables['poolName'], 'hetzner-docker'),
+        ne(variables['poolName'], 'hetzner-docker-arm'),
+        ne(variables['poolName'], 'hetzner-docker-zfs')
       )
   - pwsh: New-Item -Path "$HOME/.m2/repository" -ItemType Directory -Force
     displayName: "Ensure .m2/repository exists (PowerShell)"
@@ -260,7 +283,7 @@ steps:
     displayName: "Prepare Rust binaries for upload"
     condition: |
       and(
-        eq(variables['testset'], 'coverage-griffin'),
+        eq(variables['testset'], 'coverage-griffin-root'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
@@ -268,7 +291,7 @@ steps:
     displayName: "Upload Rust binaries needed to merge coverage files"
     condition: |
       and(
-        eq(variables['testset'], 'coverage-griffin'),
+        eq(variables['testset'], 'coverage-griffin-root'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
         eq(variables['System.PullRequest.IsFork'], 'false')
       )

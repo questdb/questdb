@@ -19,6 +19,7 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/**"
+          # Exclude cairo fuzz tests: run in mac-cairo-fuzz
           excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -46,17 +47,36 @@ jobs:
           os: macOS
           jdk: "1.17"
           testset: "all"
+          # Exclude griffin: run in mac-griffin
+          # Exclude cairo: run in mac-cairo and mac-cairo-fuzz
+          # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
+          # Exclude pgwire: run in mac-pgwire
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-griffin:
+        windows-griffin-base:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.17"
           testset: "all"
-          includeTests: "**/griffin/**"
+          includeTests: "**/griffin/*"
+          # Exclude O3 tests: run in windows-other-2
+          # Exclude Fuzz tests: run in windows-fuzz1 (cairo) and windows-fuzz2 (non-cairo)
           excludeTests: "**/O3*Test**,**/**Fuzz**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-griffin-sub:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/griffin/**/*"
+          # Exclude O3 tests: run in windows-other-2
+          # Exclude Fuzz tests: run in windows-fuzz1 (cairo) and windows-fuzz2 (non-cairo)
+          # Exclude base package: run in windows-griffin-base
+          excludeTests: "**/griffin/*,**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-fuzz1:
@@ -74,18 +94,33 @@ jobs:
           os: Windows
           jdk: "1.17"
           testset: "all"
-          includeTests: "**/O3*Test**,**/**Fuzz**"
+          includeTests: "**/**Fuzz**"
+          # Exclude cairo fuzz tests: run in windows-fuzz1
           excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-cairo:
+        windows-cairo-1:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/**"
-          excludeTests: "**/O3*Test**,**/**Fuzz**"
+          # Exclude O3 tests: run in windows-other-2
+          # Exclude Fuzz tests: run in windows-fuzz1 (cairo/fuzz) and windows-fuzz2 (other fuzz)
+          # Exclude mv/o3 subdirs: run in windows-cairo-2
+          excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/mv/**,**/cairo/o3/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-cairo-2:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/cairo/mv/**,**/cairo/o3/**"
+          # Exclude Fuzz tests: run in windows-fuzz2
+          excludeTests: "**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-pgwire:
@@ -95,15 +130,37 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/pgwire/**/*.java"
+          # Exclude O3 tests: run in windows-other-2
+          # Exclude Fuzz tests: run in windows-fuzz2
+          excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-other:
+        windows-other-1:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.17"
           testset: "all"
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
+          # Exclude griffin: run in windows-griffin-base and windows-griffin-sub
+          # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-fuzz1
+          # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
+          # Exclude pgwire: run in windows-pgwire
+          # Exclude cutlass/http: run in windows-other-2
+          # Exclude Fuzz tests: run in windows-fuzz1 and windows-fuzz2
+          # Exclude O3 tests: run in windows-other-2
+          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/http/**,**/**Fuzz**,**/O3*Test**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-other-2:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/cutlass/http/**,**/O3*Test**"
+          # Exclude Fuzz tests: run in windows-fuzz2
+          # Exclude cairo/o3 and cairo/mv: run in windows-cairo-2
+          excludeTests: "**/**Fuzz**,**/cairo/o3/**,**/cairo/mv/**"
           javadoc_step: ""
           javadoc_profile: ""
 
