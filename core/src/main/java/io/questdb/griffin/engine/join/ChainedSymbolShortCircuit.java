@@ -27,9 +27,10 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import org.jetbrains.annotations.NotNull;
 
 public record ChainedSymbolShortCircuit(
-        SymbolJoinKeyMapping[] mappings
+        @NotNull SymbolJoinKeyMapping[] mappings
 ) implements SymbolShortCircuit {
 
     @Override

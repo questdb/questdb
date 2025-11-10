@@ -278,6 +278,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     frameRowLo = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
                     backwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
                 }
+                circuitBreaker.statefulThrowExceptionIfTripped();
             }
             record.hasSlave(false);
             isMasterHasNextPending = true;
@@ -336,6 +337,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     frameRowHi = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi());
                     forwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
                 }
+                circuitBreaker.statefulThrowExceptionIfTripped();
             }
         }
 
