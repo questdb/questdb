@@ -29,28 +29,14 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import org.jetbrains.annotations.NotNull;
 
-public record ChainedSymbolColumnAccessHelper(
-        AsofJoinColumnAccessHelper[] shortCircuits) implements AsofJoinColumnAccessHelper {
-
-    @Override
-    public CharSequence getMasterValue(Record masterRecord) {
-        throw new UnsupportedOperationException("ChainedSymbolColumnAccessHelper can't be used to return the master value");
-    }
-
-    @Override
-    public int getSlaveKey(Record masterRecord) {
-        throw new UnsupportedOperationException("ChainedSymbolColumnAccessHelper doesn't have a symbol table");
-    }
-
-    @Override
-    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        throw new UnsupportedOperationException("ChainedSymbolColumnAccessHelper doesn't have a symbol table");
-    }
+public record ChainedSymbolShortCircuit(
+        @NotNull SymbolJoinKeyMapping[] mappings
+) implements SymbolShortCircuit {
 
     @Override
     public boolean isShortCircuit(Record masterRecord) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            if (shortCircuits[i].isShortCircuit(masterRecord)) {
+        for (int i = 0, n = mappings.length; i < n; i++) {
+            if (mappings[i].getSlaveKey(masterRecord) == StaticSymbolTable.VALUE_NOT_FOUND) {
                 return true;
             }
         }
@@ -59,8 +45,8 @@ public record ChainedSymbolColumnAccessHelper(
 
     @Override
     public void of(TimeFrameRecordCursor slaveCursor) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            shortCircuits[i].of(slaveCursor);
+        for (int i = 0, n = mappings.length; i < n; i++) {
+            mappings[i].of(slaveCursor);
         }
     }
 }
