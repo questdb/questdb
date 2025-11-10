@@ -26,9 +26,12 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -267,6 +270,36 @@ public class WindowJoinTest extends AbstractCairoTest {
                     true,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testCalcSize() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareTable(true);
+            assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym) " +
+                    " range between 1 minute preceding and 1 minute following " +
+                    "order by t.ts, t.sym", 20, true);
+            assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    " range between 1 minute preceding and 1 minute following " +
+                    "order by t.ts, t.sym", 20, true);
+            assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.sym = p.sym and t.price < 400) " +
+                    " range between 1 minute preceding and 1 minute following " +
+                    "order by t.ts, t.sym", 10, true);
+            assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
+                    "from trades t " +
+                    "window join prices p " +
+                    "on (t.price < 400) " +
+                    " range between 1 minute preceding and 1 minute following " +
+                    "order by t.ts, t.sym", 10, true);
         });
     }
 
@@ -1571,6 +1604,36 @@ public class WindowJoinTest extends AbstractCairoTest {
                     true
             );
         });
+    }
+
+    private void assertSkipToAndCalculateSize(String select, int size, boolean expectedSize) throws Exception {
+        assertQueryNoLeakCheck("count\n" + size + "\n", "select count(*) from (" + select + ")", null, false, expectedSize);
+        RecordCursor.Counter counter = new RecordCursor.Counter();
+
+        try (RecordCursorFactory factory = select(select)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                Assert.assertEquals(size, counter.get());
+                for (int i = 0; i < size + 2; i++) {
+                    cursor.toTop();
+                    counter.set(i);
+                    cursor.skipRows(counter);
+                    Assert.assertEquals(Math.max(i - size, 0), counter.get());
+                    counter.clear();
+                    cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                    Assert.assertEquals(Math.max(size - i, 0), counter.get());
+                    cursor.toTop();
+                    for (int j = 0; j < i; j++) {
+                        if (!cursor.hasNext()) {
+                            break;
+                        }
+                    }
+                    counter.clear();
+                    cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                    Assert.assertEquals(Math.max(size - i, 0), counter.get());
+                }
+            }
+        }
     }
 
     private void prepareTable(boolean extraData) throws SqlException {

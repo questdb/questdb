@@ -73,8 +73,6 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
-// TODO(puzpuzpuz): consider implementing limit and negative limit
-// TODO(puzpuzpuz): consider applying time intrinsic intervals/table min/max ts from left-hand to right-hand
 public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer AGGREGATE = AsyncWindowJoinRecordCursorFactory::aggregate;
     private static final PageFrameReducer AGGREGATE_VECT = AsyncWindowJoinRecordCursorFactory::aggregateVect;
@@ -82,7 +80,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT = AsyncWindowJoinRecordCursorFactory::filterAndAggregateVect;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncWindowJoinRecordCursor cursor;
-    private final PageFrameSequence<AsyncWindowJoinAtom> frameSequence;
+    private final PageFrameSequence<AbstractWindowJoinAtom> frameSequence;
     private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
@@ -177,7 +175,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
-    public PageFrameSequence<AsyncWindowJoinAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<AbstractWindowJoinAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(masterFactory, executionContext, collectSubSeq, order);
     }
 
@@ -219,7 +217,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     public void toPlan(PlanSink sink) {
         sink.type("Async Window Join");
         sink.meta("workers").val(workerCount);
-        final AsyncWindowJoinAtom atom = frameSequence.getAtom();
+        final AbstractWindowJoinAtom atom = frameSequence.getAtom();
         if (atom.getJoinFilter(0) != null) {
             sink.setMetadata(joinMetadata);
             sink.attr("join filter").val(atom.getJoinFilter(0));
@@ -267,10 +265,10 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
-        final LongList groupByColumnSinkPtrs = atom.getGroupByColumnSinkPtrs(slotId);
+        final LongList groupByColumnSinkPtrs = atom.getGroupByColumnSinkData(slotId);
 
-        final GroupByLongList rowIds = atom.getRowIds(slotId);
-        final GroupByLongList timestamps = atom.getTimestamps(slotId);
+        final GroupByLongList rowIds = atom.getRowIdsGroupByList(slotId);
+        final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
         long rowIdPtr = groupByColumnSinkPtrs.getQuick(0);
         long timestampPtr = groupByColumnSinkPtrs.getQuick(1);
         rowIds.of(rowIdPtr);
@@ -416,11 +414,11 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
         final IntList columnIndexes = atom.getGroupByColumnIndexes();
         final int columnCount = columnIndexes.size();
-        final var columnTags = atom.getGroupByColumnTags();
+        final var columnTags = atom.getGroupByColumnTypes();
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
-        final LongList groupByColumnSinkPtrs = atom.getGroupByColumnSinkPtrs(slotId);
-        final GroupByLongList timestamps = atom.getTimestamps(slotId);
+        final LongList groupByColumnSinkPtrs = atom.getGroupByColumnSinkData(slotId);
+        final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
         long timestampPtr = groupByColumnSinkPtrs.getQuick(0);
         timestamps.of(timestampPtr);
         if (timestampPtr != 0) {
@@ -511,7 +509,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
                 }
 
-                if (timestamps != null && timestamps.size() > 0) {
+                if (timestamps.size() > 0) {
                     long newRowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     newRowLo = newRowLo < 0 ? -newRowLo - 1 : newRowLo;
                     rowLo = newRowLo;
@@ -573,7 +571,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             final long filteredRowCount = rows.size();
             task.setFilteredRowCount(filteredRowCount);
 
-            if (filteredRowCount > 0) {
+            if (filteredRowCount > 0 && !atom.isOnlyFiltered()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
                 final long joinWindowLo = atom.getJoinWindowLo();
                 final long joinWindowHi = atom.getJoinWindowHi();
@@ -592,9 +590,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
-                final LongList groupByColumnSinkPtrs = atom.getGroupByColumnSinkPtrs(slotId);
-                final GroupByLongList rowIds = atom.getRowIds(slotId);
-                final GroupByLongList timestamps = atom.getTimestamps(slotId);
+                final LongList groupByColumnSinkPtrs = atom.getGroupByColumnSinkData(slotId);
+                final GroupByLongList rowIds = atom.getRowIdsGroupByList(slotId);
+                final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
                 long rowIdPtr = groupByColumnSinkPtrs.getQuick(0);
                 long timestampPtr = groupByColumnSinkPtrs.getQuick(1);
 
@@ -744,7 +742,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             final long filteredRowCount = rows.size();
             task.setFilteredRowCount(filteredRowCount);
 
-            if (filteredRowCount > 0) {
+            if (filteredRowCount > 0 && !atom.isOnlyFiltered()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
                 final long joinWindowLo = atom.getJoinWindowLo();
                 final long joinWindowHi = atom.getJoinWindowHi();
@@ -762,11 +760,11 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 final IntList columnIndexes = atom.getGroupByColumnIndexes();
                 final int columnCount = columnIndexes.size();
-                final var columnTags = atom.getGroupByColumnTags();
+                final var columnTags = atom.getGroupByColumnTypes();
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
-                final LongList groupByColumnSinkPtrs = atom.getGroupByColumnSinkPtrs(slotId);
-                final GroupByLongList timestamps = atom.getTimestamps(slotId);
+                final LongList groupByColumnSinkPtrs = atom.getGroupByColumnSinkData(slotId);
+                final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
                 long timestampPtr = groupByColumnSinkPtrs.getQuick(0);
                 timestamps.of(timestampPtr);
                 if (timestampPtr != 0) {

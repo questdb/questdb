@@ -83,7 +83,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private DirectMapValue groupByValue;
     private boolean isOpen;
     private boolean isSlaveTimeFrameCacheBuilt;
-    private PageFrameSequence<AsyncWindowJoinAtom> masterFrameSequence;
+    private PageFrameSequence<AbstractWindowJoinAtom> masterFrameSequence;
     private TablePageFrameCursor slaveFrameCursor;
     private long valueSizeBytes;
 
@@ -220,77 +220,42 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
-    private int initializeSlaveTimeFrameCache() {
-        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
-        slaveTimeFramePartitionIndexes.clear();
-        slaveTimeFrameRowCounts.clear();
-
-        int frameCount = 0;
-        PageFrame frame;
-        while ((frame = slaveFrameCursor.next()) != null) {
-            slaveTimeFramePartitionIndexes.add(frame.getPartitionIndex());
-            slaveTimeFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-            slaveTimeFrameAddressCache.add(frameCount++, frame);
-        }
-        return frameCount;
-    }
-
-    private void populateSlavePartitionTimestamps() {
-        slavePartitionTimestamps.clear();
-        final TableReader reader = slaveFrameCursor.getTableReader();
-        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
-            slavePartitionTimestamps.add(reader.getPartitionTimestampByIndex(i));
-        }
-    }
-
-    private void initializeTimeFrameCursors(int frameCount) {
-        try {
-            masterFrameSequence.getAtom().initTimeFrameCursors(
-                    executionContext,
-                    masterFrameSequence.getSymbolTableSource(),
-                    slaveFrameCursor,
-                    slaveTimeFrameAddressCache,
-                    slaveTimeFramePartitionIndexes,
-                    slaveTimeFrameRowCounts,
-                    slavePartitionTimestamps,
-                    frameCount
-            );
-        } catch (SqlException e) {
-            throw CairoException.nonCritical().put(e.getFlyweightMessage());
-        }
-    }
-
-    // TODO(puzpuzpuz): skip aggregation for all new tasks we publish here
     private void calculateSizeFiltered(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-        if (frameIndex == -1) {
-            fetchNextFrame();
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-        }
+        boolean old = masterFrameSequence.getAtom().isOnlyFiltered();
+        masterFrameSequence.getAtom().setOnlyFiltered(true);
+        try {
+            if (frameIndex == -1) {
+                fetchNextFrame();
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            }
 
-        // We have rows in the current frame we still need to dispatch
-        if (frameRowIndex < frameRowCount) {
-            counter.add(frameRowCount - frameRowIndex);
-            frameRowIndex = frameRowCount;
-        }
-
-        // Release the previous queue item.
-        // There is no identity check here because this check
-        // had been done when 'cursor' was assigned.
-        collectCursor(false);
-
-        while (frameIndex < frameLimit) {
-            fetchNextFrame();
-            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+            // We have rows in the current frame we still need to dispatch
+            if (frameRowIndex < frameRowCount) {
                 counter.add(frameRowCount - frameRowIndex);
                 frameRowIndex = frameRowCount;
-                collectCursor(false);
             }
 
-            if (!allFramesActive) {
-                throwTimeoutException();
-            }
+            // Release the previous queue item.
+            // There is no identity check here because this check
+            // had been done when 'cursor' was assigned.
+            collectCursor(false);
 
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            while (frameIndex < frameLimit) {
+                fetchNextFrame();
+                if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+                    counter.add(frameRowCount - frameRowIndex);
+                    frameRowIndex = frameRowCount;
+                    collectCursor(false);
+                }
+
+                if (!allFramesActive) {
+                    throwTimeoutException();
+                }
+
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            }
+        } finally {
+            masterFrameSequence.getAtom().setOnlyFiltered(old);
         }
     }
 
@@ -471,6 +436,46 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         return false;
     }
 
+    private int initializeSlaveTimeFrameCache() {
+        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
+        slaveTimeFramePartitionIndexes.clear();
+        slaveTimeFrameRowCounts.clear();
+
+        int frameCount = 0;
+        PageFrame frame;
+        while ((frame = slaveFrameCursor.next()) != null) {
+            slaveTimeFramePartitionIndexes.add(frame.getPartitionIndex());
+            slaveTimeFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            slaveTimeFrameAddressCache.add(frameCount++, frame);
+        }
+        return frameCount;
+    }
+
+    private void initializeTimeFrameCursors(int frameCount) {
+        try {
+            masterFrameSequence.getAtom().initTimeFrameCursors(
+                    executionContext,
+                    masterFrameSequence.getSymbolTableSource(),
+                    slaveFrameCursor,
+                    slaveTimeFrameAddressCache,
+                    slaveTimeFramePartitionIndexes,
+                    slaveTimeFrameRowCounts,
+                    slavePartitionTimestamps,
+                    frameCount
+            );
+        } catch (SqlException e) {
+            throw CairoException.nonCritical().put(e.getFlyweightMessage());
+        }
+    }
+
+    private void populateSlavePartitionTimestamps() {
+        slavePartitionTimestamps.clear();
+        final TableReader reader = slaveFrameCursor.getTableReader();
+        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+            slavePartitionTimestamps.add(reader.getPartitionTimestampByIndex(i));
+        }
+    }
+
     private void throwTimeoutException() {
         if (masterFrameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
             throw CairoException.queryCancelled();
@@ -480,7 +485,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     void of(
-            PageFrameSequence<AsyncWindowJoinAtom> masterFrameSequence,
+            PageFrameSequence<AbstractWindowJoinAtom> masterFrameSequence,
             TablePageFrameCursor slaveFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
@@ -496,7 +501,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         frameValueOffset = -1;
         frameRowCount = -1;
         masterRecord.of(masterFrameSequence.getSymbolTableSource());
-        final AsyncWindowJoinAtom atom = masterFrameSequence.getAtom();
+        final AbstractWindowJoinAtom atom = masterFrameSequence.getAtom();
         valueSizeBytes = atom.getValueSizeBytes();
         groupByValue = atom.getOwnerGroupByValue();
         groupByRecord.of(groupByValue);
