@@ -24,8 +24,6 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
@@ -46,18 +44,16 @@ public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction 
         ArrayView array = arg.getArray(record);
         if (array == null || array.isNull()) {
             mapValue.putLong(valueIndex + 1, 0);
-            mapValue.putBool(valueIndex + 2, true);
         } else {
             sink.of(0);
             sink.put(array);
             mapValue.putLong(valueIndex + 1, sink.ptr());
-            mapValue.putBool(valueIndex + 2, false);
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getBool(valueIndex + 2)) {
+        if (mapValue.getLong(valueIndex + 1) == 0) {
             ArrayView array = arg.getArray(record);
             if (array != null && !array.isNull()) {
                 mapValue.putLong(valueIndex, rowId);
@@ -65,14 +61,13 @@ public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction 
                 sink.of(ptr);
                 sink.put(array);
                 mapValue.putLong(valueIndex + 1, sink.ptr());
-                mapValue.putBool(valueIndex + 2, false);
             }
         }
     }
 
     @Override
     public ArrayView getArray(Record rec) {
-        if (rec.getBool(valueIndex + 2)) {
+        if (rec.getLong(valueIndex + 1) == 0) {
             return ArrayConstant.NULL;
         }
         return super.getArray(rec);
@@ -83,15 +78,10 @@ public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction 
         return "first_not_null";
     }
 
-    @Override
-    public void initValueTypes(ArrayColumnTypes columnTypes) {
-        super.initValueTypes(columnTypes);
-        columnTypes.add(ColumnType.BOOLEAN);
-    }
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        if (srcValue.getBool(valueIndex + 2)) {
+        if (srcValue.getLong(valueIndex + 1) == 0) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);
@@ -99,7 +89,6 @@ public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction 
         if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
-            destValue.putBool(valueIndex + 2, false);
         }
     }
 
@@ -107,6 +96,5 @@ public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction 
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
-        mapValue.putBool(valueIndex + 2, true);
     }
 }
