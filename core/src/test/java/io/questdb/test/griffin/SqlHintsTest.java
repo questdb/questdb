@@ -34,24 +34,46 @@ import org.junit.Test;
 public class SqlHintsTest extends AbstractTest {
 
     @Test
+    public void testAsOfJoinUseDrivebyCacheHint() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            QueryModel model = new QueryModel.QueryModelFactory().newInstance();
+            Assert.assertFalse(SqlHints.hasAsOfMemoizedDrivebyHint(model, "tableA", "tableB"));
+
+            model.addHint(SqlHints.ASOF_MEMOIZED_DRIVEBY_HINT, "tableA tableB");
+            Assert.assertTrue(SqlHints.hasAsOfMemoizedDrivebyHint(model, "tableA", "tableB"));
+
+            // case-insensitive
+            Assert.assertTrue(SqlHints.hasAsOfMemoizedDrivebyHint(model, "tablea", "tableb"));
+            Assert.assertTrue(SqlHints.hasAsOfMemoizedDrivebyHint(model, "TABLEA", "TABLEB"));
+
+            // different order
+            Assert.assertTrue(SqlHints.hasAsOfMemoizedDrivebyHint(model, "tableB", "tableA"));
+            Assert.assertTrue(SqlHints.hasAsOfMemoizedDrivebyHint(model, "TABLEB", "TABLEA"));
+
+            model.clear();
+            Assert.assertFalse(SqlHints.hasAsOfMemoizedDrivebyHint(model, "tableA", "tableB"));
+        });
+    }
+
+    @Test
     public void testAsOfJoinUseIndexSearchHint() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             QueryModel model = new QueryModel.QueryModelFactory().newInstance();
-            Assert.assertFalse(SqlHints.hasAsOfIndexSearchHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAsOfIndexHint(model, "tableA", "tableB"));
 
-            model.addHint(SqlHints.ASOF_INDEX_SEARCH_HINT, "tableA tableB");
-            Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "tableA", "tableB"));
+            model.addHint(SqlHints.ASOF_INDEX_HINT, "tableA tableB");
+            Assert.assertTrue(SqlHints.hasAsOfIndexHint(model, "tableA", "tableB"));
 
             // case-insensitive
-            Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "tablea", "tableb"));
-            Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "TABLEA", "TABLEB"));
+            Assert.assertTrue(SqlHints.hasAsOfIndexHint(model, "tablea", "tableb"));
+            Assert.assertTrue(SqlHints.hasAsOfIndexHint(model, "TABLEA", "TABLEB"));
 
             // different order
-            Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "tableB", "tableA"));
-            Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "TABLEB", "TABLEA"));
+            Assert.assertTrue(SqlHints.hasAsOfIndexHint(model, "tableB", "tableA"));
+            Assert.assertTrue(SqlHints.hasAsOfIndexHint(model, "TABLEB", "TABLEA"));
 
             model.clear();
-            Assert.assertFalse(SqlHints.hasAsOfIndexSearchHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAsOfIndexHint(model, "tableA", "tableB"));
         });
     }
 
@@ -59,21 +81,21 @@ public class SqlHintsTest extends AbstractTest {
     public void testAsOfJoinUseLinearSearchHint() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             QueryModel model = new QueryModel.QueryModelFactory().newInstance();
-            Assert.assertFalse(SqlHints.hasAsOfLinearSearchHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAsOfLinearHint(model, "tableA", "tableB"));
 
-            model.addHint(SqlHints.ASOF_LINEAR_SEARCH_HINT, "tableA tableB");
-            Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "tableA", "tableB"));
+            model.addHint(SqlHints.ASOF_LINEAR_HINT, "tableA tableB");
+            Assert.assertTrue(SqlHints.hasAsOfLinearHint(model, "tableA", "tableB"));
 
             // case-insensitive
-            Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "tablea", "tableb"));
-            Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "TABLEA", "TABLEB"));
+            Assert.assertTrue(SqlHints.hasAsOfLinearHint(model, "tablea", "tableb"));
+            Assert.assertTrue(SqlHints.hasAsOfLinearHint(model, "TABLEA", "TABLEB"));
 
             // different order
-            Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "tableB", "tableA"));
-            Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "TABLEB", "TABLEA"));
+            Assert.assertTrue(SqlHints.hasAsOfLinearHint(model, "tableB", "tableA"));
+            Assert.assertTrue(SqlHints.hasAsOfLinearHint(model, "TABLEB", "TABLEA"));
 
             model.clear();
-            Assert.assertFalse(SqlHints.hasAsOfLinearSearchHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAsOfLinearHint(model, "tableA", "tableB"));
         });
     }
 

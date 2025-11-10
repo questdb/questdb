@@ -79,8 +79,12 @@ import io.questdb.std.Rows;
  * @see AbstractKeyedAsOfJoinRecordCursor
  */
 public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
+    private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
+
     private final AsofJoinColumnAccessHelper columnAccessHelper;
     private final AsOfJoinMemoizedRecordCursor cursor;
+    private final boolean driveByCaching;
     private final int slaveSymbolColumnIndex;
     private final long toleranceInterval;
 
@@ -93,22 +97,29 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             int slaveSymbolColumnIndex,
             AsofJoinColumnAccessHelper columnAccessHelper,
             JoinContext joinContext,
-            long toleranceInterval
+            long toleranceInterval,
+            boolean driveByCaching
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.columnAccessHelper = columnAccessHelper;
         this.toleranceInterval = toleranceInterval;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
-        this.cursor = new AsOfJoinMemoizedRecordCursor(
-                configuration,
-                columnSplit,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                masterFactory.getMetadata().getTimestampIndex(),
-                masterFactory.getMetadata().getTimestampType(),
-                slaveFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampType()
-        );
+        this.driveByCaching = driveByCaching;
+        try {
+            this.cursor = new AsOfJoinMemoizedRecordCursor(
+                    configuration,
+                    columnSplit,
+                    NullRecordFactory.getInstance(slaveFactory.getMetadata()),
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    masterFactory.getMetadata().getTimestampType(),
+                    slaveFactory.getMetadata().getTimestampIndex(),
+                    slaveFactory.getMetadata().getTimestampType()
+            );
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override
@@ -145,6 +156,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Memoized Scan");
         sink.attr("condition").val(joinContext);
+        sink.attr("driveByCache").val(driveByCaching);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -163,8 +175,6 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         private static final int SLOT_REMEMBERED_ROWID = 0;
         private static final int SLOT_VALIDITY_PERIOD_END = 2;
         private static final int SLOT_VALIDITY_PERIOD_START = 1;
-        private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
-        private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
         private final Map rememberedSymbols;
         private long earliestRowId = Long.MIN_VALUE;
         // These track a contiguous range of slave timestamps that we've already scanned.
@@ -194,13 +204,13 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     slaveTimestampType,
                     configuration.getSqlAsOfJoinLookAhead()
             );
-            rememberedSymbols = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
+            this.rememberedSymbols = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
         }
 
         @Override
         public void close() {
+            Misc.free(rememberedSymbols);
             super.close();
-            rememberedSymbols.close();
         }
 
         @Override
@@ -225,6 +235,9 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         }
 
         private void carefullyExtendScannedRange(long masterTimestamp, long slaveTimestamp, long rowId) {
+            if (!driveByCaching) {
+                return;
+            }
             // Extend the remembered scanned range's lower bound with the currently scanned range's lower bound.
             if (slaveTimestamp < scannedRangeMinTimestamp) {
                 scannedRangeMinTimestamp = slaveTimestamp;
@@ -396,7 +409,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                         // Therefore, we're all done. Report no slave row and return.
                         record.hasSlave(false);
                         break;
-                    } else if (!didJumpOverScannedRange) {
+                    } else if (driveByCaching && !didJumpOverScannedRange) {
                         // We're within the remembered scanned range. Since the symbol isn't remembered, we know
                         // it doesn't occur within this range because we memorize all the symbols we observe
                         // while scanning for any symbol. Jump back over the entire period and continue searching,
@@ -441,7 +454,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, rowId, false);
                     carefullyExtendScannedRange(masterTimestamp, slaveTimestamp, rowId);
                     break;
-                } else {
+                } else if (driveByCaching) {
                     // This isn't the symbol we're looking for, but memorize it anyway in the hope that some future
                     // master row will need it.
                     memorizeSymbolLocation(masterTimestamp, slaveTimestamp, thisSymbolKey, rowId, true);
@@ -461,9 +474,11 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                         // as any previous masterTimestamp, no need to check for overlap with previously remembered
                         // scanned range. We started from at least as late as any previous scan, and ended at the very
                         // beginning.
-                        scannedRangeMinTimestamp = slaveTimestamp;
-                        scannedRangeMinRowId = rowId;
-                        scannedRangeMaxTimestamp = masterTimestamp;
+                        if (driveByCaching) {
+                            scannedRangeMinTimestamp = slaveTimestamp;
+                            scannedRangeMinRowId = rowId;
+                            scannedRangeMaxTimestamp = masterTimestamp;
+                        }
                         record.hasSlave(false);
                         break;
                     }
@@ -477,12 +492,12 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
         }
+    }
 
-        static {
-            TYPES_KEY.add(ColumnType.INT);
-            TYPES_VALUE.add(ColumnType.LONG);
-            TYPES_VALUE.add(ColumnType.LONG);
-            TYPES_VALUE.add(ColumnType.LONG);
-        }
+    static {
+        TYPES_KEY.add(ColumnType.INT);
+        TYPES_VALUE.add(ColumnType.LONG);
+        TYPES_VALUE.add(ColumnType.LONG);
+        TYPES_VALUE.add(ColumnType.LONG);
     }
 }

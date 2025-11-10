@@ -254,6 +254,7 @@ public class VacuumColumnVersions implements Closeable {
                                 && !Utf8s.endsWithAscii(fileNameSink, ".k")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".v")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".c")
+                                && !Utf8s.endsWithAscii(fileNameSink, ".lock")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".o")) {
                             LOG.critical().$("file does not belong to the table, will be left on disk [name=").$(fileNameSink).$(", path=").$(path2).I$();
                             return;

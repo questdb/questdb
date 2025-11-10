@@ -2,6 +2,8 @@ package io.questdb.test.log;
 
 import io.questdb.ServerMain;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.log.LogFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.LogCapture;
@@ -15,6 +17,7 @@ public class SqlLoggingTest extends AbstractCairoTest {
     @Before
     @Override
     public void setUp() {
+        LogFactory.enableGuaranteedLogging(QueryProgress.class);
         super.setUp();
         capture.start();
     }
@@ -24,6 +27,7 @@ public class SqlLoggingTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         capture.stop();
         super.tearDown();
+        LogFactory.disableGuaranteedLogging(QueryProgress.class);
     }
 
     @Test
@@ -61,7 +65,6 @@ public class SqlLoggingTest extends AbstractCairoTest {
             assertOnlyOnce("fin.*?rename table x to y");
             assertOnlyOnce("fin.*?drop table y");
         });
-
     }
 
     private static void exec(TestHttpClient httpClient, String expectedResponse, String sql, int port) {

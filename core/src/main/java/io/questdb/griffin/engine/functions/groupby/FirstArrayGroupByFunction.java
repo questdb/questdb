@@ -26,9 +26,7 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
@@ -37,23 +35,20 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByArraySink;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private final BorrowedArray borrowedArray = new BorrowedArray();
-    private GroupByAllocator allocator;
+    private final GroupByArraySink sink;
     private int valueIndex;
 
     public FirstArrayGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.type = arg.getType();
-    }
-
-    @Override
-    public void clear() {
+        this.sink = new GroupByArraySink(type);
     }
 
     @Override
@@ -62,17 +57,16 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
     }
 
     @Override
+    public void clear() {
+        sink.of(0);
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
-        final ArrayView val = arg.getArray(record);
-        if (val == null || val.isNull()) {
-            mapValue.putLong(valueIndex + 1, -1);
-        } else {
-            long size = ArrayTypeDriver.getPlainValueSize(val);
-            long ptr = allocator.malloc(size);
-            ArrayTypeDriver.appendPlainValue(ptr, val);
-            mapValue.putLong(valueIndex + 1, ptr);
-        }
+        sink.of(0);
+        sink.put(arg.getArray(record));
+        mapValue.putLong(valueIndex + 1, sink.ptr());
     }
 
     @Override
@@ -82,17 +76,18 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
 
     @Override
     public Function getArg() {
-        return this.arg;
+        return arg;
     }
 
     @Override
     public ArrayView getArray(Record rec) {
-        final long ptr = rec.getLong(valueIndex + 1);
-        if (ptr < 0) {
+        long ptr = rec.getLong(valueIndex + 1);
+        sink.of(ptr);
+        ArrayView array = sink.getArray();
+        if (array == null) {
             return ArrayConstant.NULL;
         }
-
-        return ArrayTypeDriver.getPlainValue(ptr, borrowedArray);
+        return array;
     }
 
     @Override
@@ -142,22 +137,19 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
         }
     }
 
+    @Override
     public void setAllocator(GroupByAllocator allocator) {
-        this.allocator = allocator;
+        sink.setAllocator(allocator);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-        mapValue.putLong(valueIndex + 1, -1);
-    }
-
-    public boolean supportsParallelism() {
-        return true;
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }
