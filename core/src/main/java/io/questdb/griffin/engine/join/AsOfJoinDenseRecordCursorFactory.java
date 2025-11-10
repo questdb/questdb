@@ -91,7 +91,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
 
     @Override
     protected void putFactoryType(PlanSink sink) {
-        sink.type("AsOf Join Dense Scan");
+        sink.type("AsOf Join Dense");
     }
 
     private class AsOfJoinDenseRecordCursor extends AsOfJoinDenseRecordCursorBase {

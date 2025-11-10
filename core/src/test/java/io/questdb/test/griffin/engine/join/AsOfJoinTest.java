@@ -1142,7 +1142,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 printSql("EXPLAIN " + queryWithoutHint);
                 TestUtils.assertContains(sink, "AsOf Join Fast Scan");
                 printSql("EXPLAIN " + queryWithDenseHint);
-                TestUtils.assertContains(sink, "AsOf Join Dense Scan");
+                TestUtils.assertContains(sink, "AsOf Join Dense");
             }
         });
     }

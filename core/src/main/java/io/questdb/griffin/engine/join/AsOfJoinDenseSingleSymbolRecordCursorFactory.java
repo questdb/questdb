@@ -83,7 +83,7 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
 
     @Override
     protected void putFactoryType(PlanSink sink) {
-        sink.type("AsOf Join Dense Single Symbol Scan");
+        sink.type("AsOf Join Dense Single Symbol");
     }
 
     private class AsOfJoinDenseSingleSymbolRecordCursor extends AsOfJoinDenseRecordCursorBase {
