@@ -256,6 +256,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
             count++;
         }
 
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        int skip = count > 0 && rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
+        int k = 0;
+        while (k < skip && cursor.hasNext()) {
+            k++;
+        }
+        sink.clear();
+        cursor.toTop();
+        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+
         if (!sizeCanBeVariable) {
             if (sizeExpected) {
                 Assert.assertTrue("Concrete cursor size expected but was -1", cursorSize != -1);
@@ -272,8 +282,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             if (count > 0) {
                 RecordCursor.Counter counter = new RecordCursor.Counter();
                 cursor.toTop();
-                final Rnd rnd = TestUtils.generateRandom(LOG);
-                final int skip = rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
+                skip = rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
                 while (counter.get() < skip && cursor.hasNext()) {
                     counter.inc();
                 }

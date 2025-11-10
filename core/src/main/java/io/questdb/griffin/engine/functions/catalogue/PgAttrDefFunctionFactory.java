@@ -141,7 +141,15 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
-            findFileStruct = findFileStruct > 0 ? ff.findClose(findFileStruct) : 0;
+            if (findFileStruct > 0) {
+                ff.findClose(findFileStruct);
+            }
+            findFileStruct = 0;
+            columnIndex = 0;
+            readNextFileFromDisk = true;
+            hasNextFile = true;
+            foundMetadataFile = false;
+            tableId = -1;
         }
 
         private boolean next0() {
