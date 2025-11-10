@@ -24,9 +24,19 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.std.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 final class Unordered4MapValue implements MapValue {
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal256 decimal256 = new Decimal256();
     private final Long256Impl long256 = new Long256Impl();
     private final long[] valueOffsets;
     private final long valueSize;
@@ -75,11 +85,7 @@ final class Unordered4MapValue implements MapValue {
     public void addLong256(int index, Long256 value) {
         Long256 acc = getLong256A(index);
         Long256Util.add(acc, value);
-        final long p = address0(index);
-        Unsafe.getUnsafe().putLong(p, acc.getLong0());
-        Unsafe.getUnsafe().putLong(p + 8L, acc.getLong1());
-        Unsafe.getUnsafe().putLong(p + 16L, acc.getLong2());
-        Unsafe.getUnsafe().putLong(p + 24L, acc.getLong3());
+        Long256.putLong256(acc, address0(index));
     }
 
     @Override
@@ -112,6 +118,40 @@ final class Unordered4MapValue implements MapValue {
     @Override
     public long getDate(int index) {
         return getLong(index);
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        final long addr = address0(col);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L)
+        );
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return Unsafe.getUnsafe().getShort(address0(col));
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        sink.ofRawAddress(address0(col));
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return Unsafe.getUnsafe().getInt(address0(col));
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return Unsafe.getUnsafe().getLong(address0(col));
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return Unsafe.getUnsafe().getByte(address0(col));
     }
 
     @Override
@@ -248,6 +288,38 @@ final class Unordered4MapValue implements MapValue {
     }
 
     @Override
+    public void putDecimal128(int index, Record record, int colIndex) {
+        record.getDecimal128(colIndex, decimal128);
+        Decimal128.put(decimal128, address0(index));
+    }
+
+    @Override
+    public void putDecimal128(int index, Decimal128 decimal128) {
+        Decimal128.put(decimal128, address0(index));
+    }
+
+    @Override
+    public void putDecimal128Null(int index) {
+        Decimal128.putNull(address0(index));
+    }
+
+    @Override
+    public void putDecimal256(int index, Record record, int colIndex) {
+        record.getDecimal256(colIndex, decimal256);
+        Decimal256.put(decimal256, address0(index));
+    }
+
+    @Override
+    public void putDecimal256(int index, Decimal256 decimal256) {
+        Decimal256.put(decimal256, address0(index));
+    }
+
+    @Override
+    public void putDecimal256Null(int index) {
+        Decimal256.putNull(address0(index));
+    }
+
+    @Override
     public void putDouble(int index, double value) {
         final long p = address0(index);
         Unsafe.getUnsafe().putDouble(p, value);
@@ -280,11 +352,7 @@ final class Unordered4MapValue implements MapValue {
 
     @Override
     public void putLong256(int index, Long256 value) {
-        final long p = address0(index);
-        Unsafe.getUnsafe().putLong(p, value.getLong0());
-        Unsafe.getUnsafe().putLong(p + 8L, value.getLong1());
-        Unsafe.getUnsafe().putLong(p + 16L, value.getLong2());
-        Unsafe.getUnsafe().putLong(p + 24L, value.getLong3());
+        Long256.putLong256(value, address0(index));
     }
 
     @Override

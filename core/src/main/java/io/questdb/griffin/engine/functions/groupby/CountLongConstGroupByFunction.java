@@ -37,11 +37,6 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     private int valueIndex;
 
     @Override
-    public int getSampleByFlags() {
-        return GroupByFunction.SAMPLE_BY_FILL_ALL;
-    }
-
-    @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, 1);
     }
@@ -54,6 +49,11 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     @Override
     public long getLong(Record rec) {
         return rec.getLong(valueIndex);
+    }
+
+    @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
     }
 
     @Override
@@ -79,8 +79,15 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        long srcCount = srcValue.getLong(valueIndex);
-        destValue.addLong(valueIndex, srcCount);
+        final long srcCount = srcValue.getLong(valueIndex);
+        if (srcCount > 0) {
+            final long destCount = destValue.getLong(valueIndex);
+            if (destCount > 0) {
+                destValue.putLong(valueIndex, destCount + srcCount);
+            } else {
+                destValue.putLong(valueIndex, srcCount);
+            }
+        }
     }
 
     @Override

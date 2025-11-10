@@ -124,9 +124,9 @@ public class LineTCPSenderMain {
         Clock clock = new MicrosecondClockImpl();
         String tab = "quotes";
         try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                .address("wet-crimson-879-30b0c6db.ilp.c7at.questdb.com:32495")
-                .enableTls()
-                .enableAuth("admin").authToken("eRNONc_PZfJTwVuFoOr_YZJRfVnyfCRYZvJ9asABFzs")
+                .address("localhost")
+                .protocolVersion(3)
+//                .enableAuth("admin").authToken("eRNONc_PZfJTwVuFoOr_YZJRfVnyfCRYZvJ9asABFzs")
                 .build()) {
             for (int i = 0; i < count; i++) {
                 sender.table(tab);
@@ -134,8 +134,8 @@ public class LineTCPSenderMain {
                         .symbol("ccy", ccy[ccyDist[rnd.nextInt(ccyDist.length)]])
                         .symbol("venue", venue[venueDist[rnd.nextInt(venueDist.length)]])
                         .symbol("pool", pool[poolDist[rnd.nextInt(poolDist.length)]])
-                        .doubleColumn("qty", rnd.nextDouble())
-                        .doubleColumn("bid", rnd.nextDouble())
+                        .doubleColumn("qty", 0.2)
+                        .doubleColumn("bid", 0.3)
                         .doubleColumn("ask", rnd.nextDouble());
                 sender.at(clock.getTicks(), ChronoUnit.MICROS);
             }

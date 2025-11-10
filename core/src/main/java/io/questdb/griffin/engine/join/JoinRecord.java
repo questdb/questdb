@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -95,6 +97,56 @@ public class JoinRecord implements Record {
             return master.getDate(col);
         }
         return slave.getDate(col - split);
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        if (col < split) {
+            master.getDecimal128(col, sink);
+        } else {
+            slave.getDecimal128(col - split, sink);
+        }
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        if (col < split) {
+            return master.getDecimal16(col);
+        }
+        return slave.getDecimal16(col - split);
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        if (col < split) {
+            master.getDecimal256(col, sink);
+        } else {
+            slave.getDecimal256(col - split, sink);
+        }
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        if (col < split) {
+            return master.getDecimal32(col);
+        }
+        return slave.getDecimal32(col - split);
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        if (col < split) {
+            return master.getDecimal64(col);
+        }
+        return slave.getDecimal64(col - split);
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        if (col < split) {
+            return master.getDecimal8(col);
+        }
+        return slave.getDecimal8(col - split);
     }
 
     @Override

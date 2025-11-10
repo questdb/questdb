@@ -53,6 +53,7 @@ import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WithClauseModel;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
@@ -110,6 +111,7 @@ public class SqlParser {
     private final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCastRef = this::rewriteJsonExtractCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
+    private final PostOrderTreeTraversalAlgo.Visitor rewritePgNumericRef = this::rewritePgNumeric;
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCaseRef = this::rewriteCase;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
@@ -166,6 +168,77 @@ public class SqlParser {
 
     public static boolean isFullSampleByPeriod(ExpressionNode n) {
         return n != null && (n.type == ExpressionNode.CONSTANT || (n.type == ExpressionNode.LITERAL && isValidSampleByPeriodLetter(n.token)));
+    }
+
+    /**
+     * Parses a DECIMAL[(precision[, scale])] type from the lexer.
+     * The user may specify the precision and scale of the underlying DECIMAL type, if not provided, we use a default
+     * precision of 18 and a scale of 3 (or 0 if precision &lt; 8) so that the underlying type will be a DECIMAL64.
+     *
+     * @return the concrete DECIMAL type with proper precision/scale set.
+     */
+    public static int parseDecimalColumnType(GenericLexer lexer) throws SqlException {
+        int previousTokenPosition = lexer.lastTokenPosition();
+
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || tok.charAt(0) != '(') {
+            lexer.unparseLast();
+            return ColumnType.DECIMAL_DEFAULT_TYPE;
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || tok.charAt(0) == ')') {
+            throw SqlException.$(lexer.lastTokenPosition(), "Invalid decimal type. The precision is missing");
+        }
+        int precision = DecimalUtil.parsePrecision(lexer.lastTokenPosition(), tok, 0, tok.length());
+        int scale = precision < 8 ? 0 : 3;
+
+        tok = SqlUtil.fetchNext(lexer);
+
+        // The user may provide a scale value
+        if (tok != null && tok.charAt(0) == ',') {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || tok.charAt(0) == ')') {
+                throw SqlException.$(lexer.lastTokenPosition(), "Invalid decimal type. The scale is missing");
+            }
+            scale = DecimalUtil.parseScale(lexer.lastTokenPosition(), tok, 0, tok.length());
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        if (tok == null || tok.charAt(0) != ')') {
+            throw SqlException.$(lexer.lastTokenPosition(), "Invalid decimal type. Missing ')'");
+        }
+
+
+        if (precision <= 0) {
+            throw SqlException.position(previousTokenPosition)
+                    .put("Invalid decimal type. The precision (")
+                    .put(precision)
+                    .put(") must be greater than zero");
+        }
+        if (precision > Decimals.MAX_PRECISION) {
+            throw SqlException.position(previousTokenPosition)
+                    .put("Invalid decimal type. The precision (")
+                    .put(precision)
+                    .put(") must be less than ")
+                    .put(Decimals.MAX_PRECISION);
+        }
+        if (scale < 0) {
+            throw SqlException.position(previousTokenPosition)
+                    .put("Invalid decimal type. The scale (")
+                    .put(scale)
+                    .put(") must be greater than or equal to zero");
+        }
+        if (scale > precision) {
+            throw SqlException.position(previousTokenPosition)
+                    .put("Invalid decimal type. The precision (")
+                    .put(precision)
+                    .put(") must be greater than or equal to the scale (")
+                    .put(scale)
+                    .put(")");
+        }
+
+        return ColumnType.getDecimalType(precision, scale);
     }
 
     /**
@@ -3296,14 +3369,13 @@ public class SqlParser {
                         validateIdentifier(lexer, aliasTok);
                         boolean unquoting = Chars.indexOf(aliasTok, '.') == -1;
                         alias = unquoting ? unquote(aliasTok) : aliasTok;
-                        aliasPosition = lexer.lastTokenPosition();
                     } else {
                         validateIdentifier(lexer, tok);
                         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                         boolean unquoting = Chars.indexOf(tok, '.') == -1;
                         alias = GenericLexer.immutableOf(unquoting ? unquote(tok) : tok);
-                        aliasPosition = lexer.lastTokenPosition();
                     }
+                    aliasPosition = lexer.lastTokenPosition();
 
                     if (col.getAst().isWildcard()) {
                         throw err(lexer, null, "wildcard cannot have alias");
@@ -3799,13 +3871,13 @@ public class SqlParser {
      * select json_extract(json,path)::uuid -> select json_extract(json,path)::uuid
      * <p>
      * Notes:
-     * - varchar cast it rewritten in a special way, e.g. removed
+     * - varchar cast is rewritten in a special way, e.g. removed
      * - subset of types is handled more efficiently in the 3-arg function
      * - the remaining type casts are not rewritten, e.g. left as is
      */
     private void rewriteJsonExtractCast(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && isCastKeyword(node.token)) {
-            if (node.lhs != null && isJsonExtract(node.lhs.token) && node.lhs.paramCount == 2) {
+            if (node.lhs != null && node.lhs.paramCount == 2 && isJsonExtract(node.lhs.token)) {
                 // rewrite cast such as
                 // json_extract(json,path)::type -> json_extract(json,path,type)
                 // the ::type is already rewritten as
@@ -3868,6 +3940,7 @@ public class SqlParser {
         traversalAlgo.traverse(parent, rewriteConcatRef);
         traversalAlgo.traverse(parent, rewritePgCastRef);
         traversalAlgo.traverse(parent, rewriteJsonExtractCastRef);
+        traversalAlgo.traverse(parent, rewritePgNumericRef);
         return rewriteDeclaredVariables(parent, decls, exprTargetVariableName);
     }
 
@@ -3930,6 +4003,35 @@ public class SqlParser {
             }
         }
         return false;
+    }
+
+    /**
+     * Rewrites the following:
+     * <p>
+     * select '123.456'::numeric::decimal(p, s) -> select '123.456'::decimal(p, s)
+     */
+    private void rewritePgNumeric(ExpressionNode node) {
+        if (node.type != ExpressionNode.FUNCTION || !isCastKeyword(node.token)) {
+            return;
+        }
+
+        ExpressionNode innerCastNode = node.lhs;
+        if (innerCastNode == null || innerCastNode.type != ExpressionNode.FUNCTION || !isCastKeyword(innerCastNode.token)) {
+            return;
+        }
+
+        ExpressionNode innerTypeNode = innerCastNode.rhs;
+        if (innerTypeNode == null || innerTypeNode.type != ExpressionNode.CONSTANT || !isNumericKeyword(innerTypeNode.token)) {
+            return;
+        }
+
+        ExpressionNode typeNode = node.rhs;
+        if (typeNode == null || typeNode.type != ExpressionNode.CONSTANT || typeNode.token.length() < 7 || !startsWithDecimalKeyword(typeNode.token)) {
+            return;
+        }
+
+        // At this point, we know that the expression is compatible with our rewrite.
+        node.lhs = innerCastNode.lhs;
     }
 
     @NotNull
@@ -4044,11 +4146,14 @@ public class SqlParser {
             return ColumnType.encodeArrayType(ColumnType.tagOf(columnType), nDims);
         }
 
-        if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
+        final short typeTag = ColumnType.tagOf(columnType);
+        if (typeTag == ColumnType.GEOHASH) {
             expectTok(lexer, '(');
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
+        } else if (typeTag == ColumnType.DECIMAL) {
+            return parseDecimalColumnType(lexer);
         }
         return columnType;
     }

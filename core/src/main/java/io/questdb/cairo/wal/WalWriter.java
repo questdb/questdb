@@ -72,6 +72,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -785,6 +786,24 @@ public class WalWriter implements TableWriterAPI {
                     // fall through
                 case ColumnType.UUID:
                     nullers.add(() -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL));
+                    break;
+                case ColumnType.DECIMAL8:
+                    nullers.add(() -> dataMem.putByte(Byte.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL16:
+                    nullers.add(() -> dataMem.putShort(Short.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL32:
+                    nullers.add(() -> dataMem.putInt(Integer.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL64:
+                    nullers.add(() -> dataMem.putLong(Long.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL128:
+                    nullers.add(() -> dataMem.putDecimal128(Long.MIN_VALUE, -1));
+                    break;
+                case ColumnType.DECIMAL256:
+                    nullers.add(() -> dataMem.putDecimal256(Long.MIN_VALUE, -1, -1, -1));
                     break;
                 default:
                     throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
@@ -2351,6 +2370,7 @@ public class WalWriter implements TableWriterAPI {
     private class RowImpl implements TableWriter.Row {
         private final StringSink tempSink = new StringSink();
         private final Utf8StringSink tempUtf8Sink = new Utf8StringSink();
+        private final Decimal256 decimal256Sink = new Decimal256();
         private long timestamp;
 
         @Override
@@ -2406,6 +2426,30 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public void putDate(int columnIndex, long value) {
             putLong(columnIndex, value);
+        }
+
+        @Override
+        public void putDecimal(int columnIndex, Decimal256 value) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimal(columnIndex, value, type, this);
+        }
+
+        @Override
+        public void putDecimal128(int columnIndex, long high, long low) {
+            getPrimaryColumn(columnIndex).putDecimal128(high, low);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll) {
+            getPrimaryColumn(columnIndex).putDecimal256(hh, hl, lh, ll);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
+            int columnType = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalStr(columnIndex, decimal256Sink, decimalValue, columnType, this);
         }
 
         @Override

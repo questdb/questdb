@@ -30,6 +30,7 @@ import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
 
+@SuppressWarnings("resource")
 class BinCaseFunction extends BinFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
@@ -40,7 +41,7 @@ class BinCaseFunction extends BinFunction implements CaseFunction {
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

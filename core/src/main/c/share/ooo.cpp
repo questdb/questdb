@@ -1686,6 +1686,40 @@ Java_io_questdb_std_Vect_shiftCopyArrayColumnAux(JNIEnv *env, jclass cl, jlong s
     });
 }
 
+DECLARE_DISPATCHER(set_memory_vanilla_int128);
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setMemoryLong128(JNIEnv *env, jclass cl, jlong pData, jlong long0,
+                                       jlong long1, jlong count) {
+    measure_time(19, [=]() {
+        set_memory_vanilla_int128(
+                reinterpret_cast<long_128bit *>(pData),
+                long_128bit{
+                    .long0 = (uint64_t)long0,
+                    .long1 = (uint64_t)long1
+                },
+                (int64_t) (count)
+        );
+    });
+}
+
+DECLARE_DISPATCHER(set_memory_vanilla_int256);
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setMemoryLong256(JNIEnv *env, jclass cl, jlong pData, jlong long0,
+                                       jlong long1, jlong long2, jlong long3, jlong count) {
+    measure_time(19, [=]() {
+        set_memory_vanilla_int256(
+                reinterpret_cast<long_256bit *>(pData),
+                long_256bit{
+                    .long0 = (uint64_t)long0,
+                    .long1 = (uint64_t)long1,
+                    .long2 = (uint64_t)long2,
+                    .long3 = (uint64_t)long3
+                },
+                (int64_t) (count)
+        );
+    });
+}
+
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_getPerformanceCounter(JNIEnv *env, jclass cl, jint counterIndex) {
 #ifdef OOO_CPP_PROFILE_TIMING

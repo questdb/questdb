@@ -718,7 +718,7 @@ public class SqlUtil {
     }
 
     public static char implicitCastStrAsChar(CharSequence value) {
-        if (value == null || value.length() == 0) {
+        if (value == null || value.isEmpty()) {
             return 0;
         }
 
@@ -801,7 +801,7 @@ public class SqlUtil {
     }
 
     public static Long256Constant implicitCastStrAsLong256(CharSequence value) {
-        if (value == null || value.length() == 0) {
+        if (value == null || value.isEmpty()) {
             return Long256NullConstant.INSTANCE;
         }
         int start = 0;
@@ -836,7 +836,7 @@ public class SqlUtil {
     }
 
     public static void implicitCastStrAsUuid(CharSequence str, Uuid uuid) {
-        if (str == null || str.length() == 0) {
+        if (str == null || str.isEmpty()) {
             uuid.ofNull();
             return;
         }
