@@ -222,6 +222,7 @@ import io.questdb.griffin.engine.join.SingleStringColumnAccessHelper;
 import io.questdb.griffin.engine.join.SingleSymbolColumnAccessHelper;
 import io.questdb.griffin.engine.join.SingleVarcharColumnAccessHelper;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.WindowJoinFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinLightFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
@@ -3455,6 +3456,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         );
                                     }
                                 } else {
+                                    if (slave.supportsTimeFrameCursor()) {
+                                        if (node != null) {
+                                            filter = compileJoinFilter(node, joinMetadata, executionContext);
+                                        }
+
+                                        return new WindowJoinFilteredRecordCursorFactory(
+                                                configuration,
+                                                outerProjectionMetadata,
+                                                joinMetadata,
+                                                master,
+                                                slave,
+                                                master.getMetadata().getColumnCount(),
+                                                lo,
+                                                hi,
+                                                groupByFunctions,
+                                                valueTypes,
+                                                filter
+                                        );
+                                    }
+
                                     if (!slave.recordCursorSupportsRandomAccess()) {
                                         throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("right side of window join doesn't support random access");
                                     }
