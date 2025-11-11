@@ -24,8 +24,10 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
@@ -34,6 +36,12 @@ import org.jetbrains.annotations.Nullable;
 public class FilesFacadeImpl implements FilesFacade {
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
+    // Db root max directory depth is 4, the expected structure is:
+    // db/tableDir/partitionDir
+    // db/tableDir/wal/segmentDir
+    // db/.download/tableDir/wal/segmentDir
+    private static final int DB_DIR_MAX_DEPTH = 5;
+    private final static Log LOG = LogFactory.getLog(FilesFacadeImpl.class);
     private static final long ZFS_MAGIC_NUMBER = 0x2fc12fc1;
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
@@ -448,7 +456,22 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean rmdir(Path name, boolean haltOnError) {
-        return Files.rmdir(name, haltOnError);
+        // Rmdir is potentially dangerous operation. Verify it
+        // against installation root dir to avoid catastrophic mistakes
+        Path pathSecureCopy = SecurePath.PATH.get().of(name);
+
+        if (DB_DIR_MAX_DEPTH > 1) {
+            // Always log all recursive rmdir attempts
+            LOG.info().$("removing dir [path=").$(pathSecureCopy)
+                    .$(", haltOnError=").$(haltOnError)
+                    .$(", maxRecursiveDepth=").$(DB_DIR_MAX_DEPTH).I$();
+        }
+        try {
+            return Files.rmdir(pathSecureCopy, haltOnError, 0, DB_DIR_MAX_DEPTH);
+        } catch (CairoError e) {
+            LOG.error().$("could not remove dir [path=").$(name).$(", error=").$(e.getFlyweightMessage()).I$();
+            throw e;
+        }
     }
 
     @Override

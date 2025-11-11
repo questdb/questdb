@@ -25,6 +25,7 @@
 package io.questdb.test;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
@@ -149,7 +150,7 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
             TestUtils.writeStringToFile(temp, "abcde");
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path().of(temp.getAbsolutePath())) {
                 Assert.assertTrue(Files.exists(path.$()));
                 Assert.assertEquals(5, Files.length(path.$()));
@@ -264,7 +265,7 @@ public class FilesTest {
                         dst.concat("subdir").concat("file2");
                         TestUtils.assertFileContentsEquals(src, dst);
                     } finally {
-                        Files.rmdir(p2, true);
+                        Files.rmdir(p2, true, 0, 10);
                     }
                 }
             }
@@ -306,7 +307,7 @@ public class FilesTest {
                 Assert.assertEquals(0, Files.softLink(targetPath.$(), linkPath.$()));
                 Assert.assertTrue(Files.isSoftLink(linkPath.$()));
 
-                Assert.assertTrue(Files.rmdir(linkPath, true));
+                Assert.assertTrue(Files.rmdir(linkPath, true, 0, 10));
                 Assert.assertFalse(new File(linkPath.toString()).exists());
                 Assert.assertTrue(r.exists());
                 Assert.assertEquals(0L, Files.getDirSize(targetPath));
@@ -560,7 +561,7 @@ public class FilesTest {
                         dst.concat("subdir").concat("file2");
                         TestUtils.assertFileContentsEquals(src, dst);
                     } finally {
-                        Files.rmdir(p2, true);
+                        Files.rmdir(p2, true, 0, 10);
                     }
                 }
             }
@@ -687,7 +688,7 @@ public class FilesTest {
 
     @Test
     public void testMixedIOConcurrent() throws Exception {
-        final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         // This test aims to follow write pattern possible when handling O3 tasks.
         // Concurrent mmap-based writes and pwrite() may break read-your-write
@@ -1077,6 +1078,25 @@ public class FilesTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testRecursiveRmdirLimit() throws IOException {
+        var ff = new FilesFacadeImpl();
+        temporaryFolder.newFolder("a", "b");
+
+        try (Path path = new Path().of(temporaryFolder.getRoot().getAbsolutePath()).concat("a")) {
+            temporaryFolder.newFolder("a", ".download", "table", "wal", "segment");
+
+            Assert.assertTrue(ff.rmdir(path));
+
+            temporaryFolder.newFolder("a", ".download", "table", "wal", "segment", "extra");
+            try {
+                ff.rmdir(path);
+                Assert.fail();
+            } catch (CairoError e) {
+            }
+        }
     }
 
     @Test
