@@ -50,6 +50,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
@@ -66,7 +67,7 @@ import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactor
 public class AbstractWindowJoinAtom implements StatefulAtom, Plannable {
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     protected final IntList groupByColumnIndexes;
-    protected final AsyncTimeFrameHelper ownerSlaveTimeFrameHelper;
+    protected final TimeFrameHelper ownerSlaveTimeFrameHelper;
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledMasterFilter;
@@ -89,6 +90,7 @@ public class AbstractWindowJoinAtom implements StatefulAtom, Plannable {
     private final Function ownerJoinFilter;
     private final JoinRecord ownerJoinRecord;
     private final Function ownerMasterFilter;
+    private final ConcurrentTimeFrameCursor ownerSlaveTimeFrameCursor;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<GroupByColumnSink> perWorkerColumnSinks;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
@@ -99,7 +101,8 @@ public class AbstractWindowJoinAtom implements StatefulAtom, Plannable {
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<Function> perWorkerMasterFilters;
     private final ObjList<GroupByLongList> perWorkerRowIdsGroupByLists;
-    private final ObjList<AsyncTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
+    private final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
+    private final ObjList<TimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     private final ObjList<GroupByLongList> perWorkerTimestampsGroupByLists;
     private final long slaveTsScale;
     private final long valueSizeInBytes;
@@ -150,10 +153,13 @@ public class AbstractWindowJoinAtom implements StatefulAtom, Plannable {
             this.slaveTsScale = slaveTsScale;
             this.vectorized = ownerJoinFilter == null && GroupByUtils.isBatchComputationSupported(ownerGroupByFunctions, columnSplit);
 
-            this.ownerSlaveTimeFrameHelper = new AsyncTimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
+            this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
+            this.ownerSlaveTimeFrameHelper = new TimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
+            this.perWorkerSlaveTimeFrameCursors = new ObjList<>(slotCount);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new AsyncTimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead(), slaveTsScale));
+                perWorkerSlaveTimeFrameCursors.extendAndSet(i, slaveFactory.newTimeFrameCursor());
+                perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new TimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale));
             }
 
             this.ownerJoinRecord = new JoinRecord(columnSplit);
@@ -254,6 +260,8 @@ public class AbstractWindowJoinAtom implements StatefulAtom, Plannable {
                 Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+        Misc.free(ownerSlaveTimeFrameCursor);
+        Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
         Misc.free(ownerAllocator);
         Misc.freeObjListAndKeepObjects(perWorkerAllocators);
     }
@@ -262,8 +270,8 @@ public class AbstractWindowJoinAtom implements StatefulAtom, Plannable {
     public void close() {
         Misc.free(ownerJoinFilter);
         Misc.freeObjList(perWorkerJoinFilters);
-        Misc.free(ownerSlaveTimeFrameHelper);
-        Misc.freeObjList(perWorkerSlaveTimeFrameHelpers);
+        Misc.free(ownerSlaveTimeFrameCursor);
+        Misc.freeObjList(perWorkerSlaveTimeFrameCursors);
         Misc.free(compiledMasterFilter);
         Misc.free(bindVarMemory);
         Misc.freeObjList(bindVarFunctions);
@@ -387,7 +395,7 @@ public class AbstractWindowJoinAtom implements StatefulAtom, Plannable {
         return perWorkerRowIdsGroupByLists.getQuick(slotId);
     }
 
-    public AsyncTimeFrameHelper getSlaveTimeFrameHelper(int slotId) {
+    public TimeFrameHelper getSlaveTimeFrameHelper(int slotId) {
         if (slotId == -1) {
             return ownerSlaveTimeFrameHelper;
         }
@@ -441,7 +449,7 @@ public class AbstractWindowJoinAtom implements StatefulAtom, Plannable {
             LongList partitionTimestamps,
             int frameCount
     ) throws SqlException {
-        ownerSlaveTimeFrameHelper.of(
+        ownerSlaveTimeFrameCursor.of(
                 pageFrameCursor,
                 frameAddressCache,
                 framePartitionIndexes,
@@ -449,8 +457,10 @@ public class AbstractWindowJoinAtom implements StatefulAtom, Plannable {
                 partitionTimestamps,
                 frameCount
         );
+        ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
         for (int i = 0, n = perWorkerSlaveTimeFrameHelpers.size(); i < n; i++) {
-            perWorkerSlaveTimeFrameHelpers.getQuick(i).of(
+            final ConcurrentTimeFrameCursor workerCursor = perWorkerSlaveTimeFrameCursors.getQuick(i);
+            workerCursor.of(
                     pageFrameCursor,
                     frameAddressCache,
                     framePartitionIndexes,
@@ -458,6 +468,7 @@ public class AbstractWindowJoinAtom implements StatefulAtom, Plannable {
                     partitionTimestamps,
                     frameCount
             );
+            perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
         }
 
         // now we can init join filters

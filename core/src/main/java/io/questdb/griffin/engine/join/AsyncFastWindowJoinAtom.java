@@ -54,7 +54,7 @@ public class AsyncFastWindowJoinAtom extends AbstractWindowJoinAtom {
     private final DirectIntMultiLongHashMap ownerSlaveData;
     private final ObjList<DirectIntMultiLongHashMap> perWorkerSlaveData;
     private final int slaveSymbolIndex;
-    // slave-to-master symbol key LUT
+    // slave-to-master symbol key lookup hash table
     private final DirectIntIntHashMap slaveSymbolLookupTable;
 
     public AsyncFastWindowJoinAtom(

@@ -196,10 +196,11 @@ public class WindowJoinFilteredRecordCursorFactory extends AbstractRecordCursorF
         private final TimeFrameHelper slaveHelper;
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
-        private SqlExecutionCircuitBreaker circuitBreaker = null;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
         private RecordCursor masterCursor;
         private Record masterRecord;
+        private TimeFrameCursor slaveCursor;
 
         public WindowJoinRecordCursor(
                 CairoConfiguration configuration,
@@ -240,8 +241,8 @@ public class WindowJoinFilteredRecordCursorFactory extends AbstractRecordCursorF
             if (isOpen) {
                 isOpen = false;
                 Misc.clearObjList(groupByFunctions);
-                Misc.free(masterCursor);
-                Misc.free(slaveHelper);
+                masterCursor = Misc.free(masterCursor);
+                slaveCursor = Misc.free(slaveCursor);
             }
         }
 
@@ -255,7 +256,7 @@ public class WindowJoinFilteredRecordCursorFactory extends AbstractRecordCursorF
             if (columnIndex < columnSplit) {
                 return masterCursor.getSymbolTable(columnIndex);
             }
-            return slaveHelper.getSymbolTable(columnIndex - columnSplit);
+            return slaveCursor.getSymbolTable(columnIndex - columnSplit);
         }
 
         @Override
@@ -352,6 +353,7 @@ public class WindowJoinFilteredRecordCursorFactory extends AbstractRecordCursorF
             }
             this.masterCursor = masterCursor;
             masterRecord = masterCursor.getRecord();
+            this.slaveCursor = slaveCursor;
             slaveHelper.of(slaveCursor);
             joinRecord.of(masterRecord, slaveHelper.getRecord());
             record.of(masterRecord, mapValue);

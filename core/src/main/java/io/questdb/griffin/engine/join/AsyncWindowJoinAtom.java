@@ -86,6 +86,7 @@ public class AsyncWindowJoinAtom extends AbstractWindowJoinAtom {
                 slaveTsScale,
                 workerCount
         );
+
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         if (isVectorized()) {
             int slaveDataLen = this.groupByColumnIndexes.size();

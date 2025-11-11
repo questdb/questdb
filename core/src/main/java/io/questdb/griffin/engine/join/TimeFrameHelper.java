@@ -29,13 +29,11 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
-import io.questdb.std.Misc;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
-public class TimeFrameHelper implements QuietCloseable {
+public class TimeFrameHelper {
     private final long lookahead;
     private final long scale;
     private int bookmarkedFrameIndex = -1;
@@ -48,11 +46,6 @@ public class TimeFrameHelper implements QuietCloseable {
     public TimeFrameHelper(long lookahead, long scale) {
         this.lookahead = lookahead;
         this.scale = scale;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(timeFrameCursor);
     }
 
     // finds the first row id within the given interval and load the record to it
@@ -87,7 +80,6 @@ public class TimeFrameHelper implements QuietCloseable {
                         }
                         if (scaleTimestamp(timeFrame.getTimestampLo(), scale) <= timestampHi) {
                             // yay, it's what we need!
-
                             if (scaleTimestamp(timeFrame.getTimestampLo(), scale) >= timestampLo) {
                                 // we can start with the first row
                                 bookmarkCurrentFrame(timeFrame.getRowLo());
@@ -153,10 +145,6 @@ public class TimeFrameHelper implements QuietCloseable {
         return record;
     }
 
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return timeFrameCursor.getSymbolTable(columnIndex);
-    }
-
     public SymbolTableSource getSymbolTableSource() {
         return timeFrameCursor;
     }
@@ -208,7 +196,9 @@ public class TimeFrameHelper implements QuietCloseable {
     }
 
     public void toTop() {
-        timeFrameCursor.toTop();
+        if (timeFrameCursor != null) {
+            timeFrameCursor.toTop();
+        }
         bookmarkedFrameIndex = -1;
         bookmarkedRowId = Long.MIN_VALUE;
     }
