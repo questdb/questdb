@@ -515,15 +515,14 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         private void discardIterator(long iterAddr) {
             long blockAddr = iterAddr - iter_offsetFromBlockStart(iterAddr);
             int newCount = block_decUsedSlotCount(blockAddr);
-            if (newCount == 0) {
-                long nextBlockAddr = block_nextBlockAddr(blockAddr);
-                block_free(blockAddr);
-                if (blockAddr == lastIteratorBlockAddr) {
-                    lastIteratorBlockAddr = 0;
-                    assert nextBlockAddr == 0 : "nextBlockAddr != 0";
+            if (newCount == 0)
+                if (blockAddr != lastIteratorBlockAddr) {
+                    long nextBlockAddr = block_nextBlockAddr(blockAddr);
+                    block_free(blockAddr);
+                    firstIteratorBlockAddr = nextBlockAddr;
+                } else {
+                    block_setNextFreeSlot(blockAddr, 0);
                 }
-                firstIteratorBlockAddr = nextBlockAddr;
-            }
         }
 
         private void freeAllIteratorBlocks() {
