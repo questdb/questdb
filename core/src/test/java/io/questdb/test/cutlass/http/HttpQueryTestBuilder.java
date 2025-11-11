@@ -78,8 +78,8 @@ public class HttpQueryTestBuilder {
     private String copyInputRoot;
     private FactoryProvider factoryProvider;
     private FilesFacade filesFacade = new TestFilesFacadeImpl();
-    private int forceRecvFragmentationChunkSize;
-    private int forceSendFragmentationChunkSize;
+    private int forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+    private int forceSendFragmentationChunkSize = Integer.MAX_VALUE;
     private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
