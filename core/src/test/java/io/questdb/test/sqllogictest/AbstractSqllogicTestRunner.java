@@ -27,7 +27,6 @@ package io.questdb.test.sqllogictest;
 import io.questdb.network.NetworkError;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -36,6 +35,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.Sqllogictest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -131,7 +131,7 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
         try (Path path = new Path()) {
             String testResourcePath = getTestResourcePath();
             path.of(testResourcePath).concat("test").concat(testFile);
-            Assert.assertTrue(Misc.getThreadLocalUtf8Sink().put(path).toString(), FilesFacadeImpl.INSTANCE.exists(path.$()));
+            Assert.assertTrue(Misc.getThreadLocalUtf8Sink().put(path).toString(), TestFilesFacadeImpl.INSTANCE.exists(path.$()));
             Sqllogictest.run(pgPort, path.$().ptr());
         }
     }

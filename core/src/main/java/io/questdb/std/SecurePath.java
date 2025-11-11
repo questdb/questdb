@@ -22,27 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.std;
 
-import io.questdb.cutlass.http.MimeTypesCache;
-import io.questdb.std.Utf8SequenceObjHashMap;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Path;
 
-public interface StaticContentProcessorConfiguration {
-    Utf8SequenceObjHashMap<Utf8Sequence> DEFAULT_REDIRECT_MAP = new Utf8SequenceObjHashMap<>() {{
-        put(new Utf8String("/"), new Utf8String("/index.html"));
-    }};
+public class SecurePath {
+    static final io.questdb.std.ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
 
-    String getKeepAliveHeader();
-
-    MimeTypesCache getMimeTypesCache();
-
-    CharSequence getPublicDirectory();
-
-    default Utf8SequenceObjHashMap<Utf8Sequence> getRedirectMap() {
-        return DEFAULT_REDIRECT_MAP;
+    public static void clearThreadLocals() {
+        PATH.close();
     }
-
-    byte getRequiredAuthType();
 }

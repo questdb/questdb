@@ -55,7 +55,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.MemoryTag;
@@ -69,7 +69,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -3300,7 +3299,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 File table = new File(target);
                 Assert.assertTrue(table.exists());
                 Assert.assertTrue(table.isDirectory());
-                Assert.assertTrue(FilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash()));
+                Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash()));
                 Assert.assertTrue(volume.delete());
             }
         });

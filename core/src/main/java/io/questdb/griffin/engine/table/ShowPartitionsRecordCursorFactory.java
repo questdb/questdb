@@ -49,7 +49,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -293,7 +292,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                             if (ff.exists(path.parent().concat(TableUtils.TXN_FILE_NAME).$())) {
                                 try {
                                     if (detachedTxReader == null) {
-                                        detachedTxReader = new TxReader(FilesFacadeImpl.INSTANCE);
+                                        detachedTxReader = new TxReader(cairoConfig.getFilesFacade());
                                     }
                                     detachedTxReader.ofRO(path.$(), timestampType, partitionBy);
                                     detachedTxReader.unsafeLoadAll();

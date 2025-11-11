@@ -47,7 +47,7 @@ import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
@@ -60,7 +60,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -1117,7 +1116,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         final int loopCounter = 8;
         final Rnd rnd = new Rnd(seed1, seed2);
 
-        try (WalPurgeJob purgeJob = new WalPurgeJob(engine, FilesFacadeImpl.INSTANCE, (MicrosecondClock) () -> 0)) {
+        try (WalPurgeJob purgeJob = new WalPurgeJob(engine, TestFilesFacadeImpl.INSTANCE, (MicrosecondClock) () -> 0)) {
 
             for (int j = 0; j < loopCounter; j++) {
 

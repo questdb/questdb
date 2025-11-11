@@ -33,7 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -45,7 +45,6 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -149,7 +148,7 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
             TestUtils.writeStringToFile(temp, "abcde");
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path().of(temp.getAbsolutePath())) {
                 Assert.assertTrue(Files.exists(path.$()));
                 Assert.assertEquals(5, Files.length(path.$()));
@@ -687,7 +686,7 @@ public class FilesTest {
 
     @Test
     public void testMixedIOConcurrent() throws Exception {
-        final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         // This test aims to follow write pattern possible when handling O3 tasks.
         // Concurrent mmap-based writes and pwrite() may break read-your-write

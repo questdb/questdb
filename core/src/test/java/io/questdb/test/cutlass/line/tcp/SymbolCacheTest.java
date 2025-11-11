@@ -49,7 +49,6 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SPSequence;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -410,7 +409,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
         final int N = 1024;
         final String tableName = "tb1";
         final String symbolPrefix = "аз_съм_грут";
-        final FilesFacade ff = new FilesFacadeImpl();
+        final var ff = new TestFilesFacadeImpl();
 
         assertMemoryLeak(() -> {
             try (Path path = new Path();

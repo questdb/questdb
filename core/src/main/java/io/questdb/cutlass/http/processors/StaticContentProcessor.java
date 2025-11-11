@@ -74,11 +74,11 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private final Utf8Sequence webConsoleContextPath;
 
-    public StaticContentProcessor(HttpFullFatServerConfiguration configuration) {
+    public StaticContentProcessor(HttpFullFatServerConfiguration configuration, FilesFacade ff) {
         this.configuration = configuration.getStaticContentProcessorConfiguration();
         this.mimeTypes = configuration.getStaticContentProcessorConfiguration().getMimeTypesCache();
         this.prefixedPath = new PrefixedPath(configuration.getStaticContentProcessorConfiguration().getPublicDirectory());
-        this.ff = configuration.getStaticContentProcessorConfiguration().getFilesFacade();
+        this.ff = ff;
         this.keepAliveHeader = configuration.getStaticContentProcessorConfiguration().getKeepAliveHeader();
         this.httpProtocolVersion = configuration.getHttpContextConfiguration().getHttpVersion();
         this.requiredAuthType = configuration.getStaticContentProcessorConfiguration().getRequiredAuthType();

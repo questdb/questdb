@@ -32,7 +32,6 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -59,7 +58,6 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private static final int INITIAL_LOG_FILE_LIST_SIZE = 1024;
     private static final int INITIAL_LOG_FILE_NAME_SINK_SIZE = 64 * 1024;
     private final MicrosecondClock clock;
-    private final FilesFacade ff;
     private final int level;
     private final TemplateParser locationParser = new TemplateParser();
     private final DirectUtf8StringZ logFileName = new DirectUtf8StringZ();
@@ -73,6 +71,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private String bufferSize;
     private long currentSize;
     private long fd = -1;
+    private FilesFacade ff;
     private long idleSpinCount = 0;
     private String lifeDuration;
     private long lim;
@@ -100,11 +99,10 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private String spinBeforeFlush;
 
     public LogRollingFileWriter(RingQueue<LogRecordUtf8Sink> ring, SCSequence subSeq, int level) {
-        this(FilesFacadeImpl.INSTANCE, MicrosecondClockImpl.INSTANCE, ring, subSeq, level);
+        this(MicrosecondClockImpl.INSTANCE, ring, subSeq, level);
     }
 
     public LogRollingFileWriter(
-            FilesFacade ff,
             MicrosecondClock clock,
             RingQueue<LogRecordUtf8Sink> ring,
             SCSequence subSeq,
@@ -113,7 +111,6 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         try {
             this.path = new Path();
             this.renameToPath = new Path();
-            this.ff = ff;
             this.clock = clock;
             this.ring = ring;
             this.subSeq = subSeq;
@@ -125,7 +122,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     @Override
-    public void bindProperties(LogFactory factory) {
+    public void bindProperties(LogFactory factory, FilesFacade ff) {
+        this.ff = ff;
         if (location == null) {
             throw CairoException.nonCritical().put("rolling log file location not set [location=null]");
         }

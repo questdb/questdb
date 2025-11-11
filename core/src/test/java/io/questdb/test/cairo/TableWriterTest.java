@@ -61,7 +61,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -80,7 +80,6 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -445,7 +444,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnHavingTroubleCreatingMetaSwap() throws Exception {
+    public void testAddColumnHavingTroubleCreatingMetaSwap() {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         FilesFacade ff = new TestFilesFacadeImpl() {
@@ -532,7 +531,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnRepairFail() throws Exception {
-        testAddColumnErrorFollowedByRepairFail(new FilesFacadeImpl() {
+        testAddColumnErrorFollowedByRepairFail(new TestFilesFacadeImpl() {
             int counter = 2;
 
             @Override
@@ -558,7 +557,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnRepairFail2() throws Exception {
-        testAddColumnErrorFollowedByRepairFail(new FilesFacadeImpl() {
+        testAddColumnErrorFollowedByRepairFail(new TestFilesFacadeImpl() {
             int counter = 1;
 
             @Override
@@ -813,7 +812,7 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.DAY, N);
             Rnd rnd = new Rnd();
 
-            final FilesFacadeImpl ff = new FilesFacadeImpl() {
+            final var ff = new TestFilesFacadeImpl() {
                 @Override
                 public boolean rmdir(Path name, boolean lazy) {
                     return false;
@@ -1953,7 +1952,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonStandardPageSize() throws Exception {
+    public void testNonStandardPageSize() {
         populateTable(new TestFilesFacadeImpl() {
             @Override
             public long getPageSize() {
@@ -1963,7 +1962,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonStandardPageSize2() throws Exception {
+    public void testNonStandardPageSize2() {
         populateTable(new TestFilesFacadeImpl() {
             @Override
             public long getPageSize() {
@@ -2293,7 +2292,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveColumnUnrecoverableRenameFailure() throws Exception {
-        testUnrecoverableRemoveColumn(new FilesFacadeImpl() {
+        testUnrecoverableRemoveColumn(new TestFilesFacadeImpl() {
             int count = 2;
 
             @Override
@@ -2447,7 +2446,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testRenameColumnUnrecoverableRenameFailure() throws Exception {
-        testUnrecoverableRenameColumn(new FilesFacadeImpl() {
+        testUnrecoverableRenameColumn(new TestFilesFacadeImpl() {
             int count = 2;
 
             @Override
@@ -3884,7 +3883,7 @@ public class TableWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, timestampType);
 
-            final FilesFacadeImpl ff = new FilesFacadeImpl() {
+            final FilesFacade ff = new TestFilesFacadeImpl() {
                 long fd = -1;
 
                 @Override
@@ -4221,7 +4220,7 @@ public class TableWriterTest extends AbstractCairoTest {
         void modify(TableWriter w, Rnd rnd, long timestamp, long increment);
     }
 
-    static class CountingFilesFacade extends FilesFacadeImpl {
+    static class CountingFilesFacade extends TestFilesFacadeImpl {
         long count = Long.MAX_VALUE;
     }
 

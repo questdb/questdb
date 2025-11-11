@@ -38,7 +38,7 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorState;
 import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.cutlass.line.http.LineHttpSenderV2;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.LogCapture;
@@ -121,7 +121,7 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
                                 getEnv(),
                                 bootstrap1.getLog(),
                                 bootstrap1.getBuildInformation(),
-                                FilesFacadeImpl.INSTANCE,
+                                TestFilesFacadeImpl.INSTANCE,
                                 bootstrap1.getMicrosecondClock(),
                                 (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
                                     @Override

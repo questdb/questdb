@@ -4650,7 +4650,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         .$(", errno=").$(e.getErrno())
                         .I$();
                 auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
-                if (!ff.rmdir(auxPath)) {
+                if (!ff.rmdirDbRoot(auxPath)) {
                     LOG.error().$("could not delete directory [path=").$(auxPath).$(", errno=").$(ff.errno()).I$();
                 }
                 throw e;

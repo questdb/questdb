@@ -229,7 +229,8 @@ public class PGJobContextTest extends BasePGTest {
                 .I$();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
-        inputRoot = TestUtils.getCsvRoot();
+        var inputRoot = TestUtils.getCsvRoot();
+        setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, inputRoot);
     }
 
     @Test
@@ -13171,7 +13172,7 @@ create table tab as (
     }
 
     private void testReadParquetSchemaChange(boolean simple) throws Exception {
-        inputRoot = root; // the parquet files are exported into the root dir
+        setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, root); // the parquet files are exported into the root dir
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (

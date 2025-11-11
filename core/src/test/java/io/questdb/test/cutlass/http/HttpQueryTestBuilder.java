@@ -197,7 +197,7 @@ public class HttpQueryTestBuilder {
                 workerPool.freeOnExit(copyExportRequestJob);
             }
 
-            httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+            httpServer.bind(new StaticContentProcessorFactory(httpConfiguration, filesFacade));
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override

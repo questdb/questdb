@@ -39,7 +39,6 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -185,27 +184,17 @@ public class Bootstrap {
                 // /server.conf properties
                 final Properties properties = loadProperties();
                 final FilesFacade ffOverride = bootstrapConfiguration.getFilesFacade();
-                if (ffOverride == null) {
-                    config = new DynamicPropServerConfiguration(
-                            rootDirectory,
-                            properties,
-                            bootstrapConfiguration.getEnv(),
-                            log,
-                            buildInformation
-                    );
-                } else {
-                    config = new DynamicPropServerConfiguration(
-                            rootDirectory,
-                            properties,
-                            bootstrapConfiguration.getEnv(),
-                            log,
-                            buildInformation,
-                            ffOverride,
-                            MicrosecondClockImpl.INSTANCE,
-                            (configuration1, engine, freeOnExit) -> DefaultFactoryProvider.INSTANCE,
-                            true
-                    );
-                }
+                config = new DynamicPropServerConfiguration(
+                        rootDirectory,
+                        properties,
+                        bootstrapConfiguration.getEnv(),
+                        log,
+                        buildInformation,
+                        ffOverride,
+                        MicrosecondClockImpl.INSTANCE,
+                        (configuration1, engine, freeOnExit) -> DefaultFactoryProvider.INSTANCE,
+                        true
+                );
             } else {
                 config = configuration;
             }
@@ -277,7 +266,7 @@ public class Bootstrap {
 
             int plen = path.size();
             AtomicInteger counter = new AtomicInteger(0);
-            FilesFacadeImpl.INSTANCE.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+            ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
                 if (Files.notDots(pUtf8NameZ)) {
                     name.of(pUtf8NameZ);
                     if (Utf8s.startsWithAscii(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {

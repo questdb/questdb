@@ -40,7 +40,7 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -860,7 +860,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                             envMap,
                             bootstrap.getLog(),
                             bootstrap.getBuildInformation(),
-                            FilesFacadeImpl.INSTANCE,
+                            TestFilesFacadeImpl.INSTANCE,
                             bootstrap.getMicrosecondClock(),
                             FactoryProviderFactoryImpl.INSTANCE,
                             true

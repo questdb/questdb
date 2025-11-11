@@ -36,7 +36,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -44,7 +44,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -58,7 +57,7 @@ public class CairoMemoryTest extends AbstractTest {
         long used = Unsafe.getMemUsed();
         Rnd rnd = new Rnd();
 
-        class X extends FilesFacadeImpl {
+        class X extends TestFilesFacadeImpl {
             boolean force = true;
 
             @Override
@@ -101,7 +100,7 @@ public class CairoMemoryTest extends AbstractTest {
     public void testAppendAllocateError() throws Exception {
         long used = Unsafe.getMemUsed();
 
-        class X extends FilesFacadeImpl {
+        class X extends TestFilesFacadeImpl {
             boolean allClear = false;
             int count = 2;
 
@@ -140,7 +139,7 @@ public class CairoMemoryTest extends AbstractTest {
     public void testAppendCannotOpenFile() {
         long used = Unsafe.getMemUsed();
 
-        class X extends FilesFacadeImpl {
+        class X extends TestFilesFacadeImpl {
             @Override
             public long openRW(LPSZ name, int opts) {
                 int n = name.size();
@@ -269,7 +268,7 @@ public class CairoMemoryTest extends AbstractTest {
     public void testReadWriteCannotOpenFile() {
         long used = Unsafe.getMemUsed();
 
-        class X extends FilesFacadeImpl {
+        class X extends TestFilesFacadeImpl {
             @Override
             public long openRW(LPSZ name, int opts) {
                 int n = name.size();
@@ -429,7 +428,7 @@ public class CairoMemoryTest extends AbstractTest {
     @Test
     public void testWriteOverMapFailuresAndRead() throws Exception {
         Rnd rnd = new Rnd();
-        class X extends FilesFacadeImpl {
+        class X extends TestFilesFacadeImpl {
             @Override
             public long getMapPageSize() {
                 return super.getPageSize();

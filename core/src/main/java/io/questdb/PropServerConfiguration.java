@@ -686,7 +686,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 env,
                 log,
                 buildInformation,
-                FilesFacadeImpl.INSTANCE,
+                null,
                 MicrosecondClockImpl.INSTANCE,
                 (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
                 true
@@ -772,7 +772,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         } catch (NumericException e) {
             throw new ServerConfigurationException("Invalid log timezone: '" + logTimestampTimezone + "'");
         }
-        this.filesFacade = filesFacade;
+        FilesFacadeImpl ffImpl = filesFacade != null ? null : new FilesFacadeImpl();
+        this.filesFacade = filesFacade != null ? filesFacade : ffImpl;
         this.fpf = fpf;
         this.microsecondClock = microsecondClock;
         this.validator = newValidator();
@@ -1269,7 +1270,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 });
                 // load mime types
                 path.of(new File(new File(installRoot, CONFIG_DIRECTORY), "mime.types").getAbsolutePath());
-                this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path.$());
+                this.mimeTypesCache = new MimeTypesCache(this.filesFacade, path.$());
             }
 
             this.maxRerunWaitCapMs = getMillis(properties, env, PropertyKey.HTTP_BUSY_RETRY_MAXIMUM_WAIT_BEFORE_RETRY, 1000);
@@ -4912,11 +4913,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public FilesFacade getFilesFacade() {
-            return FilesFacadeImpl.INSTANCE;
-        }
-
-        @Override
         public CharSequence getKeepAliveHeader() {
             return keepAliveHeader;
         }
@@ -5172,11 +5168,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public FactoryProvider getFactoryProvider() {
             return factoryProvider;
-        }
-
-        @Override
-        public FilesFacade getFilesFacade() {
-            return FilesFacadeImpl.INSTANCE;
         }
 
         @Override
@@ -5940,11 +5931,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropStaticContentProcessorConfiguration implements StaticContentProcessorConfiguration {
-
-        @Override
-        public FilesFacade getFilesFacade() {
-            return FilesFacadeImpl.INSTANCE;
-        }
 
         @Override
         public String getKeepAliveHeader() {

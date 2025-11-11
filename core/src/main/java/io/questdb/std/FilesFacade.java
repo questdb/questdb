@@ -158,9 +158,13 @@ public interface FilesFacade {
 
     int rename(LPSZ from, LPSZ to);
 
-    boolean rmdir(Path name);  // Implementation-specific laziness.
+    boolean rmdir(Path name);
 
     boolean rmdir(Path name, boolean haltOnError);
+
+    boolean rmdirDbRoot(Path path);
+
+    boolean rmdirTable(Path path);
 
     int softLink(LPSZ src, LPSZ softLink);
 

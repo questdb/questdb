@@ -25,7 +25,7 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -73,7 +73,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         super.setUp();
         node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, 512 * 1024);
         // Disable mixed I/O on some OSes and FSes (wink-wink Windows and ZFS).
-        fsAllowsMixedIO = FilesFacadeImpl.INSTANCE.allowMixedIO(root);
+        fsAllowsMixedIO = TestFilesFacadeImpl.INSTANCE.allowMixedIO(root);
         node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, fsAllowsMixedIO);
         setFuzzProperties(100, 1000, 2);
         existingFilesParanoia = FD_PARANOIA_MODE;

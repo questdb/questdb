@@ -209,9 +209,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             symLinkTarget = null;
                         }
                     }
-                    boolean fullyDeleted = ff.rmdir(pathToDelete, false);
+                    boolean fullyDeleted = ff.rmdirTable(pathToDelete);
                     if (symLinkTarget != null) {
-                        ff.rmdir(symLinkTarget, false);
+                        ff.rmdirTable(symLinkTarget);
                     }
 
                     // Sometimes on Windows sequencer files can be open at this point,
@@ -446,8 +446,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         return safeToPurgeTxn;
     }
 
-    private boolean recursiveDelete(Path path) {
-        if (!ff.rmdir(path, false) && !Files.isErrnoFileDoesNotExist(ff.errno())) {
+    private boolean recursiveDeleteSegment(Path path) {
+        if (!ff.rmdir(path) && !Files.isErrnoFileDoesNotExist(ff.errno())) {
+            LOG.debug()
+                    .$("could not delete directory [path=").$(path)
+                    .$(", errno=").$(ff.errno())
+                    .I$();
+            return false;
+        }
+        return true;
+    }
+
+    private boolean recursiveDeleteWal(Path path) {
+        if (!ff.rmdir(path) && !Files.isErrnoFileDoesNotExist(ff.errno())) {
             LOG.debug()
                     .$("could not delete directory [path=").$(path)
                     .$(", errno=").$(ff.errno())
@@ -756,7 +767,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     .$(", walId=").$(walId)
                     .$(", segmentId=").$(segmentId)
                     .I$();
-            if (recursiveDelete(setSegmentPath(tableToken, walId, segmentId))) {
+            if (recursiveDeleteSegment(setSegmentPath(tableToken, walId, segmentId))) {
                 ff.closeRemove(lockFd, setSegmentLockPath(tableToken, walId, segmentId).$());
             } else {
                 ff.close(lockFd);
@@ -781,7 +792,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             LOG.debug().$("deleting WAL directory [table=").$(tableToken)
                     .$(", walId=").$(walId)
                     .I$();
-            if (recursiveDelete(setWalPath(tableToken, walId))) {
+            if (recursiveDeleteWal(setWalPath(tableToken, walId))) {
                 ff.closeRemove(lockFd, setWalLockPath(tableToken, walId).$());
             } else {
                 ff.close(lockFd);

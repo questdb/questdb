@@ -32,11 +32,9 @@ import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
-import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
-import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.postgresql.PGProperty;
@@ -84,11 +82,6 @@ public class PGSecurityTest extends BasePGTest {
             return true;
         }
     };
-
-    @BeforeClass
-    public static void init() {
-        inputRoot = TestUtils.getCsvRoot();
-    }
 
     @Test
     public void testAllowDumpThreadStacks() throws Exception {

@@ -36,8 +36,6 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.DefaultConcurrentCacheConfiguration;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -56,10 +54,6 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     };
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration;
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
-        @Override
-        public FilesFacade getFilesFacade() {
-            return FilesFacadeImpl.INSTANCE;
-        }
 
         @Override
         public String getKeepAliveHeader() {
@@ -309,11 +303,6 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         @Override
         public FactoryProvider getFactoryProvider() {
             return DefaultFactoryProvider.INSTANCE;
-        }
-
-        @Override
-        public FilesFacade getFilesFacade() {
-            return FilesFacadeImpl.INSTANCE;
         }
 
         @Override

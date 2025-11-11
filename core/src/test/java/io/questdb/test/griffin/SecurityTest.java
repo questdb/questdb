@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -64,7 +65,7 @@ public class SecurityTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        inputRoot = TestUtils.getCsvRoot();
+        setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, TestUtils.getCsvRoot());
         AbstractCairoTest.setUpStatic();
         CairoConfiguration readOnlyConfiguration = new DefaultTestCairoConfiguration(root) {
 

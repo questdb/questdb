@@ -77,7 +77,7 @@ public class PGArraysTest extends BasePGTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
-        inputRoot = TestUtils.getCsvRoot();
+        setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, TestUtils.getCsvRoot());
     }
 
     @Test

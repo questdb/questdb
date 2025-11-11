@@ -59,7 +59,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     }
 
     @Override
-    public void bindProperties(LogFactory factory) {
+    public void bindProperties(LogFactory factory, FilesFacade ff) {
         if (this.bufferSize != null) {
             try {
                 bufSize = Numbers.parseIntSize(this.bufferSize);

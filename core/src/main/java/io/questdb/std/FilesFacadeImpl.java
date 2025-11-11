@@ -24,20 +24,26 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 public class FilesFacadeImpl implements FilesFacade {
-    public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
+    private final static Log LOG = LogFactory.getLog(FilesFacadeImpl.class);
     private static final long ZFS_MAGIC_NUMBER = 0x2fc12fc1;
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
     private long mapPageSize = 0;
+
+    public FilesFacadeImpl() {
+    }
+
 
     @Override
     public boolean allocate(long fd, long size) {
@@ -448,7 +454,25 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean rmdir(Path name, boolean haltOnError) {
-        return Files.rmdir(name, haltOnError);
+        return rmdir(name, haltOnError, 1, LOG);
+    }
+
+    @Override
+    public boolean rmdirDbRoot(Path path) {
+        // Db root max directory depth is 4, the expected structure is:
+        // tableDir/partitionDir
+        // tableDir/wal/segmentDir
+        // tableDir/.download/wal/segmentDir
+        return rmdir(path, false, 4, LOG);
+    }
+
+    @Override
+    public boolean rmdirTable(Path path) {
+        // table max directory depth is 3, the expected structure is:
+        // partitionDir
+        // wal/segmentDir
+        // .download/wal/segmentDir
+        return rmdir(path, false, 3, LOG);
     }
 
     @Override
@@ -482,12 +506,6 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean unlinkOrRemove(Path path, Log LOG) {
-        int checkedType = isSoftLink(path.$()) ? Files.DT_LNK : Files.DT_UNKNOWN;
-        return unlinkOrRemove(path, checkedType, LOG);
-    }
-
-    @Override
     public boolean unlinkOrRemove(Path path, int checkedType, Log LOG) {
         if (checkedType == Files.DT_LNK) {
             // in Windows ^ ^ will return DT_DIR, but that is ok as the behaviour
@@ -510,6 +528,12 @@ public class FilesFacadeImpl implements FilesFacade {
         return false;
     }
 
+    @Override
+    public boolean unlinkOrRemove(Path path, Log LOG) {
+        int checkedType = isSoftLink(path.$()) ? Files.DT_LNK : Files.DT_UNKNOWN;
+        return unlinkOrRemove(path, checkedType, LOG);
+    }
+
     public void walk(Path path, FindVisitor func) {
         Files.walk(path, func);
     }
@@ -529,6 +553,25 @@ public class FilesFacadeImpl implements FilesFacade {
             return pageSize;
         } else {
             return mapPageSize;
+        }
+    }
+
+    private boolean rmdir(Path path, boolean haltOnError, int maxRecursiveDepth, Log log) {
+        // Rmdir is potentially dangerous operation. Verify it
+        // against installation root dir to avoid catastrophic mistakes
+        Path pathSecureCopy = SecurePath.PATH.get().of(path);
+
+        if (maxRecursiveDepth > 1) {
+            // Always log all recursive rmdir attempts
+            log.info().$("removing dir [path=").$(pathSecureCopy)
+                    .$(", haltOnError=").$(haltOnError)
+                    .$(", maxRecursiveDepth=").$(maxRecursiveDepth).I$();
+        }
+        try {
+            return Files.rmdir(pathSecureCopy, haltOnError, 0, maxRecursiveDepth);
+        } catch (CairoError e) {
+            log.error().$("could not remove dir [path=").$(path).$(", error=").$(e.getFlyweightMessage()).I$();
+            throw e;
         }
     }
 

@@ -36,7 +36,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
@@ -45,7 +45,6 @@ import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -282,7 +281,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testDropPartitionMacFileReadTimeoutError() throws Exception {
-        assertMemoryLeak(new FilesFacadeImpl() {
+        assertMemoryLeak(new TestFilesFacadeImpl() {
                              private boolean returnError = true;
 
                              @Override

@@ -44,6 +44,10 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     private final static Utf8SequenceIntHashMap openPaths = new Utf8SequenceIntHashMap();
     protected long fd = -1;
 
+    public TestFilesFacadeImpl() {
+        super();
+    }
+
     public static synchronized void resetTracking() {
     }
 

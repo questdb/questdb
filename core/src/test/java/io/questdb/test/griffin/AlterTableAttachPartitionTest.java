@@ -39,7 +39,7 @@ import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
@@ -49,7 +49,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -997,7 +996,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testCannotMapTimestampColumn() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
 
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
@@ -1024,7 +1023,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testCannotReadTimestampColumn() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
@@ -1040,7 +1039,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testCannotReadTimestampColumnFileDoesNotExist() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
@@ -1056,7 +1055,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testCannotRenameDetachedFolderOnAttach() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
                 if (Utf8s.containsAscii(to, "2020-01-01") && counter.decrementAndGet() == 0) {
@@ -1072,7 +1071,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testCannotSwitchPartition() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "dst" + "testCannotSwitchPartition") && Utf8s.containsAscii(name, "2020-01-01") && counter.decrementAndGet() == 0) {
@@ -1407,7 +1406,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     private void testSqlFailedOnFsOperation(
-            FilesFacadeImpl ff,
+            FilesFacade ff,
             String srcTableName,
             String dstTableName,
             boolean catchAll,

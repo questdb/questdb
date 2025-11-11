@@ -34,8 +34,6 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -134,11 +132,6 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     @Override
     public FactoryProvider getFactoryProvider() {
         return DefaultFactoryProvider.INSTANCE;
-    }
-
-    @Override
-    public FilesFacade getFilesFacade() {
-        return FilesFacadeImpl.INSTANCE;
     }
 
     @Override

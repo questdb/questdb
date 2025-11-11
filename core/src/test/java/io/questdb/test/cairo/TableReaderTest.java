@@ -2851,11 +2851,11 @@ public class TableReaderTest extends AbstractCairoTest {
 
             final FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public boolean rmdir(Path name, boolean lazy) {
+                public boolean rmdir(Path name, boolean haltOnError) {
                     if (Utf8s.endsWithAscii(name, "2017-12-14" + Files.SEPARATOR)) {
                         return false;
                     }
-                    return super.rmdir(name, lazy);
+                    return super.rmdir(name, haltOnError);
                 }
             };
 

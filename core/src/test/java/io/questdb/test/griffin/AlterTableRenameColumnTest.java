@@ -28,9 +28,8 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -271,7 +270,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
     @Test
     public void testRenameSymbolColumnReloadReader() throws Exception {
 
-        FilesFacade ff = new FilesFacadeImpl();
+        var ff = new TestFilesFacadeImpl();
         assertMemoryLeak(
                 ff,
                 () -> {
@@ -338,7 +337,7 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
         // Don't use TestFilesFacadeImpl because we want to remove renamed columns file
         // while they are opened by passive table reader.
-        FilesFacade ff = new FilesFacadeImpl();
+        var ff = new TestFilesFacadeImpl();
         assertMemoryLeak(
                 ff,
                 () -> {

@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
@@ -497,6 +498,13 @@ public final class Files {
      * @return true on success
      */
     public static boolean rmdir(Path path, boolean haltOnFail) {
+        return rmdir(path, haltOnFail, 0, 1);
+    }
+
+    public static boolean rmdir(Path path, boolean haltOnFail, int recursiveDepth, int maxRecursiveDepth) {
+        if (recursiveDepth >= maxRecursiveDepth) {
+            throw new CairoError("maximum recursive depth of " + maxRecursiveDepth + " exceeded when deleting " + path.toString());
+        }
         path.$();
         long pFind = findFirst(path.ptr());
         if (pFind > 0L) {
@@ -510,13 +518,17 @@ public final class Files {
                     path.trimTo(len).concat(nameUtf8Ptr).$();
                     type = findType(pFind);
                     if (type == Files.DT_FILE) {
-                        if (!remove(path.ptr()) && haltOnFail) {
-                            return false;
+                        if (!remove(path.ptr())) {
+                            if (haltOnFail || Files.isSecurityError(Os.errno())) {
+                                return false;
+                            }
                         }
                     } else if (notDots(nameUtf8Ptr)) {
-                        res = type == Files.DT_LNK ? unlink(path.ptr()) == 0 : rmdir(path, haltOnFail);
-                        if (!res && haltOnFail) {
-                            return false;
+                        res = type == Files.DT_LNK ? unlink(path.ptr()) == 0 : rmdir(path, haltOnFail, recursiveDepth, maxRecursiveDepth);
+                        if (!res) {
+                            if (haltOnFail || Files.isSecurityError(Os.errno())) {
+                                return false;
+                            }
                         }
                     }
                 }
@@ -532,6 +544,17 @@ public final class Files {
             return rmdir(path.ptr());
         }
         return false;
+    }
+
+    private static boolean isSecurityError(int errno) {
+        if (Os.isLinux()) {
+            return errno == CairoException.ERRNO_EACCES_LINUX || errno == CairoException.ERRNO_EPERM_LINUX;
+        } else if (Os.isWindows()) {
+            return errno == CairoException.ERRNO_ACCESS_DENIED_WIN;
+        } else if (Os.isOSX()) {
+            return errno == CairoException.ERRNO_EACCES_MACOS || errno == CairoException.ERRNO_EPERM_MACOS;
+        }
+        return true;
     }
 
     @TestOnly

@@ -102,7 +102,7 @@ public class AbstractTest {
 
     public static void removeTestPath() {
         final Path path = Path.getThreadLocal(root);
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = new FilesFacadeImpl();
         path.slash$();
         Assert.assertTrue("Test dir cleanup error", !ff.exists(path.$()) || ff.rmdir(path.slash()));
     }

@@ -67,6 +67,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final long databaseIdHi;
     private final long databaseIdLo;
     private final String dbRoot;
+    private final FilesFacadeImpl ff;
     private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
     private final String installRoot;
     private final CharSequence legacyCheckpointRoot;
@@ -80,6 +81,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     public DefaultCairoConfiguration(CharSequence dbRoot, CharSequence installRoot) {
+        this.ff = new FilesFacadeImpl();
         this.dbRoot = Chars.toString(dbRoot);
         this.installRoot = Chars.toString(installRoot);
         this.confRoot = PropServerConfiguration.rootSubdir(dbRoot, PropServerConfiguration.CONFIG_DIRECTORY);
@@ -363,7 +365,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public @NotNull FilesFacade getFilesFacade() {
-        return FilesFacadeImpl.INSTANCE;
+        return ff;
     }
 
     @Override

@@ -52,7 +52,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.IOURing;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
@@ -66,7 +66,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -864,7 +863,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         String tab41 = "tab41";
         String dirName = tab41 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
 
-        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
+        var ff = new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
                 if (Utf8s.containsAscii(path, File.separator + dirName + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
@@ -884,7 +883,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
     @Test
     public void testImportFileFailsWhenIntermediateFilesCantBeMovedOrCopied() throws Exception {
-        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
+        var ff = new TestFilesFacadeImpl() {
             @Override
             public int copy(LPSZ from, LPSZ to) {
                 if (Utf8s.containsAscii(from, "tab42")) {
@@ -904,7 +903,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
     @Test
     public void testImportFileFailsWhenIntermediateFilesCantBeMovedToTargetDirForUnexpectedReason() throws Exception {
-        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
+        var ff = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
                 return Files.FILES_RENAME_ERR_OTHER;
@@ -1012,7 +1011,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
     @Test
     public void testImportFileFailsWhenWorkDirCantBeCreated() throws Exception {
-        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
+        var ff = new TestFilesFacadeImpl() {
             @Override
             public int mkdir(LPSZ path, int mode) {
                 if (Utf8s.containsAscii(path, "tab39")) {
@@ -3005,8 +3004,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             String fileName, IndexChunk... expectedChunks
     ) {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        inputRoot = TestUtils.getCsvRoot();
-
         try (
                 Path path = new Path().of(inputRoot).concat(fileName);
                 ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, workerCount)
@@ -3540,12 +3537,12 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                     @Override
                     public CharSequence getSqlCopyInputRoot() {
-                        return ParallelCsvFileImporterTest.inputRoot;
+                        return inputRoot;
                     }
 
                     @Override
                     public CharSequence getSqlCopyInputWorkRoot() {
-                        return ParallelCsvFileImporterTest.inputWorkRoot;
+                        return inputWorkRoot;
                     }
 
                     @Override

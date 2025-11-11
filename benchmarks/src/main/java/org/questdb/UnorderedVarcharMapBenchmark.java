@@ -150,7 +150,7 @@ public class UnorderedVarcharMapBenchmark {
 
     @Setup(Level.Trial)
     public void createMem() {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = new FilesFacadeImpl();
         try (
                 MemoryMA auxAppendMem = Vm.getPMARInstance(null);
                 MemoryMA dataAppendMem = Vm.getPMARInstance(null)

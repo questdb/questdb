@@ -29,6 +29,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -64,7 +65,7 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
     }
 
     @Override
-    public void bindProperties(LogFactory factory) {
+    public void bindProperties(LogFactory factory, FilesFacade ff) {
     }
 
     @Override

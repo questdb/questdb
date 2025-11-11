@@ -25,7 +25,8 @@
 package io.questdb.log;
 
 import io.questdb.mp.Job;
+import io.questdb.std.FilesFacade;
 
 public interface LogWriter extends Job {
-    void bindProperties(LogFactory factory);
+    void bindProperties(LogFactory factory, FilesFacade ff);
 }

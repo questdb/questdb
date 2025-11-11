@@ -38,6 +38,8 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -233,9 +235,10 @@ public class LogFactory implements Closeable {
 
         scopeConfigMap.sortKeys(LDC);
 
+        FilesFacade ff = new FilesFacadeImpl();
         for (int i = 0, n = jobs.size(); i < n; i++) {
             LogWriter job = jobs.get(i);
-            job.bindProperties(this);
+            job.bindProperties(this, ff);
             loggingWorkerPool.assign(job);
         }
     }

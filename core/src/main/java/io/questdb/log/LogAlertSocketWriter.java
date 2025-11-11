@@ -55,7 +55,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private final TemplateParser alertTemplate = new TemplateParser();
     private final RingQueue<LogRecordUtf8Sink> alertsSourceQueue;
     private final Clock clock;
-    private final FilesFacade ff;
     private final int level;
     private final NetworkFacade nf;
     private final CharSequenceObjHashMap<CharSequence> properties;
@@ -78,7 +77,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     public LogAlertSocketWriter(RingQueue<LogRecordUtf8Sink> alertsSrc, SCSequence writeSequence, int level) {
         this(
-                FilesFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 MicrosecondClockImpl.INSTANCE,
                 alertsSrc,
@@ -89,7 +87,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     public LogAlertSocketWriter(
-            FilesFacade ff,
             NetworkFacade nf,
             Clock clock,
             RingQueue<LogRecordUtf8Sink> alertsSrc,
@@ -97,7 +94,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             int level,
             CharSequenceObjHashMap<CharSequence> properties
     ) {
-        this.ff = ff;
         this.nf = nf;
         this.clock = clock;
         this.alertsSourceQueue = alertsSrc;
@@ -145,7 +141,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @Override
-    public void bindProperties(LogFactory factory) {
+    public void bindProperties(LogFactory factory, FilesFacade ff) {
         int nInBufferSize = LogAlertSocket.IN_BUFFER_SIZE;
         if (inBufferSize != null) {
             try {
@@ -195,7 +191,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         alertSink = new HttpLogRecordUtf8Sink(socket)
                 .putHeader(LogAlertSocket.localHostIp)
                 .setMark();
-        loadLogAlertTemplate();
+        loadLogAlertTemplate(ff);
         socket.connect();
     }
 
@@ -306,7 +302,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         this.reconnectDelay = reconnectDelay;
     }
 
-    private void loadLogAlertTemplate() {
+    private void loadLogAlertTemplate(FilesFacade ff) {
         final long now = clock.getTicks();
         if (location == null || location.isEmpty()) {
             location = DEFAULT_ALERT_TPT_FILE;

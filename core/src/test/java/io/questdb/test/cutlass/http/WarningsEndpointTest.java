@@ -47,7 +47,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -300,7 +300,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
                                 getEnv(),
                                 bootstrap.getLog(),
                                 bootstrap.getBuildInformation(),
-                                new FilesFacadeImpl(),
+                                new TestFilesFacadeImpl(),
                                 bootstrap.getMicrosecondClock(),
                                 (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration)
                         ) {
@@ -309,7 +309,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
                                 return new DefaultCairoConfiguration(bootstrap.getRootDirectory()) {
                                     @Override
                                     public @NotNull FilesFacade getFilesFacade() {
-                                        return new FilesFacadeImpl() {
+                                        return new TestFilesFacadeImpl() {
                                             @Override
                                             public long getFileLimit() {
                                                 return openFilesLimit;

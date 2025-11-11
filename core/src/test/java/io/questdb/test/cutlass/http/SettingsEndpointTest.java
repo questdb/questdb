@@ -42,7 +42,7 @@ import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.preferences.PreferencesMap;
 import io.questdb.preferences.PreferencesUpdateListener;
 import io.questdb.preferences.SettingsStore;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -711,7 +711,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                                 getEnv(),
                                 bootstrap.getLog(),
                                 bootstrap.getBuildInformation(),
-                                new FilesFacadeImpl(),
+                                new TestFilesFacadeImpl(),
                                 bootstrap.getMicrosecondClock(),
                                 (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration)
                         ) {
@@ -753,7 +753,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                                 getEnv(),
                                 bootstrap.getLog(),
                                 bootstrap.getBuildInformation(),
-                                new FilesFacadeImpl(),
+                                new TestFilesFacadeImpl(),
                                 bootstrap.getMicrosecondClock(),
                                 (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration)
                         ) {
