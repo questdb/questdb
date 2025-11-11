@@ -505,8 +505,7 @@ public class Table2IlpTest {
         HttpServer.HttpRequestHandlerBuilder sqlValidationProcessorBuilder = () -> new SqlValidationProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
-                workerPool.getWorkerCount(),
-                sharedWorkerCount
+                1
         );
 
         HttpServer.addDefaultEndpoints(

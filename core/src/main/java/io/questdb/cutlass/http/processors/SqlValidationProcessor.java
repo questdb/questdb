@@ -32,7 +32,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -59,7 +58,7 @@ import io.questdb.network.QueryPausedException;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 
@@ -83,13 +82,12 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     public SqlValidationProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            int workerCount,
             int sharedWorkerCount
     ) {
         this(
                 configuration,
                 engine,
-                new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount)
+                new SqlExecutionContextImpl(engine, sharedWorkerCount)
         );
     }
 
@@ -105,7 +103,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             requiredAuthType = configuration.getRequiredAuthType();
             this.sqlExecutionContext = sqlExecutionContext;
             this.nanosecondClock = configuration.getNanosecondClock();
-            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
+            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
         } catch (Throwable th) {
             close();
             throw th;
@@ -223,11 +221,6 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     }
 
     @Override
-    public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) {
-        return context.getCookieHandler().processCookies(context, securityContext);
-    }
-
-    @Override
     public void resumeSend(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
@@ -274,10 +267,9 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             SqlValidationProcessorState state,
             Metrics metrics
     ) {
-        if (e instanceof CairoException) {
-            CairoException ce = (CairoException) e;
+        if (e instanceof CairoException ce) {
             if (ce.isInterruption()) {
-                state.info().$("query cancelled [reason=`").$safe(((CairoException) e).getFlyweightMessage())
+                state.info().$("query cancelled [reason=`").$safe(ce.getFlyweightMessage())
                         .$("`, q=`").$safe(state.getQueryOrHidden())
                         .$("`]").$();
             } else if (ce.isCritical()) {
@@ -595,7 +587,11 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         response.status(statusCode, HttpConstants.CONTENT_TYPE_JSON);
         response.headers().setKeepAlive(keepAliveHeader);
-        context.getCookieHandler().setCookie(response.headers(), context.getSecurityContext());
+        context.getCookieHandler().setServiceAccountCookie(response.headers(), context.getSecurityContext());
+        final CharSequence sessionId = context.getSessionIdSink();
+        if (!sessionId.isEmpty()) {
+            context.getCookieHandler().setSessionCookie(response.headers(), sessionId);
+        }
         response.sendHeader();
     }
 
