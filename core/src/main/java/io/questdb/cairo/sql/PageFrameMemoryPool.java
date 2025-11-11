@@ -79,7 +79,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory = new PageFrameMemoryImpl();
             toParquetColumnIndexes = new IntList(16);
             fromParquetColumnIndexes = new IntList(16);
-            parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
+            parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
             parquetDecoder = new PartitionDecoder();
         } catch (Throwable th) {
             close();
@@ -90,13 +90,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     @Override
     public void clear() {
         Misc.free(parquetDecoder);
-        toParquetColumnIndexes.restoreInitialCapacity();
-        fromParquetColumnIndexes.restoreInitialCapacity();
-        if (parquetColumns.getCapacity() > 0) {
-            parquetColumns.resetCapacity();
-        }
         releaseParquetBuffers();
-        addressCache = null;
     }
 
     @Override
