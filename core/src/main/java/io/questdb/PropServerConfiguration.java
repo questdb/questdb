@@ -146,6 +146,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String acceptingWrites;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
+    private final boolean asyncMunmapEnabled;
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -1526,6 +1527,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.dbRoot));
             this.fileDescriptorCacheEnabled = getBoolean(properties, env, PropertyKey.CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED, true);
+            this.asyncMunmapEnabled = getBoolean(properties, env, PropertyKey.CAIRO_FILE_ASYNC_MUNMAP_ENABLED, false);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     DateFormatFactory.INSTANCE,
@@ -2975,6 +2977,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getAllowTableRegistrySharedWrite() {
             return allowTableRegistrySharedWrite;
+        }
+
+        @Override
+        public boolean getAsyncMunmapEnabled() {
+            return asyncMunmapEnabled;
         }
 
         @Override

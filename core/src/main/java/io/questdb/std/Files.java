@@ -69,6 +69,7 @@ public final class Files {
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private final static FdCache fdCache = new FdCache();
     private static final MmapCache mmapCache = new MmapCache();
+    public static boolean ASYNC_MUNMAP_ENABLED = false;
     public static boolean FS_CACHE_ENABLED = true;
     // To be set in tests to check every call for using OPEN file descriptor
     public static boolean VIRTIO_FS_DETECTED = false;
@@ -228,6 +229,10 @@ public final class Files {
      * Returns vm.max_map_count kernel limit on Linux or 0 on other OSes.
      */
     public native static long getMapCountLimit();
+
+    public static MmapCache getMmapCache() {
+        return mmapCache;
+    }
 
     public static long getMmapReuseCount() {
         return mmapCache.getReuseCount();

@@ -25,6 +25,10 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.YieldingWaitStrategy;
 
 /**
  * Thread-safe cache for memory-mapped file regions with reference counting.
@@ -34,8 +38,29 @@ public class MmapCache {
     private static final int MAX_RECORD_POOL_CAPACITY = 16 * 1024;
     private final LongObjHashMap<MmapCacheRecord> mmapAddrCache = new LongObjHashMap<>();
     private final LongObjHashMap<MmapCacheRecord> mmapFileCache = new LongObjHashMap<>();
+    private final SCSequence munmapConsumerSequence;
+    private final MPSequence munmapProducesSequence;
+    private final RingQueue<MunmapTask> munmapTaskRingQueue;
     private final ObjStack<MmapCacheRecord> recordPool = new ObjStack<>();
     private long mmapReuseCount = 0;
+
+    public MmapCache() {
+        // todo: configurable queue size
+        munmapTaskRingQueue = new RingQueue<>(MunmapTask::new, Numbers.ceilPow2(10000));
+        munmapProducesSequence = new MPSequence(munmapTaskRingQueue.getCycle());
+        munmapConsumerSequence = new SCSequence(new YieldingWaitStrategy());
+        munmapProducesSequence.then(munmapConsumerSequence).then(munmapProducesSequence);
+    }
+
+    public boolean asyncMunmap() {
+        // todo: handle errors
+        return munmapConsumerSequence.consumeAll(munmapTaskRingQueue, task -> {
+            int result = Files.munmap0(task.address, task.size);
+            if (result != -1) {
+                Unsafe.recordMemAlloc(-task.size, task.memoryTag);
+            }
+        });
+    }
 
     /**
      * Maps file region into memory, reusing existing mapping if available.
@@ -302,7 +327,27 @@ public class MmapCache {
         return address;
     }
 
-    private static void unmap0(long address, long len, int memoryTag) {
+    private MmapCacheRecord createMmapCacheRecord(int fd, long fileCacheKey, long len, long address, int memoryTag) {
+        MmapCacheRecord rec = recordPool.pop();
+        if (rec != null) {
+            rec.of(fd, fileCacheKey, len, address, 1, memoryTag);
+            return rec;
+        }
+        return new MmapCacheRecord(fd, fileCacheKey, len, address, 1, memoryTag);
+    }
+
+    private void unmap0(long address, long len, int memoryTag) {
+        if (Files.ASYNC_MUNMAP_ENABLED) {
+            long seq = munmapProducesSequence.next();
+            if (seq > -1) {
+                MunmapTask task = munmapTaskRingQueue.get(seq);
+                task.address = address;
+                task.size = len;
+                task.memoryTag = memoryTag;
+                munmapProducesSequence.done(seq);
+                return;
+            }
+        }
         int result = Files.munmap0(address, len);
         if (result != -1) {
             Unsafe.recordMemAlloc(-len, memoryTag);
@@ -312,15 +357,6 @@ public class MmapCache {
                     .put(", len=").put(len)
                     .put(", memoryTag=").put(memoryTag).put(']');
         }
-    }
-
-    private MmapCacheRecord createMmapCacheRecord(int fd, long fileCacheKey, long len, long address, int memoryTag) {
-        MmapCacheRecord rec = recordPool.pop();
-        if (rec != null) {
-            rec.of(fd, fileCacheKey, len, address, 1, memoryTag);
-            return rec;
-        }
-        return new MmapCacheRecord(fd, fileCacheKey, len, address, 1, memoryTag);
     }
 
     /**
@@ -351,5 +387,11 @@ public class MmapCache {
             this.count = count;
             this.memoryTag = memoryTag;
         }
+    }
+
+    private static class MunmapTask {
+        long address;
+        int memoryTag;
+        long size;
     }
 }
