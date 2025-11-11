@@ -81,11 +81,10 @@ import io.questdb.std.Rows;
 public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
     private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
-
-    private final AsofJoinColumnAccessHelper columnAccessHelper;
     private final AsOfJoinMemoizedRecordCursor cursor;
     private final boolean driveByCaching;
     private final int slaveSymbolColumnIndex;
+    private final SymbolJoinKeyMapping symbolJoinKeyMapping;
     private final long toleranceInterval;
 
     public AsOfJoinMemoizedRecordCursorFactory(
@@ -95,14 +94,14 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             RecordCursorFactory slaveFactory,
             int columnSplit,
             int slaveSymbolColumnIndex,
-            AsofJoinColumnAccessHelper columnAccessHelper,
+            SymbolJoinKeyMapping symbolJoinKeyMapping,
             JoinContext joinContext,
             long toleranceInterval,
             boolean driveByCaching
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
-        this.columnAccessHelper = columnAccessHelper;
+        this.symbolJoinKeyMapping = symbolJoinKeyMapping;
         this.toleranceInterval = toleranceInterval;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         this.driveByCaching = driveByCaching;
@@ -218,7 +217,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             super.of(masterCursor, slaveCursor, circuitBreaker);
             rememberedSymbols.reopen();
             rememberedSymbols.clear();
-            columnAccessHelper.of(slaveCursor);
+            symbolJoinKeyMapping.of(slaveCursor);
             earliestRowId = Long.MIN_VALUE;
         }
 
@@ -343,7 +342,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            int slaveSymbolKey = columnAccessHelper.getSlaveKey(masterRecord);
+            int slaveSymbolKey = symbolJoinKeyMapping.getSlaveKey(masterRecord);
             if (slaveSymbolKey == StaticSymbolTable.VALUE_NOT_FOUND) {
                 // The master record's symbol does not match any symbol in the slave table,
                 // we can immediately report no match and return.

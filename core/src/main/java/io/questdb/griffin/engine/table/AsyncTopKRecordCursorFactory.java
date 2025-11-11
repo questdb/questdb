@@ -96,7 +96,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull @Transient RecordMetadata orderByMetadata,
             long lo,
             int workerCount
-    ) {
+    ) throws SqlException {
         super(metadata);
         assert !(base instanceof AsyncTopKRecordCursorFactory);
         try {

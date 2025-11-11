@@ -25,6 +25,9 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -38,6 +41,8 @@ import io.questdb.std.Vect;
  */
 public class DirectCompactMapValue implements DirectMapValue {
     private final int columnCount;
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal256 decimal256 = new Decimal256();
     private boolean isNew;
     private long ptr;
 
@@ -238,6 +243,38 @@ public class DirectCompactMapValue implements DirectMapValue {
     @Override
     public void putDate(int index, long value) {
         putLong(index, value);
+    }
+
+    @Override
+    public void putDecimal128(int index, Record record, int colIndex) {
+        record.getDecimal128(colIndex, decimal128);
+        Decimal128.put(decimal128, address0(index));
+    }
+
+    @Override
+    public void putDecimal128(int index, Decimal128 decimal128) {
+        Decimal128.put(decimal128, address0(index));
+    }
+
+    @Override
+    public void putDecimal128Null(int index) {
+        Decimal128.putNull(address0(index));
+    }
+
+    @Override
+    public void putDecimal256(int index, Record record, int colIndex) {
+        record.getDecimal256(colIndex, decimal256);
+        Decimal256.put(decimal256, address0(index));
+    }
+
+    @Override
+    public void putDecimal256(int index, Decimal256 decimal256) {
+        Decimal256.put(decimal256, address0(index));
+    }
+
+    @Override
+    public void putDecimal256Null(int index) {
+        Decimal256.putNull(address0(index));
     }
 
     @Override

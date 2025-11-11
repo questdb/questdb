@@ -27,11 +27,13 @@ package io.questdb.griffin.engine.functions.conditional;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongObjHashMap;
@@ -39,6 +41,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.ColumnType.*;
 
@@ -50,6 +53,7 @@ public class CaseCommon {
     private static final LongIntHashMap typeEscalationMap = new LongIntHashMap();
 
     // public for testing
+    @TestOnly
     public static Function getCastFunction(
             Function arg,
             int argPosition,
@@ -64,6 +68,9 @@ public class CaseCommon {
         if (ColumnType.isArray(argType)) {
             assert argType == toType; // no type escalation for arrays
             return arg;
+        }
+        if (ColumnType.isDecimal(toType)) {
+            return DecimalUtil.getImplicitCastFunction(arg, argPosition, toType, sqlExecutionContext);
         }
         final int keyIndex = castFactories.keyIndex(Numbers.encodeLowHighInts(argType, toType));
         if (keyIndex < 0) {
@@ -82,6 +89,7 @@ public class CaseCommon {
     }
 
     // public for testing
+    @TestOnly
     public static int getCommonType(int commonType, int valueType, int valuePos, String undefinedErrorMsg) throws SqlException {
         if (isUndefined(valueType)) {
             throw SqlException.$(valuePos, undefinedErrorMsg);
@@ -103,11 +111,40 @@ public class CaseCommon {
             throw SqlException.inconvertibleTypes(valuePos, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
         }
 
+        if (ColumnType.isDecimal(commonType) || ColumnType.isDecimal(valueType)) {
+            return getDecimalCommonType(commonType, valueType, valuePos);
+        }
+
         final int type = typeEscalationMap.get(Numbers.encodeLowHighInts(commonType, valueType));
         if (type == LongIntHashMap.NO_ENTRY_VALUE) {
             throw SqlException.inconvertibleTypes(valuePos, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
         }
         return type;
+    }
+
+    private static int getDecimalCommonType(int commonType, int valueType, int valuePos) throws SqlException {
+        if (commonType == valueType) {
+            return commonType;
+        }
+
+        commonType = DecimalUtil.getImplicitCastType(commonType);
+        valueType = DecimalUtil.getImplicitCastType(valueType);
+        if (commonType == 0 || valueType == 0) {
+            throw SqlException.inconvertibleTypes(valuePos, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
+        }
+
+        final int commonPrecision = ColumnType.getDecimalPrecision(commonType);
+        final int commonScale = ColumnType.getDecimalScale(commonType);
+        final int valuePrecision = ColumnType.getDecimalPrecision(valueType);
+        final int valueScale = ColumnType.getDecimalScale(valueType);
+
+        final int targetScale = Math.max(commonScale, valueScale);
+        final int targetPrecision = Math.min(
+                Math.max(commonPrecision - commonScale, valuePrecision - valueScale) + targetScale,
+                Decimals.MAX_PRECISION
+        );
+
+        return ColumnType.getDecimalType(targetPrecision, targetScale);
     }
 
     @NotNull
@@ -121,16 +158,12 @@ public class CaseCommon {
 
     static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker, ObjList<Function> args) throws SqlException {
         if (isGeoHash(returnType)) {
-            switch (tagOf(returnType)) {
-                case GEOBYTE:
-                    return new GeoByteCaseFunction(returnType, picker, args);
-                case GEOSHORT:
-                    return new GeoShortCaseFunction(returnType, picker, args);
-                case GEOINT:
-                    return new GeoIntCaseFunction(returnType, picker, args);
-                default:
-                    return new GeoLongCaseFunction(returnType, picker, args);
-            }
+            return switch (tagOf(returnType)) {
+                case GEOBYTE -> new GeoByteCaseFunction(returnType, picker, args);
+                case GEOSHORT -> new GeoShortCaseFunction(returnType, picker, args);
+                case GEOINT -> new GeoIntCaseFunction(returnType, picker, args);
+                default -> new GeoLongCaseFunction(returnType, picker, args);
+            };
         }
         if (ColumnType.isArray(returnType)) {
             return new ArrayCaseFunction(returnType, picker, args);
@@ -307,6 +340,13 @@ public class CaseCommon {
         constructors.extendAndSet(LONG128, (position, picker, args, returnType) -> new Long128CaseFunction(picker, args));
         constructors.extendAndSet(UUID, (position, picker, args, returnType) -> new UuidCaseFunction(picker, args));
         constructors.extendAndSet(IPv4, (position, picker, args, returnType) -> new IPv4CaseFunction(picker, args));
+        constructors.extendAndSet(VARCHAR, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
+        constructors.extendAndSet(DECIMAL8, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
+        constructors.extendAndSet(DECIMAL16, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
+        constructors.extendAndSet(DECIMAL32, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
+        constructors.extendAndSet(DECIMAL64, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
+        constructors.extendAndSet(DECIMAL128, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
+        constructors.extendAndSet(DECIMAL256, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(VARCHAR, (position, picker, args, returnType) -> new VarcharCaseFunction(picker, args));
         constructors.extendAndSet(NULL, (position, picker, args, returnType) -> new NullCaseFunction(args));
         constructors.setPos(NULL + 1);

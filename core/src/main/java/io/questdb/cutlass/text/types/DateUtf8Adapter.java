@@ -27,6 +27,7 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.text.Utf8Exception;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
@@ -73,7 +74,7 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink, Decimal256 decimal256) throws Exception {
         utf16Sink.clear();
         if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
             throw Utf8Exception.INSTANCE;
@@ -83,6 +84,6 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
-        write(row, column, value, utf16Sink, null);
+        write(row, column, value, utf16Sink, null, null);
     }
 }
