@@ -106,6 +106,9 @@ public class StreamingColumnarSerializer implements Mutable {
     // State machine
     private State state = State.UNINITIALIZED;
     private int stateProgress;
+    private int currentValueLength;
+    // Track position when writing large variable-length values that don't fit in buffer
+    private int currentValuePos;
 
     public StreamingColumnarSerializer() {
     }
@@ -121,6 +124,8 @@ public class StreamingColumnarSerializer implements Mutable {
         // Keep utf8Buf allocated for reuse
         rowsInCurrentGroup = 0;
         currentColumnInGroup = 0;
+        currentValuePos = 0;
+        currentValueLength = 0;
         complete = false;
     }
 
@@ -367,21 +372,46 @@ public class StreamingColumnarSerializer implements Mutable {
                     }
                     case ColumnType.VARCHAR -> {
                         Utf8Sequence value = record.getVarcharA(currentColumnInGroup);
-                        // Null bitmap
-                        sink.putByte(value == null ? (byte) 0x01 : (byte) 0x00);
-                        // Offsets length is (rowCount+1)*4, no need to write it
-                        // Calculate value length
-                        int valueLength = value == null ? 0 : value.size();
-                        // Offsets: [0, valueLength]
-                        sink.putInt(0);
-                        sink.putInt(valueLength);
-                        // Data
-                        if (value != null) {
-                            int size = value.size();
-                            for (int i = 0; i < size; i++) {
-                                sink.putByte(value.byteAt(i));
+
+                        // Sub-state tracking: 0 = write metadata, 1 = write data
+                        if (stateProgress == 0) {
+                            // Write metadata atomically (always fits)
+                            // Null bitmap
+                            sink.putByte(value == null ? (byte) 0x01 : (byte) 0x00);
+                            // Offsets length is (rowCount+1)*4, no need to write it
+                            // Calculate value length
+                            currentValueLength = value == null ? 0 : value.size();
+                            // Offsets: [0, valueLength]
+                            sink.putInt(0);
+                            sink.putInt(currentValueLength);
+
+                            // Move to data writing state
+                            stateProgress = 1;
+                            currentValuePos = 0;
+                        }
+
+                        // Write data (potentially in chunks)
+                        if (currentValueLength > 0 && value != null) {
+                            int remaining = currentValueLength - currentValuePos;
+                            // Write as much as fits in the buffer
+                            int written = sink.putUtf8(value, currentValuePos, remaining);
+                            currentValuePos += written;
+
+                            // CRITICAL: Update bookmark AFTER writing partial data
+                            // This ensures the rollback keeps the partial data in the sink
+                            bookmark = sink.bookmark();
+
+                            if (currentValuePos < currentValueLength) {
+                                // Not done yet, throw exception to resume later
+                                // Rollback will be to the updated bookmark (after partial data)
+                                throw NoSpaceLeftInResponseBufferException.instance(currentValueLength - currentValuePos);
                             }
                         }
+
+                        // Done with this column, reset and move to next
+                        stateProgress = 0;
+                        currentValuePos = 0;
+                        currentValueLength = 0;
                     }
                     case ColumnType.BINARY -> {
                         BinarySequence value = record.getBin(currentColumnInGroup);

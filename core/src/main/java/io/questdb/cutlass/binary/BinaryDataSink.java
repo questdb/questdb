@@ -83,29 +83,6 @@ public interface BinaryDataSink {
     void putByte(byte value);
 
     /**
-     * Writes bytes from a byte array without length prefix.
-     * This method may write partial data if the buffer fills up.
-     *
-     * @param data   source byte array
-     * @param offset offset in the array to start from
-     * @param length number of bytes to write
-     * @return number of bytes actually written
-     * @throws NoSpaceLeftInResponseBufferException if buffer is full before any bytes written
-     */
-    int putByteArray(byte[] data, int offset, int length);
-
-    /**
-     * Writes raw bytes without length prefix.
-     * This method may write partial data if the buffer fills up.
-     *
-     * @param address native memory address of source data
-     * @param length  number of bytes to write
-     * @return number of bytes actually written
-     * @throws NoSpaceLeftInResponseBufferException if buffer is full before any bytes written
-     */
-    int putBytes(long address, long length);
-
-    /**
      * Writes a char (2 bytes, little-endian) to the buffer.
      *
      * @param value char to write

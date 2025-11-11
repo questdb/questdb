@@ -27,7 +27,6 @@ package io.questdb.cutlass.binary;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.std.Long256;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
@@ -74,34 +73,6 @@ public class BinaryDataSinkImpl implements BinaryDataSink {
         }
         Unsafe.getUnsafe().putByte(address + position, value);
         position += 1;
-    }
-
-    @Override
-    public int putByteArray(byte[] data, int offset, int length) {
-        int available = size - position;
-        if (available == 0) {
-            throw NoSpaceLeftInResponseBufferException.instance(length);
-        }
-
-        int toWrite = Math.min(length, available);
-        for (int i = 0; i < toWrite; i++) {
-            Unsafe.getUnsafe().putByte(address + position + i, data[offset + i]);
-        }
-        position += toWrite;
-        return toWrite;
-    }
-
-    @Override
-    public int putBytes(long srcAddress, long length) {
-        int available = size - position;
-        if (available == 0) {
-            throw NoSpaceLeftInResponseBufferException.instance(length);
-        }
-
-        int toWrite = (int) Math.min(length, available);
-        Vect.memcpy(address + position, srcAddress, toWrite);
-        position += toWrite;
-        return toWrite;
     }
 
     @Override
@@ -188,9 +159,8 @@ public class BinaryDataSinkImpl implements BinaryDataSink {
         }
 
         int toWrite = Math.min(length, available);
-        for (int i = 0; i < toWrite; i++) {
-            Unsafe.getUnsafe().putByte(address + position + i, value.byteAt(offset + i));
-        }
+        // Use native memory copy instead of byte-by-byte
+        value.writeTo(address + position, offset, offset + toWrite);
         position += toWrite;
         return toWrite;
     }
