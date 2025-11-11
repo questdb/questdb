@@ -27,8 +27,12 @@ package io.questdb.test.griffin.engine.functions.bind;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -432,6 +436,60 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testNamedSetDecimalNull() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setDecimal("x", Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, ColumnType.getDecimalType(12, 0));
+            Function function = bindVariableService.getFunction(":x");
+            Assert.assertEquals(Decimals.DECIMAL8_NULL, function.getDecimal8(null));
+            Assert.assertEquals(Decimals.DECIMAL16_NULL, function.getDecimal16(null));
+            Assert.assertEquals(Decimals.DECIMAL32_NULL, function.getDecimal32(null));
+            Assert.assertEquals(Decimals.DECIMAL64_NULL, function.getDecimal64(null));
+            var decimal128 = new Decimal128();
+            function.getDecimal128(null, decimal128);
+            Assert.assertTrue(decimal128.isNull());
+            var decimal256 = new Decimal256();
+            function.getDecimal256(null, decimal256);
+            Assert.assertTrue(decimal256.isNull());
+        });
+    }
+
+    @Test
+    public void testNamedSetDecimalOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setDecimal("x", 0, 0, 0, 0, ColumnType.getDecimalType(76, 70));
+            try {
+                bindVariableService.setDecimal("x", 0, 0, 0, 900000000, ColumnType.getDecimalType(16, 0));
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: DECIMAL(16,0) -> DECIMAL(76,70) [varName=x]");
+            }
+        });
+    }
+
+    @Test
+    public void testNamedSetDecimalOverflowPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setDecimal("x", 0, 0, 0, 0, ColumnType.getDecimalType(5, 4));
+            try {
+                bindVariableService.setDecimal("x", 0, 0, 0, 5000, ColumnType.getDecimalType(7, 2));
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: DECIMAL(7,2) -> DECIMAL(5,4) [varName=x]");
+            }
+        });
+    }
+
+    @Test
+    public void testNamedSetDecimalScale() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setDecimal("x", 0, 0, 0, 5, ColumnType.getDecimalType(12, 2));
+            bindVariableService.setDecimal("x", 0, 0, 0, 5, ColumnType.getDecimalType(12, 0));
+            Function function = bindVariableService.getFunction(":x");
+            Assert.assertEquals(500, function.getDecimal32(null));
+        });
+    }
+
+    @Test
     public void testNamedSetDoubleToDoubleNoDefine() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.setDouble("x", 17.3);
@@ -648,6 +706,74 @@ public class BindVariableServiceImplTest {
             Assert.assertEquals(10, bindVariableService.getFunction(0).getDate(null));
             bindVariableService.setShort(0, (short) 5);
             Assert.assertEquals(5, bindVariableService.getFunction(0).getDate(null));
+        });
+    }
+
+    @Test
+    public void testSetDecimalInvalidFunctionType() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.VARCHAR, 0);
+            try {
+                bindVariableService.setDecimal(0, 0, 0, 0, 1, ColumnType.getDecimalType(16, 0));
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as VARCHAR and cannot accept DECIMAL(16,0)");
+            }
+        });
+    }
+
+    @Test
+    public void testSetDecimalNull() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(12, 2), 0);
+            bindVariableService.setDecimal(0, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, ColumnType.getDecimalType(12, 0));
+            Function function = bindVariableService.getFunction(0);
+            Assert.assertEquals(Decimals.DECIMAL8_NULL, function.getDecimal8(null));
+            Assert.assertEquals(Decimals.DECIMAL16_NULL, function.getDecimal16(null));
+            Assert.assertEquals(Decimals.DECIMAL32_NULL, function.getDecimal32(null));
+            Assert.assertEquals(Decimals.DECIMAL64_NULL, function.getDecimal64(null));
+            var decimal128 = new Decimal128();
+            function.getDecimal128(null, decimal128);
+            Assert.assertTrue(decimal128.isNull());
+            var decimal256 = new Decimal256();
+            function.getDecimal256(null, decimal256);
+            Assert.assertTrue(decimal256.isNull());
+        });
+    }
+
+    @Test
+    public void testSetDecimalOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(76, 70), 0);
+            try {
+                bindVariableService.setDecimal(0, 0, 0, 0, 900000000, ColumnType.getDecimalType(16, 0));
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: DECIMAL(16,0) -> DECIMAL(76,70) [varIndex=0]");
+            }
+        });
+    }
+
+    @Test
+    public void testSetDecimalOverflowPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(5, 4), 0);
+            try {
+                bindVariableService.setDecimal(0, 0, 0, 0, 5000, ColumnType.getDecimalType(7, 2));
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: DECIMAL(7,2) -> DECIMAL(5,4) [varIndex=0]");
+            }
+        });
+    }
+
+    @Test
+    public void testSetDecimalScale() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.getDecimalType(12, 2), 0);
+            bindVariableService.setDecimal(0, 0, 0, 0, 5, ColumnType.getDecimalType(12, 0));
+            Function function = bindVariableService.getFunction(0);
+            Assert.assertEquals(500, function.getDecimal32(null));
         });
     }
 

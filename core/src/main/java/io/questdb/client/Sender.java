@@ -34,12 +34,16 @@ import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSenderV1;
 import io.questdb.cutlass.line.LineTcpSenderV2;
+import io.questdb.cutlass.line.LineTcpSenderV3;
 import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -102,6 +106,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
     int PROTOCOL_VERSION_NOT_SET_EXPLICIT = -1;
     int PROTOCOL_VERSION_V1 = 1;
     int PROTOCOL_VERSION_V2 = 2;
+    int PROTOCOL_VERSION_V3 = 3;
 
     /**
      * Create a Sender builder instance from a configuration string.
@@ -270,6 +275,50 @@ public interface Sender extends Closeable, ArraySender<Sender> {
      */
     @Override
     void close();
+
+    /**
+     * Add a column with a Decimal256 value serialized using the binary format.
+     *
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
+     */
+    default Sender decimalColumn(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    /**
+     * Add a column with a Decimal128 value serialized using the binary format.
+     *
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
+     */
+    default Sender decimalColumn(CharSequence name, Decimal128 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    /**
+     * Add a column with a Decimal128 value serialized using the binary format.
+     *
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
+     */
+    default Sender decimalColumn(CharSequence name, Decimal64 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    /**
+     * Add a column with a Decimal value serialized using the text format.
+     *
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
+     */
+    default Sender decimalColumn(CharSequence name, CharSequence value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
 
     /**
      * Add a column with a floating point value.
@@ -463,9 +512,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
+        private static final int DEFAULT_MAX_BACKOFF_MILLIS = 1_000;
         private static final int DEFAULT_MAX_NAME_LEN = 127;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
-        private static final int DEFAULT_MAX_BACKOFF_MILLIS = 1_000;
         private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
         private static final int MIN_BUFFER_SIZE = AuthUtils.CHALLENGE_LEN + 1; // challenge size + 1;
@@ -486,9 +535,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private int httpTimeout = PARAMETER_NOT_SET_EXPLICITLY;
         private String httpToken;
         private String keyId;
+        private int maxBackoffMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private int maxNameLength = PARAMETER_NOT_SET_EXPLICITLY;
         private int maximumBufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
-        private int maxBackoffMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
             @Override
             public int getInitialRequestBufferSize() {
@@ -764,11 +813,13 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 channel = tlsChannel;
             }
             try {
-                if (protocolVersion == PROTOCOL_VERSION_V1) {
-                    sender = new LineTcpSenderV1(channel, bufferCapacity, maxNameLength);
-                } else {
-                    sender = new LineTcpSenderV2(channel, bufferCapacity, maxNameLength);
-                }
+                sender = switch (protocolVersion) {
+                    case PROTOCOL_VERSION_V1 -> new LineTcpSenderV1(channel, bufferCapacity, maxNameLength);
+                    case PROTOCOL_VERSION_V2 -> new LineTcpSenderV2(channel, bufferCapacity, maxNameLength);
+                    case PROTOCOL_VERSION_V3 -> new LineTcpSenderV3(channel, bufferCapacity, maxNameLength);
+                    default ->
+                            throw new LineSenderException("unknown protocol version [version=").put(protocolVersion).put("]");
+                };
             } catch (Throwable t) {
                 channel.close();
                 throw rethrow(t);
@@ -995,6 +1046,46 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         }
 
         /**
+         * Configures the maximum backoff time between retry attempts when the Sender encounters recoverable errors.
+         * <br>
+         * This setting is applicable only when communicating over the HTTP transport, and it is illegal to invoke this
+         * method when communicating over the TCP transport.
+         * <p>
+         * The Sender uses exponential backoff with jitter for retry operations. The backoff time starts at a small value
+         * and doubles with each retry attempt, up to the maximum value specified here. This helps prevent overwhelming
+         * the server during temporary outages while still providing quick recovery when the service becomes available again.
+         * <p>
+         * This parameter works in conjunction with {@link #retryTimeoutMillis(int)}. While retryTimeoutMillis sets
+         * the total time the Sender will spend retrying, maxBackoffMillis controls the maximum delay between individual
+         * retry attempts.
+         * <p>
+         * Setting this value to zero effectively disables the backoff mechanism, causing retries to occur with minimal
+         * delay (though some small jitter is still applied).
+         * <p>
+         * Default value: 1,000 milliseconds (1 second).
+         *
+         * @param maxBackoffMillis the maximum backoff time between retry attempts in milliseconds.
+         * @return this instance, enabling method chaining.
+         * @throws LineSenderException if maxBackoffMillis is negative, if this method is called for TCP protocol,
+         *                             or if maxBackoffMillis was already configured.
+         */
+        public LineSenderBuilder maxBackoffMillis(int maxBackoffMillis) {
+            if (this.maxBackoffMillis != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("max backoff was already configured ")
+                        .put("[maxBackoffMillis=").put(this.maxBackoffMillis).put("]");
+            }
+            if (maxBackoffMillis < 0) {
+                throw new LineSenderException("max backoff cannot be negative ")
+                        .put("[maxBackoffMillis=").put(maxBackoffMillis).put("]");
+            }
+            if (protocol == PROTOCOL_TCP) {
+                throw new LineSenderException("max backoff is not supported for TCP protocol");
+            }
+            this.maxBackoffMillis = maxBackoffMillis;
+            return this;
+        }
+
+        /**
          * Set the maximum local buffer capacity in bytes.
          * <br>
          * This is a hard limit on the maximum buffer capacity. The buffer cannot grow beyond this limit and Sender
@@ -1084,7 +1175,8 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         /**
          * Sets the protocol version used by the client to connect to the server.
          * <p>
-         * The client currently supports {@link #PROTOCOL_VERSION_V1} and {@link #PROTOCOL_VERSION_V2} (default).
+         * The client currently supports {@link #PROTOCOL_VERSION_V1}, {@link #PROTOCOL_VERSION_V2} and
+         * {@link #PROTOCOL_VERSION_V3} (default).
          * <p>
          * In most cases, this method should not be called. Set {@link #PROTOCOL_VERSION_V1} only when connecting to a legacy server.
          * <p>
@@ -1097,9 +1189,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 throw new LineSenderException("protocol version was already configured ")
                         .put("[protocolVersion=").put(this.protocolVersion).put("]");
             }
-            if (protocolVersion < PROTOCOL_VERSION_V1 || protocolVersion > PROTOCOL_VERSION_V2) {
+            if (protocolVersion < PROTOCOL_VERSION_V1 || protocolVersion > PROTOCOL_VERSION_V3) {
                 throw new LineSenderException("current client only supports protocol version 1(text format for all datatypes), " +
-                        "2(binary format for part datatypes) or explicitly unset");
+                        "2(binary format for part datatypes), 3(decimal datatype) or explicitly unset");
             }
             this.protocolVersion = protocolVersion;
             return this;
@@ -1141,46 +1233,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 throw new LineSenderException("retrying is not supported for TCP protocol");
             }
             this.retryTimeoutMillis = retryTimeoutMillis;
-            return this;
-        }
-
-        /**
-         * Configures the maximum backoff time between retry attempts when the Sender encounters recoverable errors.
-         * <br>
-         * This setting is applicable only when communicating over the HTTP transport, and it is illegal to invoke this
-         * method when communicating over the TCP transport.
-         * <p>
-         * The Sender uses exponential backoff with jitter for retry operations. The backoff time starts at a small value
-         * and doubles with each retry attempt, up to the maximum value specified here. This helps prevent overwhelming
-         * the server during temporary outages while still providing quick recovery when the service becomes available again.
-         * <p>
-         * This parameter works in conjunction with {@link #retryTimeoutMillis(int)}. While retryTimeoutMillis sets
-         * the total time the Sender will spend retrying, maxBackoffMillis controls the maximum delay between individual
-         * retry attempts.
-         * <p>
-         * Setting this value to zero effectively disables the backoff mechanism, causing retries to occur with minimal
-         * delay (though some small jitter is still applied).
-         * <p>
-         * Default value: 1,000 milliseconds (1 second).
-         *
-         * @param maxBackoffMillis the maximum backoff time between retry attempts in milliseconds.
-         * @return this instance, enabling method chaining.
-         * @throws LineSenderException if maxBackoffMillis is negative, if this method is called for TCP protocol,
-         *                             or if maxBackoffMillis was already configured.
-         */
-        public LineSenderBuilder maxBackoffMillis(int maxBackoffMillis) {
-            if (this.maxBackoffMillis != PARAMETER_NOT_SET_EXPLICITLY) {
-                throw new LineSenderException("max backoff was already configured ")
-                        .put("[maxBackoffMillis=").put(this.maxBackoffMillis).put("]");
-            }
-            if (maxBackoffMillis < 0) {
-                throw new LineSenderException("max backoff cannot be negative ")
-                        .put("[maxBackoffMillis=").put(maxBackoffMillis).put("]");
-            }
-            if (protocol == PROTOCOL_TCP) {
-                throw new LineSenderException("max backoff is not supported for TCP protocol");
-            }
-            this.maxBackoffMillis = maxBackoffMillis;
             return this;
         }
 

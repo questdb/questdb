@@ -9471,6 +9471,38 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewritePgNumeric() throws Exception {
+        assertQuery(
+                "select-virtual '123.456'::decimal_12_3 cast from (long_sequence(1))",
+                "select '123.456'::numeric::decimal(12, 3)"
+        );
+    }
+
+    @Test
+    public void testRewritePgNumericNotCast() throws Exception {
+        assertQuery(
+                "select-virtual ('123.456' + 1)::decimal_16_5 cast from (long_sequence(1))",
+                "select ('123.456' + 1)::decimal(16, 5)"
+        );
+    }
+
+    @Test
+    public void testRewritePgNumericNotDecimal() throws Exception {
+        assertQuery(
+                "select-virtual '123.456'::numeric::varchar cast from (long_sequence(1))",
+                "select '123.456'::numeric::varchar"
+        );
+    }
+
+    @Test
+    public void testRewritePgNumericNotNumeric() throws Exception {
+        assertQuery(
+                "select-virtual '123.456'::double::decimal_12_3 cast from (long_sequence(1))",
+                "select '123.456'::double::decimal(12, 3)"
+        );
+    }
+
+    @Test
     public void testSampleBy() throws Exception {
         assertQuery(
                 "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (timestamp)) sample by 2m",

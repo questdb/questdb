@@ -37,6 +37,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Hash;
 import io.questdb.std.Interval;
@@ -686,6 +688,18 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
+        public void putDecimal128(Decimal128 decimal128) {
+            Decimal128.put(decimal128, appendAddress);
+            appendAddress += 16L;
+        }
+
+        @Override
+        public void putDecimal256(Decimal256 decimal256) {
+            Decimal256.put(decimal256, appendAddress);
+            appendAddress += 32L;
+        }
+
+        @Override
         public void putDouble(double value) {
             Unsafe.getUnsafe().putDouble(appendAddress, value);
             appendAddress += 8L;
@@ -962,6 +976,20 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void putDate(long value) {
             putLong(value);
+        }
+
+        @Override
+        public void putDecimal128(Decimal128 decimal128) {
+            checkCapacity(16L);
+            Decimal128.put(decimal128, appendAddress);
+            appendAddress += 16L;
+        }
+
+        @Override
+        public void putDecimal256(Decimal256 decimal256) {
+            checkCapacity(32L);
+            Decimal256.put(decimal256, appendAddress);
+            appendAddress += 32L;
         }
 
         @Override

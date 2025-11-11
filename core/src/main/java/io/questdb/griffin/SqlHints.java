@@ -31,6 +31,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class SqlHints {
+    public static final String ASOF_DENSE_HINT = "asof_dense";
     public static final String ASOF_INDEX_HINT = "asof_index";
     public static final String ASOF_LINEAR_HINT = "asof_linear";
     public static final String ASOF_MEMOIZED_DRIVEBY_HINT = "asof_memoized_driveby";
@@ -38,6 +39,14 @@ public final class SqlHints {
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
     public static final String MARKOUT_HORIZON_JOIN_HINT = "markout_horizon_join";
+
+    public static boolean hasAsOfDenseHint(
+            @NotNull QueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_DENSE_HINT, tableNameA, tableNameB);
+    }
 
     public static boolean hasAsOfIndexHint(
             @NotNull QueryModel queryModel,
