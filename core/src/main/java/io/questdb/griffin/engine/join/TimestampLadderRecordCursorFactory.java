@@ -69,7 +69,7 @@ import io.questdb.std.Unsafe;
  * numbers represent time offsets that are added to the master row's timestamp. The
  * output of the cross-join is sorted on (<code>master_row_timestamp + slave_time_offset</code>).
  * <p>
- * The algorithm deals with SlaveRowIterator structs. Each iterator represents all the
+ * The algorithm deals with slave row iterators. Each iterator represents all the
  * output rows that originate from a single master row. At any point in the algorithm,
  * we deal with two things:
  * <ol>
@@ -202,20 +202,17 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
      */
     private static class TimestampLadderRecordCursor extends AbstractJoinCursor {
         // Native memory layout constants
-        // Block header: 16 bytes
         private static final int BLOCK_HEADER_SIZE = 16;
         private static final int BLOCK_OFFSET_NEXT_BLOCK_ADDR = 0;    // long (8 bytes)
         private static final int BLOCK_OFFSET_NEXT_FREE_SLOT = 8;     // int (4 bytes)
         private static final int BLOCK_OFFSET_USED_SLOT_COUNT = 12;   // int (4 bytes)
-        // Block capacity
         private static final int ITERATORS_PER_BLOCK = 1024;
-        private static final int ITERATOR_OFFSET_MASTER_ROW_ID = 0;          // long (8 bytes)
-        private static final int ITERATOR_OFFSET_MASTER_TIMESTAMP = 8;       // long (8 bytes)
-        private static final int ITERATOR_OFFSET_NEXT_ITER_ADDR = 16;        // long (8 bytes)
-        private static final int ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM = 32;    // int (4 bytes)
-        private static final int ITERATOR_OFFSET_NEXT_TIMESTAMP = 24;        // long (8 bytes)
+        private static final int ITERATOR_OFFSET_MASTER_ROW_ID = 0;            // long (8 bytes)
+        private static final int ITERATOR_OFFSET_MASTER_TIMESTAMP = 8;         // long (8 bytes)
+        private static final int ITERATOR_OFFSET_NEXT_ITER_ADDR = 16;          // long (8 bytes)
+        private static final int ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM = 32;      // int (4 bytes)
+        private static final int ITERATOR_OFFSET_NEXT_TIMESTAMP = 24;          // long (8 bytes)
         private static final int ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START = 36; // int (4 bytes)
-        // Iterator struct: 40 bytes per iterator
         private static final int ITERATOR_SIZE = 40;
         private static final long BLOCK_SIZE = BLOCK_HEADER_SIZE + (ITERATORS_PER_BLOCK * ITERATOR_SIZE);
 
@@ -225,16 +222,17 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         private final LongList slaveRecordOffsets;
         private final int slaveSequenceColumnIndex;
         private SqlExecutionCircuitBreaker circuitBreaker;
+
+        // Algorithm state
         private long currMasterRowId = -1;
-        // Merge algorithm state
-        private long currentIterAddr;  // Address of current iterator (instead of object reference)
-        private long firstIteratorBlockAddr;  // Address of first iterator block
-        private long firstSlaveTimeOffset;  // Cache the first slave's offset value
+        private long currentIterAddr;
+        private long firstIteratorBlockAddr;
+        private long firstSlaveTimeOffset;
         private boolean isMasterHasNextPending;
-        private long lastIteratorBlockAddr;  // Address of last iterator block
+        private long lastIteratorBlockAddr;
         private boolean masterHasNext;
         private Record masterRecord;
-        private long prevIterAddr;  // Address of previous iterator (instead of object reference)
+        private long prevIterAddr;
         private long slaveRowCount;
 
         public TimestampLadderRecordCursor(
@@ -251,17 +249,10 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             this.slaveRecordOffsets = new LongList();
         }
 
-        // ===== Block header accessors =====
-
         @Override
         public void close() {
             // Free all iterator blocks in the linked list
-            long blockAddr = firstIteratorBlockAddr;
-            while (blockAddr != 0) {
-                long nextBlockAddr = block_nextBlockAddr(blockAddr);
-                block_free(blockAddr);
-                blockAddr = nextBlockAddr;
-            }
+            freeAllIteratorBlocks();
             firstIteratorBlockAddr = 0;
             lastIteratorBlockAddr = 0;
             currentIterAddr = 0;
@@ -351,13 +342,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
         @Override
         public void toTop() {
-            // Free all iterator blocks
-            long blockAddr = firstIteratorBlockAddr;
-            while (blockAddr != 0) {
-                long nextBlockAddr = block_nextBlockAddr(blockAddr);
-                block_free(blockAddr);
-                blockAddr = nextBlockAddr;
-            }
+            freeAllIteratorBlocks();
 
             // Reset state
             currentIterAddr = 0;
@@ -377,9 +362,11 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             return blockAddr;
         }
 
-        private static void block_decUsedSlotCount(long blockAddr) {
+        private static int block_decUsedSlotCount(long blockAddr) {
             int count = Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
-            Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count - 1);
+            count--;
+            Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count);
+            return count;
         }
 
         private static void block_free(long blockAddr) {
@@ -491,8 +478,6 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                 lastIteratorBlockAddr = block_alloc();
                 firstIteratorBlockAddr = lastIteratorBlockAddr;
             }
-
-            // Check if current block is exhausted
             int nextFreeSlot = block_nextFreeSlot(lastIteratorBlockAddr);
             if (nextFreeSlot == ITERATORS_PER_BLOCK) {
                 // Block is full, allocate a new one
@@ -528,14 +513,9 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         }
 
         private void discardIterator(long iterAddr) {
-            // Compute the iterator block's base address
             long blockAddr = iterAddr - iter_offsetFromBlockStart(iterAddr);
-
-            // Decrement used slot count
-            block_decUsedSlotCount(blockAddr);
-
-            // If usedSlotCount is now zero, deallocate the block
-            if (block_usedSlotCount(blockAddr) == 0) {
+            int newCount = block_decUsedSlotCount(blockAddr);
+            if (newCount == 0) {
                 long nextBlockAddr = block_nextBlockAddr(blockAddr);
                 block_free(blockAddr);
                 if (blockAddr == lastIteratorBlockAddr) {
@@ -543,6 +523,15 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                     assert nextBlockAddr == 0 : "nextBlockAddr != 0";
                 }
                 firstIteratorBlockAddr = nextBlockAddr;
+            }
+        }
+
+        private void freeAllIteratorBlocks() {
+            long blockAddr = firstIteratorBlockAddr;
+            while (blockAddr != 0) {
+                long nextBlockAddr = block_nextBlockAddr(blockAddr);
+                block_free(blockAddr);
+                blockAddr = nextBlockAddr;
             }
         }
 
@@ -608,7 +597,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             this.slaveCursor = slaveCursor;
             this.circuitBreaker = circuitBreaker;
 
-            // Materialize the slave cursor into RecordArray for efficient random access
+            // Materialize the slave cursor into RecordArray to enable random access
             slaveRecordArray.clear();
             slaveRecordOffsets.clear();
             final Record slaveRecord = slaveCursor.getRecord();
@@ -618,8 +607,6 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                 slaveRecordOffsets.add(offset);
             }
             slaveRecordArray.toTop();
-
-            // Cache the slave row count for iteration
             slaveRowCount = slaveRecordOffsets.size();
 
             // Cache the first slave's offset value to avoid repositioning recordC later
@@ -631,12 +618,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
             // Reset iterator state for new execution
             // Free any existing iterator blocks from previous execution
-            long blockAddr = firstIteratorBlockAddr;
-            while (blockAddr != 0) {
-                long nextBlockAddr = block_nextBlockAddr(blockAddr);
-                block_free(blockAddr);
-                blockAddr = nextBlockAddr;
-            }
+            freeAllIteratorBlocks();
 
             currentIterAddr = 0;
             prevIterAddr = 0;
