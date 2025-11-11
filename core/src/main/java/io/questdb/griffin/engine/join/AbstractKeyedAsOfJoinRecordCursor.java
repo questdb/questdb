@@ -55,7 +55,7 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
     }
 
     @Override
-    public final boolean hasNext() {
+    public boolean hasNext() {
         // Common master cursor iteration logic
         if (isMasterHasNextPending) {
             masterHasNext = masterCursor.hasNext();

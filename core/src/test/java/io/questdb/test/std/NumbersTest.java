@@ -676,6 +676,107 @@ public class NumbersTest {
     }
 
     @Test
+    public void testGetMaxLongConsistencyWithGetLongPrecision() {
+        for (int precision = 1; precision <= 18; precision++) {
+            long maxValue = Numbers.getMaxValue(precision);
+            Assert.assertEquals("Precision mismatch for max value of precision " + precision,
+                    precision, Numbers.getPrecision(maxValue));
+
+            if (precision < 18) {
+                long nextValue = maxValue + 1;
+                Assert.assertEquals("Next value should require precision " + (precision + 1),
+                        precision + 1, Numbers.getPrecision(nextValue));
+            }
+        }
+    }
+
+    @Test
+    public void testGetPrecision() {
+        Assert.assertEquals(1, Numbers.getPrecision(1));
+        Assert.assertEquals(1, Numbers.getPrecision(-1));
+        Assert.assertEquals(1, Numbers.getPrecision(3));
+        Assert.assertEquals(1, Numbers.getPrecision(-3));
+        Assert.assertEquals(1, Numbers.getPrecision(5));
+        Assert.assertEquals(1, Numbers.getPrecision(-5));
+        Assert.assertEquals(1, Numbers.getPrecision(9));
+        Assert.assertEquals(1, Numbers.getPrecision(-9));
+        Assert.assertEquals(2, Numbers.getPrecision(10));
+        Assert.assertEquals(2, Numbers.getPrecision(-10));
+        Assert.assertEquals(2, Numbers.getPrecision(42));
+        Assert.assertEquals(2, Numbers.getPrecision(-42));
+        Assert.assertEquals(2, Numbers.getPrecision(99));
+        Assert.assertEquals(2, Numbers.getPrecision(-99));
+        Assert.assertEquals(3, Numbers.getPrecision(100));
+        Assert.assertEquals(3, Numbers.getPrecision(-100));
+        Assert.assertEquals(3, Numbers.getPrecision(999));
+        Assert.assertEquals(3, Numbers.getPrecision(-999));
+        Assert.assertEquals(4, Numbers.getPrecision(1000));
+        Assert.assertEquals(4, Numbers.getPrecision(-1000));
+        Assert.assertEquals(4, Numbers.getPrecision(9999));
+        Assert.assertEquals(4, Numbers.getPrecision(-9999));
+        Assert.assertEquals(5, Numbers.getPrecision(10000));
+        Assert.assertEquals(5, Numbers.getPrecision(-10000));
+        Assert.assertEquals(5, Numbers.getPrecision(99999));
+        Assert.assertEquals(5, Numbers.getPrecision(-99999));
+        Assert.assertEquals(6, Numbers.getPrecision(100000));
+        Assert.assertEquals(6, Numbers.getPrecision(-100000));
+        Assert.assertEquals(6, Numbers.getPrecision(999999));
+        Assert.assertEquals(6, Numbers.getPrecision(-999999));
+        Assert.assertEquals(7, Numbers.getPrecision(1000000));
+        Assert.assertEquals(7, Numbers.getPrecision(-1000000));
+        Assert.assertEquals(7, Numbers.getPrecision(9999999));
+        Assert.assertEquals(7, Numbers.getPrecision(-9999999));
+        Assert.assertEquals(8, Numbers.getPrecision(10000000));
+        Assert.assertEquals(8, Numbers.getPrecision(-10000000));
+        Assert.assertEquals(8, Numbers.getPrecision(99999999));
+        Assert.assertEquals(8, Numbers.getPrecision(-99999999));
+        Assert.assertEquals(9, Numbers.getPrecision(100000000));
+        Assert.assertEquals(9, Numbers.getPrecision(-100000000));
+        Assert.assertEquals(9, Numbers.getPrecision(999999999));
+        Assert.assertEquals(9, Numbers.getPrecision(-999999999));
+        Assert.assertEquals(10, Numbers.getPrecision(1000000000));
+        Assert.assertEquals(10, Numbers.getPrecision(-1000000000));
+        Assert.assertEquals(10, Numbers.getPrecision(9999999999L));
+        Assert.assertEquals(10, Numbers.getPrecision(-9999999999L));
+        Assert.assertEquals(11, Numbers.getPrecision(10000000000L));
+        Assert.assertEquals(11, Numbers.getPrecision(-10000000000L));
+        Assert.assertEquals(11, Numbers.getPrecision(99999999999L));
+        Assert.assertEquals(11, Numbers.getPrecision(-99999999999L));
+        Assert.assertEquals(12, Numbers.getPrecision(100000000000L));
+        Assert.assertEquals(12, Numbers.getPrecision(-100000000000L));
+        Assert.assertEquals(12, Numbers.getPrecision(999999999999L));
+        Assert.assertEquals(12, Numbers.getPrecision(-999999999999L));
+        Assert.assertEquals(13, Numbers.getPrecision(1000000000000L));
+        Assert.assertEquals(13, Numbers.getPrecision(-1000000000000L));
+        Assert.assertEquals(13, Numbers.getPrecision(9999999999999L));
+        Assert.assertEquals(13, Numbers.getPrecision(-9999999999999L));
+        Assert.assertEquals(14, Numbers.getPrecision(10000000000000L));
+        Assert.assertEquals(14, Numbers.getPrecision(-10000000000000L));
+        Assert.assertEquals(14, Numbers.getPrecision(99999999999999L));
+        Assert.assertEquals(14, Numbers.getPrecision(-99999999999999L));
+        Assert.assertEquals(15, Numbers.getPrecision(100000000000000L));
+        Assert.assertEquals(15, Numbers.getPrecision(-100000000000000L));
+        Assert.assertEquals(15, Numbers.getPrecision(999999999999999L));
+        Assert.assertEquals(15, Numbers.getPrecision(-999999999999999L));
+        Assert.assertEquals(16, Numbers.getPrecision(1000000000000000L));
+        Assert.assertEquals(16, Numbers.getPrecision(-1000000000000000L));
+        Assert.assertEquals(16, Numbers.getPrecision(9999999999999999L));
+        Assert.assertEquals(16, Numbers.getPrecision(-9999999999999999L));
+        Assert.assertEquals(17, Numbers.getPrecision(10000000000000000L));
+        Assert.assertEquals(17, Numbers.getPrecision(-10000000000000000L));
+        Assert.assertEquals(17, Numbers.getPrecision(99999999999999999L));
+        Assert.assertEquals(17, Numbers.getPrecision(-99999999999999999L));
+        Assert.assertEquals(18, Numbers.getPrecision(100000000000000000L));
+        Assert.assertEquals(18, Numbers.getPrecision(-100000000000000000L));
+        Assert.assertEquals(18, Numbers.getPrecision(999999999999999999L));
+        Assert.assertEquals(18, Numbers.getPrecision(-999999999999999999L));
+        Assert.assertEquals(19, Numbers.getPrecision(1000000000000000000L));
+        Assert.assertEquals(19, Numbers.getPrecision(-1000000000000000000L));
+        Assert.assertEquals(19, Numbers.getPrecision(Long.MAX_VALUE));
+        Assert.assertEquals(19, Numbers.getPrecision(Long.MIN_VALUE));
+    }
+
+    @Test
     public void testHexDigitsLong256() {
         Long256Impl long256 = new Long256Impl();
 

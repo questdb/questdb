@@ -320,7 +320,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ) timestamp(ts) partition by DAY""",
                 leftTableTimestampType.getTypeName());
 
-        assertQuery("tag\thi\tlo\n",
+        assertQuery(expected,
                 "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq",
                 null,
                 false,
@@ -328,9 +328,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
         );
         execute(
                 """
-                        insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,\s
-                                rnd_int() seq,\s
-                                timestamp_sequence(172800000000, 360000000) ts\s
+                        insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,
+                                rnd_int() seq,
+                                timestamp_sequence(172800000000, 360000000) ts
                             from long_sequence(10)) timestamp (ts)"""
 
         );
@@ -370,12 +370,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String query = "SELECT * FROM master ASOF JOIN slave y ON(vch) TOLERANCE 1s";
             printSql("EXPLAIN " + query, true);
-            TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertNotContains(sink, "AsOf Join Fast");
             printSql(query, true);
             String fullFatResult = sink.toString();
 
             printSql("EXPLAIN " + query, false);
-            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertContains(sink, "AsOf Join Fast");
             printSql(query, false);
             String lightResult = sink.toString();
             TestUtils.assertEquals(fullFatResult, lightResult);
@@ -428,6 +428,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense Single Symbol", expected);
         });
     }
 
@@ -470,6 +471,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -511,6 +513,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -552,6 +555,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -600,6 +604,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -654,6 +659,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -697,6 +703,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -746,6 +753,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody1, "", "Fast", expected1);
             assertAlgoAndResult(queryBody1, "asof_index(t q)", "Indexed", expected1);
             assertAlgoAndResult(queryBody1, "asof_memoized(t q)", "Memoized", expected1);
+            assertAlgoAndResult(queryBody1, "asof_dense(t q)", "Dense", expected1);
 
             // With 15-minute tolerance: both trades should match
             String expected2 = """
@@ -760,6 +768,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody2, "", "Fast", expected2);
             assertAlgoAndResult(queryBody2, "asof_index(t q)", "Indexed", expected2);
             assertAlgoAndResult(queryBody2, "asof_memoized(t q)", "Memoized", expected2);
+            assertAlgoAndResult(queryBody2, "asof_dense(t q)", "Dense", expected2);
         });
     }
 
@@ -811,6 +820,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected);
             assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
             assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
         });
     }
 
@@ -874,7 +884,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String expectedPlan = "QUERY PLAN\n" +
                     "SelectedRecord\n" +
                     "    Filter filter: oRdERS.price<MD.bid\n" +
-                    "        Filtered AsOf Join Fast Scan\n" +
+                    "        Filtered AsOf Join Fast\n" +
                     "          filter: market_Data_symbol='sym_1'\n" +
                     "            PageFrame\n" +
                     "                Row forward scan\n" +
@@ -1042,47 +1052,72 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 executeWithRewriteTimestamp(
-                        "CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts #TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                CREATE TABLE bids (
+                                    stock SYMBOL,
+                                    exchange SYMBOL,
+                                    market SYMBOL,
+                                    ts #TIMESTAMP,
+                                    i INT,
+                                    rating SYMBOL
+                                ) TIMESTAMP(ts) PARTITION BY DAY
+                                """,
                         leftTableTimestampType.getTypeName()
                 );
                 executeWithRewriteTimestamp(
-                        "CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts #TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                CREATE TABLE asks (
+                                    stock SYMBOL,
+                                    exchange SYMBOL,
+                                    market SYMBOL,
+                                    ts #TIMESTAMP,
+                                    i INT,
+                                    rating SYMBOL
+                                ) TIMESTAMP(ts) PARTITION BY DAY
+                                """,
                         rightTableTimestampType.getTypeName()
                 );
 
-                execute("INSERT INTO bids VALUES " +
-                        "('AAPL', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
-                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'GOOD')," +
-                        "('AAPL', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'SCAM')," +
-                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'SCAM')," +
-                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
-                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
-                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'GOOD')," +
-                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 9, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'SCAM')," +
-                        "('MSFT', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'UNKNOWN')," +
-                        "('MSFT', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 13, 'GOOD')"
+                execute("""
+                        INSERT INTO bids VALUES
+                            ('AAPL', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 1, 'GOOD'),
+                            ('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'GOOD'),
+                            ('AAPL', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'SCAM'),
+                            ('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'SCAM'),
+                            ('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT'),
+                            ('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM'),
+                            ('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'GOOD'),
+                            ('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD'),
+                            ('MSFT', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 9, 'GOOD'),
+                            ('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD'),
+                            ('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'SCAM'),
+                            ('MSFT', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'UNKNOWN'),
+                            ('MSFT', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 13, 'GOOD')
+                        """
                 );
 
-                execute("INSERT INTO asks VALUES " +
-                        "('AAPL', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
-                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'EXCELLENT')," +
-                        "('AAPL', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'EXCELLENT')," +
-                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'EXCELLENT')," +
-                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
-                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
-                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'EXCELLENT')," +
-                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 9, 'EXCELLENT')," +
-                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
-                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'EXCELLENT')," +
-                        "('MSFT', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'GOOD')," +
-                        "('MSFT', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 13, 'SCAM')"
+                execute("""
+                        INSERT INTO asks VALUES
+                            ('AAPL', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 1, 'GOOD'),
+                            ('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'EXCELLENT'),
+                            ('AAPL', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'EXCELLENT'),
+                            ('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'EXCELLENT'),
+                            ('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT'),
+                            ('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM'),
+                            ('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'EXCELLENT'),
+                            ('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD'),
+                            ('MSFT', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 9, 'EXCELLENT'),
+                            ('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD'),
+                            ('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'EXCELLENT'),
+                            ('MSFT', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'GOOD'),
+                            ('MSFT', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 13, 'SCAM')
+                        """
                 );
 
-                String query = "SELECT * FROM bids ASOF JOIN asks ON (stock, exchange, market)";
+                String queryBody = " * FROM bids ASOF JOIN asks ON (stock, exchange, market)";
+                String queryWithoutHint = "SELECT" + queryBody;
+                String queryWithDenseHint = "SELECT /*+ asof_dense(bids asks) */" + queryBody;
+
                 String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
                 String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
                 String expected = String.format("""
@@ -1101,7 +1136,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%1$s\t11\tSCAM\tMSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%2$s\t11\tEXCELLENT
                         AAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%1$s\t3\tSCAM\tAAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000%2$s\t3\tEXCELLENT
                         """, leftSuffix, rightSuffix);
-                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQueryNoLeakCheck(compiler, expected, queryWithoutHint, "ts", false, sqlExecutionContext, true);
+                assertQueryNoLeakCheck(compiler, expected, queryWithDenseHint, "ts", false, sqlExecutionContext, true);
+
+                printSql("EXPLAIN " + queryWithoutHint);
+                TestUtils.assertContains(sink, "AsOf Join Fast");
+                printSql("EXPLAIN " + queryWithDenseHint);
+                TestUtils.assertContains(sink, "AsOf Join Dense");
             }
         });
     }
@@ -1199,7 +1240,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 2s;";
             // sanity check: uses AsOfJoinFastRecordCursorFactory
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertContains(sink, "AsOf Join Fast");
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
             String expected = String.format("""
@@ -1221,7 +1262,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) ON id TOLERANCE 2s;";
             // sanity check: uses FilteredAsOfJoinFastRecordCursorFactory
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
@@ -1244,21 +1285,19 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     10\t1970-01-01T00:00:10.000010%1$s\tnull\t
                     """, leftSuffix, rightSuffix);
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertContains(sink, "AsOf Join Fast");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             // non-keyed join, slave has a filter, no hint -> should also use FilteredAsOfJoinNoKeyFastRecordCursorFactory
             query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             // non-keyed join, slave has a filter, linear hint -> should also use AsOfJoinNoKeyRecordCursorFactory
             query = "SELECT /*+ asof_linear(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join");
-            TestUtils.assertNotContains(sink, "Filtered");
-            TestUtils.assertNotContains(sink, "Memoized");
+            TestUtils.assertContains(sink, "AsOf Join\n");
         });
     }
 
@@ -1509,10 +1548,100 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinWithLinearSearchHint() throws Exception {
         assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table orders as (\n" +
+                            "  select \n" +
+                            "    concat('sym_', rnd_int(0, 10, 0))::symbol as order_symbol,\n" +
+                            "    rnd_double() price,\n" +
+                            "    rnd_double() volume,\n" +
+                            "    ('2025'::timestamp + x * 200_000_000L + rnd_int(0, 10_000, 0))::" + leftTableTimestampType.getTypeName() + " as ts,\n" +
+                            "  from long_sequence(5)\n" +
+                            ") timestamp(ts) partition by day;\n",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp("create table market_data as (\n" +
+                            "  select \n" +
+                            "    concat('sym_', rnd_int(0, 10, 0))::symbol as market_data_symbol,\n" +
+                            "    rnd_double() bid,\n" +
+                            "    rnd_double() ask,\n" +
+                            "    ('2025'::timestamp + x * 100_000L + rnd_int(0, 10_000, 0))::" + rightTableTimestampType.getTypeName() + " as ts,\n" +
+                            "  from long_sequence(10_000)\n" +
+                            ") timestamp(ts) partition by day;",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            String queryBody = """
+                    * from (
+                      select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from oRdERS
+                      asof join (
+                        select ts as md_ts, market_Data_symbol, bid from market_data
+                        where market_data_symbol = 'sym_1'\s
+                      ) MD \s
+                      where orders.ts > '2025-01-01T00:00:00.000000000Z'\s
+                      and bid > price
+                    );""";
+            String queryWithoutHint = "select " + queryBody;
+            String queryWithLinearHint = "select /*+ asof_linear(orders md) */ " + queryBody;
+
+            // plan with the linear search hint should NOT use the FAST ASOF
+            assertQueryNoLeakCheck("QUERY PLAN\n" +
+                            "SelectedRecord\n" +
+                            "    Filter filter: oRdERS.price<MD.bid\n" +
+                            "        AsOf Join\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: orders\n" +
+                            (leftTableTimestampType == TestTimestampType.MICRO ?
+                                    "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" :
+                                    "                  intervals: [(\"2025-01-01T00:00:00.000000001Z\",\"MAX\")]\n") +
+                            "            SelectedRecord\n" +
+                            "                Async " + (JitUtil.isJitSupported() ? "JIT " : "") + "Filter workers: 1\n" +
+                            "                  filter: market_Data_symbol='sym_1'\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: market_data\n",
+                    "EXPLAIN " + queryWithLinearHint, null, false, true);
+
+            String expectedPlan = "QUERY PLAN\n" +
+                    "SelectedRecord\n" +
+                    "    Filter filter: oRdERS.price<MD.bid\n" +
+                    "        Filtered AsOf Join Fast\n" +
+                    "          filter: market_Data_symbol='sym_1'\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: orders\n" +
+                    (leftTableTimestampType == TestTimestampType.MICRO ?
+                            "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" :
+                            "                  intervals: [(\"2025-01-01T00:00:00.000000001Z\",\"MAX\")]\n") +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: market_data\n";
+            // query without Linear hint should use the fast asof join
+            assertQueryNoLeakCheck(expectedPlan,
+                    "EXPLAIN " + queryWithoutHint, null, false, true);
+
+            // both queries must return the same result
+            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
+            String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
+
+            String expectedResult = "ts\tbid\tmarket_data_symbol\torder_symbol\torder_ts\tprice\n" +
+                    "2025-01-01T00:03:20.003570" + leftSuffix + "\t0.18646912884414946\tsym_1\tsym_4\t2025-01-01T00:03:19.407091" + rightSuffix + "\t0.08486964232560668\n" +
+                    "2025-01-01T00:06:40.006304" + leftSuffix + "\t0.9130994629783138\tsym_1\tsym_2\t2025-01-01T00:06:37.303610" + rightSuffix + "\t0.8423410920883345\n" +
+                    "2025-01-01T00:13:20.002056" + leftSuffix + "\t0.24872951622414008\tsym_1\tsym_4\t2025-01-01T00:13:19.909382" + rightSuffix + "\t0.0367581207471136\n" +
+                    "2025-01-01T00:16:40.009947" + leftSuffix + "\t0.5071618579762882\tsym_1\tsym_6\t2025-01-01T00:16:39.800653" + rightSuffix + "\t0.3100545983862456\n";
+
+            assertQueryNoLeakCheck(expectedResult, queryWithLinearHint, "ts", false, false);
+            assertQueryNoLeakCheck(expectedResult, queryWithoutHint, "ts", false, false);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinWithLinearSearchHintSimple() throws Exception {
+        assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     """
                             create table t1 as (
-                              select\s
+                              select
                                 rnd_symbol('A', 'B', 'C') as sym,
                                 cast(x as #TIMESTAMP) as ts
                               from long_sequence(100)
@@ -1523,7 +1652,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             executeWithRewriteTimestamp(
                     """
                             create table t2 as (
-                              select\s
+                              select
                                 rnd_symbol('A', 'B', 'C') as sym,
                                 cast(x as #TIMESTAMP) as ts
                               from long_sequence(100)
@@ -1535,11 +1664,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String query = "SELECT /*+ asof_linear(t1 t2) */ * FROM t1 " +
                     "ASOF JOIN t2 ON (sym)";
 
-            // Verify the query plan does NOT show Fast Scan
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join");
-            TestUtils.assertNotContains(sink, "Memoized");
-            TestUtils.assertNotContains(sink, "Indexed");
+            TestUtils.assertContains(sink, "AsOf Join Light");
 
             // Execute and verify results
             printSql(query);
@@ -1548,7 +1674,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAsOfJoinWithMultipleHintsCombination() throws Exception {
+    public void testAsOfJoinWithMultipleHints() throws Exception {
         assertMemoryLeak(() -> {
             // Create test tables with symbols
             executeWithRewriteTimestamp(
@@ -1579,16 +1705,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             printSql("EXPLAIN " + query);
             // Linear search should take precedence
-            TestUtils.assertContains(sink, "AsOf Join");
-            TestUtils.assertNotContains(sink, "Indexed");
-            TestUtils.assertNotContains(sink, "Memoized");
+            TestUtils.assertContains(sink, "AsOf Join Light");
         });
     }
 
     @Test
     public void testCursorToTop() throws Exception {
         assertMemoryLeak(() -> {
-            // This test verifies that toTop() properly clears the memoization state in AsOfJoinMemoizedRecordCursor.
+            // Verifies that toTop() properly clears the memoization state in AsOfJoinMemoizedRecordCursor.
             // The CROSS JOIN forces the ASOF JOIN cursor to be reset via toTop() for each row in the multiplier table.
             // After toTop(), the memoization cache (rememberedSymbols map and scanned range tracking) must be cleared
             // so that the second iteration produces identical results to the first iteration.
@@ -1681,7 +1805,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // Verify the plan uses Memoized scan
             sink.clear();
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join Memoized Scan");
+            TestUtils.assertContains(sink, "AsOf Join Memoized");
         });
     }
 
@@ -1713,9 +1837,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testImplicitTimestampPropagationWontCauseAmbiguity() throws Exception {
         assertMemoryLeak(() -> {
+            String leftTsTypeName = leftTableTimestampType.getTypeName();
             executeWithRewriteTimestamp(
                     "create table t1 (x int, ts #TIMESTAMP) timestamp(ts) partition by day",
-                    leftTableTimestampType.getTypeName()
+                    leftTsTypeName
             );
 
             execute("insert into t1 values (1, '2022-10-05T08:15:00.000000Z')");
@@ -1730,10 +1855,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("insert into t2 values (5, '2022-10-05T08:19:00.000000Z')");
             execute("insert into t2 values (6, '2023-10-05T09:00:00.000000Z')");
 
-            assertQuery("ts\n" +
-                            "2022-10-05T08:15:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\n" +
-                            "2022-10-05T08:17:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\n" +
-                            "2022-10-05T08:21:00.000000" + getTimestampSuffix(leftTableTimestampType.getTypeName()) + "\n",
+            String leftSuffix = getTimestampSuffix(leftTsTypeName);
+            assertQuery(String.format("""
+                            ts
+                            2022-10-05T08:15:00.000000%1$s
+                            2022-10-05T08:17:00.000000%1$s
+                            2022-10-05T08:21:00.000000%1$s
+                            """, leftSuffix),
                     "select ts from t1 asof join (select x from t2)",
                     null, "ts", false, true);
         });
@@ -2983,7 +3111,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
 
 
-            // non-keyed join and slave supports timeframe -> should use Lt Join Fast Scan
+            // non-keyed join and slave supports timeframe -> should use Lt Join Fast
             query = "SELECT * FROM t1 LT JOIN t2 TOLERANCE 2s;";
             expected = String.format("""
                     id\tts\tid1\tts1
@@ -2999,7 +3127,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     10\t1970-01-01T00:00:10.000010%1$s\tnull\t
                     """, leftSuffix, rightSuffix);
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "Lt Join Fast Scan");
+            TestUtils.assertContains(sink, "Lt Join Fast");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             // non-keyed join, slave supports timeframe but avoid BINARY_SEARCH hint -> should use Lt Join (full fat)
@@ -3716,176 +3844,78 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSingleSymbolAsOf() throws Exception {
-        assertMemoryLeak(
-                (TestUtils.LeakProneCode) () -> {
-                    executeWithRewriteTimestamp(
-                            """
-                                    create table t1 as (
-                                    SELECT
-                                        rnd_symbol_zipf(1_000, 2.0) AS symbol,
-                                        rnd_symbol('buy', 'sell') as side,
-                                        rnd_double() * 20 + 10 AS price,
-                                        rnd_double() * 20 + 10 AS amount,
-                                        generate_series as timestamp
-                                      FROM generate_series('2025-01-01'::#TIMESTAMP, '2025-01-02', '172898983u')
-                                      ) timestamp(timestamp) partition by day
-                                    """,
-                            leftTableTimestampType.getTypeName()
-                    );
+    public void testSingleSymbolAsOfWithDynamicSlaveSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            create table dyn_master as (
+                            select
+                                rnd_symbol('A', 'B', 'C') as sym,
+                                rnd_double() as val,
+                                generate_series as timestamp
+                            from generate_series('2025-01-01'::#TIMESTAMP, '2025-01-01T00:30', '300000000u')
+                            ) timestamp(timestamp) partition by day
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
 
-                    executeWithRewriteTimestamp(
-                            """
-                                    create table t2 as (
-                                    SELECT
-                                          '2024-12-31T23'::#TIMESTAMP + (60*x) + rnd_long(-20, 20, 0) as ts,
-                                          rnd_symbol_zipf(1_000, 2.0) sym,
-                                          rnd_double() * 10.0 + 5.0 bid,
-                                          rnd_double() * 10.0 + 5.0 ask
-                                          FROM long_sequence(10_000)
-                                    ) timestamp(ts) partition by day
-                                    """,
-                            rightTableTimestampType.getTypeName()
-                    );
+            executeWithRewriteTimestamp(
+                    """
+                            create table dyn_slave_src as (
+                            select
+                                cast(sym as string) as sym_str,
+                                cast(timestamp as #TIMESTAMP) as ts
+                            from dyn_master
+                            ) timestamp(ts) partition by day
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
 
-                    var asofSQL = """
-                                    SELECT /*+ ASOF_LINEAR(t p) */ avg(bid)\s
-                                    FROM t1 t\s
-                                    ASOF JOIN t2 p on (t.symbol=p.sym);
-                            """;
+            final String sql = """
+                    SELECT /*+ ASOF_LINEAR(m s) */m.sym, ts
+                    FROM dyn_master m
+                    ASOF JOIN (
+                        SELECT cast(sym_str as symbol) AS sym, ts
+                        FROM dyn_slave_src
+                    ) s ON m.sym = s.sym
+                    """;
 
-                    assertQueryNoLeakCheck(
-                            """
-                                    avg
-                                    10.82018197104726
-                                    """,
-                            asofSQL,
-                            null,
-                            false,
-                            true
-                    );
-
-                    assertSql(
-                            """
-                                    QUERY PLAN
-                                    GroupBy vectorized: false
-                                      values: [avg(bid)]
-                                        SelectedRecord
-                                            AsOf Join Single Symbol
-                                              condition: p.sym=t.symbol
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t2
-                                    """,
-                            "explain " + asofSQL
-
-                    );
-
-                    // ensure algo is not triggered without hint
-                    assertSql(
-                            """
-                                    QUERY PLAN
-                                    GroupBy vectorized: false
-                                      values: [avg(bid)]
-                                        SelectedRecord
-                                            AsOf Join Fast Scan
-                                              condition: p.sym=t.symbol
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t2
-                                    """,
-                            """
-                                    EXPLAIN SELECT avg(bid)\s
-                                    FROM t1 t\s
-                                    ASOF JOIN t2 p on (t.symbol=p.sym);
-                                    """
-                    );
-                }
-        );
-    }
-
-    @Test
-    public void testSingleSymbolAsOfWithDynamicSlaveSymbolThrows() throws Exception {
-        assertMemoryLeak(
-                (TestUtils.LeakProneCode) () -> {
-                    executeWithRewriteTimestamp(
-                            """
-                                    create table dyn_master as (
-                                    select
-                                        rnd_symbol('A', 'B', 'C') as sym,
-                                        rnd_double() as val,
-                                        generate_series as timestamp
-                                    from generate_series('2025-01-01'::#TIMESTAMP, '2025-01-01T00:30', '300000000u')
-                                    ) timestamp(timestamp) partition by day
-                                    """,
-                            leftTableTimestampType.getTypeName()
-                    );
-
-                    executeWithRewriteTimestamp(
-                            """
-                                    create table dyn_slave_src as (
-                                    select
-                                        cast(sym as string) as sym_str,
-                                        cast(timestamp as #TIMESTAMP) as ts
-                                    from dyn_master
-                                    ) timestamp(ts) partition by day
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                                    sym	ts
+                                    A	2025-01-01T00:00:00.000000Z
+                                    C	2025-01-01T00:05:00.000000Z
+                                    C	2025-01-01T00:10:00.000000Z
+                                    B	2025-01-01T00:15:00.000000Z
+                                    B	2025-01-01T00:20:00.000000Z
+                                    A	2025-01-01T00:25:00.000000Z
+                                    A	2025-01-01T00:30:00.000000Z
                                     """,
                             rightTableTimestampType.getTypeName()
-                    );
-
-                    final String sql = """
-                            SELECT /*+ ASOF_LINEAR(m s) */m.sym, ts
-                            FROM dyn_master m
-                            ASOF JOIN (
-                                SELECT cast(sym_str as symbol) AS sym, ts
-                                FROM dyn_slave_src
-                            ) s ON m.sym = s.sym
-                            """;
-
-                    assertQueryNoLeakCheck(
-                            replaceTimestampSuffix1("""
-                                            sym	ts
-                                            A	2025-01-01T00:00:00.000000Z
-                                            C	2025-01-01T00:05:00.000000Z
-                                            C	2025-01-01T00:10:00.000000Z
-                                            B	2025-01-01T00:15:00.000000Z
-                                            B	2025-01-01T00:20:00.000000Z
-                                            A	2025-01-01T00:25:00.000000Z
-                                            A	2025-01-01T00:30:00.000000Z
-                                            """,
-                                    rightTableTimestampType.getTypeName()
-                            ),
-                            sql,
-                            null,
-                            false,
-                            true
-                    );
-
-                    assertSql(
-                            """
-                                    QUERY PLAN
-                                    SelectedRecord
-                                        AsOf Join Light
-                                          condition: s.sym=m.sym
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: dyn_master
-                                            VirtualRecord
-                                              functions: [ts,sym_str::symbol]
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: dyn_slave_src
-                                    """,
-                            "explain " + sql
-                    );
-                }
-        );
+                    ),
+                    sql,
+                    null,
+                    false,
+                    true
+            );
+            assertSql(
+                    """
+                            QUERY PLAN
+                            SelectedRecord
+                                AsOf Join Light
+                                  condition: s.sym=m.sym
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: dyn_master
+                                    VirtualRecord
+                                      functions: [ts,sym_str::symbol]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: dyn_slave_src
+                            """,
+                    "explain " + sql
+            );
+        });
     }
 
     @Test

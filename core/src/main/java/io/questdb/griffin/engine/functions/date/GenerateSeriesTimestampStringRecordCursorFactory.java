@@ -233,17 +233,8 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
             public static boolean isPotentiallyValidUnit(char c) {
                 return switch (c) {
-                    // nanos
-                    // compatibility
-                    // micros
-                    // millis
-                    // seconds
-                    // minutes
-                    // compatibility
-                    // hours
-                    // days
-                    // weeks
-                    // months
+                    // n:nanos U:micros u:micros-compatibility T:millis s:seconds m:minutes
+                    // h:hours H:hours-compatibility d:days w:weeks M:months y:years
                     case 'n', 'u', 'U', 'T', 's', 'm', 'h', 'H', 'd', 'w', 'M', 'y' -> true;
                     default -> false;
                 };

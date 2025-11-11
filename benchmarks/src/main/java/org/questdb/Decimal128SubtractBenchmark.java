@@ -151,7 +151,7 @@ public class Decimal128SubtractBenchmark {
             case "MIXED_128_64":
                 // Subtraction of 128-bit minus 64-bit value: large 128-bit - normal 64-bit
                 decimal128Minuend = new Decimal128();
-                decimal128Minuend.set(123456789L, 987654321098765432L, 6);
+                decimal128Minuend.of(123456789L, 987654321098765432L, 6);
                 decimal128Subtrahend = Decimal128.fromDouble(789.123, 3);
                 bigDecimalMinuend = new BigDecimal("123456789987654321098.765432");
                 bigDecimalSubtrahend = new BigDecimal("789.123");
