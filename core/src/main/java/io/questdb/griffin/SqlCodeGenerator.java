@@ -74,11 +74,14 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDecimalToDecimalFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDecimalToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToVarcharFunctionFactory;
@@ -90,15 +93,19 @@ import io.questdb.griffin.engine.functions.cast.CastFloatToVarcharFunctionFactor
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIPv4ToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLong256ToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLong256ToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastShortToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastShortToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastShortToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToVarcharFunctionFactory;
@@ -107,6 +114,7 @@ import io.questdb.griffin.engine.functions.cast.CastTimestampToTimestampFunction
 import io.questdb.griffin.engine.functions.cast.CastTimestampToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastVarcharToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
@@ -114,6 +122,7 @@ import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
 import io.questdb.griffin.engine.functions.columns.CharColumn;
 import io.questdb.griffin.engine.functions.columns.DateColumn;
+import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.columns.FloatColumn;
 import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
@@ -137,6 +146,7 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -186,6 +196,8 @@ import io.questdb.griffin.engine.groupby.vect.SumLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
+import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
@@ -193,9 +205,7 @@ import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.AsOfJoinSingleSymbolRecordCursorFactory;
-import io.questdb.griffin.engine.join.AsofJoinColumnAccessHelper;
-import io.questdb.griffin.engine.join.ChainedSymbolColumnAccessHelper;
+import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
@@ -213,13 +223,16 @@ import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.NoopColumnAccessHelper;
+import io.questdb.griffin.engine.join.NoopSymbolShortCircuit;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
-import io.questdb.griffin.engine.join.SingleStringColumnAccessHelper;
-import io.questdb.griffin.engine.join.SingleSymbolColumnAccessHelper;
-import io.questdb.griffin.engine.join.SingleVarcharColumnAccessHelper;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.StringToSymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.SymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.SymbolKeyMappingRecordCopier;
+import io.questdb.griffin.engine.join.SymbolShortCircuit;
+import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
@@ -287,6 +300,7 @@ import io.questdb.std.BitSet;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
@@ -306,6 +320,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 
 import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
@@ -339,40 +354,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * The matrix doesn't cover generic types (e.g. geohash) since they have a more complex structure.
      */
     private static final int[][] UNION_CAST_MATRIX = new int[][]{
-            { 0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  0}, //  0 = unknown
-            {11,  1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  1}, //  1 = BOOLEAN
-            {11, 11,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  2}, //  2 = BYTE
-            {11, 11,  3,  3,  3,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  3}, //  3 = SHORT
-            {11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 11}, //  4 = CHAR
-            {11, 11,  5,  5,  5,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  5}, //  5 = INT
-            {11, 11,  6,  6,  6,  6,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  6}, //  6 = LONG
-            {11, 11,  7,  7,  7,  7,  7,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  7}, //  7 = DATE
-            {11, 11,  8,  8,  8,  8,  8,  8,  8,  9, 10, 11,  8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  8}, //  8 = TIMESTAMP
-            {11, 11,  9,  9,  9,  9,  9,  9,  9,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  9}, //  9 = FLOAT
-            {11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 10}, // 10 = DOUBLE
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11}, // 11 = STRING
-            {11, 11, 11, 11, 11, 11, 11, 11,  8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 11}, // 12 = SYMBOL
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 13}, // 13 = LONG256
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 14 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 15 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 16 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 17 = unknown
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 18, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 18}, // 18 = BINARY
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 19, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 19}, // 19 = UUID
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 20, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 20}, // 20 = CURSOR
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 21, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 21}, // 21 = VARARG
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 22}, // 22 = RECORD
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, 11, 11, 11, 11, 11, 11, 23}, // 23 = GEOHASH
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, 11, 11, 11, 11, 11, 11, 24}, // 24 = LONG128
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, 11, 11, 11, 11, 11, 25}, // 25 = IPv4
-            {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26}, // 26 = VARCHAR
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 27, 11, 11, 11, 11, 11, 27}, // 27 = ARRAY
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 28, 11, 11, 11, 11, 28}, // 28 = regclass
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 29, 11, 11, 11, 29}, // 29 = regprocedure
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 30, 11, 11, 30}, // 30 = text[]
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 31, 11, 31}, // 31 = PARAMETER
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 32, 32}, // 32 = INTERVAL
-            { 0,  1,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33}  // 33 = NULL
+            { 0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  0}, //  0 = unknown
+            {11,  1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  1}, //  1 = BOOLEAN
+            {11, 11,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  2}, //  2 = BYTE
+            {11, 11,  3,  3,  3,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  3}, //  3 = SHORT
+            {11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11}, //  4 = CHAR
+            {11, 11,  5,  5,  5,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  5}, //  5 = INT
+            {11, 11,  6,  6,  6,  6,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  6}, //  6 = LONG
+            {11, 11,  7,  7,  7,  7,  7,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  7}, //  7 = DATE
+            {11, 11,  8,  8,  8,  8,  8,  8,  8,  9, 10, 11,  8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  8}, //  8 = TIMESTAMP
+            {11, 11,  9,  9,  9,  9,  9,  9,  9,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  9}, //  9 = FLOAT
+            {11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 10}, // 10 = DOUBLE
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11}, // 11 = STRING
+            {11, 11, 11, 11, 11, 11, 11, 11,  8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11}, // 12 = SYMBOL
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 13}, // 13 = LONG256
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 14 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 15 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 16 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 17 = unknown
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 18, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 18}, // 18 = BINARY
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 19, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 19}, // 19 = UUID
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 20, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 20}, // 20 = CURSOR
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 21, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 21}, // 21 = VARARG
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 22}, // 22 = RECORD
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 23}, // 23 = GEOHASH
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24}, // 24 = LONG128
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 25}, // 25 = IPv4
+            {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, -1, -1, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26}, // 26 = VARCHAR
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 27, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 27}, // 27 = ARRAY
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 28 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 29 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 30 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 31 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 32 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 33 = unknown
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 34, 11, 11, 11, 11, 11, 34}, // 34 = DECIMAL
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 35, 11, 11, 11, 11, 35}, // 35 = regclass
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 36, 11, 11, 11, 36}, // 36 = regprocedure
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 37, 11, 11, 37}, // 37 = text[]
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 38, 11, 38}, // 38 = PARAMETER
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 39, 39}, // 39 = INTERVAL
+            { 0,  1,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, -1, -1, -1, -1, -1, -1, 34, 35, 36, 37, 38, 39, 40}  // 40 = NULL
     };
     // @formatter:on
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
@@ -472,7 +494,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int[][] expected = new int[ColumnType.NULL + 1][ColumnType.NULL + 1];
         for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
             for (int typeB = 0; typeB <= ColumnType.NULL; typeB++) {
-                final int outType = (isGeoType(typeA) || isGeoType(typeB)) ? -1 : commonWideningType(typeA, typeB);
+                final int outType = (isGeoType(typeA) || isGeoType(typeB) || isDecimalType(typeA) || isDecimalType(typeB)) ? -1 : commonWideningType(typeA, typeB);
                 expected[typeA][typeB] = outType;
             }
         }
@@ -511,8 +533,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         int geoBitsA = getGeoHashBits(typeA);
         int geoBitsB = getGeoHashBits(typeB);
-        boolean isGeoHashA = geoBitsA != 0;
-        boolean isGeoHashB = geoBitsB != 0;
+        boolean isGeoHashA = ColumnType.isGeoHash(typeA);
+        boolean isGeoHashB = ColumnType.isGeoHash(typeB);
         if (isGeoHashA != isGeoHashB) {
             // One type is geohash, the other isn't. Since a stringy type can be parsed
             // into geohash, output geohash when the other type is stringy. If not,
@@ -524,6 +546,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (isGeoHashA) {
             // Both types are geohash, resolve to the one with fewer geohash bits.
             return geoBitsA < geoBitsB ? typeA : typeB;
+        }
+
+        boolean isDecimalA = ColumnType.isDecimalType(tagA);
+        boolean isDecimalB = ColumnType.isDecimalType(tagB);
+        if (isDecimalA || isDecimalB) {
+            int a = DecimalUtil.getTypePrecisionScale(typeA);
+            int b = DecimalUtil.getTypePrecisionScale(typeB);
+            if (a != 0 && b != 0) {
+                // Both types are decimal/implicitly castable to decimal.
+                int precisionA = Numbers.decodeLowShort(a);
+                int scaleA = Numbers.decodeHighShort(a);
+                int precisionB = Numbers.decodeLowShort(b);
+                int scaleB = Numbers.decodeHighShort(b);
+                final int scale = Math.max(scaleA, scaleB);
+                final int precision = Math.min(Math.max(precisionA - scaleA, precisionB - scaleB) + scale, Decimals.MAX_PRECISION);
+                return ColumnType.getDecimalType(precision, scale);
+            }
+            // We also support casting between decimal and stringy types.
+            return isStringyType(typeA) ? typeB :
+                    isStringyType(typeB) ? typeA :
+                            ColumnType.STRING; // Fallback should be supported by any type
         }
 
         if (tagA == INTERVAL || tagB == INTERVAL) {
@@ -1127,69 +1170,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
-    private @NotNull AsofJoinColumnAccessHelper createAsofColumnAccessHelper(
-            RecordMetadata masterMetadata,
-            RecordMetadata slaveMetadata,
-            boolean isSelfJoin
-    ) {
-        AsofJoinColumnAccessHelper columnAccessHelper = NoopColumnAccessHelper.INSTANCE;
-        assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
-        AsofJoinColumnAccessHelper[] symbolShortCircuits = null;
-        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-            int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
-            int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
-            if (slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
-                int masterColType = masterMetadata.getColumnType(masterIndex);
-                AsofJoinColumnAccessHelper newSymbolShortCircuit;
-                switch (masterColType) {
-                    case SYMBOL:
-                        if (isSelfJoin && masterIndex == slaveIndex) {
-                            // self join on the same column -> there is no point in attempting short-circuiting
-                            // NOTE: This check is naive, it can generate false positives
-                            //       For example 'select t1.s, t2.s2 from t as t1 asof join t as t2 on t1.s = t2.s2'
-                            //       This is deemed as a self-join (which it is), and due to the way columns are projected
-                            //       it will take this branch (even when it fact it's comparing different columns)
-                            //       and won't create a short circuit. This is OK from correctness perspective,
-                            //       but it is a missed opportunity for performance optimization. Doing a perfect check
-                            //       would require a more complex logic, which is not worth it for now
-                            continue;
-                        }
-                        newSymbolShortCircuit = new SingleSymbolColumnAccessHelper(configuration, masterIndex, slaveIndex);
-                        break;
-                    case VARCHAR:
-                        newSymbolShortCircuit = new SingleVarcharColumnAccessHelper(masterIndex, slaveIndex);
-                        break;
-                    case STRING:
-                        newSymbolShortCircuit = new SingleStringColumnAccessHelper(masterIndex, slaveIndex);
-                        break;
-                    default:
-                        // unsupported type for short circuit
-                        continue;
-                }
-                if (columnAccessHelper == NoopColumnAccessHelper.INSTANCE) {
-                    // ok, a single symbol short circuit
-                    columnAccessHelper = newSymbolShortCircuit;
-                } else if (symbolShortCircuits == null) {
-                    // 2 symbol short circuits, we need to chain them
-                    symbolShortCircuits = new AsofJoinColumnAccessHelper[2];
-                    symbolShortCircuits[0] = columnAccessHelper;
-                    symbolShortCircuits[1] = newSymbolShortCircuit;
-                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(symbolShortCircuits);
-                } else {
-                    // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
-                    // this allocates arrays, but it should be very rare
-                    int size = symbolShortCircuits.length;
-                    AsofJoinColumnAccessHelper[] newSymbolShortCircuits = new AsofJoinColumnAccessHelper[size + 1];
-                    System.arraycopy(symbolShortCircuits, 0, newSymbolShortCircuits, 0, size);
-                    newSymbolShortCircuits[size] = newSymbolShortCircuit;
-                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(newSymbolShortCircuits);
-                    symbolShortCircuits = newSymbolShortCircuits;
-                }
-            }
-        }
-        return columnAccessHelper;
-    }
-
     @NotNull
     private RecordCursorFactory createFullFatJoin(
             RecordCursorFactory master,
@@ -1229,8 +1209,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // at this point listColumnFilterB has column indexes of the master record that are JOIN keys
-        // so masterSink writes key columns of master record to a sink
-        RecordSink masterSink = createRecordSinkMaster(masterMetadata);
+        // so masterCopier writes key columns of master record to a sink
+        RecordSink masterCopier = createRecordCopierMaster(masterMetadata);
 
         // This metadata allocates native memory, it has to be closed in case join
         // generation is unsuccessful. The exception can be thrown anywhere between
@@ -1298,8 +1278,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     keyTypes,
                     valueTypes,
                     slaveTypes,
-                    masterSink,
-                    createRecordSinkSlave(slaveMetadata),
+                    masterCopier,
+                    createRecordCopierSlave(slaveMetadata),
                     masterMetadata.getColumnCount(),
                     RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB), // slaveValueSink
                     columnIndex,
@@ -1336,8 +1316,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
          */
         final RecordMetadata masterMetadata = master.getMetadata();
         final RecordMetadata slaveMetadata = slave.getMetadata();
-        final RecordSink masterKeySink = createRecordSinkMaster(masterMetadata);
-        final RecordSink slaveKeySink = createRecordSinkSlave(slaveMetadata);
+        final RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
+        final RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
 
         if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
             valueTypes.clear();
@@ -1354,8 +1334,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slave,
                         keyTypes,
                         valueTypes,
-                        masterKeySink,
-                        slaveKeySink,
+                        masterKeyCopier,
+                        slaveKeyCopier,
                         masterMetadata.getColumnCount(),
                         context
                 );
@@ -1372,8 +1352,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slave,
                         keyTypes,
                         valueTypes,
-                        masterKeySink,
-                        slaveKeySink,
+                        masterKeyCopier,
+                        slaveKeyCopier,
                         masterMetadata.getColumnCount(),
                         filter,
                         context,
@@ -1388,8 +1368,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slave,
                     keyTypes,
                     valueTypes,
-                    masterKeySink,
-                    slaveKeySink,
+                    masterKeyCopier,
+                    slaveKeyCopier,
                     masterMetadata.getColumnCount(),
                     context,
                     joinType
@@ -1415,8 +1395,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slave,
                     keyTypes,
                     valueTypes,
-                    masterKeySink,
-                    slaveKeySink,
+                    masterKeyCopier,
+                    slaveKeyCopier,
                     slaveSink,
                     masterMetadata.getColumnCount(),
                     context
@@ -1431,8 +1411,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slave,
                     keyTypes,
                     valueTypes,
-                    masterKeySink,
-                    slaveKeySink,
+                    masterKeyCopier,
+                    slaveKeyCopier,
                     slaveSink,
                     masterMetadata.getColumnCount(),
                     filter,
@@ -1448,8 +1428,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 slave,
                 keyTypes,
                 valueTypes,
-                masterKeySink,
-                slaveKeySink,
+                masterKeyCopier,
+                slaveKeyCopier,
                 slaveSink,
                 masterMetadata.getColumnCount(),
                 context,
@@ -1501,7 +1481,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return metadata;
     }
 
-    private @NotNull RecordSink createRecordSinkMaster(RecordMetadata masterMetadata) {
+    private @NotNull RecordSink createRecordCopierMaster(RecordMetadata masterMetadata) {
         return RecordSinkFactory.getInstance(
                 asm,
                 masterMetadata,
@@ -1512,7 +1492,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    private @NotNull RecordSink createRecordSinkSlave(RecordMetadata slaveMetadata) {
+    private @NotNull RecordSink createRecordCopierSlave(RecordMetadata slaveMetadata) {
         return RecordSinkFactory.getInstance(
                 asm,
                 slaveMetadata,
@@ -1552,6 +1532,68 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
+    private @NotNull SymbolShortCircuit createSymbolShortCircuit(
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata,
+            boolean isSelfJoin
+    ) {
+        SymbolShortCircuit symbolShortCircuit = NoopSymbolShortCircuit.INSTANCE;
+        assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
+        SymbolJoinKeyMapping[] mappings = null;
+        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+            int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
+            int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
+            if (slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
+                int masterColType = masterMetadata.getColumnType(masterIndex);
+                SymbolJoinKeyMapping newMapping;
+                switch (masterColType) {
+                    case SYMBOL:
+                        if (isSelfJoin && masterIndex == slaveIndex) {
+                            // self join on the same column -> there is no point in attempting short-circuiting
+                            // NOTE: This check is naive, it can generate false positives
+                            //       For example 'select t1.s, t2.s2 from t as t1 asof join t as t2 on t1.s = t2.s2'
+                            //       This is deemed as a self-join (which it is), and due to the way columns are projected
+                            //       it will take this branch (even when it fact it's comparing different columns)
+                            //       and won't create a short circuit. This is OK from correctness perspective,
+                            //       but it is a missed opportunity for performance optimization. Doing a perfect check
+                            //       would require a more complex logic, which is not worth it for now
+                            continue;
+                        }
+                        newMapping = new SymbolToSymbolJoinKeyMapping(configuration, masterIndex, slaveIndex);
+                        break;
+                    case VARCHAR:
+                        newMapping = new VarcharToSymbolJoinKeyMapping(masterIndex, slaveIndex);
+                        break;
+                    case STRING:
+                        newMapping = new StringToSymbolJoinKeyMapping(masterIndex, slaveIndex);
+                        break;
+                    default:
+                        // unsupported type for short circuit
+                        continue;
+                }
+                if (symbolShortCircuit == NoopSymbolShortCircuit.INSTANCE) {
+                    // ok, a single symbol short circuit
+                    symbolShortCircuit = (SymbolShortCircuit) newMapping;
+                } else if (mappings == null) {
+                    // 2 symbol mappings, we need to chain them
+                    mappings = new SymbolJoinKeyMapping[2];
+                    mappings[0] = (SymbolJoinKeyMapping) symbolShortCircuit;
+                    mappings[1] = newMapping;
+                    symbolShortCircuit = new ChainedSymbolShortCircuit(mappings);
+                } else {
+                    // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
+                    // this allocates arrays, but it should be very rare
+                    int size = mappings.length;
+                    SymbolJoinKeyMapping[] newMappings = Arrays.copyOf(mappings, size + 1);
+                    newMappings[size] = newMapping;
+                    symbolShortCircuit = new ChainedSymbolShortCircuit(newMappings);
+                    mappings = newMappings;
+                }
+            }
+        }
+        return symbolShortCircuit;
+    }
+
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
         final ObjList<Function> result = new ObjList<>();
         for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
@@ -1563,6 +1605,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private ObjList<Function> generateCastFunctions(
+            SqlExecutionContext executionContext,
             RecordMetadata castToMetadata,
             RecordMetadata castFromMetadata,
             int modelPosition
@@ -1871,6 +1914,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         )
                                 );
                                 break;
+                            case ColumnType.DECIMAL8:
+                            case ColumnType.DECIMAL16:
+                            case ColumnType.DECIMAL32:
+                            case ColumnType.DECIMAL64:
+                                castFunctions.add(
+                                        new CastDecimalToStrFunctionFactory.Func64(
+                                                Decimal64LoaderFunctionFactory.getInstance(DecimalColumn.newInstance(i, fromType))
+                                        )
+                                );
+                                break;
+                            case ColumnType.DECIMAL128:
+                                castFunctions.add(
+                                        new CastDecimalToStrFunctionFactory.Func128(DecimalColumn.newInstance(i, fromType))
+                                );
+                                break;
+                            case ColumnType.DECIMAL256:
+                                castFunctions.add(
+                                        new CastDecimalToStrFunctionFactory.Func(DecimalColumn.newInstance(i, fromType))
+                                );
+                                break;
                             case ColumnType.INTERVAL:
                                 castFunctions.add(new CastIntervalToStrFunctionFactory.Func(IntervalColumn.newInstance(i, fromType)));
                                 break;
@@ -2097,6 +2160,96 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                         }
                         break;
+                    case ColumnType.DECIMAL8:
+                    case ColumnType.DECIMAL16:
+                    case ColumnType.DECIMAL32:
+                    case ColumnType.DECIMAL64:
+                    case ColumnType.DECIMAL128:
+                    case ColumnType.DECIMAL256:
+                        if (ColumnType.isDecimalType(fromTag)) {
+                            if (fromType == toType) {
+                                castFunctions.add(DecimalColumn.newInstance(i, fromType));
+                                break;
+                            }
+                            castFunctions.add(
+                                    CastDecimalToDecimalFunctionFactory.newInstance(
+                                            0,
+                                            new DecimalColumn(i, fromType),
+                                            toType,
+                                            executionContext
+                                    )
+                            );
+                            break;
+                        }
+                        switch (fromTag) {
+                            case INT:
+                                castFunctions.add(
+                                        CastIntToDecimalFunctionFactory.newInstance(
+                                                0,
+                                                IntColumn.newInstance(i),
+                                                toType,
+                                                executionContext
+                                        )
+                                );
+                                break;
+                            case SHORT:
+                                castFunctions.add(
+                                        CastShortToDecimalFunctionFactory.newInstance(
+                                                0,
+                                                ShortColumn.newInstance(i),
+                                                toType,
+                                                executionContext
+                                        )
+                                );
+                                break;
+                            case LONG:
+                                castFunctions.add(
+                                        CastLongToDecimalFunctionFactory.newInstance(
+                                                0,
+                                                LongColumn.newInstance(i),
+                                                toType,
+                                                executionContext.getDecimal256()
+                                        )
+                                );
+                                break;
+                            case BYTE:
+                                castFunctions.add(
+                                        CastByteToDecimalFunctionFactory.newInstance(
+                                                0,
+                                                ByteColumn.newInstance(i),
+                                                toType,
+                                                executionContext
+                                        )
+                                );
+                                break;
+                            case STRING:
+                                castFunctions.add(
+                                        CastStrToDecimalFunctionFactory.newInstance(
+                                                executionContext.getDecimal256(),
+                                                0,
+                                                toType,
+                                                new StrColumn(i)
+                                        )
+                                );
+                                break;
+                            case VARCHAR:
+                                castFunctions.add(
+                                        CastVarcharToDecimalFunctionFactory.newInstance(
+                                                executionContext.getDecimal256(),
+                                                0,
+                                                toType,
+                                                new VarcharColumn(i)
+                                        )
+                                );
+                                break;
+                            default:
+                                throw SqlException.unsupportedCast(
+                                        modelPosition,
+                                        castFromMetadata.getColumnName(i),
+                                        fromType,
+                                        toType
+                                );
+                        }
                     case ColumnType.BINARY:
                         castFunctions.add(BinColumn.newInstance(i));
                         break;
@@ -2626,59 +2779,97 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
+                SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, isSelfJoin);
+                int joinColumnSplit = masterMetadata.getColumnCount();
+                JoinContext slaveContext = slaveModel.getJoinContext();
                 if (!hasLinearHint) {
                     if (slave.supportsTimeFrameCursor()) {
-                        int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-                        AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, isSelfJoin);
-                        boolean isOptimizable = columnAccessHelper != NoopColumnAccessHelper.INSTANCE;
-                        int joinColumnSplit = masterMetadata.getColumnCount();
-                        JoinContext slaveContext = slaveModel.getJoinContext();
-
-                        boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
-                        if (isOptimizable && hasIndexHint && isSingleSymbolJoinWithIndex(slaveMetadata)) {
-                            return new AsOfJoinIndexedRecordCursorFactory(
+                        boolean isSingleSymbolJoin = isSingleSymbolJoin(symbolShortCircuit);
+                        boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
+                        if (hasDenseHint) {
+                            if (isSingleSymbolJoin) {
+                                int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                                return new AsOfJoinDenseSingleSymbolRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        slave,
+                                        joinColumnSplit,
+                                        slaveSymbolColumnIndex,
+                                        (SymbolJoinKeyMapping) symbolShortCircuit,
+                                        slaveContext,
+                                        toleranceInterval
+                                );
+                            }
+                            return new AsOfJoinDenseRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
                                     master,
+                                    createRecordCopierMaster(masterMetadata),
                                     slave,
+                                    createRecordCopierSlave(slaveMetadata),
                                     joinColumnSplit,
-                                    slaveSymbolColumnIndex,
-                                    columnAccessHelper,
+                                    keyTypes,
                                     slaveContext,
                                     toleranceInterval
                             );
                         }
+                        RecordSink recordCopierMaster;
+                        if (isSingleSymbolJoin) {
+                            SymbolJoinKeyMapping symbolJoinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
+                            int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                            boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
+                            if (hasIndexHint && slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
+                                return new AsOfJoinIndexedRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        slave,
+                                        joinColumnSplit,
+                                        slaveSymbolColumnIndex,
+                                        symbolJoinKeyMapping,
+                                        slaveContext,
+                                        toleranceInterval
+                                );
+                            }
+                            boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias);
+                            boolean hasMemoizedDrivebyHint = SqlHints.hasAsOfMemoizedDrivebyHint(model, masterAlias, slaveAlias);
+                            if (hasMemoizedHint || hasMemoizedDrivebyHint) {
+                                return new AsOfJoinMemoizedRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        slave,
+                                        joinColumnSplit,
+                                        slaveSymbolColumnIndex,
+                                        symbolJoinKeyMapping,
+                                        slaveContext,
+                                        toleranceInterval,
+                                        hasMemoizedDrivebyHint
+                                );
+                            }
 
-                        boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias);
-                        boolean hasMemoizedDrivebyHint = SqlHints.hasAsOfMemoizedDrivebyHint(model, masterAlias, slaveAlias);
-                        if (isOptimizable && (hasMemoizedHint || hasMemoizedDrivebyHint) && isSingleSymbolJoin(slaveMetadata)) {
-                            return new AsOfJoinMemoizedRecordCursorFactory(
-                                    configuration,
-                                    joinMetadata,
-                                    master,
-                                    slave,
-                                    joinColumnSplit,
-                                    slaveSymbolColumnIndex,
-                                    columnAccessHelper,
-                                    slaveContext,
-                                    toleranceInterval,
-                                    hasMemoizedDrivebyHint
-                            );
+                            // We're falling back to the default Fast scan. We can still optimize one thing:
+                            // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
+                            // For that to work, we need code that maps master symbol key to slave symbol key.
+                            writeSymbolAsString.unset(slaveSymbolColumnIndex);
+                            recordCopierMaster = new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit);
+                        } else {
+                            recordCopierMaster = createRecordCopierMaster(masterMetadata);
                         }
                         return new AsOfJoinFastRecordCursorFactory(
                                 configuration,
                                 joinMetadata,
                                 master,
-                                createRecordSinkMaster(masterMetadata),
+                                recordCopierMaster,
                                 slave,
-                                createRecordSinkSlave(slaveMetadata),
+                                createRecordCopierSlave(slaveMetadata),
                                 joinColumnSplit,
-                                columnAccessHelper,
+                                symbolShortCircuit,
                                 slaveContext,
                                 toleranceInterval
                         );
-                    }
-                    if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                    } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
                         RecordCursorFactory slaveBase = slave.getBaseFactory();
                         int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
 
@@ -2694,9 +2885,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 configuration,
                                 joinMetadata,
                                 master,
-                                createRecordSinkMaster(masterMetadata),
+                                createRecordCopierMaster(masterMetadata),
                                 slaveBase,
-                                createRecordSinkSlave(slaveMetadata),
+                                createRecordCopierSlave(slaveMetadata),
                                 stolenFilter,
                                 masterMetadata.getColumnCount(),
                                 NullRecordFactory.getInstance(slaveMetadata),
@@ -2704,8 +2895,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 slaveTimestampIndex,
                                 toleranceInterval
                         );
-                    }
-                    if (slave.isProjection()) {
+                    } else if (slave.isProjection()) {
                         RecordCursorFactory projectionBase = slave.getBaseFactory();
                         // We know projectionBase does not support supportsTimeFrameCursor, because
                         // Projections forward this call to its base factory and if we are in this branch
@@ -2713,7 +2903,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // There is still chance that projectionBase is just a filter
                         // and its own base supports timeFrameCursor. let's see.
                         if (projectionBase.supportsFilterStealing()) {
-                            // ok, cool, is used only as a filter.
+                            // ok cool, it's used only as a filter.
                             RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
                             if (filterStealingBase.supportsTimeFrameCursor()) {
                                 IntList stolenCrossIndex = slave.getColumnCrossIndex();
@@ -2734,9 +2924,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         configuration,
                                         joinMetadata,
                                         master,
-                                        createRecordSinkMaster(masterMetadata),
+                                        createRecordCopierMaster(masterMetadata),
                                         filterStealingBase,
-                                        createRecordSinkSlave(slaveMetadata),
+                                        createRecordCopierSlave(slaveMetadata),
                                         stolenFilter,
                                         masterMetadata.getColumnCount(),
                                         NullRecordFactory.getInstance(slaveMetadata),
@@ -2749,39 +2939,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                int joinColumnSplit = masterMetadata.getColumnCount();
-                JoinContext slaveContext = slaveModel.getJoinContext();
-                if (isSingleSymbolJoin(slaveMetadata)) {
-                    AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, isSelfJoin);
-                    if (columnAccessHelper != NoopColumnAccessHelper.INSTANCE) {
-                        int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-                        return new AsOfJoinSingleSymbolRecordCursorFactory(
-                                configuration,
-                                joinMetadata,
-                                master,
-                                slave,
-                                joinColumnSplit,
-                                slaveSymbolColumnIndex,
-                                columnAccessHelper,
-                                slaveContext,
-                                toleranceInterval
-                        );
-                    }
+                // fallback for keyed join when no optimizations are applicable, or when asof_linear hint is used:
+                if (isSingleSymbolJoin(symbolShortCircuit)) {
+                    // We're falling back to the default Light scan. We can still optimize one thing:
+                    // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
+                    // For that to work, we need code that maps master symbol key to slave symbol key.
+                    int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                    writeSymbolAsString.unset(slaveSymbolColumnIndex);
+                    SymbolJoinKeyMapping joinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
+                    return new AsOfJoinLightRecordCursorFactory(
+                            configuration,
+                            joinMetadata,
+                            master,
+                            slave,
+                            keyTypes,
+                            new SymbolKeyMappingRecordCopier(joinKeyMapping),
+                            createRecordCopierSlave(slaveMetadata),
+                            joinKeyMapping,
+                            joinColumnSplit,
+                            slaveContext,
+                            toleranceInterval
+                    );
+                } else {
+                    return new AsOfJoinLightRecordCursorFactory(
+                            configuration,
+                            joinMetadata,
+                            master,
+                            slave,
+                            keyTypes,
+                            createRecordCopierMaster(masterMetadata),
+                            createRecordCopierSlave(slaveMetadata),
+                            null,
+                            joinColumnSplit,
+                            slaveContext,
+                            toleranceInterval
+                    );
                 }
-                return new AsOfJoinLightRecordCursorFactory(
-                        configuration,
-                        joinMetadata,
-                        master,
-                        slave,
-                        keyTypes,
-                        createRecordSinkMaster(masterMetadata),
-                        createRecordSinkSlave(slaveMetadata),
-                        joinColumnSplit,
-                        slaveContext,
-                        toleranceInterval
-                );
             }
 
+            // reaching this point means the join is non-keyed
             if (!hasLinearHint) {
                 if (slave.supportsTimeFrameCursor()) {
                     return new AsOfJoinNoKeyFastRecordCursorFactory(
@@ -2862,7 +3058,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
             }
-            // slow path: this always works but can be quite slow, especially with large slave tables
+            // fallback for non-keyed join when no optimizations are applicable, or the asof_linear hint is used:
             return new AsOfJoinLightNoKeyRecordCursorFactory(
                     joinMetadata,
                     master,
@@ -2906,8 +3102,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
         try {
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
-                RecordSink masterKeySink = createRecordSinkMaster(masterMetadata);
-                RecordSink slaveKeySink = createRecordSinkSlave(slaveMetadata);
+                RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
+                RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
                 int columnSplit = masterMetadata.getColumnCount();
                 JoinContext joinContext = slaveModel.getJoinContext();
                 valueTypes.clear();
@@ -2919,8 +3115,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slave,
                         keyTypes,
                         valueTypes,
-                        masterKeySink,
-                        slaveKeySink,
+                        masterKeyCopier,
+                        slaveKeyCopier,
                         columnSplit,
                         joinContext,
                         toleranceInterval
@@ -3079,9 +3275,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             // splice join result does not have timestamp
                                             createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
                                             master,
-                                            createRecordSinkMaster(masterMetadata),
+                                            createRecordCopierMaster(masterMetadata),
                                             slave,
-                                            createRecordSinkSlave(slaveMetadata),
+                                            createRecordCopierSlave(slaveMetadata),
                                             masterMetadata.getColumnCount(),
                                             slaveModel.getJoinContext()
                                     );
@@ -5647,8 +5843,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionFactory(
@@ -5666,8 +5862,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionAllFactory(
@@ -5684,8 +5880,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionFactory(
@@ -5703,8 +5899,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateIntersectOrExceptAllFactory(
@@ -5722,8 +5918,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionFactory(
@@ -5741,8 +5937,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateIntersectOrExceptAllFactory(
@@ -6640,26 +6836,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
     }
 
-    private boolean isSingleSymbolJoin(RecordMetadata slaveMetadata) {
-        return isSingleSymbolJoin(slaveMetadata, false);
-    }
-
-    /**
-     * Checks if the ASOF JOIN is on a single symbol column, and optionally requires the slave column is indexed.
-     * This is a precondition to enable some optimized ASOF JOIN implementations.
-     */
-    private boolean isSingleSymbolJoin(RecordMetadata slaveMetadata, boolean requireSlaveIndex) {
-        // Must be joining on exactly one column (besides timestamps)
-        if (listColumnFilterA.size() != 1 || listColumnFilterB.size() != 1) {
-            return false;
-        }
-        int slaveIndex = listColumnFilterA.getColumnIndexFactored(0);
-        return slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL &&
-                (!requireSlaveIndex || slaveMetadata.isColumnIndexed(slaveIndex));
-    }
-
-    private boolean isSingleSymbolJoinWithIndex(RecordMetadata slaveMetadata) {
-        return isSingleSymbolJoin(slaveMetadata, true);
+    private boolean isSingleSymbolJoin(SymbolShortCircuit symbolShortCircuit) {
+        return symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
+                !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
     }
 
     // skips skipped models until finding a WHERE clause

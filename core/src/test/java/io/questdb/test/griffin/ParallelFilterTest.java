@@ -337,6 +337,13 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEqDecimal() throws Exception {
+        // Decimal is not yet supported in Parquet
+        Assume.assumeFalse(convertToParquet);
+        testEqDecimal(SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
     public void testEqStrFunctionFactory() throws Exception {
         final int threadCount = 4;
         final int workerCount = 4;
@@ -892,6 +899,37 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             query,
                             sink,
                             "count\n20000\n"
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    private void testEqDecimal(int jitMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
+
+        WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE tab (\n" +
+                                    "  ts TIMESTAMP," +
+                                    "  val DECIMAL(30, 2)" +
+                                    ") TIMESTAMP (ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
+                    engine.execute("insert into tab select (x * 1000 * 1000 * 60)::timestamp, cast(x * 1000 as decimal(30,2)) from long_sequence(10000)", sqlExecutionContext);
+
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select * from tab where val = 13000 or val = 42000 limit 10",
+                            sink,
+                            "ts\tval\n" +
+                                    "1970-01-01T00:13:00.000000Z\t13000.00\n" +
+                                    "1970-01-01T00:42:00.000000Z\t42000.00\n"
                     );
                 },
                 configuration,

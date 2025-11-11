@@ -128,11 +128,6 @@ public final class Files {
         return -1;
     }
 
-    public static int errnoInvalidParameter() {
-        return Os.type != Os.WINDOWS ? CairoException.ERRNO_INVALID_PARAMETER
-                : CairoException.ERRNO_INVALID_PARAMETER_WIN;
-    }
-
     public static boolean exists(long fd) {
         return exists(toOsFd(fd));
     }

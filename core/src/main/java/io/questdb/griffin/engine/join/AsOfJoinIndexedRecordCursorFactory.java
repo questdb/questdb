@@ -48,9 +48,9 @@ import io.questdb.std.Rows;
  * instead of linear scanning through time-ordered records.
  */
 public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final AsofJoinColumnAccessHelper columnAccessHelper;
     private final AsOfJoinIndexedRecordCursor cursor;
     private final int slaveSymbolColumnIndex;
+    private final SymbolJoinKeyMapping symbolJoinKeyMapping;
     private final long toleranceInterval;
 
     public AsOfJoinIndexedRecordCursorFactory(
@@ -60,13 +60,13 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             RecordCursorFactory slaveFactory,
             int columnSplit,
             int slaveSymbolColumnIndex,
-            AsofJoinColumnAccessHelper columnAccessHelper,
+            SymbolJoinKeyMapping symbolJoinKeyMapping,
             JoinContext joinContext,
             long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
-        this.columnAccessHelper = columnAccessHelper;
+        this.symbolJoinKeyMapping = symbolJoinKeyMapping;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         RecordMetadata masterMeta = masterFactory.getMetadata();
         RecordMetadata slaveMeta = slaveFactory.getMetadata();
@@ -144,13 +144,12 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
-            columnAccessHelper.of(slaveCursor);
+            symbolJoinKeyMapping.of(slaveCursor);
         }
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            CharSequence masterSymbolValue = columnAccessHelper.getMasterValue(masterRecord);
-            int symbolKey = TableUtils.toIndexKey(columnAccessHelper.getSlaveSymbolTable().keyOf(masterSymbolValue));
+            int symbolKey = TableUtils.toIndexKey(symbolJoinKeyMapping.getSlaveKey(masterRecord));
             if (symbolKey < 0) {
                 record.hasSlave(false);
                 return;

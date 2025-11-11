@@ -3,13 +3,16 @@ package main
 import (
 	"context"
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"gorunner/drivers"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/shopspring/decimal"
 )
 
 func init() {
@@ -345,6 +348,8 @@ func (tr *TestRunner) formatValue(value interface{}) interface{} {
 	case []interface{}:
 		// Handle array values
 		return tr.formatArrayValue(v)
+	case decimal.Decimal:
+		return v.String()
 	}
 	return value
 }
@@ -663,7 +668,7 @@ func (tr *TestRunner) main(yamlFile string) error {
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Println("Usage: go run runner.go <test_file.yaml>")
+		fmt.Println("Usage: go run main.go <test_file.yaml>")
 		os.Exit(1)
 	}
 

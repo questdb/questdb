@@ -29,5 +29,5 @@ import io.questdb.cairo.sql.Record;
 
 @FunctionalInterface
 public interface RecordToRowCopier {
-    void copy(Record record, TableWriter.Row row);
+    void copy(SqlExecutionContext context, Record record, TableWriter.Row row);
 }

@@ -38,6 +38,7 @@ import org.jetbrains.annotations.NotNull;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
+@SuppressWarnings("resource")
 public class LineUdpSender extends AbstractLineSender {
 
     public LineUdpSender(int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int bufferCapacity, int ttl) {

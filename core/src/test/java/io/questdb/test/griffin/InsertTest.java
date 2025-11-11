@@ -641,6 +641,159 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertDecimalArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table arithmetic(id int, base decimal(8,2), calculated decimal(10,4), ts timestamp) timestamp(ts)");
+
+            execute("insert into arithmetic values (1, 100.50m, 100.50m * 1.1m, 0)");
+            execute("insert into arithmetic values (2, 75.25m, 75.25m + 24.75m, 1000000)");
+            execute("insert into arithmetic values (3, 200.00m, 200.00m / 2m, 2000000)");
+
+            drainWalQueue();
+
+            assertSql(
+                    "id\tbase\tcalculated\tts\n" +
+                            "1\t100.50\t110.5500\t1970-01-01T00:00:00.000000Z\n" +
+                            "2\t75.25\t100.0000\t1970-01-01T00:00:01.000000Z\n" +
+                            "3\t200.00\t100.0000\t1970-01-01T00:00:02.000000Z\n",
+                    "arithmetic"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertDecimalFromCast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table int_to_decimal(id int, original int, converted decimal(10,2), ts timestamp) timestamp(ts)");
+
+            execute("insert into int_to_decimal values (1, 100, cast(100 as decimal(10,2)), 0)");
+            execute("insert into int_to_decimal values (2, 250, cast(250 as decimal(10,2)), 1000000)");
+
+            drainWalQueue();
+
+            assertSql(
+                    "id\toriginal\tconverted\tts\n" +
+                            "1\t100\t100.00\t1970-01-01T00:00:00.000000Z\n" +
+                            "2\t250\t250.00\t1970-01-01T00:00:01.000000Z\n",
+                    "int_to_decimal"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertDecimalFromSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table source(id int, val decimal(8,3), ts timestamp) timestamp(ts)");
+            execute("create table target(id int, price decimal(10,3), adjusted decimal(8,3), ts timestamp) timestamp(ts)");
+
+            execute("insert into source values (1, 123.456m, 0)");
+            execute("insert into source values (2, 789.012m, 1000000)");
+            execute("insert into source values (3, 456.789m, 2000000)");
+
+            execute("insert into target select id, val * 2m as price, val, ts from source where id > 1");
+
+            drainWalQueue();
+
+            assertSql(
+                    "id\tprice\tadjusted\tts\n" +
+                            "2\t1578.024\t789.012\t1970-01-01T00:00:01.000000Z\n" +
+                            "3\t913.578\t456.789\t1970-01-01T00:00:02.000000Z\n",
+                    "target"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertDecimalHighPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table high_precision(id int, large_value decimal(30,10), ts timestamp) timestamp(ts)");
+
+            execute("insert into high_precision values (1, 12345678901234567890.1234567890m, 0)");
+            execute("insert into high_precision values (2, 98765432109876543210.9876543210m, 1000000)");
+
+            drainWalQueue();
+
+            assertSql(
+                    "id\tlarge_value\tts\n" +
+                            "1\t12345678901234567890.1234567890\t1970-01-01T00:00:00.000000Z\n" +
+                            "2\t98765432109876543210.9876543210\t1970-01-01T00:00:01.000000Z\n",
+                    "high_precision"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertDecimalLiterals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table decimals(id int, price decimal(10,2), rate decimal(6,4), ts timestamp) timestamp(ts)");
+
+            execute("insert into decimals values (1, 99.99m, 0.1234m, 0)");
+            execute("insert into decimals values (2, 1234.56m, 1.2345m, 1000000)");
+            execute("insert into decimals values (3, 0.01m, 0.0001m, 2000000)");
+            execute("insert into decimals values (4, 9999.99m, 9.9999m, 3000000)");
+
+            drainWalQueue();
+
+            assertSql(
+                    "id\tprice\trate\tts\n" +
+                            "1\t99.99\t0.1234\t1970-01-01T00:00:00.000000Z\n" +
+                            "2\t1234.56\t1.2345\t1970-01-01T00:00:01.000000Z\n" +
+                            "3\t0.01\t0.0001\t1970-01-01T00:00:02.000000Z\n" +
+                            "4\t9999.99\t9.9999\t1970-01-01T00:00:03.000000Z\n",
+                    "decimals"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertDecimalMixedWithOtherTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table mixed_types(" +
+                    "id int, " +
+                    "price decimal(10,2), " +
+                    "name string, " +
+                    "active boolean, " +
+                    "quantity decimal(8,0), " +
+                    "rate double, " +
+                    "symbol symbol, " +
+                    "ts timestamp) timestamp(ts)");
+
+            execute("insert into mixed_types values (1, 99.99m, 'Item1', true, 100m, 1.5, 'ABC', 0)");
+            execute("insert into mixed_types values (2, 150.75m, 'Item2', false, 50m, 2.25, 'DEF', 1000000)");
+
+            drainWalQueue();
+
+            assertSql(
+                    "id\tprice\tname\tactive\tquantity\trate\tsymbol\tts\n" +
+                            "1\t99.99\tItem1\ttrue\t100\t1.5\tABC\t1970-01-01T00:00:00.000000Z\n" +
+                            "2\t150.75\tItem2\tfalse\t50\t2.25\tDEF\t1970-01-01T00:00:01.000000Z\n",
+                    "mixed_types"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertDecimalNullValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table decimal_nulls(id int, value decimal(12,4), ts timestamp) timestamp(ts)");
+
+            execute("insert into decimal_nulls values (1, 123.4567m, 0)");
+            execute("insert into decimal_nulls values (2, null, 1000000)");
+            execute("insert into decimal_nulls values (3, 999.9999m, 2000000)");
+
+            drainWalQueue();
+
+            assertSql(
+                    "id\tvalue\tts\n" +
+                            "1\t123.4567\t1970-01-01T00:00:00.000000Z\n" +
+                            "2\t\t1970-01-01T00:00:01.000000Z\n" +
+                            "3\t999.9999\t1970-01-01T00:00:02.000000Z\n",
+                    "decimal_nulls"
+            );
+        });
+    }
+
+    @Test
     public void testInsertEmptyStringSelectEmptyStringColumnIndexed() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (id int, val symbol index)");
