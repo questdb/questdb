@@ -51,6 +51,8 @@ public class HttpServerConfigurationBuilder {
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
     private boolean dumpTraffic;
     private FactoryProvider factoryProvider;
+    private int forceRecvFragmentationChunkSize;
+    private int forceSendFragmentationChunkSize;
     private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
     private String httpProtocolVersion = "HTTP/1.1 ";
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
@@ -158,6 +160,16 @@ public class HttpServerConfigurationBuilder {
                     }
 
                     @Override
+                    public int getForceRecvFragmentationChunkSize() {
+                        return forceRecvFragmentationChunkSize;
+                    }
+
+                    @Override
+                    public int getForceSendFragmentationChunkSize() {
+                        return forceSendFragmentationChunkSize;
+                    }
+
+                    @Override
                     public String getHttpVersion() {
                         return httpProtocolVersion;
                     }
@@ -181,6 +193,8 @@ public class HttpServerConfigurationBuilder {
                     public boolean getServerKeepAlive() {
                         return serverKeepAlive;
                     }
+
+
                 };
             }
 
@@ -283,6 +297,16 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withFactoryProvider(FactoryProvider factoryProvider) {
         this.factoryProvider = factoryProvider;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withForceRecvFragmentationChunkSize(int forceRecvFragmentationChunkSize) {
+        this.forceRecvFragmentationChunkSize = forceRecvFragmentationChunkSize;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withForceSendFragmentationChunkSize(int forceSendFragmentationChunkSize) {
+        this.forceSendFragmentationChunkSize = forceSendFragmentationChunkSize;
         return this;
     }
 

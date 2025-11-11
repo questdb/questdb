@@ -37,7 +37,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpConstants;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
@@ -365,106 +364,61 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             state.setQueryType(cc.getType());
             try {
                 switch (state.getQueryType()) {
-                    case CompiledQuery.SELECT:
-                        executeNewSelect(state, cc);
-                        break;
-                    case CompiledQuery.INSERT:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "INSERT");
-                        break;
-                    case CompiledQuery.TRUNCATE:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "TRUNCATE");
-                        break;
-                    case CompiledQuery.ALTER:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "ALTER TABLE");
-                        break;
-                    case CompiledQuery.SET:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "SET");
-                        break;
-                    case CompiledQuery.DROP:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "DROP");
-                        break;
-                    case CompiledQuery.PSEUDO_SELECT:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "COPY");
-                        break;
-                    case CompiledQuery.CREATE_TABLE:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE TABLE");
-                        break;
-                    case CompiledQuery.INSERT_AS_SELECT:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "INSERT AS SELECT");
-                        break;
-                    case CompiledQuery.COPY_REMOTE:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "COPY REMOTE");
-                        break;
-                    case CompiledQuery.RENAME_TABLE:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "RENAME TABLE");
-                        break;
-                    case CompiledQuery.REPAIR:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "REPAIR");
-                        break;
-                    case CompiledQuery.BACKUP_TABLE:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "BACKUP TABLE");
-                        break;
-                    case CompiledQuery.UPDATE:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "UPDATE");
-                        break;
-                    case CompiledQuery.VACUUM:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "VACUUM");
-                        break;
-                    case CompiledQuery.BEGIN:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "BEGIN");
-                        break;
-                    case CompiledQuery.COMMIT:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "COMMIT");
-                        break;
-
-                    case CompiledQuery.ROLLBACK:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "ROLLBACK");
-                        break;
-                    case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE AS SELECT");
-                        break;
-                    case CompiledQuery.CHECKPOINT_CREATE:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "CHECKPOINT CREATE");
-                        break;
-                    case CompiledQuery.CHECKPOINT_RELEASE:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "CHECKPOINT RELEASE");
-                        break;
-                    case CompiledQuery.DEALLOCATE:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "DEALLOCATE");
-                        break;
-                    case CompiledQuery.EXPLAIN:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "ECXPLAIN");
-                        break;
-                    case CompiledQuery.TABLE_RESUME:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "TABLE RESUME");
-                        break;
-                    case CompiledQuery.TABLE_SUSPEND:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "TABLE SUSPEND");
-                        break;
-                    case CompiledQuery.TABLE_SET_TYPE:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "TABLE SET TYPE");
-                        break;
-                    case CompiledQuery.CREATE_USER:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE USER");
-                        break;
-                    case CompiledQuery.ALTER_USER:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "ALTER USER");
-                        break;
-                    case CompiledQuery.CANCEL_QUERY:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "CANCEL QUERY");
-                        break;
-                    case CompiledQuery.EMPTY:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "EMPTY");
-                        break;
-                    case CompiledQuery.CREATE_MAT_VIEW:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE MAT VIEW");
-                        break;
-                    case CompiledQuery.REFRESH_MAT_VIEW:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "REFRESH MAT VIEW");
-                        break;
-                    default:
-                        sendConfirmation(state, configuration.getKeepAliveHeader(), "UNKNOWN");
-                        break;
+                    case CompiledQuery.SELECT -> executeNewSelect(state, cc);
+                    case CompiledQuery.INSERT -> sendConfirmation(state, configuration.getKeepAliveHeader(), "INSERT");
+                    case CompiledQuery.TRUNCATE ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "TRUNCATE");
+                    case CompiledQuery.ALTER ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "ALTER TABLE");
+                    case CompiledQuery.SET -> sendConfirmation(state, configuration.getKeepAliveHeader(), "SET");
+                    case CompiledQuery.DROP -> sendConfirmation(state, configuration.getKeepAliveHeader(), "DROP");
+                    case CompiledQuery.PSEUDO_SELECT ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "COPY");
+                    case CompiledQuery.CREATE_TABLE ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE TABLE");
+                    case CompiledQuery.INSERT_AS_SELECT ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "INSERT AS SELECT");
+                    case CompiledQuery.COPY_REMOTE ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "COPY REMOTE");
+                    case CompiledQuery.RENAME_TABLE ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "RENAME TABLE");
+                    case CompiledQuery.REPAIR -> sendConfirmation(state, configuration.getKeepAliveHeader(), "REPAIR");
+                    case CompiledQuery.BACKUP_TABLE ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "BACKUP TABLE");
+                    case CompiledQuery.UPDATE -> sendConfirmation(state, configuration.getKeepAliveHeader(), "UPDATE");
+                    case CompiledQuery.VACUUM -> sendConfirmation(state, configuration.getKeepAliveHeader(), "VACUUM");
+                    case CompiledQuery.BEGIN -> sendConfirmation(state, configuration.getKeepAliveHeader(), "BEGIN");
+                    case CompiledQuery.COMMIT -> sendConfirmation(state, configuration.getKeepAliveHeader(), "COMMIT");
+                    case CompiledQuery.ROLLBACK ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "ROLLBACK");
+                    case CompiledQuery.CREATE_TABLE_AS_SELECT ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE AS SELECT");
+                    case CompiledQuery.CHECKPOINT_CREATE ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "CHECKPOINT CREATE");
+                    case CompiledQuery.CHECKPOINT_RELEASE ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "CHECKPOINT RELEASE");
+                    case CompiledQuery.DEALLOCATE ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "DEALLOCATE");
+                    case CompiledQuery.EXPLAIN ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "ECXPLAIN");
+                    case CompiledQuery.TABLE_RESUME ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "TABLE RESUME");
+                    case CompiledQuery.TABLE_SUSPEND ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "TABLE SUSPEND");
+                    case CompiledQuery.TABLE_SET_TYPE ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "TABLE SET TYPE");
+                    case CompiledQuery.CREATE_USER ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE USER");
+                    case CompiledQuery.ALTER_USER ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "ALTER USER");
+                    case CompiledQuery.CANCEL_QUERY ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "CANCEL QUERY");
+                    case CompiledQuery.EMPTY -> sendConfirmation(state, configuration.getKeepAliveHeader(), "EMPTY");
+                    case CompiledQuery.CREATE_MAT_VIEW ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE MAT VIEW");
+                    case CompiledQuery.REFRESH_MAT_VIEW ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "REFRESH MAT VIEW");
+                    default -> sendConfirmation(state, configuration.getKeepAliveHeader(), "UNKNOWN");
                 }
             } catch (TableReferenceOutOfDateException e) {
                 throw SqlException.$(0, e.getFlyweightMessage());
@@ -585,14 +539,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             CharSequence keepAliveHeader,
             int statusCode
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        response.status(statusCode, HttpConstants.CONTENT_TYPE_JSON);
-        response.headers().setKeepAlive(keepAliveHeader);
-        context.getCookieHandler().setServiceAccountCookie(response.headers(), context.getSecurityContext());
-        final CharSequence sessionId = context.getSessionIdSink();
-        if (!sessionId.isEmpty()) {
-            context.getCookieHandler().setSessionCookie(response.headers(), sessionId);
-        }
-        response.sendHeader();
+        JsonQueryProcessor.header(response, context, keepAliveHeader, statusCode);
     }
 
     static void sendBadUtf8EncodingInRequestResponse(

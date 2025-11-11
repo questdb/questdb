@@ -40,6 +40,7 @@ import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.ExportQueryProcessor;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.SqlValidationProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
@@ -77,6 +78,8 @@ public class HttpQueryTestBuilder {
     private String copyInputRoot;
     private FactoryProvider factoryProvider;
     private FilesFacade filesFacade = new TestFilesFacadeImpl();
+    private int forceRecvFragmentationChunkSize;
+    private int forceSendFragmentationChunkSize;
     private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
@@ -112,6 +115,8 @@ public class HttpQueryTestBuilder {
                 .withStaticContentAuthRequired(httpStaticContentAuthType)
                 .withHealthCheckAuthRequired(httpHealthCheckAuthType)
                 .withNanosClock(nanosecondClock)
+                .withForceSendFragmentationChunkSize(forceSendFragmentationChunkSize)
+                .withForceRecvFragmentationChunkSize(forceRecvFragmentationChunkSize)
                 .build(configuration);
         final WorkerPool workerPool = new TestWorkerPool(workerCount, httpConfiguration.getMetrics());
 
@@ -241,6 +246,19 @@ public class HttpQueryTestBuilder {
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
                 public ObjList<String> getUrls() {
+                    return httpConfiguration.getContextPathSqlValidation();
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new SqlValidationProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, workerCount) {
+                    };
+                }
+            });
+
+            httpServer.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjList<String> getUrls() {
                     return httpConfiguration.getContextPathExport();
                 }
 
@@ -331,6 +349,16 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withFilesFacade(FilesFacade ff) {
         this.filesFacade = ff;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withForceRecvFragmentationChunkSize(int forceRecvFragmentationChunkSize) {
+        this.forceRecvFragmentationChunkSize = forceRecvFragmentationChunkSize;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withForceSendFragmentationChunkSize(int forceSendFragmentationChunkSize) {
+        this.forceSendFragmentationChunkSize = forceSendFragmentationChunkSize;
         return this;
     }
 

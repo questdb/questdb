@@ -94,6 +94,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         resumeActions.extendAndSet(QUERY_METADATA, this::onQueryMetadata);
         resumeActions.extendAndSet(QUERY_METADATA_SUFFIX, this::onQueryMetadataSuffix);
         resumeActions.extendAndSet(QUERY_SUFFIX, (response, columnCount1) -> querySuffixWithError(response, 0, null, 0));
+        resumeActions.extendAndSet(QUERY_DONE, (response, columnCount) -> response.done());
         this.keepAliveHeader = keepAliveHeader;
     }
 
