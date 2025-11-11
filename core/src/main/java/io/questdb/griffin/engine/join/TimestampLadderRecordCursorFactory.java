@@ -550,7 +550,8 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             if (nextSlaveRowNum == slaveRowCount) {
                 return;
             }
-            iter_setNextSlaveRowNum(iterAddr, nextSlaveRowNum + 1);
+            nextSlaveRowNum++;
+            iter_setNextSlaveRowNum(iterAddr, nextSlaveRowNum);
             long slaveRecordOffset = slaveRecordOffsets.getQuick(nextSlaveRowNum);
             Record slaveRec = slaveRecordArray.getRecordAt(slaveRecordOffset);
             long slaveOffset = slaveRec.getLong(slaveSequenceColumnIndex);
