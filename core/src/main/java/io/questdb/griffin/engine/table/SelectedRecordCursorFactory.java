@@ -340,6 +340,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long getRemainingRowsInInterval() {
+            return baseCursor.getRemainingRowsInInterval();
+        }
+
+        @Override
         public StaticSymbolTable getSymbolTable(int columnIndex) {
             return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
         }
