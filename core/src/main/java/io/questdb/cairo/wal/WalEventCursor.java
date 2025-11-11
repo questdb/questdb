@@ -593,15 +593,42 @@ public class WalEventCursor {
                         bindVariableService.setGeoHash(i, readLong(), type);
                         break;
                     case ColumnType.UUID:
-                        long lo = readLong();
-                        long hi = readLong();
-                        bindVariableService.setUuid(i, lo, hi);
+                        bindVariableService.setUuid(i, readLong(), readLong());
                         break;
                     case ColumnType.ARRAY:
                         // Multiple arrayView objects might be bind to variables, and in `ArrayBindVariable`,
                         // arrayView does not clone its meta information, so `arrayViewPool` is needed.
                         // Same as `setBin`
                         bindVariableService.setArray(i, readArray(arrayViewPool.next()));
+                        break;
+                    case ColumnType.DECIMAL8:
+                        byte decimal8 = readByte();
+                        long s = decimal8 < 0 ? -1 : 0;
+                        bindVariableService.setDecimal(i, s, s, s, decimal8, type);
+                        break;
+                    case ColumnType.DECIMAL16:
+                        short decimal16 = readShort();
+                        s = decimal16 < 0 ? -1 : 0;
+                        bindVariableService.setDecimal(i, s, s, s, decimal16, type);
+                        break;
+                    case ColumnType.DECIMAL32:
+                        int decimal32 = readInt();
+                        s = decimal32 < 0 ? -1 : 0;
+                        bindVariableService.setDecimal(i, s, s, s, decimal32, type);
+                        break;
+                    case ColumnType.DECIMAL64:
+                        long decimal64 = readLong();
+                        s = decimal64 < 0 ? -1 : 0;
+                        bindVariableService.setDecimal(i, s, s, s, decimal64, type);
+                        break;
+                    case ColumnType.DECIMAL128:
+                        long hi = readLong();
+                        long lo = readLong();
+                        s = hi < 0 ? -1 : 0;
+                        bindVariableService.setDecimal(i, s, s, hi, lo, type);
+                        break;
+                    case ColumnType.DECIMAL256:
+                        bindVariableService.setDecimal(i, readLong(), readLong(), readLong(), readLong(), type);
                         break;
                     default:
                         throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
@@ -672,6 +699,35 @@ public class WalEventCursor {
                         // arrayView does not clone its meta information, so `arrayViewPool` is needed.
                         // Same as `setBin`
                         bindVariableService.setArray(i, readArray(arrayViewPool.next()));
+                        break;
+                    case ColumnType.DECIMAL8:
+                        byte decimal8 = readByte();
+                        long s = decimal8 < 0 ? -1 : 0;
+                        bindVariableService.setDecimal(name, s, s, s, decimal8, type);
+                        break;
+                    case ColumnType.DECIMAL16:
+                        short decimal16 = readShort();
+                        s = decimal16 < 0 ? -1 : 0;
+                        bindVariableService.setDecimal(name, s, s, s, decimal16, type);
+                        break;
+                    case ColumnType.DECIMAL32:
+                        int decimal32 = readInt();
+                        s = decimal32 < 0 ? -1 : 0;
+                        bindVariableService.setDecimal(name, s, s, s, decimal32, type);
+                        break;
+                    case ColumnType.DECIMAL64:
+                        long decimal64 = readLong();
+                        s = decimal64 < 0 ? -1 : 0;
+                        bindVariableService.setDecimal(name, s, s, s, decimal64, type);
+                        break;
+                    case ColumnType.DECIMAL128:
+                        long hi = readLong();
+                        long lo = readLong();
+                        s = hi < 0 ? -1 : 0;
+                        bindVariableService.setDecimal(name, s, s, hi, lo, type);
+                        break;
+                    case ColumnType.DECIMAL256:
+                        bindVariableService.setDecimal(name, readLong(), readLong(), readLong(), readLong(), type);
                         break;
                     default:
                         throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));

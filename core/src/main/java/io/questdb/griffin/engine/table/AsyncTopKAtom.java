@@ -81,7 +81,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
             @NotNull @Transient RecordMetadata orderByMetadata,
             long lo,
             int workerCount
-    ) {
+    ) throws SqlException {
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
 
         try {

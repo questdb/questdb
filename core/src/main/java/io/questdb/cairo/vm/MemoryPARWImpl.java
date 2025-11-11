@@ -31,6 +31,8 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
@@ -196,6 +198,44 @@ public class MemoryPARWImpl implements MemoryARW {
             return Unsafe.getUnsafe().getChar(absolutePointer + offset);
         }
         return getChar0(offset);
+    }
+
+    @Override
+    public void getDecimal128(long offset, Decimal128 sink) {
+        sink.ofRaw(
+                getLong(offset),
+                getLong(offset + 8L)
+        );
+    }
+
+    @Override
+    public short getDecimal16(long offset) {
+        return getShort(offset);
+    }
+
+    @Override
+    public void getDecimal256(long offset, Decimal256 sink) {
+        sink.ofRaw(
+                getLong(offset),
+                getLong(offset + 8L),
+                getLong(offset + 16L),
+                getLong(offset + 24L)
+        );
+    }
+
+    @Override
+    public int getDecimal32(long offset) {
+        return getInt(offset);
+    }
+
+    @Override
+    public long getDecimal64(long offset) {
+        return getLong(offset);
+    }
+
+    @Override
+    public byte getDecimal8(long offset) {
+        return getByte(offset);
     }
 
     @Override
@@ -540,6 +580,52 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
+    public void putDecimal128(long offset, long high, long low) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 2 * Long.BYTES) {
+            Decimal128.put(high, low, absolutePointer + offset);
+        } else {
+            putLong(offset, high);
+            putLong(offset + Long.BYTES, low);
+        }
+    }
+
+    @Override
+    public void putDecimal128(long high, long low) {
+        if (pageHi - appendPointer > 2 * Long.BYTES - 1) {
+            Decimal128.put(high, low, appendPointer);
+            appendPointer += 2 * Long.BYTES;
+        } else {
+            putLong(high);
+            putLong(low);
+        }
+    }
+
+    @Override
+    public void putDecimal256(long offset, long hh, long hl, long lh, long ll) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Decimal256.BYTES) {
+            Decimal256.put(hh, hl, lh, ll, appendPointer + offset);
+        } else {
+            putLong(offset, hh);
+            putLong(offset + Long.BYTES, hl);
+            putLong(offset + Long.BYTES * 2, lh);
+            putLong(offset + Long.BYTES * 3, ll);
+        }
+    }
+
+    @Override
+    public void putDecimal256(long hh, long hl, long lh, long ll) {
+        if (pageHi - appendPointer > Decimal256.BYTES - 1) {
+            Decimal256.put(hh, hl, lh, ll, appendPointer);
+            appendPointer += Decimal256.BYTES;
+        } else {
+            putLong(hh);
+            putLong(hl);
+            putLong(lh);
+            putLong(ll);
+        }
+    }
+
+    @Override
     public void putDouble(long offset, double value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 8) {
             Unsafe.getUnsafe().putDouble(absolutePointer + offset, value);
@@ -658,11 +744,6 @@ public class MemoryPARWImpl implements MemoryARW {
         } else {
             putLong128Slow(lo, hi);
         }
-    }
-
-    private void putLong128Slow(long lo, long hi) {
-        putLong(lo);
-        putLong(hi);
     }
 
     @Override
@@ -1097,6 +1178,11 @@ public class MemoryPARWImpl implements MemoryARW {
 
     private void putByteRnd(long offset, byte value) {
         Unsafe.getUnsafe().putByte(jumpTo0(offset) + offsetInPage(offset), value);
+    }
+
+    private void putLong128Slow(long lo, long hi) {
+        putLong(lo);
+        putLong(hi);
     }
 
     private void putLong256Null() {

@@ -36,8 +36,10 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -55,32 +57,24 @@ import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.
 public class LineWalAppender {
     private static final Log LOG = LogFactory.getLog(LineWalAppender.class);
     private final boolean autoCreateNewColumns;
+    private final Decimal256 decimal256;
     private final Long256Impl long256;
     private final int maxFileNameLength;
-    private final DirectUtf8Sink sink;
     private final boolean stringToCharCastAllowed;
+    private final DirectUtf8Sink utf8Sink; // owned by LineHttpProcessorState or LineTcpMeasurementScheduler
     private byte timestampUnit;
 
-    public LineWalAppender(
-            boolean autoCreateNewColumns,
-            boolean stringToCharCastAllowed,
-            byte timestampUnit,
-            DirectUtf8Sink sink,
-            int maxFileNameLength
-    ) {
+    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, byte timestampUnit, DirectUtf8Sink utf8Sink, int maxFileNameLength) {
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
         this.maxFileNameLength = maxFileNameLength;
         this.timestampUnit = timestampUnit;
         this.long256 = new Long256Impl();
-        this.sink = sink;
+        this.decimal256 = new Decimal256();
+        this.utf8Sink = utf8Sink;
     }
 
-    public void appendToWal(
-            SecurityContext securityContext,
-            LineTcpParser parser,
-            TableUpdateDetails tud
-    ) throws CommitFailedException {
+    public void appendToWal(SecurityContext securityContext, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
         while (!tud.isDropped()) {
             try {
                 appendToWal0(securityContext, parser, tud);
@@ -96,11 +90,7 @@ public class LineWalAppender {
         this.timestampUnit = precision;
     }
 
-    private void appendToWal0(
-            SecurityContext securityContext,
-            LineTcpParser parser,
-            TableUpdateDetails tud
-    ) throws CommitFailedException, MetadataChangedException {
+    private void appendToWal0(SecurityContext securityContext, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException, MetadataChangedException {
 
         // pass 1: create all columns that do not exist
         final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(0); // IO thread id is irrelevant
@@ -214,6 +204,26 @@ public class LineWalAppender {
                     }
                     case LineTcpParser.ENTITY_TYPE_INTEGER: {
                         switch (ColumnType.tagOf(colType)) {
+                            case ColumnType.DECIMAL8:
+                            case ColumnType.DECIMAL16:
+                            case ColumnType.DECIMAL32:
+                            case ColumnType.DECIMAL64:
+                            case ColumnType.DECIMAL128:
+                            case ColumnType.DECIMAL256:
+                                final int scale = ColumnType.getDecimalScale(colType);
+                                decimal256.ofLong(ent.getLongValue(), 0);
+                                if (scale != 0) {
+                                    try {
+                                        decimal256.rescale(scale);
+                                    } catch (NumericException ignored) {
+                                        throw boundsError(ent.getLongValue(), colType, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
+                                    }
+                                }
+                                if (!decimal256.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
+                                    throw boundsError(ent.getLongValue(), colType, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
+                                }
+                                DecimalUtil.storeNonNull(decimal256, r, columnIndex, colType);
+                                break;
                             case ColumnType.LONG:
                                 r.putLong(columnIndex, ent.getLongValue());
                                 break;
@@ -224,8 +234,7 @@ public class LineWalAppender {
                                 } else if (entityValue == Numbers.LONG_NULL) {
                                     r.putInt(columnIndex, Numbers.INT_NULL);
                                 } else {
-                                    throw boundsError(entityValue, ColumnType.INT, tud.getTableNameUtf16(),
-                                            writer.getMetadata().getColumnName(columnIndex));
+                                    throw boundsError(entityValue, ColumnType.INT, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                                 }
                                 break;
                             }
@@ -236,8 +245,7 @@ public class LineWalAppender {
                                 } else if (entityValue == Numbers.LONG_NULL) {
                                     r.putShort(columnIndex, (short) 0);
                                 } else {
-                                    throw boundsError(entityValue, ColumnType.SHORT, tud.getTableNameUtf16(),
-                                            writer.getMetadata().getColumnName(columnIndex));
+                                    throw boundsError(entityValue, ColumnType.SHORT, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                                 }
                                 break;
                             }
@@ -248,8 +256,7 @@ public class LineWalAppender {
                                 } else if (entityValue == Numbers.LONG_NULL) {
                                     r.putByte(columnIndex, (byte) 0);
                                 } else {
-                                    throw boundsError(entityValue, ColumnType.BYTE, tud.getTableNameUtf16(),
-                                            writer.getMetadata().getColumnName(columnIndex));
+                                    throw boundsError(entityValue, ColumnType.BYTE, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                                 }
                                 break;
                             }
@@ -267,9 +274,9 @@ public class LineWalAppender {
                                 break;
                             case ColumnType.SYMBOL:
                                 if (ent.isBinaryFormat()) {
-                                    sink.clear();
-                                    Numbers.append(sink, ent.getLongValue());
-                                    r.putSymUtf8(columnIndex, sink);
+                                    utf8Sink.clear();
+                                    Numbers.append(utf8Sink, ent.getLongValue());
+                                    r.putSymUtf8(columnIndex, utf8Sink);
                                 } else {
                                     r.putSymUtf8(columnIndex, ent.getValue());
                                 }
@@ -280,18 +287,50 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_FLOAT: {
-                        switch (colType) {
+                        switch (ColumnType.tagOf(colType)) {
                             case ColumnType.DOUBLE:
                                 r.putDouble(columnIndex, ent.getFloatValue());
                                 break;
                             case ColumnType.FLOAT:
                                 r.putFloat(columnIndex, (float) ent.getFloatValue());
                                 break;
+                            case ColumnType.DECIMAL8:
+                            case ColumnType.DECIMAL16:
+                            case ColumnType.DECIMAL32:
+                            case ColumnType.DECIMAL64:
+                            case ColumnType.DECIMAL128:
+                            case ColumnType.DECIMAL256:
+                                final int precision = ColumnType.getDecimalPrecision(colType);
+                                final int scale = ColumnType.getDecimalScale(colType);
+                                if (ent.isBinaryFormat()) {
+                                    double d = ent.getFloatValue();
+                                    if (Numbers.isNull(d)) {
+                                        DecimalUtil.storeNull(r, columnIndex, colType);
+                                        break;
+                                    } else {
+                                        utf8Sink.clear();
+                                        Numbers.append(utf8Sink, ent.getFloatValue());
+                                        try {
+                                            decimal256.ofString(utf8Sink.asAsciiCharSequence(), precision, scale);
+                                        } catch (NumericException ignored) {
+                                            throw precisionLossError(tud.getTableNameUtf16(), ent.getName(), utf8Sink, colType);
+                                        }
+                                        DecimalUtil.storeNonNull(decimal256, r, columnIndex, colType);
+                                    }
+                                } else {
+                                    try {
+                                        decimal256.ofString(ent.getValue().asAsciiCharSequence(), precision, scale);
+                                    } catch (NumericException ignored) {
+                                        throw precisionLossError(tud.getTableNameUtf16(), ent.getName(), ent.getValue(), colType);
+                                    }
+                                    DecimalUtil.store(decimal256, r, columnIndex, colType);
+                                }
+                                break;
                             case ColumnType.SYMBOL:
                                 if (ent.isBinaryFormat()) {
-                                    sink.clear();
-                                    Numbers.append(sink, ent.getFloatValue());
-                                    r.putSymUtf8(columnIndex, sink);
+                                    utf8Sink.clear();
+                                    Numbers.append(utf8Sink, ent.getFloatValue());
+                                    r.putSymUtf8(columnIndex, utf8Sink);
                                 } else {
                                     r.putSymUtf8(columnIndex, ent.getValue());
                                 }
@@ -302,10 +341,9 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_STRING: {
-                        final int geoHashBits = ColumnType.getGeoHashBits(colType);
                         final DirectUtf8Sequence entityValue = ent.getValue();
-                        if (geoHashBits == 0) { // not geohash
-                            switch (colType) {
+                        if (!ColumnType.isGeoHash(colType)) { // not geohash
+                            switch (ColumnType.tagOf(colType)) {
                                 case ColumnType.IPv4:
                                     try {
                                         int value = Numbers.parseIPv4Nl(entityValue);
@@ -355,6 +393,21 @@ public class LineWalAppender {
                                         break;
                                     }
                                     throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
+                                case ColumnType.DECIMAL8:
+                                case ColumnType.DECIMAL16:
+                                case ColumnType.DECIMAL32:
+                                case ColumnType.DECIMAL64:
+                                case ColumnType.DECIMAL128:
+                                case ColumnType.DECIMAL256:
+                                    final int precision = ColumnType.getDecimalPrecision(colType);
+                                    final int scale = ColumnType.getDecimalScale(colType);
+                                    try {
+                                        decimal256.ofString(entityValue.asAsciiCharSequence(), precision, scale);
+                                    } catch (NumericException ignored) {
+                                        throw valueError(tud.getTableNameUtf16(), colType, entityValue, ent.getName());
+                                    }
+                                    DecimalUtil.store(decimal256, r, columnIndex, colType);
+                                    break;
                                 default:
                                     throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                             }
@@ -362,7 +415,7 @@ public class LineWalAppender {
                             long geoHash;
                             try {
                                 DirectUtf8Sequence value = ent.getValue();
-                                geoHash = GeoHashes.fromAsciiTruncatingNl(value.lo(), value.hi(), geoHashBits);
+                                geoHash = GeoHashes.fromAsciiTruncatingNl(value.lo(), value.hi(), ColumnType.getGeoHashBits(colType));
                             } catch (NumericException e) {
                                 geoHash = GeoHashes.NULL;
                             }
@@ -408,9 +461,9 @@ public class LineWalAppender {
                                 break;
                             case ColumnType.SYMBOL:
                                 if (ent.isBinaryFormat()) {
-                                    sink.clear();
-                                    sink.put(ent.getBooleanValue() ? 't' : 'f');
-                                    r.putSymUtf8(columnIndex, sink);
+                                    utf8Sink.clear();
+                                    utf8Sink.put(ent.getBooleanValue() ? 't' : 'f');
+                                    r.putSymUtf8(columnIndex, utf8Sink);
                                 } else {
                                     r.putSymUtf8(columnIndex, ent.getValue());
                                 }
@@ -433,9 +486,9 @@ public class LineWalAppender {
                                 break;
                             case ColumnType.SYMBOL:
                                 if (ent.isBinaryFormat()) {
-                                    sink.clear();
-                                    Numbers.append(sink, ent.getLongValue());
-                                    r.putSymUtf8(columnIndex, sink);
+                                    utf8Sink.clear();
+                                    Numbers.append(utf8Sink, ent.getLongValue());
+                                    r.putSymUtf8(columnIndex, utf8Sink);
                                 } else {
                                     r.putSymUtf8(columnIndex, ent.getValue());
                                 }
@@ -456,6 +509,25 @@ public class LineWalAppender {
                             throw castError(tud.getTableNameUtf16(), "ARRAY", colType, ent.getName());
                         }
                         break;
+                    case LineTcpParser.ENTITY_TYPE_DECIMAL:
+                        Decimal256 decimal = ent.getDecimalValue();
+                        if (decimal.isNull()) {
+                            DecimalUtil.storeNull(r, columnIndex, colType);
+                        } else {
+                            final int scale = ColumnType.getDecimalScale(colType);
+                            if (decimal.getScale() != scale) {
+                                try {
+                                    decimal.rescale(scale);
+                                } catch (NumericException ignored) {
+                                    throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(), ent.getName().asAsciiCharSequence());
+                                }
+                            }
+                            if (!decimal.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
+                                throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(), ent.getName().asAsciiCharSequence());
+                            }
+                            DecimalUtil.storeNonNull(decimal, r, columnIndex, colType);
+                        }
+                        break;
                     default:
                         break; // unsupported types are ignored
                 }
@@ -465,15 +537,13 @@ public class LineWalAppender {
         } catch (CommitFailedException commitFailedException) {
             throw commitFailedException;
         } catch (CairoException th) {
-            LOG.error().$("could not write line protocol measurement [tableName=")
-                    .$(tud.getTableNameUtf16()).$(", message=").$safe(th.getFlyweightMessage()).$(", trace: ").$((Throwable) th).I$();
+            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$safe(th.getFlyweightMessage()).$(", trace: ").$((Throwable) th).I$();
             if (r != null) {
                 r.cancel();
             }
             throw th;
         } catch (Throwable th) {
-            LOG.error().$("could not write line protocol measurement [tableName=")
-                    .$(tud.getTableNameUtf16()).$(", message=").$safe(th.getMessage()).$(", trace: ").$(th).I$();
+            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$safe(th.getMessage()).$(", trace: ").$(th).I$();
             if (r != null) {
                 r.cancel();
             }

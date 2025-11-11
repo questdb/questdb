@@ -44,6 +44,7 @@ import org.jetbrains.annotations.NotNull;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
+@SuppressWarnings("resource")
 public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBufferAppender {
     public LineTcpSenderV2(LineChannel channel, int bufferCapacity, int maxNameLength) {
         super(channel, bufferCapacity, maxNameLength);
@@ -271,7 +272,7 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
     }
 
     private void putTimestamp(Instant timestamp) {
-        // always send as nanos as long as it fits in a long 
+        // always send as nanos as long as it fits in a long
         try {
             put(NanosTimestampDriver.INSTANCE.from(timestamp)).putAsciiInternal('n');
         } catch (ArithmeticException e) {

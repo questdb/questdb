@@ -81,6 +81,15 @@ public class BitSet implements Mutable {
         words[wordIndex] |= 1L << bitIndex;
     }
 
+    /**
+     * Sets the given bit to 0.
+     */
+    public void unset(int bitIndex) {
+        int wordIndex = wordIndex(bitIndex);
+        checkCapacity(wordIndex + 1);
+        words[wordIndex] &= ~(1L << bitIndex);
+    }
+
     private static int wordIndex(int bitIndex) {
         return bitIndex >> 6;
     }

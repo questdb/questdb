@@ -32,6 +32,7 @@ import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.arr.BorrowedFlatArrayView;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long128;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -146,6 +147,25 @@ public class LineTcpEventBuffer {
         Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_DATE);
         Unsafe.getUnsafe().putLong(address + Byte.BYTES, value);
         return address + Long.BYTES + Byte.BYTES;
+    }
+
+    public long addDecimal(long address, Decimal256 decimal256, int columnType) {
+        // Layout:
+        // +-------------+--------+----------+
+        // | column type | scale  |  values  |
+        // +-------------+--------+----------+
+        // |   4 bytes   | 1 byte | 32 bytes |
+        // +-------------+--------+----------+
+
+        checkCapacity(address, Byte.BYTES * 2 + Integer.BYTES + Decimal256.BYTES);
+        Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_DECIMAL);
+        Unsafe.getUnsafe().putInt(address + Byte.BYTES, columnType);
+        Unsafe.getUnsafe().putByte(address + Integer.BYTES + Byte.BYTES, (byte) decimal256.getScale());
+        Unsafe.getUnsafe().putLong(address + Integer.BYTES + Byte.BYTES * 2, decimal256.getHh());
+        Unsafe.getUnsafe().putLong(address + Integer.BYTES + Byte.BYTES * 2 + Long.BYTES, decimal256.getHl());
+        Unsafe.getUnsafe().putLong(address + Integer.BYTES + Byte.BYTES * 2 + Long.BYTES * 2, decimal256.getLh());
+        Unsafe.getUnsafe().putLong(address + Integer.BYTES + Byte.BYTES * 2 + Long.BYTES * 3, decimal256.getLl());
+        return address + Byte.BYTES * 2 + Integer.BYTES + Decimal256.BYTES;
     }
 
     public void addDesignatedTimestamp(long address, long timestamp) {
@@ -319,43 +339,26 @@ public class LineTcpEventBuffer {
 
     public long columnValueLength(byte entityType, long offset) {
         CharSequence cs;
-        switch (entityType) {
-            case LineTcpParser.ENTITY_TYPE_TAG:
-            case LineTcpParser.ENTITY_TYPE_STRING:
-            case LineTcpParser.ENTITY_TYPE_LONG256:
+        return switch (entityType) {
+            case LineTcpParser.ENTITY_TYPE_TAG, LineTcpParser.ENTITY_TYPE_STRING, LineTcpParser.ENTITY_TYPE_LONG256 -> {
                 cs = readUtf16Chars(offset);
-                return cs.length() * 2L + Integer.BYTES;
-            case LineTcpParser.ENTITY_TYPE_BYTE:
-            case LineTcpParser.ENTITY_TYPE_GEOBYTE:
-            case LineTcpParser.ENTITY_TYPE_BOOLEAN:
-                return Byte.BYTES;
-            case LineTcpParser.ENTITY_TYPE_SHORT:
-            case LineTcpParser.ENTITY_TYPE_GEOSHORT:
-                return Short.BYTES;
-            case LineTcpParser.ENTITY_TYPE_CHAR:
-                return Character.BYTES;
-            case LineTcpParser.ENTITY_TYPE_CACHED_TAG:
-            case LineTcpParser.ENTITY_TYPE_INTEGER:
-            case LineTcpParser.ENTITY_TYPE_GEOINT:
-                return Integer.BYTES;
-            case LineTcpParser.ENTITY_TYPE_LONG:
-            case LineTcpParser.ENTITY_TYPE_GEOLONG:
-            case LineTcpParser.ENTITY_TYPE_DATE:
-            case LineTcpParser.ENTITY_TYPE_TIMESTAMP:
-                return Long.BYTES;
-            case LineTcpParser.ENTITY_TYPE_FLOAT:
-                return Float.BYTES;
-            case LineTcpParser.ENTITY_TYPE_DOUBLE:
-                return Double.BYTES;
-            case LineTcpParser.ENTITY_TYPE_UUID:
-                return Long128.BYTES;
-            case LineTcpParser.ENTITY_TYPE_ARRAY:
-                return readInt(offset);
-            case ENTITY_TYPE_NULL:
-                return 0;
-            default:
-                throw new UnsupportedOperationException("entityType " + entityType + " is not implemented!");
-        }
+                yield cs.length() * 2L + Integer.BYTES;
+            }
+            case LineTcpParser.ENTITY_TYPE_BYTE, LineTcpParser.ENTITY_TYPE_GEOBYTE, LineTcpParser.ENTITY_TYPE_BOOLEAN ->
+                    Byte.BYTES;
+            case LineTcpParser.ENTITY_TYPE_SHORT, LineTcpParser.ENTITY_TYPE_GEOSHORT -> Short.BYTES;
+            case LineTcpParser.ENTITY_TYPE_CHAR -> Character.BYTES;
+            case LineTcpParser.ENTITY_TYPE_CACHED_TAG, LineTcpParser.ENTITY_TYPE_INTEGER,
+                 LineTcpParser.ENTITY_TYPE_GEOINT -> Integer.BYTES;
+            case LineTcpParser.ENTITY_TYPE_LONG, LineTcpParser.ENTITY_TYPE_GEOLONG, LineTcpParser.ENTITY_TYPE_DATE,
+                 LineTcpParser.ENTITY_TYPE_TIMESTAMP -> Long.BYTES;
+            case LineTcpParser.ENTITY_TYPE_FLOAT -> Float.BYTES;
+            case LineTcpParser.ENTITY_TYPE_DOUBLE -> Double.BYTES;
+            case LineTcpParser.ENTITY_TYPE_UUID -> Long128.BYTES;
+            case LineTcpParser.ENTITY_TYPE_ARRAY -> readInt(offset);
+            case ENTITY_TYPE_NULL -> 0;
+            default -> throw new UnsupportedOperationException("entityType " + entityType + " is not implemented!");
+        };
     }
 
     public long getAddress() {
@@ -391,6 +394,18 @@ public class LineTcpEventBuffer {
 
     public char readChar(long address) {
         return Unsafe.getUnsafe().getChar(address);
+    }
+
+    public int readDecimal(long address, Decimal256 result) {
+        int scale = Unsafe.getUnsafe().getByte(address + Integer.BYTES);
+        result.of(
+                Unsafe.getUnsafe().getLong(address + Integer.BYTES + Byte.BYTES),
+                Unsafe.getUnsafe().getLong(address + Integer.BYTES + Byte.BYTES + Long.BYTES),
+                Unsafe.getUnsafe().getLong(address + Integer.BYTES + Byte.BYTES + Long.BYTES * 2),
+                Unsafe.getUnsafe().getLong(address + Integer.BYTES + Byte.BYTES + Long.BYTES * 3),
+                scale
+        );
+        return Unsafe.getUnsafe().getInt(address);
     }
 
     public double readDouble(long address) {

@@ -47,8 +47,8 @@ import java.util.Collections;
 import java.util.List;
 
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
-    private static final boolean RUN_ALL_PERMUTATIONS = false;
-    private static final int RUN_N_PERMUTATIONS = 50;
+    private static final boolean RUN_ALL_PERMUTATIONS = true;
+    private static final int RUN_N_PERMUTATIONS = 100;
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
 
@@ -153,22 +153,17 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         String join;
         String onSuffix = "";
         switch (joinType) {
-            case ASOF:
+            case ASOF -> {
                 join = " ASOF";
                 onSuffix = (projectionType == ProjectionType.RENAME_COLUMN) ? " on t1.s = t2.s2 " : " on s ";
-                break;
-            case ASOF_NONKEYED:
-                join = " ASOF";
-                break;
-            case LT_NONKEYED:
-                join = " LT";
-                break;
-            case LT:
+            }
+            case ASOF_NONKEYED -> join = " ASOF";
+            case LT_NONKEYED -> join = " LT";
+            case LT -> {
                 join = " LT";
                 onSuffix = (projectionType == ProjectionType.RENAME_COLUMN) ? " on t1.s = t2.s2 " : " on s ";
-                break;
-            default:
-                throw new IllegalArgumentException("Unexpected join type: " + joinType);
+            }
+            default -> throw new IllegalArgumentException("Unexpected join type: " + joinType);
         }
 
         final long toleranceSeconds;
@@ -255,10 +250,11 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         String hint = switch (hintType) {
-            case LINEAR -> " /*+ asof_linear(t1 t2) */ ";
             case MEMOIZED -> " /*+ asof_memoized(t1 t2) */ ";
             case MEMOIZED_DRIVEBY -> " /*+ asof_memoized_driveby(t1 t2) */ ";
             case INDEX -> " /*+ asof_index(t1 t2) */ ";
+            case DENSE -> " /*+ asof_dense(t1 t2) */ ";
+            case LINEAR -> " /*+ asof_linear(t1 t2) */ ";
             default -> "";
         };
         String query = "select " + hint + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
@@ -284,19 +280,21 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         sink.clear();
         printSql("EXPLAIN " + query, false);
         if (hintType == HintType.LINEAR) {
-            TestUtils.assertNotContains(sink, "AsOf Join Indexed Scan");
-            TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
-            TestUtils.assertNotContains(sink, "AsOf Join Memoized Scan");
-            TestUtils.assertNotContains(sink, "Lt Join Fast Scan");
+            TestUtils.assertNotContains(sink, "AsOf Join Indexed");
+            TestUtils.assertNotContains(sink, "AsOf Join Memoized");
+            TestUtils.assertNotContains(sink, "AsOf Join Dense");
+            TestUtils.assertNotContains(sink, "AsOf Join Fast");
+            TestUtils.assertNotContains(sink, "Lt Join Fast");
         } else if (joinType == JoinType.ASOF_NONKEYED && numIntervalsOpt == NumIntervals.MANY) {
-            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertContains(sink, "AsOf Join Fast");
         } else if (joinType == JoinType.ASOF && numIntervalsOpt != NumIntervals.MANY && !exerciseFilters) {
             String algo = switch (hintType) {
                 case INDEX -> "Indexed";
                 case MEMOIZED, MEMOIZED_DRIVEBY -> "Memoized";
+                case DENSE -> "Dense Single Symbol";
                 default -> "Fast";
             };
-            TestUtils.assertContains(sink, "AsOf Join " + algo + " Scan");
+            TestUtils.assertContains(sink, "AsOf Join " + algo);
         }
 
         final StringSink actualSink = new StringSink();
@@ -344,7 +342,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             long ts = leftTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += leftTimestampDriver.fromHours((int) (rnd.nextLong() % 48));
             for (int i = 0; i < table1Size; i++) {
-                if (rnd.nextInt(100) >= tsDuplicatePercentage) {
+                if (rnd.nextInt(100) < tsDuplicatePercentage) {
                     ts += leftTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
@@ -410,6 +408,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         MEMOIZED,
         MEMOIZED_DRIVEBY,
         INDEX,
+        DENSE,
         LINEAR,
     }
 
