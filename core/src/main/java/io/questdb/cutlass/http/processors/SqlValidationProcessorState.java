@@ -348,24 +348,6 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         onQueryPrefix(response, columnCount);
     }
 
-    private void queryDone(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        response.done();
-    }
-
-    static void prepareExceptionJson(
-            HttpChunkedResponse response,
-            int position,
-            CharSequence message,
-            CharSequence query
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        response.putAscii('{')
-                .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query != null ? query : "").putQuote().putAscii(',')
-                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(message != null ? message : "").putQuote().putAscii(',')
-                .putAsciiQuoted("position").putAscii(':').put(position)
-                .putAscii('}');
-        response.sendChunk(true);
-    }
-
     boolean of(RecordCursorFactory factory)
             throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         try (factory) {

@@ -567,7 +567,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             int code
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         header(response, context, keepAliveHeader, code);
-        SqlValidationProcessorState.prepareExceptionJson(response, position, message, query);
+        JsonQueryProcessorState.prepareExceptionJson(response, position, message, query);
     }
 
     @FunctionalInterface
