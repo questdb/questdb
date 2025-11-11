@@ -64,6 +64,10 @@ public class Rnd {
         return nextLong() >>> (64 - 1) != 0;
     }
 
+    public byte nextByte(byte boundary) {
+        return (byte) (nextByte() % boundary);
+    }
+
     public byte nextByte() {
         return (byte) nextLong();
     }
@@ -178,7 +182,11 @@ public class Rnd {
                 sink.of(0, 0, nextLong(), nextLong(), scale);
                 break;
             default: // Ultra large 256-bit values (using all four longs)
-                sink.of(nextLong(), nextLong(), nextLong(), nextLong(), scale);
+                long hh = nextLong();
+                while (hh >= Decimal256.MAX_VALUE.getHh() || hh <= Decimal256.MIN_VALUE.getHh()) {
+                    hh = nextLong();
+                }
+                sink.of(hh, nextLong(), nextLong(), nextLong(), scale);
                 break;
         }
     }
@@ -337,6 +345,10 @@ public class Rnd {
     public long nextPositiveLong() {
         long l = nextLong();
         return l > 0 ? l : (l == Long.MIN_VALUE ? Long.MAX_VALUE : -l);
+    }
+
+    public short nextShort(short boundary) {
+        return (short) (nextShort() % boundary);
     }
 
     public short nextShort() {

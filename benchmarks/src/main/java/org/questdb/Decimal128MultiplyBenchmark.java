@@ -153,7 +153,7 @@ public class Decimal128MultiplyBenchmark {
             case "MIXED_128_64":
                 // Multiplication of 128-bit by 64-bit value: large 128-bit * normal 64-bit
                 decimal128Factor1 = new Decimal128();
-                decimal128Factor1.set(123456789L, 987654321098765432L, 6);
+                decimal128Factor1.of(123456789L, 987654321098765432L, 6);
                 decimal128Factor2 = Decimal128.fromDouble(7.89, 2);
                 bigDecimalFactor1 = new BigDecimal("123456789987654321098.765432");
                 bigDecimalFactor2 = new BigDecimal("7.89");

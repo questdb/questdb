@@ -29,6 +29,8 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Mutable;
 
 public interface GroupByFunction extends Function, Mutable {
@@ -154,6 +156,16 @@ public interface GroupByFunction extends Function, Mutable {
 
     // used when doing interpolation
     default void setByte(MapValue mapValue, byte value) {
+        throw new UnsupportedOperationException();
+    }
+
+    // to be used when doing interpolation
+    default void setDecimal128(MapValue mapValue, Decimal128 value) {
+        throw new UnsupportedOperationException();
+    }
+
+    // to be used when doing interpolation
+    default void setDecimal256(MapValue mapValue, Decimal256 value) {
         throw new UnsupportedOperationException();
     }
 

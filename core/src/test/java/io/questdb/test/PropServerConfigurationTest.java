@@ -730,9 +730,9 @@ public class PropServerConfigurationTest {
         properties.setProperty("http.net.rcv.buf.size", "10000");
         PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
-        Assert.assertFalse(result.isError);
-        Assert.assertNotEquals(-1, result.message.indexOf("Deprecated settings"));
-        Assert.assertNotEquals(-1, result.message.indexOf(
+        Assert.assertFalse(result.isError());
+        Assert.assertNotEquals(-1, result.message().indexOf("Deprecated settings"));
+        Assert.assertNotEquals(-1, result.message().indexOf(
                 "Replaced by `http.min.net.connection.rcvbuf` and `http.net.connection.rcvbuf`"));
     }
 
@@ -1124,9 +1124,9 @@ public class PropServerConfigurationTest {
         properties.setProperty("invalid.key", "value");
         PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
-        Assert.assertTrue(result.isError);
-        Assert.assertNotEquals(-1, result.message.indexOf("Invalid settings"));
-        Assert.assertNotEquals(-1, result.message.indexOf("* invalid.key"));
+        Assert.assertTrue(result.isError());
+        Assert.assertNotEquals(-1, result.message().indexOf("Invalid settings"));
+        Assert.assertNotEquals(-1, result.message().indexOf("* invalid.key"));
     }
 
     @Test
@@ -1270,9 +1270,9 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.tcp.commit.timeout", "10000");
         PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
-        Assert.assertTrue(result.isError);
-        Assert.assertNotEquals(-1, result.message.indexOf("Obsolete settings"));
-        Assert.assertNotEquals(-1, result.message.indexOf(
+        Assert.assertTrue(result.isError());
+        Assert.assertNotEquals(-1, result.message().indexOf("Obsolete settings"));
+        Assert.assertNotEquals(-1, result.message().indexOf(
                 "Replaced by `line.tcp.commit.interval.default` and `line.tcp.commit.interval.fraction`"));
     }
 
