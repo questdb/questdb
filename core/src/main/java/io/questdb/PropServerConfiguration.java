@@ -223,7 +223,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
-    private final ObjList<String> httpContextPathExec = new ObjList<>();
+    private final ObjList<String> httpContextPathSqlExecute = new ObjList<>();
+    private final ObjList<String> httpContextPathSqlValidate = new ObjList<>();
     private final ObjList<String> httpContextPathExport = new ObjList<>();
     private final ObjList<String> httpContextPathILP = new ObjList<>();
     private final ObjList<String> httpContextPathILPPing = new ObjList<>();
@@ -1045,7 +1046,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXPORT, this.httpContextPathExport, httpContextWebConsole + "/exp");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_SETTINGS, this.httpContextPathSettings, httpContextWebConsole + "/settings");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_TABLE_STATUS, this.httpContextPathTableStatus, httpContextWebConsole + "/chk");
-            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, httpContextWebConsole + "/exec");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathSqlExecute, httpContextWebConsole + "/exec", httpContextWebConsole + "/api/v1/sql/execute");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathSqlValidate, httpContextWebConsole + "/api/v1/sql/validate");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
 
             // If any REST services that the Web Console depends on are overridden,
@@ -1068,7 +1070,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             httpContextPathExport.add(httpContextWebConsole + "/exp");
             httpContextPathSettings.add(httpContextWebConsole + "/settings");
             httpContextPathTableStatus.add(httpContextWebConsole + "/chk");
-            httpContextPathExec.add(httpContextWebConsole + "/exec");
+            httpContextPathSqlExecute.add(httpContextWebConsole + "/exec");
+            httpContextPathSqlExecute.add(httpContextWebConsole + "/api/v1/sql/execute");
+            httpContextPathSqlValidate.add(httpContextWebConsole + "/api/v1/sql/validate");
             httpContextPathWarnings.add(httpContextWebConsole + "/warnings");
 
             // read the redirect map
@@ -4642,7 +4646,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public ObjList<String> getContextPathExec() {
-            return httpContextPathExec;
+            return httpContextPathSqlExecute;
+        }
+
+        @Override
+        public ObjList<String> getContextPathSqlValidation() {
+            return httpContextPathSqlValidate;
         }
 
         @Override

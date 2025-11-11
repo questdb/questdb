@@ -84,8 +84,7 @@ public class HttpServer implements Closeable {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
 
-        if (configuration instanceof HttpFullFatServerConfiguration) {
-            final HttpFullFatServerConfiguration serverConfiguration = (HttpFullFatServerConfiguration) configuration;
+        if (configuration instanceof HttpFullFatServerConfiguration serverConfiguration) {
             if (serverConfiguration.isQueryCacheEnabled()) {
                 this.selectCache = new ConcurrentAssociativeCache<>(serverConfiguration.getConcurrentCacheConfiguration());
             } else {

@@ -40,7 +40,10 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
     }
 
     default ObjList<String> getContextPathExec() {
-        return new ObjList<>("/exec");
+        return new ObjList<>() {{
+            add("/exec");
+            add("/api/v1/sql/execute");
+        }};
     }
 
     default ObjList<String> getContextPathExport() {
@@ -60,7 +63,9 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
     }
 
     default ObjList<String> getContextPathSqlValidation() {
-        return new ObjList<>("/validate");
+        return new ObjList<>() {{
+            add("/api/v1/sql/validate");
+        }};
     }
 
     default ObjList<String> getContextPathSettings() {
