@@ -166,6 +166,8 @@ public interface FilesFacade {
 
     boolean rmdirTable(Path path);
 
+    boolean rmdirWal(Path path);
+
     int softLink(LPSZ src, LPSZ softLink);
 
     int sync();

@@ -486,6 +486,14 @@ public class FailureFileFacade implements FilesFacade {
         return ff.rmdirTable(path);
     }
 
+    @Override
+    public boolean rmdirWal(Path path) {
+        if (checkForFailure()) {
+            return false;
+        }
+        return ff.rmdirWal(path);
+    }
+
     public void setToFailAfter(int ioFailureCallCount) {
         int osCalls;
 
@@ -545,19 +553,19 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
-    public boolean unlinkOrRemoveTable(Path path, Log LOG) {
-        if (checkForFailure()) {
-            return false;
-        }
-        return ff.unlinkOrRemoveTable(path, LOG);
-    }
-
-    @Override
     public boolean unlinkOrRemove(Path path, int checkedType, Log LOG) {
         if (checkForFailure()) {
             return false;
         }
         return ff.unlinkOrRemove(path, checkedType, LOG);
+    }
+
+    @Override
+    public boolean unlinkOrRemoveTable(Path path, Log LOG) {
+        if (checkForFailure()) {
+            return false;
+        }
+        return ff.unlinkOrRemoveTable(path, LOG);
     }
 
     @Override

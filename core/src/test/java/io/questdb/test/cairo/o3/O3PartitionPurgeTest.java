@@ -611,13 +611,13 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             AtomicInteger deleteAttempts = new AtomicInteger();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public boolean rmdir(Path name, boolean lazy) {
+                public boolean unlinkOrRemove(Path name, Log LOG) {
                     if (Utf8s.endsWithAscii(name, "1970-01-10")) {
                         if (deleteAttempts.incrementAndGet() < 3) {
                             return false;
                         }
                     }
-                    return super.rmdir(name, lazy);
+                    return super.unlinkOrRemove(name, LOG);
                 }
             };
 

@@ -207,7 +207,7 @@ public class TableConverter {
                                         .I$();
                             }
                         } else {
-                            if (!ff.rmdir(path)) {
+                            if (!ff.rmdirWal(path)) {
                                 LOG.error()
                                         .$("could not remove wal dir [errno=").$(ff.errno())
                                         .$(", path=").$(path)

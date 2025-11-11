@@ -45,6 +45,9 @@ public class FilesFacadeImpl implements FilesFacade {
     // table/partitionDir
     // table/wal/segmentDir
     private static final int TABLE_DIR_MAX_DEPTH = 3;
+    // wal max directory depth is 2, the expected structure is:
+    // wal/segmentDir
+    private static final int WAL_DIR_MAX_DEPTH = 2;
     private static final long ZFS_MAGIC_NUMBER = 0x2fc12fc1;
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
@@ -474,6 +477,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean rmdirTable(Path path) {
         return rmdir0(path, false, TABLE_DIR_MAX_DEPTH);
+    }
+
+    @Override
+    public boolean rmdirWal(Path path) {
+        return rmdir0(path, false, WAL_DIR_MAX_DEPTH);
     }
 
     @Override

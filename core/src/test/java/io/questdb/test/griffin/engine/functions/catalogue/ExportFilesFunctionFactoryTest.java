@@ -97,7 +97,7 @@ public class ExportFilesFunctionFactoryTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 path.of(exportRoot).$();
                 if (ff.exists(path.$())) {
-                    ff.rmdir(path);
+                    ff.rmdirTable(path);
                 }
                 ff.mkdir(path.$(), 493);
             }
@@ -150,7 +150,7 @@ public class ExportFilesFunctionFactoryTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             path.of(exportRoot).$();
             if (ff.exists(path.$())) {
-                ff.rmdir(path);
+                ff.rmdirDbRoot(path);
             }
             ff.mkdir(path.$(), 493);
             createTestFile("users_export.parquet");
