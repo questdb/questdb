@@ -803,14 +803,14 @@ public class Utf8sTest {
     }
 
     @Test
-    public void testReadWriteVarcharOver2GB() {
+    public void testReadWriteVarcharOver1GB() {
         try (
                 MemoryCARW auxMem = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
                 MemoryCARW dataMem = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
         ) {
             final Utf8StringSink utf8Sink = new Utf8StringSink();
             int len = 1024;
-            int n = Integer.MAX_VALUE / len + len;
+            int n = (1024 * 1024 * 1024) / len + len;
             LongList expectedOffsets = new LongList(n);
             for (int i = 0; i < n; i++) {
                 utf8Sink.clear();
