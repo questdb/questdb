@@ -21,7 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use crate::error::{CoreError, CoreErrorExt, CoreResult, fmt_err};
+use crate::error::{fmt_err, CoreError, CoreErrorExt, CoreResult};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
@@ -59,8 +59,8 @@ pub enum ColumnTypeTag {
     Decimal16 = 29,
     Decimal32 = 30,
     Decimal64 = 31,
-    Decimal128 = 33,
-    Decimal256 = 34,
+    Decimal128 = 32,
+    Decimal256 = 33,
 }
 
 impl ColumnTypeTag {
@@ -210,12 +210,12 @@ impl TryFrom<u8> for ColumnTypeTag {
             25 => Ok(ColumnTypeTag::IPv4),
             26 => Ok(ColumnTypeTag::Varchar),
             27 => Ok(ColumnTypeTag::Array),
-            33 => Ok(ColumnTypeTag::Decimal8),
-            34 => Ok(ColumnTypeTag::Decimal16),
-            35 => Ok(ColumnTypeTag::Decimal32),
-            36 => Ok(ColumnTypeTag::Decimal64),
-            37 => Ok(ColumnTypeTag::Decimal128),
-            38 => Ok(ColumnTypeTag::Decimal256),
+            28 => Ok(ColumnTypeTag::Decimal8),
+            29 => Ok(ColumnTypeTag::Decimal16),
+            30 => Ok(ColumnTypeTag::Decimal32),
+            31 => Ok(ColumnTypeTag::Decimal64),
+            32 => Ok(ColumnTypeTag::Decimal128),
+            33 => Ok(ColumnTypeTag::Decimal256),
             _ => Err(fmt_err!(
                 InvalidType,
                 "unknown QuestDB column tag code: {}",
@@ -318,7 +318,7 @@ impl ColumnType {
     }
 
     pub fn has_flag(&self, flag: i32) -> bool {
-        let flag_shifted:i32 = flag << 8;
+        let flag_shifted: i32 = flag << 8;
         self.code.get() & flag_shifted == flag_shifted
     }
 }
