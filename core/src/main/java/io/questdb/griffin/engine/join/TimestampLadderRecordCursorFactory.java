@@ -130,7 +130,6 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                     configuration.getSqlHashJoinValueMaxPages()
             );
             this.cursor = new TimestampLadderRecordCursor(
-                    configuration,
                     columnSplit,
                     masterColumnIndex,
                     slaveColumnIndex,
@@ -201,7 +200,6 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
      * because we need random access to its rows.
      */
     private static class TimestampLadderRecordCursor extends AbstractJoinCursor {
-        private final CairoConfiguration configuration;
         private final JoinRecord joinRecord;
         private final int masterTimestampColumnIndex;
         private final RecordArray slaveRecordArray;
@@ -219,14 +217,12 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         private long slaveRowCount;
 
         public TimestampLadderRecordCursor(
-                CairoConfiguration configuration,
                 int columnSplit,
                 int masterTimestampColumnIndex,
                 int slaveSequenceColumnIndex,
                 RecordArray slaveRecordArray
         ) {
             super(columnSplit);
-            this.configuration = configuration;
             this.joinRecord = new JoinRecord(columnSplit);
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.slaveSequenceColumnIndex = slaveSequenceColumnIndex;
@@ -366,7 +362,9 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             }
             if (isMasterHasNextPending) {
                 masterHasNext = masterCursor.hasNext();
-                currMasterRowId = masterRecord.getRowId();
+                if (masterHasNext) {
+                    currMasterRowId = masterRecord.getRowId();
+                }
                 isMasterHasNextPending = false;
             }
         }
