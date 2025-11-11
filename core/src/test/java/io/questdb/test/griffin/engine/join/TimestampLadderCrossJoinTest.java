@@ -224,9 +224,12 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
     public void testMasterWithFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO orders VALUES (2, '1970-01-01T00:00:05.000000Z')");
-            execute("INSERT INTO orders VALUES (3, '1970-01-01T00:00:10.000000Z')");
+            execute("""
+                    INSERT INTO orders VALUES
+                        (1, '1970-01-01T00:00:00.000000Z'),
+                        (2, '1970-01-01T00:00:05.000000Z'),
+                        (3, '1970-01-01T00:00:10.000000Z')
+                    """);
 
             String sql = """
                     WITH offsets AS (
@@ -260,11 +263,14 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             // Master rows close together (100ms apart)
-            execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO orders VALUES (2, '1970-01-01T00:00:00.100000Z')");
-            execute("INSERT INTO orders VALUES (3, '1970-01-01T00:00:00.200000Z')");
+            execute("""
+                    INSERT INTO orders VALUES
+                        (1, '1970-01-01T00:00:00.000000Z'),
+                        (2, '1970-01-01T00:00:00.100000Z'),
+                        (3, '1970-01-01T00:00:00.200000Z')
+                    """);
 
-            // Large sequence (1-second offsets) creates heavy interleaving
+            // Time offsets 1 second apart. All three master rows start within the first offset interval.
             String sql = """
                     WITH offsets AS (
                         SELECT 1_000_000 * (x-1) usec_offs
@@ -300,9 +306,12 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
     public void testMultipleMasterRowsInterleaved() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO orders VALUES (2, '1970-01-01T00:00:01.000000Z')");
-            execute("INSERT INTO orders VALUES (3, '1970-01-01T00:00:02.000000Z')");
+            execute("""
+                    INSERT INTO orders VALUES
+                        (1, '1970-01-01T00:00:00.000000Z'),
+                        (2, '1970-01-01T00:00:01.000000Z'),
+                        (3, '1970-01-01T00:00:02.000000Z')
+                    """);
 
             // With 5-second offsets (0, 1, 2, 3, 4), the sequences interleave
             String sql = """
@@ -346,9 +355,12 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
     public void testMultipleMasterRowsNonOverlapping() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO orders VALUES (2, '1970-01-01T00:01:00.000000Z')");
-            execute("INSERT INTO orders VALUES (3, '1970-01-01T00:02:00.000000Z')");
+            execute("""
+                    INSERT INTO orders VALUES
+                        (1, '1970-01-01T00:00:00.000000Z'),
+                        (2, '1970-01-01T00:01:00.000000Z'),
+                        (3, '1970-01-01T00:02:00.000000Z')
+                    """);
 
             // With 3-second offsets (0, 1, 2), the sequences don't overlap
             String sql = """
@@ -445,8 +457,11 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
     public void testReexecution() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO orders VALUES (2, '1970-01-01T00:00:01.000000Z')");
+            execute("""
+                    INSERT INTO orders VALUES
+                        (1, '1970-01-01T00:00:00.000000Z'),
+                        (2, '1970-01-01T00:00:01.000000Z')
+                    """);
 
             String sql = """
                     WITH offsets AS (
@@ -485,9 +500,12 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     ) TIMESTAMP(reading_ts)
                     """);
 
-            execute("INSERT INTO sensor_readings VALUES (101, 20.5, '2024-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO sensor_readings VALUES (102, 21.3, '2024-01-01T00:00:30.000000Z')");
-            execute("INSERT INTO sensor_readings VALUES (103, 19.8, '2024-01-01T00:01:00.000000Z')");
+            execute("""
+                    INSERT INTO sensor_readings VALUES
+                        (101, 20.5, '2024-01-01T00:00:00.000000Z'),
+                        (102, 21.3, '2024-01-01T00:00:30.000000Z'),
+                        (103, 19.8, '2024-01-01T00:01:00.000000Z')
+                    """);
 
             // Simulate generating interpolated timestamps every 10 seconds for each reading
             String sql = """
@@ -621,9 +639,12 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
     public void testSingleSlaveCursorRow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO orders VALUES (2, '1970-01-01T00:00:05.000000Z')");
-            execute("INSERT INTO orders VALUES (3, '1970-01-01T00:00:10.000000Z')");
+            execute("""
+                    INSERT INTO orders VALUES
+                        (1, '1970-01-01T00:00:00.000000Z'),
+                        (2, '1970-01-01T00:00:05.000000Z'),
+                        (3, '1970-01-01T00:00:10.000000Z')
+                    """);
 
             assertQueryNoLeakCheck(
                     """
@@ -688,9 +709,12 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             // Timestamps 1 microsecond apart
-            execute("INSERT INTO orders VALUES (1, 0)");
-            execute("INSERT INTO orders VALUES (2, 1)");
-            execute("INSERT INTO orders VALUES (3, 2)");
+            execute("""
+                    INSERT INTO orders VALUES
+                        (1, 0),
+                        (2, 1),
+                        (3, 2)
+                    """);
 
             assertQueryNoLeakCheck(
                     """
@@ -721,8 +745,11 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
     public void testWithAdditionalColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, customer STRING, amount DOUBLE, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            execute("INSERT INTO orders VALUES (1, 'Alice', 100.50, '1970-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO orders VALUES (2, 'Bob', 250.75, '1970-01-01T00:00:05.000000Z')");
+            execute("""
+                    INSERT INTO orders VALUES
+                     (1, 'Alice', 100.50, '1970-01-01T00:00:00.000000Z'),
+                     (2, 'Bob', 250.75, '1970-01-01T00:00:05.000000Z')
+                    """);
 
             assertQueryNoLeakCheck(
                     """
@@ -753,8 +780,11 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
     public void testWithSlaveColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO orders VALUES (2, '1970-01-01T00:00:05.000000Z')");
+            execute("""
+                    INSERT INTO orders VALUES
+                        (1, '1970-01-01T00:00:00.000000Z'),
+                        (2, '1970-01-01T00:00:05.000000Z')
+                    """);
 
             assertQueryNoLeakCheck(
                     """
