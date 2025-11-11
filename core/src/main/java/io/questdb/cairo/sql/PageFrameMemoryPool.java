@@ -90,6 +90,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     @Override
     public void clear() {
         Misc.free(parquetDecoder);
+        Misc.free(parquetColumns);
         releaseParquetBuffers();
     }
 
