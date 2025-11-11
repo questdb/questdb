@@ -39,43 +39,56 @@ fi
 deactivate
 echo "asyncpg tests finished"
 
-echo "starting rust tests"
-cd compat/src/test/rust/scenarios
+echo "starting rust-tokio tests"
+cd compat/src/test/rust-tokio
 rm -f ./Cargo.lock
 cargo build --release
-./target/release/questrun_rust ../../resources/test_cases.yaml
+./target/release/questrun_rust ../resources/test_cases.yaml
 if [ $? -ne 0 ]; then
-    echo "rust tests failed"
+    echo "rust-tokio tests failed"
     exit 1
 fi
-echo "rust tests finished"
+cd "$base_dir" || exit
+echo "rust-tokio tests finished"
+
+echo "starting rust-sqlx tests"
+cd compat/src/test/rust-sqlx
+rm -f ./Cargo.lock
+cargo build --release
+./target/release/questrun_sqlx ../resources/test_cases.yaml
+if [ $? -ne 0 ]; then
+    echo "rust-sqlx tests failed"
+    exit 1
+fi
+cd "$base_dir" || exit
+echo "rust-sqlx tests finished"
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'csharp'* ]]; then
-  echo "starting csharp tests"
+    echo "starting csharp tests"
 
-  # check if dotnet is installed
+    # check if dotnet is installed
     if ! command -v dotnet &> /dev/null
     then
         echo "dotnet could not be found! Please install .NET 9.0 SDK from https://dotnet.microsoft.com/download/dotnet/9.0"
         exit 1
     fi
 
-  echo "$base_dir/compat/src/test/csharp"
-  cd "$base_dir/compat/src/test/csharp" || exit
+    echo "$base_dir/compat/src/test/csharp"
+    cd "$base_dir/compat/src/test/csharp" || exit
 
-  # restore dependencies
-  dotnet restore
+    # restore dependencies
+    dotnet restore
 
-  # build
-  dotnet build --configuration Release --no-restore
+    # build
+    dotnet build --configuration Release --no-restore
 
-  # run
-  dotnet run --configuration Release --no-build -- ../resources/test_cases.yaml
-  if [ $? -ne 0 ]; then
-      echo "csharp tests failed"
-      exit 1
-  fi
-  echo "csharp tests finished"
+    # run
+    dotnet run --configuration Release --no-build -- ../resources/test_cases.yaml
+    if [ $? -ne 0 ]; then
+        echo "csharp tests failed"
+        exit 1
+    fi
+    echo "csharp tests finished"
 else
-  echo "skipping csharp tests"
+    echo "skipping csharp tests"
 fi

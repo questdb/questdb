@@ -72,8 +72,8 @@ public class BytecodeAssembler {
     private static final int lstore_1 = 0x40;
     private static final int lstore_2 = 0x41;
     private static final int lstore_3 = 0x42;
-    private static final int sipush = 0x11;
     private static final int new_ = 0xbb;
+    private static final int sipush = 0x11;
     private final ObjIntHashMap<Class<?>> classCache = new ObjIntHashMap<>();
     private final Utf8Appender utf8Appender = new Utf8Appender();
     private final CharSequenceIntHashMap utf8Cache = new CharSequenceIntHashMap();
@@ -84,6 +84,7 @@ public class BytecodeAssembler {
     private int defaultConstructorDescIndex;
     private int defaultConstructorMethodIndex;
     private int defaultConstructorNameIndex;
+    private int defaultConstructorSigIndex;
     private Class<?> host;
     private int objectClassIndex;
     private int poolCount;
@@ -190,6 +191,10 @@ public class BytecodeAssembler {
         putByte(0x5c);
     }
 
+    public void dup_x2() {
+        putByte(0x5b);
+    }
+
     public void endMethod() {
         putInt(codeAttributeStart - 4, position() - codeAttributeStart);
     }
@@ -238,8 +243,29 @@ public class BytecodeAssembler {
         return codeStart;
     }
 
+    public int getDefaultConstructorDescIndex() {
+        return defaultConstructorDescIndex;
+    }
+
+    public int getDefaultConstructorNameIndex() {
+        return defaultConstructorNameIndex;
+    }
+
+    public int getDefaultConstructorSigIndex() {
+        return defaultConstructorSigIndex;
+    }
+
+    public int getObjectInitMethodIndex() {
+        return defaultConstructorMethodIndex;
+    }
+
     public int getPoolCount() {
         return poolCount;
+    }
+
+    public void getStatic(int index) {
+        putByte(178);
+        putShort(index);
     }
 
     public void getfield(int index) {
@@ -367,7 +393,7 @@ public class BytecodeAssembler {
     }
 
     public void invokespecial(int index) {
-        putByte(183);
+        putByte(invokespecial);
         putShort(index);
     }
 
@@ -682,7 +708,7 @@ public class BytecodeAssembler {
 
         // add standard stuff
         objectClassIndex = poolClass(Object.class);
-        defaultConstructorMethodIndex = poolMethod(objectClassIndex, poolNameAndType(
+        defaultConstructorMethodIndex = poolMethod(objectClassIndex, defaultConstructorSigIndex = poolNameAndType(
                         defaultConstructorNameIndex = poolUtf8("<init>"),
                         defaultConstructorDescIndex = poolUtf8("()V")
                 )

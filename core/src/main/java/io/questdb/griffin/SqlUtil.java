@@ -27,22 +27,24 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.MillsTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -51,9 +53,8 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -61,13 +62,15 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
+import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
+import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
 public class SqlUtil {
 
-    static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
-    private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
-    private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
+    static final LowerCaseCharSequenceHashSet disallowedAliases = new LowerCaseCharSequenceHashSet();
+    private static final DateFormat[] IMPLICIT_CAST_FORMATS;
+    private static final int IMPLICIT_CAST_FORMATS_SIZE;
     private static final ThreadLocal<Long256ConstantFactory> LONG256_FACTORY = new ThreadLocal<>(Long256ConstantFactory::new);
 
     public static void addSelectStar(
@@ -77,6 +80,17 @@ public class SqlUtil {
     ) throws SqlException {
         model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*", 0));
         model.setArtificialStar(true);
+    }
+
+    public static long castPGDates(CharSequence value, int fromColumnType, TimestampDriver driver) {
+        final int hi = value.length();
+        for (int i = 0; i < IMPLICIT_CAST_FORMATS_SIZE; i++) {
+            try {
+                return driver.fromDate(IMPLICIT_CAST_FORMATS[i].parse(value, 0, hi, EN_LOCALE));
+            } catch (NumericException ignore) {
+            }
+        }
+        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
     }
 
     public static CharSequence createExprColumnAlias(
@@ -96,23 +110,28 @@ public class SqlUtil {
             boolean nonLiteral
     ) {
         // We need to wrap disallowed aliases with double quotes to avoid later conflicts.
-        final boolean quote = nonLiteral && !Chars.isDoubleQuoted(base) && (
-                Chars.indexOf(base, '.') > -1 || disallowedAliases.contains(base)
-        );
+        final int baseLen = base.length();
+        final int indexOfDot = Chars.indexOfLastUnquoted(base, '.');
+        final boolean prefixedLiteral = !nonLiteral && indexOfDot > -1 && indexOfDot < baseLen - 1;
+        boolean quote = nonLiteral
+                ? !Chars.isDoubleQuoted(base) && (indexOfDot > -1 || disallowedAliases.contains(base))
+                : indexOfDot > -1 && disallowedAliases.contains(base, indexOfDot + 1, base.length());
 
-        int len = base.length();
         // early exit for simple cases
-        if (!quote && aliasToColumnMap.excludes(base) && len > 0 && len <= maxLength && base.charAt(len - 1) != ' ') {
+        if (!prefixedLiteral && !quote && aliasToColumnMap.excludes(base)
+                && baseLen > 0 && baseLen <= maxLength && base.charAt(baseLen - 1) != ' ') {
             return base;
         }
 
+        final int start = prefixedLiteral ? indexOfDot + 1 : 0;
+        int len = baseLen - start;
         final CharacterStoreEntry entry = store.newEntry();
         final int entryLen = entry.length();
         if (quote) {
             entry.put('"');
             len += 2;
         }
-        entry.put(base);
+        entry.put(base, start, baseLen);
 
         int sequence = 1;
         int seqSize = 0;
@@ -123,8 +142,8 @@ public class SqlUtil {
             len = Math.min(len, maxLength - seqSize - (quote ? 1 : 0));
 
             // We don't want the alias to finish with a space.
-            if (!quote && len > 0 && base.charAt(len - 1) == ' ') {
-                final int lastSpace = Chars.lastIndexOfDifferent(base, 0, len, ' ');
+            if (!quote && len > 0 && base.charAt(start + len - 1) == ' ') {
+                final int lastSpace = Chars.lastIndexOfDifferent(base, start, start + len, ' ') - start;
                 if (lastSpace > 0) {
                     len = lastSpace + 1;
                 }
@@ -146,29 +165,9 @@ public class SqlUtil {
         }
     }
 
-    // used by Copier assembler
-    @SuppressWarnings("unused")
-    public static long dateToTimestamp(long millis) {
-        return millis != Numbers.LONG_NULL ? millis * 1000L : millis;
-    }
-
     public static long expectMicros(CharSequence tok, int position) throws SqlException {
-        int k = -1;
-
         final int len = tok.length();
-
-        // look for end of digits
-        for (int i = 0; i < len; i++) {
-            char c = tok.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1) {
-            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
-        }
+        final int k = findEndOfDigitsPos(tok, len, position);
 
         try {
             long interval = Numbers.parseLong(tok, 0, k);
@@ -176,40 +175,46 @@ public class SqlUtil {
             if (nChars > 2) {
                 throw SqlException.$(position + k, "expected 1/2 letter interval qualifier in ").put(tok);
             }
+            TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
 
             switch (tok.charAt(k)) {
                 case 's':
                     if (nChars == 1) {
                         // seconds
-                        return interval * Timestamps.SECOND_MICROS;
+                        return driver.fromSeconds(interval);
                     }
                     break;
                 case 'm':
                     if (nChars == 1) {
                         // minutes
-                        return interval * Timestamps.MINUTE_MICROS;
+                        return driver.fromMinutes((int) interval);
                     } else {
                         if (tok.charAt(k + 1) == 's') {
                             // millis
-                            return interval * Timestamps.MILLI_MICROS;
+                            return driver.fromMillis((int) interval);
                         }
                     }
                     break;
                 case 'h':
                     if (nChars == 1) {
                         // hours
-                        return interval * Timestamps.HOUR_MICROS;
+                        return driver.fromHours((int) interval);
                     }
                     break;
                 case 'd':
                     if (nChars == 1) {
                         // days
-                        return interval * Timestamps.DAY_MICROS;
+                        return driver.fromDays((int) interval);
                     }
                     break;
                 case 'u':
                     if (nChars == 2 && tok.charAt(k + 1) == 's') {
-                        return interval;
+                        return driver.fromMicros(interval);
+                    }
+                    break;
+                case 'n':
+                    if (nChars == 2 && tok.charAt(k + 1) == 's') {
+                        return driver.fromNanos(interval);
                     }
                     break;
                 default:
@@ -223,22 +228,8 @@ public class SqlUtil {
     }
 
     public static long expectSeconds(CharSequence tok, int position) throws SqlException {
-        int k = -1;
-
         final int len = tok.length();
-
-        // look for end of digits
-        for (int i = 0; i < len; i++) {
-            char c = tok.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1) {
-            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
-        }
+        final int k = findEndOfDigitsPos(tok, len, position);
 
         try {
             long interval = Numbers.parseLong(tok, 0, k);
@@ -251,11 +242,11 @@ public class SqlUtil {
                 case 's': // seconds
                     return interval;
                 case 'm': // minutes
-                    return interval * Timestamps.MINUTE_SECONDS;
+                    return interval * Micros.MINUTE_SECONDS;
                 case 'h': // hours
-                    return interval * Timestamps.HOUR_SECONDS;
+                    return interval * Micros.HOUR_SECONDS;
                 case 'd': // days
-                    return interval * Timestamps.DAY_SECONDS;
+                    return interval * Micros.DAY_SECONDS;
                 default:
                     break;
             }
@@ -545,6 +536,16 @@ public class SqlUtil {
 
     @SuppressWarnings("unused")
     // used by the row copier
+    public static double implicitCastFloatAsDouble(float value) {
+        if (Numbers.isNull(value)) {
+            return Double.NaN;
+        }
+
+        return value;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static int implicitCastFloatAsInt(float value) {
         if (value > Integer.MIN_VALUE && value <= Integer.MAX_VALUE) {
             return (int) value;
@@ -603,6 +604,36 @@ public class SqlUtil {
 
     @SuppressWarnings("unused")
     // used by the row copier
+    public static double implicitCastIntAsDouble(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Double.NaN;
+        } else {
+            return value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static float implicitCastIntAsFloat(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Float.NaN;
+        } else {
+            return value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static long implicitCastIntAsLong(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Long.MIN_VALUE;
+        } else {
+            return value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static short implicitCastIntAsShort(int value) {
         if (value != Numbers.INT_NULL) {
             return implicitCastAsShort(value, ColumnType.INT);
@@ -626,6 +657,27 @@ public class SqlUtil {
         }
         return 0;
     }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static double implicitCastLongAsDouble(long value) {
+        if (value == Numbers.LONG_NULL) {
+            return Double.NaN;
+        } else {
+            return (double) value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static float implicitCastLongAsFloat(long value) {
+        if (value == Numbers.LONG_NULL) {
+            return Float.NaN;
+        } else {
+            return (float) value;
+        }
+    }
+
 
     @SuppressWarnings("unused")
     // used by the row copier
@@ -666,7 +718,7 @@ public class SqlUtil {
     }
 
     public static char implicitCastStrAsChar(CharSequence value) {
-        if (value == null || value.length() == 0) {
+        if (value == null || value.isEmpty()) {
             return 0;
         }
 
@@ -677,8 +729,9 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.CHAR);
     }
 
+    @SuppressWarnings("unused")
     public static long implicitCastStrAsDate(CharSequence value) {
-        return implicitCastStrVarcharAsDate0(value, ColumnType.STRING);
+        return MillsTimestampDriver.INSTANCE.implicitCast(value, ColumnType.STRING);
     }
 
     public static double implicitCastStrAsDouble(CharSequence value) {
@@ -748,7 +801,7 @@ public class SqlUtil {
     }
 
     public static Long256Constant implicitCastStrAsLong256(CharSequence value) {
-        if (value == null || value.length() == 0) {
+        if (value == null || value.isEmpty()) {
             return Long256NullConstant.INSTANCE;
         }
         int start = 0;
@@ -782,12 +835,8 @@ public class SqlUtil {
         }
     }
 
-    public static long implicitCastStrAsTimestamp(CharSequence value) {
-        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.STRING);
-    }
-
     public static void implicitCastStrAsUuid(CharSequence str, Uuid uuid) {
-        if (str == null || str.length() == 0) {
+        if (str == null || str.isEmpty()) {
             uuid.ofNull();
             return;
         }
@@ -812,18 +861,12 @@ public class SqlUtil {
 
     public static ArrayView implicitCastStringAsDoubleArray(CharSequence value, DoubleArrayParser parser, int expectedType) {
         try {
-            parser.of(value, ColumnType.decodeArrayDimensionality(expectedType));
+            // the parser will handle the weak dimensionality case (-1)
+            parser.of(value, ColumnType.decodeWeakArrayDimensionality(expectedType));
         } catch (IllegalArgumentException e) {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
         }
-        if (expectedType != ColumnType.UNDEFINED && parser.getType() != expectedType) {
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
-        }
         return parser;
-    }
-
-    public static long implicitCastSymbolAsTimestamp(CharSequence value) {
-        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.SYMBOL);
     }
 
     public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink<?> sink) {
@@ -861,8 +904,8 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.CHAR);
     }
 
-    public static long implicitCastVarcharAsDate(CharSequence value) {
-        return implicitCastStrVarcharAsDate0(value, ColumnType.VARCHAR);
+    public static long implicitCastVarcharAsDate(Utf8Sequence value) {
+        return MillsTimestampDriver.INSTANCE.implicitCastVarchar(value);
     }
 
     public static double implicitCastVarcharAsDouble(Utf8Sequence value) {
@@ -874,6 +917,16 @@ public class SqlUtil {
             }
         }
         return Double.NaN;
+    }
+
+    public static ArrayView implicitCastVarcharAsDoubleArray(Utf8Sequence value, DoubleArrayParser parser, int expectedType) {
+        try {
+            // the parser will handle the weak dimensionality case (-1)
+            parser.of(value.asAsciiCharSequence(), ColumnType.decodeWeakArrayDimensionality(expectedType));
+        } catch (IllegalArgumentException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, expectedType);
+        }
+        return parser;
     }
 
     public static float implicitCastVarcharAsFloat(Utf8Sequence value) {
@@ -918,10 +971,6 @@ public class SqlUtil {
         }
     }
 
-    public static long implicitCastVarcharAsTimestamp(CharSequence value) {
-        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.VARCHAR);
-    }
-
     public static boolean isNotPlainSelectModel(QueryModel model) {
         return model.getTableName() != null
                 || model.getGroupBy().size() > 0
@@ -961,8 +1010,8 @@ public class SqlUtil {
         return pool.next().of(exprNodeType, token, 0, position);
     }
 
-    public static int parseArrayDimensionality(GenericLexer lexer, int typeTag, int typeTagPosition) throws SqlException {
-        if (typeTag == ColumnType.ARRAY) {
+    public static int parseArrayDimensionality(GenericLexer lexer, int columnType, int typeTagPosition) throws SqlException {
+        if (ColumnType.tagOf(columnType) == ColumnType.ARRAY) {
             throw SqlException.position(typeTagPosition).put("the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
         }
         boolean hasNumericDimensionality = false;
@@ -1017,7 +1066,7 @@ public class SqlUtil {
 
                     SqlException e = SqlException.position(openBracketPosition)
                             .put("syntax error at column type definition, expected array type: '")
-                            .put(ColumnType.nameOf(typeTag));
+                            .put(ColumnType.nameOf(columnType));
 
                     // add dimensionality we found so far
                     for (int i = 0, n = dim + 1; i < n; i++) {
@@ -1041,70 +1090,32 @@ public class SqlUtil {
         return dim;
     }
 
-    /**
-     * Parses partial representation of timestamp with time zone.
-     *
-     * @param value            the characters representing timestamp
-     * @param tupleIndex       the tuple index for insert SQL, which inserts multiple rows at once
-     * @param targetColumnType the target column type, which might be different from timestamp
-     * @return epoch offset
-     * @throws ImplicitCastException inconvertible type error.
-     */
-    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int sourceColumnType, int targetColumnType) {
-        try {
-            return IntervalUtils.parseFloorPartialTimestamp(value);
-        } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, sourceColumnType, targetColumnType);
-        }
-    }
-
-    public static short toPersistedTypeTag(@NotNull CharSequence tok, int tokPosition) throws SqlException {
-        final short typeTag = ColumnType.tagOf(tok);
-        if (typeTag == -1) {
+    public static int toPersistedType(@NotNull CharSequence tok, int tokPosition) throws SqlException {
+        final int columnType = ColumnType.typeOf(tok);
+        if (columnType == -1) {
             throw SqlException.$(tokPosition, "unsupported column type: ").put(tok);
         }
-        if (ColumnType.isPersisted(typeTag)) {
-            return typeTag;
+        if (ColumnType.isPersisted(ColumnType.tagOf(columnType))) {
+            return columnType;
         }
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
     }
 
-    private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {
-        assert columnType == ColumnType.VARCHAR || columnType == ColumnType.STRING;
-        try {
-            return DateFormatUtils.parseDate(value);
-        } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.DATE);
+    private static int findEndOfDigitsPos(CharSequence tok, int tokLen, int tokPosition) throws SqlException {
+        int k = -1;
+        // look for end of digits
+        for (int i = 0; i < tokLen; i++) {
+            char c = tok.charAt(i);
+            if (c < '0' || c > '9') {
+                k = i;
+                break;
+            }
         }
-    }
 
-    private static long implicitCastStrVarcharAsTimestamp0(CharSequence value, int columnType) {
-        assert columnType == ColumnType.STRING || columnType == ColumnType.VARCHAR || columnType == ColumnType.SYMBOL;
-
-        if (value != null) {
-            try {
-                return Numbers.parseLong(value);
-            } catch (NumericException ignore) {
-            }
-
-            // Parse as ISO with variable length.
-            try {
-                return IntervalUtils.parseFloorPartialTimestamp(value);
-            } catch (NumericException ignore) {
-            }
-
-            final int hi = value.length();
-            for (int i = 0; i < DATE_FORMATS_FOR_TIMESTAMP_SIZE; i++) {
-                try {
-                    //
-                    return DATE_FORMATS_FOR_TIMESTAMP[i].parse(value, 0, hi, EN_LOCALE) * 1000L;
-                } catch (NumericException ignore) {
-                }
-            }
-
-            throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.TIMESTAMP);
+        if (k == -1) {
+            throw SqlException.$(tokPosition + tokLen, "expected interval qualifier in ").put(tok);
         }
-        return Numbers.LONG_NULL;
+        return k;
     }
 
     static CharSequence createColumnAlias(
@@ -1207,12 +1218,12 @@ public class SqlUtil {
         final DateFormat pgDateTimeFormat = milliCompiler.compile("y-MM-dd HH:mm:ssz");
 
         // we are using "millis" compiler deliberately because clients encode millis into strings
-        DATE_FORMATS_FOR_TIMESTAMP = new DateFormat[]{
+        IMPLICIT_CAST_FORMATS = new DateFormat[]{
                 PG_DATE_Z_FORMAT,
                 PG_DATE_MILLI_TIME_Z_FORMAT,
                 pgDateTimeFormat
         };
 
-        DATE_FORMATS_FOR_TIMESTAMP_SIZE = DATE_FORMATS_FOR_TIMESTAMP.length;
+        IMPLICIT_CAST_FORMATS_SIZE = IMPLICIT_CAST_FORMATS.length;
     }
 }

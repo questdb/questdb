@@ -29,7 +29,6 @@ import io.questdb.std.Files;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -42,6 +41,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int ERRNO_ACCESS_DENIED_WIN = 5;
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
     public static final int ERRNO_FILE_DOES_NOT_EXIST_WIN = 3;
+    // psync_cvcontinue sets two bits in the error code to indicate whether the wait timed out (0x100) or there were no waiters (0x200).
+    // Error #316 (0x13C) is the timed out bit bitwise OR'd with ETIMEDOUT (60).
+    public static final int ERRNO_FILE_READ_TIMEOUT_MACOS = 316;
+    public static final int ERRNO_INVALID_PARAMETER = 22;
+    public static final int ERRNO_INVALID_PARAMETER_WIN = 87;
     public static final int METADATA_VALIDATION = -100;
     public static final int ILLEGAL_OPERATION = METADATA_VALIDATION - 1;
     private static final int TABLE_DROPPED = ILLEGAL_OPERATION - 1;
@@ -176,14 +180,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(']');
     }
 
+    public static CairoException tableIsEmpty(CharSequence tableName) {
+        return nonCritical().put("table is empty [table=").put(tableName).put(']');
+    }
+
     public static CairoException txnApplyBlockError(TableToken tableToken) {
         return critical(TXN_BLOCK_APPLY_FAILED)
                 .put("sorting transaction block failed, need to be re-run in 1 by 1 apply mode [dirName=").put(tableToken.getDirName())
                 .put(", tableName=").put(tableToken.getTableName()).put(']');
-    }
-
-    public boolean errnoFileCannotRead() {
-        return Files.errnoFileCannotRead(errno);
     }
 
     public int getErrno() {
@@ -246,6 +250,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 && errno != TABLE_DROPPED
                 && errno != MAT_VIEW_DOES_NOT_EXIST
                 && errno != TABLE_DOES_NOT_EXIST;
+    }
+
+    public boolean isFileCannotRead() {
+        return Files.isErrnoFileCannotRead(errno);
     }
 
     public boolean isHousekeeping() {
@@ -359,8 +367,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         sink.putAscii('[').put(errno).putAscii("]: ").put(message);
     }
 
-    public CairoException ts(long timestamp) {
-        TimestampFormatUtils.appendDateTime(message, timestamp);
+    public CairoException ts(int timestampType, long timestamp) {
+        ColumnType.getTimestampDriver(timestampType).append(message, timestamp);
+        return this;
+    }
+
+    public CairoException ts(TimestampDriver driver, long timestamp) {
+        driver.append(message, timestamp);
         return this;
     }
 

@@ -91,12 +91,12 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
+    public InsertMethod createMethod(SqlExecutionContext executionContext) {
         return createMethod(executionContext, engine);
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
+    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) {
         SecurityContext securityContext = executionContext.getSecurityContext();
         securityContext.authorizeInsert(tableToken);
 
@@ -144,25 +144,24 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
         @Override
         public long execute(SqlExecutionContext executionContext) throws SqlException {
             executionContext.setUseSimpleCircuitBreaker(true);
-            SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 try {
                     if (timestampIndex == -1) {
-                        rowCount = SqlCompilerImpl.copyUnordered(cursor, writer, copier, circuitBreaker);
+                        rowCount = SqlCompilerImpl.copyUnordered(executionContext, cursor, writer, copier);
                     } else {
                         if (batchSize != -1) {
                             rowCount = SqlCompilerImpl.copyOrderedBatched(
+                                    executionContext,
                                     writer,
                                     factory.getMetadata(),
                                     cursor,
                                     copier,
                                     timestampIndex,
                                     batchSize,
-                                    o3MaxLag,
-                                    circuitBreaker
+                                    o3MaxLag
                             );
                         } else {
-                            rowCount = SqlCompilerImpl.copyOrderedBatched(writer, factory.getMetadata(), cursor, copier, timestampIndex, Long.MAX_VALUE, 0, circuitBreaker);
+                            rowCount = SqlCompilerImpl.copyOrderedBatched(executionContext, writer, factory.getMetadata(), cursor, copier, timestampIndex, Long.MAX_VALUE, 0);
                         }
                     }
                 } catch (Throwable e) {
@@ -171,7 +170,7 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
                         writer.rollback();
                     } catch (Throwable e2) {
                         // Writer is distressed, exception already logged, the pool will handle it when writer is returned
-                        LOG.error().$("could not rollback, writer must be distressed [table=").$(tableToken.getTableName()).I$();
+                        LOG.error().$("could not rollback, writer must be distressed [table=").$(tableToken).I$();
                     }
                     throw e;
                 } finally {

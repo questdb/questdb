@@ -27,13 +27,21 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
+import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -69,6 +77,9 @@ public class RecordToRowCopierUtils {
         // Z                boolean     true or false
         // [                reference   one array dimension
 
+        int sGetDecimal128 = asm.poolInterfaceMethod(SqlExecutionContext.class, "getDecimal128", "()Lio/questdb/std/Decimal128;");
+        int sGetDecimal256 = asm.poolInterfaceMethod(SqlExecutionContext.class, "getDecimal256", "()Lio/questdb/std/Decimal256;");
+
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
         int rGetIPv4 = asm.poolInterfaceMethod(Record.class, "getIPv4", "(I)I");
         int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
@@ -94,6 +105,12 @@ public class RecordToRowCopierUtils {
         int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         int rGetVarchar = asm.poolInterfaceMethod(Record.class, "getVarcharA", "(I)Lio/questdb/std/str/Utf8Sequence;");
         int rGetArray = asm.poolInterfaceMethod(Record.class, "getArray", "(II)Lio/questdb/cairo/arr/ArrayView;");
+        int rGetDecimal8 = asm.poolInterfaceMethod(Record.class, "getDecimal8", "(I)B");
+        int rGetDecimal16 = asm.poolInterfaceMethod(Record.class, "getDecimal16", "(I)S");
+        int rGetDecimal32 = asm.poolInterfaceMethod(Record.class, "getDecimal32", "(I)I");
+        int rGetDecimal64 = asm.poolInterfaceMethod(Record.class, "getDecimal64", "(I)J");
+        int rGetDecimal128 = asm.poolInterfaceMethod(Record.class, "getDecimal128", "(ILio/questdb/std/Decimal128;)V");
+        int rGetDecimal256 = asm.poolInterfaceMethod(Record.class, "getDecimal256", "(ILio/questdb/std/Decimal256;)V");
         //
         int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
         int wPutIPv4 = asm.poolInterfaceMethod(TableWriter.Row.class, "putIPv4", "(II)V");
@@ -118,6 +135,7 @@ public class RecordToRowCopierUtils {
         int wPutGeoVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
         int wPutVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
         int wPutArray = asm.poolInterfaceMethod(TableWriter.Row.class, "putArray", "(ILio/questdb/cairo/arr/ArrayView;)V");
+        int wPutDecimalStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putDecimalStr", "(ILjava/lang/CharSequence;)V");
 
         int implicitCastCharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastCharAsByte", "(CI)B");
         int implicitCastCharAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastCharAsGeoHash", "(CI)B");
@@ -132,13 +150,21 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsLong = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong256", "(Ljava/lang/CharSequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
-        int implicitCastStrAsTimestamp = asm.poolMethod(SqlUtil.class, "implicitCastStrAsTimestamp", "(Ljava/lang/CharSequence;)J");
-        int implicitCastDateAsTimestamp = asm.poolMethod(SqlUtil.class, "dateToTimestamp", "(J)J");
+        int implicitCastStrAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCast", "(Ljava/lang/CharSequence;)J");
         int implicitCastShortAsByte = asm.poolMethod(SqlUtil.class, "implicitCastShortAsByte", "(S)B");
         int implicitCastIntAsByte = asm.poolMethod(SqlUtil.class, "implicitCastIntAsByte", "(I)B");
         int implicitCastLongAsByte = asm.poolMethod(SqlUtil.class, "implicitCastLongAsByte", "(J)B");
         int implicitCastFloatAsByte = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsByte", "(F)B");
         int implicitCastDoubleAsByte = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsByte", "(D)B");
+
+
+        int implicitCastIntAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastIntAsDouble", "(I)D");
+        int implicitCastIntAsLong = asm.poolMethod(SqlUtil.class, "implicitCastIntAsLong", "(I)J");
+        int implicitCastIntAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastIntAsFloat", "(I)F");
+        int implicitCastLongAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastLongAsFloat", "(J)F");
+        int implicitCastLongAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastLongAsDouble", "(J)D");
+        int implicitCastFloatAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsDouble", "(F)D");
+
 
         int implicitCastVarcharAsLong = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsLong", "(Lio/questdb/std/str/Utf8Sequence;)J");
         int implicitCastVarcharAsShort = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsShort", "(Lio/questdb/std/str/Utf8Sequence;)S");
@@ -157,6 +183,10 @@ public class RecordToRowCopierUtils {
         int implicitCastFloatAsInt = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsInt", "(F)I");
         int implicitCastDoubleAsInt = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsInt", "(D)I");
 
+        int implicitCastDateAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "fromDate", "(J)J");
+        int implicitCastTimestampAsDate = asm.poolInterfaceMethod(TimestampDriver.class, "toDate", "(J)J");
+        int implicitCastTimestampAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "from", "(JI)J");
+
         int implicitCastFloatAsLong = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsLong", "(F)J");
         int implicitCastDoubleAsLong = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsLong", "(D)J");
         int implicitCastDoubleAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsFloat", "(D)F");
@@ -169,10 +199,22 @@ public class RecordToRowCopierUtils {
         int transferUuidToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferUuidToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;IJJ)V");
         int transferVarcharToStrCol = asm.poolInterfaceMethod(TableWriter.Row.class, "putStrUtf8", "(ILio/questdb/std/str/DirectUtf8Sequence;)V");
         int transferVarcharToSymbolCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToSymbolCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
-        int transferVarcharToTimestampCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToTimestampCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
+        int implicitCastVarcharAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCastVarchar", "(Lio/questdb/std/str/Utf8Sequence;)J");
         int transferVarcharToDateCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToDateCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
         int transferStrToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;)V");
-        int validateArrayDimensionsAndTransferCol = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cutlass/pgwire/modern/DoubleArrayParser;Ljava/lang/CharSequence;I)V");
+        int getTimestampDriverRef = asm.poolMethod(ColumnType.class, "getTimestampDriver", "(I)Lio/questdb/cairo/TimestampDriver;");
+        int validateArrayDimensionsAndTransferColString = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cairo/arr/DoubleArrayParser;Ljava/lang/CharSequence;I)V");
+        int validateArrayDimensionsAndTransferColVarchar = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cairo/arr/DoubleArrayParser;Lio/questdb/std/str/Utf8Sequence;I)V");
+        int transferDecimal8 = asm.poolMethod(RecordToRowCopierUtils.class, "transferDecimal8", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/Decimal256;IIB)V");
+        int transferDecimal16 = asm.poolMethod(RecordToRowCopierUtils.class, "transferDecimal16", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/Decimal256;IIS)V");
+        int transferDecimal32 = asm.poolMethod(RecordToRowCopierUtils.class, "transferDecimal32", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/Decimal256;III)V");
+        int transferDecimal64 = asm.poolMethod(RecordToRowCopierUtils.class, "transferDecimal64", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/Decimal256;IIJ)V");
+        int transferDecimal128 = asm.poolMethod(RecordToRowCopierUtils.class, "transferDecimal128", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/Decimal256;IILio/questdb/std/Decimal128;)V");
+        int transferDecimal256 = asm.poolMethod(RecordToRowCopierUtils.class, "transferDecimal256", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/Decimal256;II)V");
+        int transferByteToDecimal = asm.poolMethod(RecordToRowCopierUtils.class, "transferByteToDecimal", "(Lio/questdb/cairo/TableWriter$Row;IBLio/questdb/std/Decimal256;I)V");
+        int transferShortToDecimal = asm.poolMethod(RecordToRowCopierUtils.class, "transferShortToDecimal", "(Lio/questdb/cairo/TableWriter$Row;ISLio/questdb/std/Decimal256;I)V");
+        int transferIntToDecimal = asm.poolMethod(RecordToRowCopierUtils.class, "transferIntToDecimal", "(Lio/questdb/cairo/TableWriter$Row;IILio/questdb/std/Decimal256;I)V");
+        int transferLongToDecimal = asm.poolMethod(RecordToRowCopierUtils.class, "transferLongToDecimal", "(Lio/questdb/cairo/TableWriter$Row;IJLio/questdb/std/Decimal256;I)V");
 
         // in case of Geo Hashes column type can overflow short and asm.iconst() will not provide
         // the correct value.
@@ -190,7 +232,7 @@ public class RecordToRowCopierUtils {
         }
 
         int copyNameIndex = asm.poolUtf8("copy");
-        int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
+        int copySigIndex = asm.poolUtf8("(Lio/questdb/griffin/SqlExecutionContext;Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
 
         // if we have to do implicit cast from STRING to ARRAYs then we need to create a parser
         // the parser is instantiated in a constructor and stored in a field.
@@ -206,7 +248,7 @@ public class RecordToRowCopierUtils {
         boolean needsArrayParser = isArrayParserRequired(from, to, toColumnFilter, n);
         if (needsArrayParser) {
             parserFieldIndex = asm.poolUtf8("parser");
-            parserDescIndex = asm.poolUtf8("Lio/questdb/cutlass/pgwire/modern/DoubleArrayParser;");
+            parserDescIndex = asm.poolUtf8("Lio/questdb/cairo/arr/DoubleArrayParser;");
             constructorNameIndex = asm.poolUtf8("<init>");
             constructorDescIndex = asm.poolUtf8("()V");
             doubleArrayParserClassIndex = asm.poolClass(DoubleArrayParser.class);
@@ -265,15 +307,32 @@ public class RecordToRowCopierUtils {
 
             final int toColumnType = to.getColumnType(toColumnIndex);
             final int fromColumnType = from.getColumnType(i);
+            int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
             final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
             final int toColumnWriterIndex = to.getWriterIndex(toColumnIndex);
+
+            int timestampTypeRef = 0;
+            // determine the `TimestampDriver` during bytecode generation to avoid
+            // calling `ColumnType.getTimestampDriver()` at runtime much times.
+            if (toColumnTypeTag == ColumnType.DATE && fromColumnTypeTag == ColumnType.TIMESTAMP) { // Timestamp -> Date
+                timestampTypeRef = fromColumnType_0 + 2 * i;
+            } else if (toColumnTypeTag == ColumnType.TIMESTAMP && (fromColumnTypeTag == ColumnType.DATE || // Date -> Timestamp
+                    fromColumnTypeTag == ColumnType.VARCHAR || fromColumnTypeTag == ColumnType.STRING || // Varchar -> Timestamp or String -> Timestamp
+                    (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) { // Timestamp -> Timestamp
+                timestampTypeRef = toColumnType_0 + 2 * i;
+            }
+
+            if (fromColumnTypeTag == ColumnType.NULL) {
+                fromColumnTypeTag = toColumnTypeTag;
+            }
 
             // todo: this branch is not great, but we need parser
             // inside the stack building block, not sure how to do it better
             if (toColumnTypeTag == ColumnType.ARRAY &&
-                    ColumnType.tagOf(fromColumnType) == ColumnType.STRING) {
+                    (ColumnType.tagOf(fromColumnType) == ColumnType.STRING || ColumnType.tagOf(fromColumnType) == ColumnType.VARCHAR)
+            ) {
                 // Build stack with parser in the right position
-                asm.aload(2);
+                asm.aload(3);
                 // Stack: [rowWriter]
                 asm.iconst(toColumnWriterIndex);
                 // Stack: [rowWriter, toColumnIndex]
@@ -281,27 +340,35 @@ public class RecordToRowCopierUtils {
                 // Stack: [rowWriter, toColumnIndex, this]
                 asm.getfield(parserFieldRef);
                 // Stack: [rowWriter, toColumnIndex, parser]
-                asm.aload(1);
+                asm.aload(2);
                 // Stack: [rowWriter, toColumnIndex, parser, record]
                 asm.iconst(i);
                 // Stack: [rowWriter, toColumnIndex, parser, record, fromColumnIndex]
-            } else {
-                // Original stack building
-                asm.aload(2);
+            } else if (ColumnType.isDecimal(fromColumnTypeTag)) {
+                // Decimal stack building
+                asm.aload(3);
                 // stack: [rowWriter]
                 asm.iconst(toColumnWriterIndex);
                 // stack: [rowWriter, toColumnIndex]
-                asm.aload(1);
+            } else {
+                // Original stack building
+                asm.aload(3);
+                // stack: [rowWriter]
+                asm.iconst(toColumnWriterIndex);
+                // stack: [rowWriter, toColumnIndex]
+
+                if (timestampTypeRef != 0) {
+                    asm.ldc(timestampTypeRef);
+                    asm.invokeStatic(getTimestampDriverRef);
+                    // stack: [rowWriter, toColumnIndex, timestampDriver]
+                }
+
+                asm.aload(2);
                 // stack: [rowWriter, toColumnIndex, record]
                 asm.iconst(i);
                 // stack: [rowWriter, toColumnIndex, record, fromColumnIndex]
             }
 
-
-            int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
-            if (fromColumnTypeTag == ColumnType.NULL) {
-                fromColumnTypeTag = toColumnTypeTag;
-            }
             switch (fromColumnTypeTag) {
                 case ColumnType.INT: // from
                     // stack: [rowWriter, toColumnIndex, record, fromColumnIndex]
@@ -320,26 +387,38 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            asm.i2l();
+                            asm.invokeStatic(implicitCastIntAsLong);
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
-                            asm.i2l();
+                            asm.invokeStatic(implicitCastIntAsLong);
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.i2l();
+                            asm.invokeStatic(implicitCastIntAsLong);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.FLOAT:
-                            asm.i2f();
+                            asm.invokeStatic(implicitCastIntAsFloat);
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.i2d();
+                            asm.invokeStatic(implicitCastIntAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
+                            if (ColumnType.isDecimalType(toColumnTypeTag)) {
+                                // stack: [rowWriter, toColumnIndex, int]
+                                asm.aload(1);
+                                // stack: [rowWriter, toColumnIndex, int, sqlExecutionContext]
+                                asm.invokeInterface(sGetDecimal256, 0);
+                                // Stack: [rowWriter, toColumnIndex, int, decimal]
+                                asm.ldc(toColumnType_0 + i * 2);
+                                // Stack: [rowWriter, toColumnIndex, int, decimal, toType]
+                                asm.invokeStatic(transferIntToDecimal);
+                                // Stack: []
+                                break;
+                            }
                             assert false;
                             break;
                     }
@@ -374,14 +453,26 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.FLOAT:
-                            asm.l2f();
+                            asm.invokeStatic(implicitCastLongAsFloat);
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.l2d();
+                            asm.invokeStatic(implicitCastLongAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
+                            if (ColumnType.isDecimalType(toColumnTypeTag)) {
+                                // stack: [rowWriter, toColumnIndex, long]
+                                asm.aload(1);
+                                // stack: [rowWriter, toColumnIndex, long, sqlExecutionContext]
+                                asm.invokeInterface(sGetDecimal256, 0);
+                                // Stack: [rowWriter, toColumnIndex, long, decimal]
+                                asm.ldc(toColumnType_0 + i * 2);
+                                // Stack: [rowWriter, toColumnIndex, long, decimal, toType]
+                                asm.invokeStatic(transferLongToDecimal);
+                                // Stack: []
+                                break;
+                            }
                             assert false;
                             break;
                     }
@@ -408,15 +499,15 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.invokeStatic(implicitCastDateAsTimestamp);
+                            asm.invokeInterface(implicitCastDateAsTimestamp, 2);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.FLOAT:
-                            asm.l2f();
+                            asm.invokeStatic(implicitCastLongAsFloat);
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.l2d();
+                            asm.invokeStatic(implicitCastLongAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
@@ -443,17 +534,22 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.FLOAT:
-                            asm.l2f();
+                            asm.invokeStatic(implicitCastLongAsFloat);
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.l2d();
+                            asm.invokeStatic(implicitCastLongAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         case ColumnType.DATE:
+                            asm.invokeInterface(implicitCastTimestampAsDate, 2);
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
+                            if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL) {
+                                asm.ldc(fromColumnType_0 + i * 2);
+                                asm.invokeInterface(implicitCastTimestampAsTimestamp, 3);
+                            }
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         default:
@@ -496,6 +592,18 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
+                            if (ColumnType.isDecimalType(toColumnTypeTag)) {
+                                // stack: [rowWriter, toColumnIndex, byte]
+                                asm.aload(1);
+                                // stack: [rowWriter, toColumnIndex, byte, sqlExecutionContext]
+                                asm.invokeInterface(sGetDecimal256, 0);
+                                // Stack: [rowWriter, toColumnIndex, byte, decimal]
+                                asm.ldc(toColumnType_0 + i * 2);
+                                // Stack: [rowWriter, toColumnIndex, byte, decimal, toType]
+                                asm.invokeStatic(transferByteToDecimal);
+                                // Stack: []
+                                break;
+                            }
                             assert false;
                             break;
                     }
@@ -534,6 +642,18 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
+                            if (ColumnType.isDecimalType(toColumnTypeTag)) {
+                                // stack: [rowWriter, toColumnIndex, short]
+                                asm.aload(1);
+                                // stack: [rowWriter, toColumnIndex, short, sqlExecutionContext]
+                                asm.invokeInterface(sGetDecimal256, 0);
+                                // Stack: [rowWriter, toColumnIndex, short, decimal]
+                                asm.ldc(toColumnType_0 + i * 2);
+                                // Stack: [rowWriter, toColumnIndex, short, decimal, toType]
+                                asm.invokeStatic(transferShortToDecimal);
+                                // Stack: []
+                                break;
+                            }
                             assert false;
                             break;
                     }
@@ -574,7 +694,7 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.f2d();
+                            asm.invokeStatic(implicitCastFloatAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
@@ -656,7 +776,7 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.iconst(toColumnType);
+                            asm.ldc(toColumnType_0 + i * 2);
                             asm.invokeStatic(implicitCastCharAsByte);
                             asm.i2l();
                             asm.invokeInterface(wPutTimestamp, 3);
@@ -715,6 +835,15 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(rGetVarchar);
                             asm.invokeInterface(wPutVarchar, 2);
                             break;
+                        case ColumnType.ARRAY:
+                            // Initial stack: [rowWriter, toColumnIndex, parser, record, fromColumnIndex]
+                            asm.invokeInterface(rGetVarchar);
+                            // Stack: [rowWriter, toColumnIndex, parser, varchar]
+                            asm.iconst(toColumnType);
+                            // Stack: [rowWriter, toColumnIndex, parser, varchar, toColumnType]
+                            asm.invokeStatic(validateArrayDimensionsAndTransferColVarchar);
+                            // Stack: []
+                            break;
                         case ColumnType.STRING:
                             asm.invokeInterface(rGetVarchar);
                             asm.invokeInterface(transferVarcharToStrCol, 2);
@@ -765,7 +894,8 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.invokeInterface(rGetVarchar);
-                            asm.invokeStatic(transferVarcharToTimestampCol);
+                            asm.invokeInterface(implicitCastVarcharAsTimestamp, 1);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SYMBOL:
                             asm.invokeInterface(rGetVarchar);
@@ -802,7 +932,7 @@ public class RecordToRowCopierUtils {
                             // Stack: [rowWriter, toColumnIndex, parser, string]
                             asm.iconst(toColumnType);
                             // Stack: [rowWriter, toColumnIndex, parser, string, toColumnType]
-                            asm.invokeStatic(validateArrayDimensionsAndTransferCol);
+                            asm.invokeStatic(validateArrayDimensionsAndTransferColString);
                             // Stack: []
                             break;
 
@@ -857,7 +987,7 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.invokeInterface(rGetStrA);
-                            asm.invokeStatic(implicitCastStrAsTimestamp);
+                            asm.invokeInterface(implicitCastStrAsTimestamp, 1);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.GEOBYTE:
@@ -883,6 +1013,18 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsLong256);
                             asm.invokeInterface(wPutLong256, 2);
+                            break;
+                        case ColumnType.DECIMAL8:
+                        case ColumnType.DECIMAL16:
+                        case ColumnType.DECIMAL32:
+                        case ColumnType.DECIMAL64:
+                        case ColumnType.DECIMAL128:
+                        case ColumnType.DECIMAL256:
+                            // Initial stack: [rowWriter, toColumnIndex, record, fromColumnIndex]
+                            asm.invokeInterface(rGetStrA);
+                            // Stack: [RowWriter, toColumnIndex, string]
+                            asm.invokeInterface(wPutDecimalStr, 2);
+                            // Stack: []
                             break;
                         default:
                             assert false;
@@ -1019,7 +1161,7 @@ public class RecordToRowCopierUtils {
                         case ColumnType.UUID:
                             asm.invokeInterface(rGetLong128Lo, 1);
                             // Stack: [RowWriter, toColumnIndex, lo]
-                            asm.aload(1);  // Push record to the stack again
+                            asm.aload(2);  // Push record to the stack again
                             // Stack: [RowWriter, toColumnIndex, lo, Record]
                             asm.iconst(i); // Push column index to a stack
                             // Stack: [RowWriter, toColumnIndex, lo, Record, columnIndex]
@@ -1041,7 +1183,7 @@ public class RecordToRowCopierUtils {
                             // Stack: [RowWriter, toColumnIndex, Record, columnIndex]
                             asm.invokeInterface(rGetLong128Lo, 1);
                             // Stack: [RowWriter, toColumnIndex, lo]
-                            asm.aload(1);  // Push record to the stack.
+                            asm.aload(2);  // Push record to the stack.
                             // Stack: [RowWriter, toColumnIndex, lo, Record]
                             asm.iconst(i); // Push column index to a stack
                             // Stack: [RowWriter, toColumnIndex, lo, Record, columnIndex]
@@ -1051,7 +1193,7 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.VARCHAR:
                             asm.invokeInterface(rGetLong128Lo, 1);
-                            asm.aload(1);  // Push record to the stack.
+                            asm.aload(2);  // Push record to the stack.
                             asm.iconst(i); // Push column index to a stack
                             asm.invokeInterface(rGetLong128Hi, 1);
                             asm.invokeStatic(transferUuidToVarcharCol);
@@ -1071,6 +1213,69 @@ public class RecordToRowCopierUtils {
                         asm.invokeInterface(wPutArray, 2);
                     } else {
                         assert false;
+                    }
+                    break;
+                case ColumnType.DECIMAL8:
+                case ColumnType.DECIMAL16:
+                case ColumnType.DECIMAL32:
+                case ColumnType.DECIMAL64:
+                case ColumnType.DECIMAL128:
+                case ColumnType.DECIMAL256:
+                    // Load Decimal256 to the stack
+                    asm.aload(1);
+                    // stack: [rowWriter, toColumnIndex, sqlExecutionContext]
+                    asm.invokeInterface(sGetDecimal256, 0);
+                    // Load both from and to column int to the stack
+                    // stack: [rowWriter, toColumnIndex, decimal256]
+                    asm.ldc(fromColumnType_0 + i * 2);
+                    // stack: [rowWriter, toColumnIndex, decimal256, fromType]
+                    asm.ldc(toColumnType_0 + i * 2);
+                    // stack: [rowWriter, toColumnIndex, decimal256, fromType, toType]
+                    asm.aload(2);
+                    // stack: [rowWriter, toColumnIndex, decimal256, fromType, toType, record]
+                    asm.iconst(i);
+                    // stack: [rowWriter, toColumnIndex, decimal256, fromType, toType, record, fromColumnIndex]
+                    switch (fromColumnTypeTag) {
+                        case ColumnType.DECIMAL8:
+                            asm.invokeInterface(rGetDecimal8, 1);
+                            asm.invokeStatic(transferDecimal8);
+                            break;
+                        case ColumnType.DECIMAL16:
+                            asm.invokeInterface(rGetDecimal16, 1);
+                            asm.invokeStatic(transferDecimal16);
+                            break;
+                        case ColumnType.DECIMAL32:
+                            asm.invokeInterface(rGetDecimal32, 1);
+                            asm.invokeStatic(transferDecimal32);
+                            break;
+                        case ColumnType.DECIMAL64:
+                            asm.invokeInterface(rGetDecimal64, 1);
+                            asm.invokeStatic(transferDecimal64);
+                            break;
+                        case ColumnType.DECIMAL128:
+                            // Load Decimal128 to the stack
+                            // stack: [..., fromColumnIndex]
+                            asm.aload(1);
+                            // stack: [..., fromColumnIndex, sqlExecutionContext]
+                            asm.invokeInterface(sGetDecimal128, 0);
+                            // stack: [rowWriter, toColumnIndex, decimal256, fromType, toType, record, fromColumnIndex, decimal128]
+                            asm.dup_x2();
+                            // stack: [rowWriter, toColumnIndex, decimal256, fromType, toType, decimal128, record, fromColumnIndex, decimal128]
+                            asm.invokeInterface(rGetDecimal128, 2);
+                            // stack: [rowWriter, toColumnIndex, decimal256, fromType, toType, decimal128]
+                            asm.invokeStatic(transferDecimal128);
+                            break;
+                        case ColumnType.DECIMAL256:
+                            // Load Decimal256 to the stack
+                            // stack: [..., fromColumnIndex]
+                            asm.aload(1);
+                            // stack: [..., fromColumnIndex, sqlExecutionContext]
+                            asm.invokeInterface(sGetDecimal256, 0);
+                            // stack: [rowWriter, toColumnIndex, decimal256, fromType, toType, record, fromColumnIndex, decimal256]
+                            asm.invokeInterface(rGetDecimal256, 2);
+                            // stack: [rowWriter, toColumnIndex, decimal256, fromType, toType]
+                            asm.invokeStatic(transferDecimal256);
+                            break;
                     }
                     break;
                 default:
@@ -1096,6 +1301,115 @@ public class RecordToRowCopierUtils {
         asm.putShort(0);
 
         return asm.newInstance();
+    }
+
+    @SuppressWarnings("unused")
+    // Called from dynamically generated bytecode
+    public static void transferByteToDecimal(TableWriter.Row row, int col, byte value, Decimal256 decimal256, int toType) {
+        decimal256.ofLong(value, 0);
+        transferDecimal(row, col, decimal256, DecimalUtil.BYTE_TYPE, toType);
+    }
+
+    @SuppressWarnings("unused")
+    // Called from dynamically generated bytecode
+    public static void transferDecimal128(TableWriter.Row row, int col, Decimal256 decimal256, int fromType, int toType, Decimal128 decimal128) {
+        if (decimal128.isNull()) {
+            WriterRowUtils.putNullDecimal(row, col, toType);
+            return;
+        }
+        final int fromScale = ColumnType.getDecimalScale(fromType);
+        decimal256.ofRaw(decimal128.getHigh(), decimal128.getLow());
+        decimal256.setScale(fromScale);
+        transferDecimal(row, col, decimal256, fromType, toType);
+    }
+
+    @SuppressWarnings("unused")
+    // Called from dynamically generated bytecode
+    public static void transferDecimal16(TableWriter.Row row, int col, Decimal256 decimal256, int fromType, int toType, short value) {
+        if (value == Decimals.DECIMAL16_NULL) {
+            WriterRowUtils.putNullDecimal(row, col, toType);
+            return;
+        }
+        final int fromScale = ColumnType.getDecimalScale(fromType);
+        decimal256.ofLong(value, fromScale);
+        transferDecimal(row, col, decimal256, fromType, toType);
+    }
+
+    @SuppressWarnings("unused")
+    // Called from dynamically generated bytecode
+    public static void transferDecimal256(TableWriter.Row row, int col, Decimal256 decimal256, int fromType, int toType) {
+        if (decimal256.isNull()) {
+            WriterRowUtils.putNullDecimal(row, col, toType);
+            return;
+        }
+        final int fromScale = ColumnType.getDecimalScale(fromType);
+        decimal256.setScale(fromScale);
+        transferDecimal(row, col, decimal256, fromType, toType);
+    }
+
+    @SuppressWarnings("unused")
+    // Called from dynamically generated bytecode
+    public static void transferDecimal32(TableWriter.Row row, int col, Decimal256 decimal256, int fromType, int toType, int value) {
+        if (value == Decimals.DECIMAL32_NULL) {
+            WriterRowUtils.putNullDecimal(row, col, toType);
+            return;
+        }
+        final int fromScale = ColumnType.getDecimalScale(fromType);
+        decimal256.ofLong(value, fromScale);
+        transferDecimal(row, col, decimal256, fromType, toType);
+    }
+
+    @SuppressWarnings("unused")
+    // Called from dynamically generated bytecode
+    public static void transferDecimal64(TableWriter.Row row, int col, Decimal256 decimal256, int fromType, int toType, long value) {
+        if (value == Decimals.DECIMAL64_NULL) {
+            WriterRowUtils.putNullDecimal(row, col, toType);
+            return;
+        }
+        final int fromScale = ColumnType.getDecimalScale(fromType);
+        decimal256.ofLong(value, fromScale);
+        transferDecimal(row, col, decimal256, fromType, toType);
+    }
+
+    @SuppressWarnings("unused")
+    // Called from dynamically generated bytecode
+    public static void transferDecimal8(TableWriter.Row row, int col, Decimal256 decimal256, int fromType, int toType, byte value) {
+        if (value == Decimals.DECIMAL8_NULL) {
+            WriterRowUtils.putNullDecimal(row, col, toType);
+            return;
+        }
+        final int fromScale = ColumnType.getDecimalScale(fromType);
+        decimal256.ofLong(value, fromScale);
+        transferDecimal(row, col, decimal256, fromType, toType);
+    }
+
+    @SuppressWarnings("unused")
+    // Called from dynamically generated bytecode
+    public static void transferIntToDecimal(TableWriter.Row row, int col, int value, Decimal256 decimal256, int toType) {
+        if (value == Numbers.INT_NULL) {
+            WriterRowUtils.putNullDecimal(row, col, toType);
+            return;
+        }
+        decimal256.ofLong(value, 0);
+        transferDecimal(row, col, decimal256, DecimalUtil.INT_TYPE, toType);
+    }
+
+    @SuppressWarnings("unused")
+    // Called from dynamically generated bytecode
+    public static void transferLongToDecimal(TableWriter.Row row, int col, long value, Decimal256 decimal256, int toType) {
+        if (value == Numbers.LONG_NULL) {
+            WriterRowUtils.putNullDecimal(row, col, toType);
+            return;
+        }
+        decimal256.ofLong(value, 0);
+        transferDecimal(row, col, decimal256, DecimalUtil.LONG_TYPE, toType);
+    }
+
+    @SuppressWarnings("unused")
+    // Called from dynamically generated bytecode
+    public static void transferShortToDecimal(TableWriter.Row row, int col, short value, Decimal256 decimal256, int toType) {
+        decimal256.ofLong(value, 0);
+        transferDecimal(row, col, decimal256, DecimalUtil.SHORT_TYPE, toType);
     }
 
     @SuppressWarnings("unused")
@@ -1133,9 +1447,7 @@ public class RecordToRowCopierUtils {
         if (seq == null) {
             return;
         }
-        StringSink sink = Misc.getThreadLocalSink();
-        sink.put(seq);
-        long date = SqlUtil.implicitCastVarcharAsDate(sink);
+        long date = SqlUtil.implicitCastVarcharAsDate(seq);
         row.putDate(col, date);
     }
 
@@ -1152,18 +1464,6 @@ public class RecordToRowCopierUtils {
 
     @SuppressWarnings("unused")
     // Called from dynamically generated bytecode
-    public static void transferVarcharToTimestampCol(TableWriter.Row row, int col, Utf8Sequence seq) {
-        if (seq == null) {
-            return;
-        }
-        StringSink sink = Misc.getThreadLocalSink();
-        sink.put(seq);
-        long ts = SqlUtil.implicitCastVarcharAsTimestamp(sink);
-        row.putTimestamp(col, ts);
-    }
-
-    @SuppressWarnings("unused")
-    // Called from dynamically generated bytecode
     public static void validateArrayDimensionsAndTransferCol(TableWriter.Row row, int col, DoubleArrayParser parser, CharSequence str, int expectedType) {
         if (str == null) {
             return;
@@ -1173,16 +1473,70 @@ public class RecordToRowCopierUtils {
         row.putArray(col, view);
     }
 
+    // Called from dynamically generated bytecode
+    @SuppressWarnings("unused")
+    public static void validateArrayDimensionsAndTransferCol(TableWriter.Row row, int col, DoubleArrayParser parser, Utf8Sequence vch, int expectedType) {
+        if (vch == null) {
+            return;
+        }
+
+        ArrayView view = SqlUtil.implicitCastVarcharAsDoubleArray(vch, parser, expectedType);
+        row.putArray(col, view);
+    }
+
     private static boolean isArrayParserRequired(ColumnTypes from, RecordMetadata to, ColumnFilter toColumnFilter, int n) {
         for (int i = 0; i < n; i++) {
             int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
             int toColumnType = to.getColumnType(toColumnIndex);
             int fromColumnType = from.getColumnType(i);
             if (ColumnType.tagOf(toColumnType) == ColumnType.ARRAY &&
-                    ColumnType.tagOf(fromColumnType) == ColumnType.STRING) {
+                    (ColumnType.tagOf(fromColumnType) == ColumnType.STRING || ColumnType.tagOf(fromColumnType) == ColumnType.VARCHAR)
+            ) {
                 return true;
             }
         }
         return false;
+    }
+
+    private static void transferDecimal(TableWriter.Row row, int col, Decimal256 decimal256, int fromType, int toType) {
+        int fromScale = ColumnType.getDecimalScale(fromType);
+        int fromPrecision = ColumnType.getDecimalPrecision(fromType);
+        int toScale = ColumnType.getDecimalScale(toType);
+        int toPrecision = ColumnType.getDecimalPrecision(toType);
+        if (fromScale != toScale) {
+            long hh = decimal256.getHh();
+            long hl = decimal256.getHl();
+            long lh = decimal256.getLh();
+            long ll = decimal256.getLl();
+            try {
+                decimal256.rescale(toScale);
+            } catch (NumericException ignored) {
+                decimal256.of(hh, hl, lh, ll, fromScale);
+                throw ImplicitCastException.inconvertibleValue(decimal256.toString(), fromType, toType);
+            }
+        }
+        if (fromPrecision + (toScale - fromScale) > toPrecision && !decimal256.comparePrecision(toPrecision)) {
+            throw ImplicitCastException.inconvertibleValue(decimal256.toString(), fromType, toType);
+        }
+        switch (ColumnType.tagOf(toType)) {
+            case ColumnType.DECIMAL8:
+                row.putByte(col, (byte) decimal256.getLl());
+                break;
+            case ColumnType.DECIMAL16:
+                row.putShort(col, (short) decimal256.getLl());
+                break;
+            case ColumnType.DECIMAL32:
+                row.putInt(col, (int) decimal256.getLl());
+                break;
+            case ColumnType.DECIMAL64:
+                row.putLong(col, decimal256.getLl());
+                break;
+            case ColumnType.DECIMAL128:
+                row.putDecimal128(col, decimal256.getLh(), decimal256.getLl());
+                break;
+            case ColumnType.DECIMAL256:
+                row.putDecimal256(col, decimal256.getHh(), decimal256.getHl(), decimal256.getLh(), decimal256.getLl());
+                break;
+        }
     }
 }

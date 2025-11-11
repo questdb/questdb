@@ -35,11 +35,9 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
-import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -170,7 +168,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
         int txnCount = rnd.nextInt(1000);
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, txnCount);
         long startTx = parseFloorPartialTimestamp("2022-02-24T02:00");
-        long maxDuration = rnd.nextLong(Timestamps.DAY_MICROS);
+        long maxDuration = rnd.nextLong(Micros.DAY_MICROS);
 
         LongList minMaxTimestamps = new LongList();
         for (int i = 0; i < txnCount; i++) {
@@ -208,12 +206,12 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
                             runningMin = Math.min(runningMin, minTimestamp);
                             if (commitTo > minTimestamp) {
-                                Assert.fail("row=" + i + " commitTo=" + Timestamps.toString(commitTo) + ", row=" + j + " minTimestamp=" + Timestamps.toString(minTimestamp));
+                                Assert.fail("row=" + i + " commitTo=" + Micros.toString(commitTo) + ", row=" + j + " minTimestamp=" + Micros.toString(minTimestamp));
                             }
                         }
 
                         if (runningMin != commitTo) {
-                            Assert.fail("row=" + i + " commitTo=" + Timestamps.toString(commitTo) + ", runningMin=" + Timestamps.toString(runningMin));
+                            Assert.fail("row=" + i + " commitTo=" + Micros.toString(commitTo) + ", runningMin=" + Micros.toString(runningMin));
                         }
                     }
                 }
@@ -343,18 +341,10 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
                 .wal();
     }
 
-    private static long parseFloorPartialTimestamp(String toTs) {
-        try {
-            return IntervalUtils.parseFloorPartialTimestamp(toTs);
-        } catch (NumericException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
     private void assertTimestampEquals(String expected, long actual) {
         long expectedTimestamp = parseFloorPartialTimestamp(expected);
         if (expectedTimestamp != actual) {
-            Assert.assertEquals(expected, Timestamps.toString(actual));
+            Assert.assertEquals(expected, Micros.toString(actual));
         }
     }
 

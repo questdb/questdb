@@ -26,13 +26,21 @@ package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WeakDimsArrayFunction;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class DoubleScalarDivArrayFunctionFactory implements FunctionFactory {
     private static final String OPERATOR_NAME = "/";
@@ -43,27 +51,54 @@ public class DoubleScalarDivArrayFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0), args.getQuick(1), configuration);
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return new Func(configuration, args.getQuick(0), args.getQuick(1), position);
     }
 
-    private static class Func extends DoubleArrayAndScalarDoubleArrayOperator {
+    private static class Func extends WeakDimsArrayFunction implements BinaryFunction {
+        private final DirectArray array;
+        private final Function arrayArg;
+        private final Function scalarArg;
 
-        public Func(Function scalarArg, Function arrayArg, CairoConfiguration configuration) {
-            super(OPERATOR_NAME, arrayArg, scalarArg, configuration);
+        public Func(CairoConfiguration configuration, Function scalarArg, Function arrayArg, int position) {
+            this.arrayArg = arrayArg;
+            this.scalarArg = scalarArg;
+            this.type = arrayArg.getType();
+            this.array = new DirectArray(configuration);
+            this.position = position;
         }
 
         @Override
-        public void applyToElement(ArrayView view, int index) {
-            memory.putDouble(scalarValue / view.getDouble(index));
+        public void close() {
+            BinaryFunction.super.close();
+            Misc.free(array);
         }
 
         @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            FlatArrayView flatView = view.flatView();
-            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
-                memory.putDouble(scalarValue / flatView.getDoubleAtAbsIndex(i));
+        public ArrayView getArray(Record rec) {
+            ArrayView arr = arrayArg.getArray(rec);
+            if (arr.isNull()) {
+                array.ofNull();
+                return array;
             }
+
+            final var scalarValue = scalarArg.getDouble(rec);
+            final var memory = array.copyShapeAndStartMemoryA(arr);
+            if (arr.isVanilla()) {
+                FlatArrayView flatView = arr.flatView();
+                for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
+                    memory.putDouble(scalarValue / flatView.getDoubleAtAbsIndex(i));
+                }
+            } else {
+                calculateRecursive(arr, 0, 0, scalarValue, memory);
+            }
+            return array;
         }
 
         @Override
@@ -72,8 +107,47 @@ public class DoubleScalarDivArrayFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return OPERATOR_NAME;
+        }
+
+        @Override
         public Function getRight() {
             return arrayArg;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            this.type = arrayArg.getType();
+            validateAssignedType();
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        private static void calculateRecursive(ArrayView view, int dim, int flatIndex, double scalarValue, MemoryA memOut) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    memOut.putDouble(scalarValue / view.getDouble(flatIndex));
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex, scalarValue, memOut);
+                    flatIndex += stride;
+                }
+            }
         }
     }
 }

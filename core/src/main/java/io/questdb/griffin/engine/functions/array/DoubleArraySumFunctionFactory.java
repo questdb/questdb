@@ -46,42 +46,24 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         return new Func(args.getQuick(0));
     }
 
-    static class Func extends DoubleFunction implements UnaryFunction, DoubleUnaryArrayAccessor {
+    static class Func extends DoubleFunction implements UnaryFunction {
 
-        protected final Function arrayArg;
-        protected double compensation = 0d;
-        protected double sum = 0d;
+        private final Function arrayArg;
+        private double compensation;
+        private double sum;
 
         Func(Function arrayArg) {
             this.arrayArg = arrayArg;
-        }
-
-        @Override
-        public void applyToElement(ArrayView view, int index) {
-            double v = view.getDouble(index);
-            if (Numbers.isFinite(v)) {
-                if (compensation == 0d && Numbers.isNull(sum)) {
-                    sum = 0d;
-                }
-                final double y = v - compensation;
-                final double t = sum + y;
-                compensation = t - sum - y;
-                sum = t;
-            }
-        }
-
-        @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            sum = view.flatView().sumDouble(view.getFlatViewOffset(), view.getFlatViewLength());
-        }
-
-        @Override
-        public void applyToNullArray() {
-            sum = Double.NaN;
         }
 
         @Override
@@ -91,9 +73,17 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
+            ArrayView arr = arrayArg.getArray(rec);
+            if (arr.isNull()) {
+                return Double.NaN;
+            }
+
+            if (arr.isVanilla()) {
+                return arr.flatView().sumDouble(arr.getFlatViewOffset(), arr.getFlatViewLength());
+            }
             sum = Double.NaN;
             compensation = 0d;
-            calculate(arrayArg.getArray(rec));
+            calculateRecursive(arr, 0, 0);
             return sum;
         }
 
@@ -105,6 +95,32 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    double v = view.getDouble(flatIndex);
+                    if (Numbers.isFinite(v)) {
+                        if (compensation == 0d && Numbers.isNull(sum)) {
+                            sum = 0d;
+                        }
+                        final double y = v - compensation;
+                        final double t = sum + y;
+                        compensation = t - sum - y;
+                        sum = t;
+                    }
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex);
+                    flatIndex += stride;
+                }
+            }
         }
     }
 }

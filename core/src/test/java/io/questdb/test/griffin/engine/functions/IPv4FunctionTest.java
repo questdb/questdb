@@ -26,9 +26,6 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IPv4Function;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class IPv4FunctionTest {
@@ -100,6 +97,36 @@ public class IPv4FunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal128() {
+        function.getDecimal128(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal16() {
+        function.getDecimal16(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256() {
+        function.getDecimal256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal32() {
+        function.getDecimal32(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal64() {
+        function.getDecimal64(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal8() {
+        function.getDecimal8(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetFloat() {
         function.getFloat(null);
     }
@@ -144,14 +171,14 @@ public class IPv4FunctionTest {
         function.getShort(null);
     }
 
-    @Test
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetStr() {
-        TestUtils.assertEquals("0.0.0.150", function.getStrA(null));
+        function.getStrA(null);
     }
 
-    @Test
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetStrB() {
-        TestUtils.assertEquals("0.0.0.150", function.getStrB(null));
+        function.getStrB(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -174,17 +201,13 @@ public class IPv4FunctionTest {
         function.getTimestamp(null);
     }
 
-    @Test
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetVarcharA() {
-        Utf8Sequence value = function.getVarcharA(null);
-        Assert.assertNotNull(value);
-        TestUtils.assertEquals("0.0.0.150", value.toString());
+        function.getVarcharA(null);
     }
 
-    @Test
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetVarcharB() {
-        Utf8Sequence value = function.getVarcharB(null);
-        Assert.assertNotNull(value);
-        TestUtils.assertEquals("0.0.0.150", value.toString());
+        function.getVarcharB(null);
     }
 }

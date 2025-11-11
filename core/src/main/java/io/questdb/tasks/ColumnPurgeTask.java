@@ -24,7 +24,9 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Transient;
@@ -41,7 +43,9 @@ public class ColumnPurgeTask implements Mutable {
     private int columnType;
     private int partitionBy;
     private int tableId;
-    private TableToken tableName;
+    private TableToken tableToken;
+    private TimestampDriver timestampDriver;
+    private int timestampType;
     private long truncateVersion;
     private long updateTxn;
 
@@ -59,15 +63,17 @@ public class ColumnPurgeTask implements Mutable {
     }
 
     public void copyFrom(ColumnPurgeTask inTask) {
-        this.tableName = inTask.tableName;
+        this.tableToken = inTask.tableToken;
         this.columnName = inTask.columnName;
         this.tableId = inTask.tableId;
+        this.timestampType = inTask.timestampType;
         this.partitionBy = inTask.partitionBy;
         this.updateTxn = inTask.updateTxn;
         this.columnType = inTask.columnType;
         this.truncateVersion = inTask.truncateVersion;
         this.updatedColumnInfo.clear();
         this.updatedColumnInfo.add(inTask.updatedColumnInfo);
+        this.timestampDriver = inTask.timestampDriver;
     }
 
     public CharSequence getColumnName() {
@@ -86,8 +92,16 @@ public class ColumnPurgeTask implements Mutable {
         return tableId;
     }
 
-    public TableToken getTableName() {
-        return tableName;
+    public TableToken getTableToken() {
+        return tableToken;
+    }
+
+    public int getTimestampType() {
+        return timestampType;
+    }
+
+    public TimestampDriver getTimestampTypeDriver() {
+        return timestampDriver;
     }
 
     public long getTruncateVersion() {
@@ -103,58 +117,63 @@ public class ColumnPurgeTask implements Mutable {
     }
 
     public boolean isEmpty() {
-        return tableName == null;
+        return tableToken == null;
     }
 
     public void of(
             @NotNull
-            TableToken tableName,
+            TableToken tableToken,
             String columnName,
             int tableId,
             long truncateVersion,
             int columnType,
+            int timestampType,
             int partitionBy,
             long updateTxn
     ) {
-        this.tableName = tableName;
+        this.tableToken = tableToken;
         this.columnName = columnName;
         this.tableId = tableId;
         this.columnType = columnType;
+        this.timestampType = timestampType;
         this.partitionBy = partitionBy;
         this.updateTxn = updateTxn;
         this.truncateVersion = truncateVersion;
         this.updatedColumnInfo.clear();
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
     }
 
     public void of(
             @NotNull
-            TableToken tableName,
+            TableToken tableToken,
             String columnName,
             int tableId,
             int truncateVersion,
             int columnType,
+            int timestampType,
             int partitionBy,
             long updateTxn,
             @Transient LongList columnVersions
     ) {
-        of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+        of(tableToken, columnName, tableId, truncateVersion, columnType, timestampType, partitionBy, updateTxn);
         this.updatedColumnInfo.add(columnVersions);
     }
 
     public void of(
             @NotNull
-            TableToken tableName,
+            TableToken tableToken,
             String columnName,
             int tableId,
             int truncateVersion,
             int columnType,
+            int timestampType,
             int partitionBy,
             long updateTxn,
             @Transient LongList columnVersions,
             int columnVersionsLo,
             int columnVersionsHi
     ) {
-        of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+        of(tableToken, columnName, tableId, truncateVersion, columnType, timestampType, partitionBy, updateTxn);
         this.updatedColumnInfo.add(columnVersions, columnVersionsLo, columnVersionsHi);
     }
 }

@@ -53,7 +53,6 @@ import static io.questdb.std.Files.SEPARATOR;
 // This class also reduces file open/close operations by caching file descriptors.
 // when the segment is marked as not last segment usage.
 public class TableWriterSegmentFileCache {
-    private static final ObjectFactory<MemoryCMOR> GET_MEMORY_CMOR = Vm::getMemoryCMOR;
     private static final Log LOG = LogFactory.getLog(TableWriterSegmentFileCache.class);
     private final CairoConfiguration configuration;
     private final TableToken tableToken;
@@ -68,9 +67,12 @@ public class TableWriterSegmentFileCache {
     public TableWriterSegmentFileCache(TableToken tableToken, CairoConfiguration configuration) {
         this.tableToken = tableToken;
         this.configuration = configuration;
+        ObjectFactory<MemoryCMOR> memoryFactory = configuration.getBypassWalFdCache()
+                ? TableWriterSegmentFileCache::openMemoryCMORBypassFdCache
+                : TableWriterSegmentFileCache::openMemoryCMORNormal;
 
         FilesFacade ff = configuration.getFilesFacade();
-        walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
+        walColumnMemoryPool = new WeakClosableObjectPool<>(memoryFactory, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
         walFdCloseCachedFdAction = (key, fdList) -> {
             for (int i = 0, n = fdList.size(); i < n; i++) {
                 long fd = fdList.get(i);
@@ -89,8 +91,9 @@ public class TableWriterSegmentFileCache {
                 .I$();
 
         int key = walFdCache.keyIndex(walSegmentId);
+        boolean cacheIsDisabled = configuration.getBypassWalFdCache();
         boolean cacheIsFull = walFdCacheSize >= configuration.getWalMaxSegmentFileDescriptorsCache();
-        if (isLastSegmentUsage || cacheIsFull) {
+        if (isLastSegmentUsage || cacheIsFull || cacheIsDisabled) {
             if (key < 0) {
                 LongList fds = walFdCache.valueAt(key);
                 walFdCache.removeAt(key);
@@ -205,6 +208,7 @@ public class TableWriterSegmentFileCache {
         if (fdCacheKey < 0) {
             fds = walFdCache.valueAt(fdCacheKey);
         }
+        int initialSize = walMappedColumns.size();
 
         try {
             int file = 0;
@@ -293,8 +297,23 @@ public class TableWriterSegmentFileCache {
                 }
             }
         } catch (Throwable th) {
-            closeWalFiles(true, walSegmentId, 0);
+            closeWalFiles(true, walSegmentId, initialSize);
+            walMappedColumns.setPos(initialSize); // already done by closeWalFiles(); kept for clarity
+            // Avoid double removal/pool push by the finally block when cached FDs were consumed.
+            fds = null;
             throw th;
+        } finally {
+            // Now that the FDs are used in the column objects, remove them from the cache.
+            // to avoid double close in case of exceptions.
+            if (fdCacheKey < 0) {
+                walFdCache.removeAt(fdCacheKey);
+                walFdCacheSize--;
+            }
+
+            if (fds != null) {
+                fds.clear();
+                walFdCacheListPool.push(fds);
+            }
         }
     }
 
@@ -312,17 +331,32 @@ public class TableWriterSegmentFileCache {
         try {
             path.concat(WalUtils.WAL_NAME_BASE);
             int walBaseLen = path.size();
-            for (int i = 0; i < segmentCopyInfo.getSegmentCount(); i++) {
-                int walId = segmentCopyInfo.getWalId(i);
-                int segmentId = segmentCopyInfo.getSegmentId(i);
-                path.trimTo(walBaseLen).put(walId).put(SEPARATOR).put(segmentId);
-                long rowLo = segmentCopyInfo.getRowLo(i);
-                long rowHi = segmentCopyInfo.getRowHi(i);
-                long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
-                mmapSegments(metadata, path, walIdSegmentId, rowLo, rowHi);
+            try {
+                for (int i = 0, n = segmentCopyInfo.getSegmentCount(); i < n; i++) {
+                    int walId = segmentCopyInfo.getWalId(i);
+                    int segmentId = segmentCopyInfo.getSegmentId(i);
+                    path.trimTo(walBaseLen).put(walId).put(SEPARATOR).put(segmentId);
+                    long rowLo = segmentCopyInfo.getRowLo(i);
+                    long rowHi = segmentCopyInfo.getRowHi(i);
+                    long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
+                    mmapSegments(metadata, path, walIdSegmentId, rowLo, rowHi);
+                }
+            } catch (Throwable th) {
+                // Close all the columns without placing into the cache.
+                Misc.freeObjListAndClear(walMappedColumns);
+                closeWalFiles();
+                throw th;
             }
         } finally {
             path.trimTo(pathSize1);
         }
+    }
+
+    private static MemoryCMOR openMemoryCMORBypassFdCache() {
+        return Vm.getMemoryCMOR(true);
+    }
+
+    private static MemoryCMOR openMemoryCMORNormal() {
+        return Vm.getMemoryCMOR(false);
     }
 }

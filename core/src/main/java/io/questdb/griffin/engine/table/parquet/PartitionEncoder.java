@@ -24,7 +24,11 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -40,6 +44,7 @@ public class PartitionEncoder {
                 destPath,
                 ParquetCompression.COMPRESSION_UNCOMPRESSED,
                 true,
+                false,
                 0, // DEFAULT_ROW_GROUP_SIZE (512 * 512) rows
                 0, // DEFAULT_DATA_PAGE_SIZE (1024 * 1024) bytes
                 ParquetVersion.PARQUET_VERSION_V1
@@ -51,6 +56,7 @@ public class PartitionEncoder {
             Path destPath,
             long compressionCodec,
             boolean statisticsEnabled,
+            boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
             int version
@@ -74,6 +80,7 @@ public class PartitionEncoder {
                     destPath.size(),
                     compressionCodec,
                     statisticsEnabled,
+                    rawArrayEncoding,
                     rowGroupSize,
                     dataPageSize,
                     version
@@ -83,7 +90,7 @@ public class PartitionEncoder {
         }
     }
 
-    public static void populateFromTableReader(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) {
+    public static void populateFromTableReader(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) throws CairoException {
         final long partitionSize = tableReader.openPartition(partitionIndex);
         assert partitionSize != 0;
         final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
@@ -101,6 +108,13 @@ public class PartitionEncoder {
 
                 final int primaryIndex = TableReader.getPrimaryColumnIndex(columnBase, i);
                 final MemoryR primaryMem = tableReader.getColumn(primaryIndex);
+
+                if (primaryMem == null) {
+                    throw CairoException.critical(CairoException.ERRNO_FILE_DOES_NOT_EXIST)
+                            .put("could not map primary mem for column [table=").put(metadata.getTableToken())
+                            .put(", primaryIndex=").put(primaryIndex)
+                            .put(']');
+                }
 
                 if (ColumnType.isSymbol(columnType)) {
                     SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);
@@ -164,6 +178,7 @@ public class PartitionEncoder {
             int destPathLength,
             long compressionCodec,
             boolean statisticsEnabled,
+            boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
             int version

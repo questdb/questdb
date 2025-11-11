@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -249,6 +249,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testByteDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0::byte a union select 3::byte union select 5::byte union select 9::byte union select 8::byte)",
+                false
+        );
+    }
+
+    @Test
     public void testByteNull() throws Exception {
         testUnionAllWithNull(
                 "a\tc\n" +
@@ -468,6 +488,224 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimal128Decimal128() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(36, 3) a from long_sequence(5))",
+                "create table y as (select 0::decimal(33, 0) a union select 3::decimal(33, 0) union select 5::decimal(33, 0) union select 9::decimal(33, 0) union select 8::decimal(33, 0))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimal16Decimal16() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.0\n" +
+                        "2.0\n" +
+                        "3.0\n" +
+                        "4.0\n" +
+                        "5.0\n" +
+                        "0.0\n" +
+                        "3.0\n" +
+                        "5.0\n" +
+                        "9.0\n" +
+                        "8.0\n",
+                "create table x as (select x::decimal(4, 1) a from long_sequence(5))",
+                "create table y as (select 0::decimal(3, 0) a union select 3::decimal(3, 0) union select 5::decimal(3, 0) union select 9::decimal(3, 0) union select 8::decimal(3, 0))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimal256Decimal256() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000000\n" +
+                        "2.000000\n" +
+                        "3.000000\n" +
+                        "4.000000\n" +
+                        "5.000000\n" +
+                        "0.000000\n" +
+                        "3.000000\n" +
+                        "5.000000\n" +
+                        "9.000000\n" +
+                        "8.000000\n",
+                "create table x as (select x::decimal(56, 6) a from long_sequence(5))",
+                "create table y as (select 0::decimal(56, 2) a union select 3::decimal(56, 2) union select 5::decimal(56, 2) union select 9::decimal(56, 2) union select 8::decimal(56, 2))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimal32Decimal32() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.0\n" +
+                        "2.0\n" +
+                        "3.0\n" +
+                        "4.0\n" +
+                        "5.0\n" +
+                        "0.0\n" +
+                        "3.0\n" +
+                        "5.0\n" +
+                        "9.0\n" +
+                        "8.0\n",
+                "create table x as (select x::decimal(8, 1) a from long_sequence(5))",
+                "create table y as (select 0::decimal(7, 0) a union select 3::decimal(7, 0) union select 5::decimal(7, 0) union select 9::decimal(7, 0) union select 8::decimal(7, 0))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimal64Decimal64() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.0\n" +
+                        "2.0\n" +
+                        "3.0\n" +
+                        "4.0\n" +
+                        "5.0\n" +
+                        "0.0\n" +
+                        "3.0\n" +
+                        "5.0\n" +
+                        "9.0\n" +
+                        "8.0\n",
+                "create table x as (select x::decimal(17, 1) a from long_sequence(5))",
+                "create table y as (select 0::decimal(16, 0) a union select 3::decimal(16, 0) union select 5::decimal(16, 0) union select 9::decimal(16, 0) union select 8::decimal(16, 0))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimal8Decimal8() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.0\n" +
+                        "2.0\n" +
+                        "3.0\n" +
+                        "4.0\n" +
+                        "5.0\n" +
+                        "0.0\n" +
+                        "3.0\n" +
+                        "5.0\n" +
+                        "9.0\n" +
+                        "8.0\n",
+                "create table x as (select x::decimal(2, 1) a from long_sequence(5))",
+                "create table y as (select 0::decimal(1, 0) a union select 3::decimal(1, 0) union select 5::decimal(1, 0) union select 9::decimal(1, 0) union select 8::decimal(1, 0))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimalDecimalMixedPrecisions() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0::decimal(18, 3) a union select 3::decimal(18, 3) union select 5::decimal(18, 3) union select 9::decimal(18, 3) union select 8::decimal(18, 3))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimalDecimalMixedScales() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.00000\n" +
+                        "2.00000\n" +
+                        "3.00000\n" +
+                        "4.00000\n" +
+                        "5.00000\n" +
+                        "0.00000\n" +
+                        "3.00000\n" +
+                        "5.00000\n" +
+                        "9.00000\n" +
+                        "8.00000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0::decimal(8, 1) a union select 3::decimal(8, 2) union select 5::decimal(8, 3) union select 9::decimal(8, 4) union select 8::decimal(8, 5))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimalNull() throws Exception {
+        testUnionAllWithNull(
+                "a\tc\n" +
+                        "1.000\t\n" +
+                        "2.000\t\n" +
+                        "3.000\t\n" +
+                        "4.000\t\n" +
+                        "5.000\t\n" +
+                        "\t1.000\n" +
+                        "\t2.000\n" +
+                        "\t3.000\n" +
+                        "\t4.000\n" +
+                        "\t5.000\n",
+                "x::decimal(18, 3)"
+        );
+    }
+
+    @Test
+    public void testDecimalStr() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::string a from long_sequence(5))",
+                "create table y as (select 0::decimal(18, 3) a union select 3::decimal(18, 3) union select 5::decimal(18, 3) union select 9::decimal(18, 3) union select 8::decimal(18, 3))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimalVarchar() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::varchar a from long_sequence(5))",
+                "create table y as (select 0::decimal(18, 3) a union select 3::decimal(18, 3) union select 5::decimal(18, 3) union select 9::decimal(18, 3) union select 8::decimal(18, 3))",
+                false
+        );
+    }
+
+    @Test
     public void testDoubleBool() throws Exception {
         // this is cast to STRING, both columns
         testUnionAll(
@@ -533,6 +771,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
                 "create table x as (select rnd_double() a from long_sequence(5))",
                 "create table y as (select rnd_date() b from long_sequence(5))",
                 12
+        );
+    }
+
+    @Test
+    public void testDoubleDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.0\n" +
+                        "3.0\n" +
+                        "5.0\n" +
+                        "9.0\n" +
+                        "8.0\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0d a union select 3d union select 5d union select 9d union select 8d)",
+                false
         );
     }
 
@@ -1468,6 +1726,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0::int a union select 3::int union select 5::int union select 9::int union select 8::int)",
+                false
+        );
+    }
+
+    @Test
     public void testIntExact() throws Exception {
         // long + geohash overlap via string type
         testUnionAll(
@@ -1592,7 +1870,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testInterval2() throws Exception {
-        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
+        setCurrentMicros(7 * Micros.DAY_MICROS + Micros.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
         assertMemoryLeak(() -> assertSql(
                 "a\tb\n" +
                         "('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n",
@@ -1609,7 +1887,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testInterval3() throws Exception {
-        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
+        setCurrentMicros(7 * Micros.DAY_MICROS + Micros.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
         assertMemoryLeak(() -> assertSql(
                 "a\ta1\n" +
                         "('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\n" +
@@ -1635,7 +1913,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testInterval4() throws Exception {
-        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
+        setCurrentMicros(7 * Micros.DAY_MICROS + Micros.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
         assertMemoryLeak(() -> assertSql(
                 "a\tb\n" +
                         "('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n" +
@@ -1761,6 +2039,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "8260188555232587029\n",
                 "create table x as (select '0'::char a union select '3'::char union select '5'::char union select '9'::char union select '8'::char)",
                 "create table y as (select rnd_long() b from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testLongDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0::long a union select 3::long union select 5::long union select 9::long union select 8::long)",
+                false
         );
     }
 
@@ -1950,6 +2248,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShortDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0::short a union select 3::short union select 5::short union select 9::short union select 8::short)",
+                false
+        );
+    }
+
+    @Test
     public void testShortNull() throws Exception {
         testUnionAllWithNull(
                 "a\tc\n" +
@@ -1964,6 +2282,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "0\t-13027\n" +
                         "0\t-21227\n",
                 "rnd_short()"
+        );
+    }
+
+    @Test
+    public void testStrDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select '0'::string a union select '3'::string union select '5'::string union select '9'::string union select '8'::string)",
+                false
         );
     }
 
@@ -2296,6 +2634,46 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampMicrosTimestampNanos() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1970-01-01T00:00:00.000001000Z\n" +
+                        "1970-01-01T00:00:00.000002000Z\n" +
+                        "1970-01-01T00:00:00.000003000Z\n" +
+                        "1970-01-01T00:00:00.000004000Z\n" +
+                        "1970-01-01T00:00:00.000005000Z\n" +
+                        "1970-01-01T00:00:00.000000001Z\n" +
+                        "1970-01-01T00:00:00.000000002Z\n" +
+                        "1970-01-01T00:00:00.000000003Z\n" +
+                        "1970-01-01T00:00:00.000000004Z\n" +
+                        "1970-01-01T00:00:00.000000005Z\n",
+                "create table x as (select cast(x as timestamp) a from long_sequence(5))",
+                "create table y as (select cast(x as timestamp_ns) a from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampNanosTimestampMicros() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1970-01-01T00:00:00.000000001Z\n" +
+                        "1970-01-01T00:00:00.000000002Z\n" +
+                        "1970-01-01T00:00:00.000000003Z\n" +
+                        "1970-01-01T00:00:00.000000004Z\n" +
+                        "1970-01-01T00:00:00.000000005Z\n" +
+                        "1970-01-01T00:00:00.000001000Z\n" +
+                        "1970-01-01T00:00:00.000002000Z\n" +
+                        "1970-01-01T00:00:00.000003000Z\n" +
+                        "1970-01-01T00:00:00.000004000Z\n" +
+                        "1970-01-01T00:00:00.000005000Z\n",
+                "create table x as (select cast(x as timestamp_ns) a from long_sequence(5))",
+                "create table y as (select cast(x as timestamp) a from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
     public void testTimestampNull() throws Exception {
         testUnionAllWithNull(
                 "a\tc\n" +
@@ -2424,6 +2802,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
                 "create table x as (select rnd_uuid4() a from long_sequence(5))",
                 "create table y as (select rnd_varchar() b from long_sequence(5))",
                 true
+        );
+    }
+
+    @Test
+    public void testVarcharDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select '0'::varchar a union select '3'::varchar union select '5'::varchar union select '9'::varchar union select '8'::varchar)",
+                false
         );
     }
 

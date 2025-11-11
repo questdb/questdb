@@ -26,10 +26,11 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
@@ -97,15 +98,20 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
             } else {
                 LPSZ txnPath = threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
                 if (ff.exists(txnPath)) {
-                    try (TxReader txReader = this.txReader.ofRO(txnPath, PartitionBy.NONE)) {
+                    try (
+                            TableMetadata tableMetadata = engine.getTableMetadata(tableToken);
+                            TxReader txReader = this.txReader.ofRO(txnPath, tableMetadata.getTimestampType(), tableMetadata.getPartitionBy())
+                    ) {
                         TableUtils.safeReadTxn(this.txReader, millisecondClock, spinLockTimeout);
                         if (engine.getTableSequencerAPI().initTxnTracker(tableToken, txReader.getSeqTxn(), seqTxn)) {
                             notificationQueueIsFull = !engine.notifyWalTxnCommitted(tableToken);
                         }
                     } catch (CairoException e) {
-                        if (!e.errnoFileCannotRead()) {
+                        if (!e.isFileCannotRead()) {
                             throw e;
                         } // race, table is dropped, ApplyWal2TableJob is already deleting the files
+                    } catch (TableReferenceOutOfDateException ignore) {
+                        // ignore, table was deleted if we got this exception on a table token
                     }
                 } // else table is dropped, ApplyWal2TableJob already is deleting the files
             }

@@ -86,8 +86,15 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        long srcCount = srcValue.getLong(valueIndex);
-        destValue.addLong(valueIndex, srcCount);
+        final long srcCount = srcValue.getLong(valueIndex);
+        if (srcCount > 0) {
+            final long destCount = destValue.getLong(valueIndex);
+            if (destCount > 0) {
+                destValue.putLong(valueIndex, destCount + srcCount);
+            } else {
+                destValue.putLong(valueIndex, srcCount);
+            }
+        }
     }
 
     @Override

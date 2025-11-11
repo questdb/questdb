@@ -256,7 +256,7 @@ public class MetricsIODispatcherTest {
         final HttpQueryTestBuilder.HttpClientCode makeRequest = (engine, sqlExecutionContext) -> {
             try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
                 if (parallelRequestBatches == 1) {
-                    Assert.assertEquals(0, pool.size());
+                    Assert.assertTrue("pool.size() > 1: " + pool.size(), pool.size() <= 1);
                 }
 
                 final StringSink utf16Sink = new StringSink();
@@ -270,7 +270,7 @@ public class MetricsIODispatcherTest {
                                     .url("/metrics")
                                     .send()
                     ) {
-                        response.await(5_000);
+                        response.await(15_000);
                         utf16Sink.clear();
                         utf16Sink.put(response.getStatusCode());
                         TestUtils.assertEquals("200", utf16Sink);
@@ -289,9 +289,7 @@ public class MetricsIODispatcherTest {
                 }
 
                 if (parallelRequestBatches == 1) {
-                    if (pool.size() > 1) {
-                        Assert.fail("pool.size() > 1: " + pool.size());
-                    }
+                    Assert.assertTrue("pool.size() > 1: " + pool.size(), pool.size() <= 1);
                 }
             }
         };

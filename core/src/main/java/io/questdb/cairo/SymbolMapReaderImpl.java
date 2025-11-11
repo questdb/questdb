@@ -39,9 +39,11 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -69,8 +71,14 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public SymbolMapReaderImpl() {
     }
 
-    public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, int symbolCount) {
-        of(configuration, path, name, columnNameTxn, symbolCount);
+    public SymbolMapReaderImpl(
+            CairoConfiguration configuration,
+            @Transient Utf8Sequence pathToTableDir,
+            @Transient CharSequence columnName,
+            long columnNameTxn,
+            int symbolCount
+    ) {
+        of(configuration, pathToTableDir, columnName, columnNameTxn, symbolCount);
     }
 
     @Override
@@ -148,10 +156,16 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return new SymbolTableView();
     }
 
-    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, int symbolCount) {
+    public void of(
+            CairoConfiguration configuration,
+            @Transient Utf8Sequence pathToTableDir,
+            @Transient CharSequence columnName,
+            long columnNameTxn,
+            int symbolCount
+    ) {
         final FilesFacade ff = configuration.getFilesFacade();
         this.configuration = configuration;
-        this.path.of(path);
+        this.path.of(pathToTableDir);
         this.columnNameSink.clear();
         this.columnNameSink.put(columnName);
         this.columnNameTxn = columnNameTxn;
@@ -184,13 +198,22 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
 
             // index reader is used to identify attempts to store duplicate symbol value
-            indexReader.of(configuration, path.trimTo(plen), columnName, columnNameTxn, 0);
+            // partition txn does not matter, because symbol is at the root of the table dir (not at partition level)
+            indexReader.of(configuration, path.trimTo(plen), columnName, columnNameTxn, -1, 0);
 
+            long charSize = offsetMem.getLong(maxOffset);
+            // char file size can be zero only if symbolCount is zero
+            assert charSize > 0 || symbolCount == 0;
             // this is the place where symbol values are stored
-            charMem.wholeFile(ff, charFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_READER);
-
-            // move append pointer for symbol values in the correct place
-            charMem.extend(offsetMem.getLong(maxOffset));
+            charMem.of(
+                    ff,
+                    charFileName(path.trimTo(plen), columnName, columnNameTxn),
+                    ff.getMapPageSize(),
+                    charSize,
+                    MemoryTag.MMAP_INDEX_READER,
+                    CairoConfiguration.O_NONE,
+                    -1
+            );
 
             // we use index hash maximum equals to half of symbol capacity, which
             // theoretically should require 2 value cells in index per hash
@@ -221,7 +244,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // we need to make sure we have access to the last element
             // which will indicate size of the char column
             offsetMem.extend(maxOffset + Long.BYTES);
-            charMem.extend(offsetMem.getLong(maxOffset));
+
+            long charSize = offsetMem.getLong(maxOffset);
+            // char file size can be zero only if symbolCount is zero
+            assert charSize > 0 || symbolCount == 0;
+            charMem.extend(charSize);
         } else if (symbolCount < this.symbolCount) {
             cache.remove(symbolCount + 1, this.symbolCount);
             this.symbolCount = symbolCount;
@@ -229,7 +256,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         // Refresh contains null flag.
         this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
         // Refresh index reader to avoid memory remapping on keyOf() calls.
-        indexReader.of(configuration, path, columnNameSink, columnNameTxn, 0);
+        // partition txn does not matter, because symbol is at the root of the table dir (not at partition level)
+        indexReader.of(configuration, path, columnNameSink, columnNameTxn, -1, 0);
     }
 
     @Override

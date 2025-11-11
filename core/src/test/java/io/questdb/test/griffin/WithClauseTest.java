@@ -97,7 +97,7 @@ public class WithClauseTest extends AbstractCairoTest {
                     "insert into balance values ( 1, 1.0 ), (2, 2.0);",
                     "address\tbalance\taddress1\tbalance1\n2\t2.0\t2\t2.0\n",
                     false,
-                    true,
+                    false,
                     false
             );
         });

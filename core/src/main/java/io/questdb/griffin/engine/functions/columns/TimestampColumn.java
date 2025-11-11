@@ -24,27 +24,36 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class TimestampColumn extends TimestampFunction implements Function {
+public class TimestampColumn extends TimestampFunction implements ColumnFunction {
     private static final ObjList<TimestampColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    private TimestampColumn(int columnIndex) {
+    private TimestampColumn(int columnIndex, int timestampType) {
+        super(timestampType);
         this.columnIndex = columnIndex;
     }
 
-    public static TimestampColumn newInstance(int columnIndex) {
+    public static TimestampColumn newInstance(int columnIndex, int timestampType) {
         if (columnIndex < STATIC_COLUMN_COUNT) {
-            return COLUMNS.getQuick(columnIndex);
+            TimestampColumn column = COLUMNS.getQuick(columnIndex);
+            column.setType(timestampType);
         }
-        return new TimestampColumn(columnIndex);
+        return new TimestampColumn(columnIndex, timestampType);
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -57,15 +66,10 @@ public class TimestampColumn extends TimestampFunction implements Function {
         return true;
     }
 
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
-    }
-
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new TimestampColumn(i));
+            COLUMNS.setQuick(i, new TimestampColumn(i, ColumnType.TIMESTAMP_MICRO));
         }
     }
 }

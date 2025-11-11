@@ -44,16 +44,11 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestName;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
-import java.util.Arrays;
-import java.util.Collection;
 
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
+import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
 
-@RunWith(Parameterized.class)
 public class O3SplitPartitionTest extends AbstractO3Test {
     protected static final Log LOG = LogFactory.getLog(O3SplitPartitionTest.class);
     private final StringBuilder tstData = new StringBuilder();
@@ -61,24 +56,10 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Rule
     public TestName name = new TestName();
 
-    public O3SplitPartitionTest(ParallelMode mode, CommitModeParam commitMode, MixedIOParam mixedIO) {
-        this.workerCount = mode == ParallelMode.CONTENDED ? 0 : 2;
-        AbstractO3Test.commitMode = commitMode == CommitModeParam.SYNC ? CommitMode.SYNC : CommitMode.NOSYNC;
-        AbstractO3Test.mixedIOEnabled = mixedIO == MixedIOParam.MIXED_IO_ALLOWED;
-    }
-
-    @Parameterized.Parameters(name = "{0},{1},{2}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {ParallelMode.PARALLEL, CommitModeParam.NO_SYNC, MixedIOParam.MIXED_IO_ALLOWED},
-                {ParallelMode.PARALLEL, CommitModeParam.NO_SYNC, MixedIOParam.NO_MIXED_IO},
-                {ParallelMode.PARALLEL, CommitModeParam.SYNC, MixedIOParam.MIXED_IO_ALLOWED},
-                {ParallelMode.PARALLEL, CommitModeParam.SYNC, MixedIOParam.NO_MIXED_IO},
-                {ParallelMode.CONTENDED, CommitModeParam.NO_SYNC, MixedIOParam.MIXED_IO_ALLOWED},
-                {ParallelMode.CONTENDED, CommitModeParam.NO_SYNC, MixedIOParam.NO_MIXED_IO},
-                {ParallelMode.CONTENDED, CommitModeParam.SYNC, MixedIOParam.MIXED_IO_ALLOWED},
-                {ParallelMode.CONTENDED, CommitModeParam.SYNC, MixedIOParam.NO_MIXED_IO}
-        });
+    public O3SplitPartitionTest() {
+        this.workerCount = rnd.nextBoolean() ? 0 : 2;
+        AbstractO3Test.commitMode = rnd.nextBoolean() ? CommitMode.SYNC : CommitMode.NOSYNC;
+        AbstractO3Test.mixedIOEnabled = rnd.nextBoolean();
     }
 
     @Before
@@ -112,7 +93,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testDoubleSplitSamePartitionAtSameTransaction() throws Exception {
         executeWithPool(
                 workerCount,
-                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext, String timestampTypeName) -> {
                     engine.execute(
                             "create table x as (" +
                                     "select" +
@@ -121,7 +102,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
                             executionContext
@@ -140,7 +121,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
+                                    " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L)::" + timestampTypeName + " ts," +
                                     " 1 as k," +
                                     " rnd_symbol(null,'5','16','2') as sym," +
                                     " rnd_str(5,16,2) as ks," +
@@ -158,7 +139,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-05T14:01:07', 60*1000000L) ts," +
+                                    " timestamp_sequence('2020-02-05T14:01:07', 60*1000000L)::" + timestampTypeName + " ts," +
                                     " 1 as k," +
                                     " rnd_symbol(null,'5','16','2') as sym," +
                                     " rnd_str(5,16,2) as ks," +
@@ -175,7 +156,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "str string," +
                                     "v1 varchar," +
                                     "v2 varchar," +
-                                    "ts timestamp, " +
+                                    "ts " + timestampTypeName + ", " +
                                     "k int," +
                                     "sym symbol," +
                                     "ks string," +
@@ -203,12 +184,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Test
     public void testRebuildIndexLastPartitionWithColumnTop() throws Exception {
         executeWithPool(
-                workerCount, (engine, compiler, sqlExecutionContext) -> {
+                workerCount, (engine, compiler, sqlExecutionContext, timestampTypeName) -> {
                     partitionO3SplitThreshold = 5;
 
                     engine.execute(
                             "CREATE TABLE monthly_col_top(" +
-                                    "ts timestamp, metric SYMBOL, diagnostic SYMBOL, sensorChannel SYMBOL" +
+                                    "ts " + timestampTypeName + ", metric SYMBOL, diagnostic SYMBOL, sensorChannel SYMBOL" +
                                     ") timestamp(ts) partition by MONTH",
                             sqlExecutionContext
                     );
@@ -247,34 +228,38 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     TestUtils.assertSql(
                             compiler, sqlExecutionContext, "select ts, metric, loggerChannel from monthly_col_top", sink,
-                            "ts\tmetric\tloggerChannel\n" +
-                                    "2022-06-08T01:40:00.000000Z\t1\t\n" +
-                                    "2022-06-08T02:41:00.000000Z\t2\t\n" +
-                                    "2022-06-08T02:42:00.000000Z\t3\t\n" +
-                                    "2022-06-08T02:43:00.000000Z\t4\t\n" +
-                                    "2022-06-08T02:50:00.000000Z\t5\t3\n" +
-                                    "2022-06-08T02:50:00.000000Z\t6\t3\n" +
-                                    "2022-06-08T02:50:00.000000Z\t7\t1\n" +
-                                    "2022-06-08T02:50:00.000000Z\t8\t1\n" +
-                                    "2022-06-08T02:50:00.000000Z\t9\t2\n" +
-                                    "2022-06-08T02:50:00.000000Z\t10\t2\n" +
-                                    "2022-06-08T03:30:00.000000Z\t15\t3\n" +
-                                    "2022-06-08T03:30:00.000000Z\t16\t3\n" +
-                                    "2022-06-08T03:50:00.000000Z\t11\t2\n" +
-                                    "2022-06-08T03:50:00.000000Z\t12\t2\n" +
-                                    "2022-06-08T04:50:00.000000Z\t13\t2\n" +
-                                    "2022-06-08T04:50:00.000000Z\t14\t2\n"
+                            replaceTimestampSuffix1("""
+                                    ts\tmetric\tloggerChannel
+                                    2022-06-08T01:40:00.000000Z\t1\t
+                                    2022-06-08T02:41:00.000000Z\t2\t
+                                    2022-06-08T02:42:00.000000Z\t3\t
+                                    2022-06-08T02:43:00.000000Z\t4\t
+                                    2022-06-08T02:50:00.000000Z\t5\t3
+                                    2022-06-08T02:50:00.000000Z\t6\t3
+                                    2022-06-08T02:50:00.000000Z\t7\t1
+                                    2022-06-08T02:50:00.000000Z\t8\t1
+                                    2022-06-08T02:50:00.000000Z\t9\t2
+                                    2022-06-08T02:50:00.000000Z\t10\t2
+                                    2022-06-08T03:30:00.000000Z\t15\t3
+                                    2022-06-08T03:30:00.000000Z\t16\t3
+                                    2022-06-08T03:50:00.000000Z\t11\t2
+                                    2022-06-08T03:50:00.000000Z\t12\t2
+                                    2022-06-08T04:50:00.000000Z\t13\t2
+                                    2022-06-08T04:50:00.000000Z\t14\t2
+                                    """, timestampTypeName)
                     );
 
                     TestUtils.assertSql(
                             compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '2'", sink,
-                            "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
-                                    "2022-06-08T02:50:00.000000Z\t9\t\t\t2\n" +
-                                    "2022-06-08T02:50:00.000000Z\t10\t\t\t2\n" +
-                                    "2022-06-08T03:50:00.000000Z\t11\t\t\t2\n" +
-                                    "2022-06-08T03:50:00.000000Z\t12\t\t\t2\n" +
-                                    "2022-06-08T04:50:00.000000Z\t13\t\t\t2\n" +
-                                    "2022-06-08T04:50:00.000000Z\t14\t\t\t2\n"
+                            replaceTimestampSuffix1("""
+                                    ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
+                                    2022-06-08T02:50:00.000000Z\t9\t\t\t2
+                                    2022-06-08T02:50:00.000000Z\t10\t\t\t2
+                                    2022-06-08T03:50:00.000000Z\t11\t\t\t2
+                                    2022-06-08T03:50:00.000000Z\t12\t\t\t2
+                                    2022-06-08T04:50:00.000000Z\t13\t\t\t2
+                                    2022-06-08T04:50:00.000000Z\t14\t\t\t2
+                                    """, timestampTypeName)
                     );
 
                     // OOO appends to last partition
@@ -286,13 +271,15 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     TestUtils.assertSql(
                             compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
-                            "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
-                                    "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
-                                    "2022-06-08T02:50:00.000000Z\t6\t\t\t3\n" +
-                                    "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
-                                    "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
-                                    "2022-06-08T04:50:00.000000Z\t18\t\t4\t3\n" +
-                                    "2022-06-08T05:30:00.000000Z\t17\t\t4\t3\n"
+                            replaceTimestampSuffix1("""
+                                    ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
+                                    2022-06-08T02:50:00.000000Z\t5\t\t\t3
+                                    2022-06-08T02:50:00.000000Z\t6\t\t\t3
+                                    2022-06-08T03:30:00.000000Z\t15\t\t2\t3
+                                    2022-06-08T03:30:00.000000Z\t16\t\t2\t3
+                                    2022-06-08T04:50:00.000000Z\t18\t\t4\t3
+                                    2022-06-08T05:30:00.000000Z\t17\t\t4\t3
+                                    """, timestampTypeName)
                     );
 
                     // OOO merges and appends to last partition
@@ -305,16 +292,18 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     TestUtils.assertSql(
                             compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
-                            "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
-                                    "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
-                                    "2022-06-08T02:50:00.000000Z\t6\t\t\t3\n" +
-                                    "2022-06-08T02:50:00.000000Z\t20\t\t4\t3\n" +
-                                    "2022-06-08T02:50:00.000000Z\t21\t\t4\t3\n" +
-                                    "2022-06-08T03:30:00.000000Z\t15\t\t2\t3\n" +
-                                    "2022-06-08T03:30:00.000000Z\t16\t\t2\t3\n" +
-                                    "2022-06-08T04:50:00.000000Z\t18\t\t4\t3\n" +
-                                    "2022-06-08T05:30:00.000000Z\t17\t\t4\t3\n" +
-                                    "2022-06-08T05:30:00.000000Z\t19\t\t4\t3\n"
+                            replaceTimestampSuffix1("""
+                                    ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
+                                    2022-06-08T02:50:00.000000Z\t5\t\t\t3
+                                    2022-06-08T02:50:00.000000Z\t6\t\t\t3
+                                    2022-06-08T02:50:00.000000Z\t20\t\t4\t3
+                                    2022-06-08T02:50:00.000000Z\t21\t\t4\t3
+                                    2022-06-08T03:30:00.000000Z\t15\t\t2\t3
+                                    2022-06-08T03:30:00.000000Z\t16\t\t2\t3
+                                    2022-06-08T04:50:00.000000Z\t18\t\t4\t3
+                                    2022-06-08T05:30:00.000000Z\t17\t\t4\t3
+                                    2022-06-08T05:30:00.000000Z\t19\t\t4\t3
+                                    """, timestampTypeName)
                     );
                 }
         );
@@ -323,13 +312,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Test
     public void testSplitLastPartition() throws Exception {
         executeWithPool(
-                workerCount, (engine, compiler, executionContext) -> {
+                workerCount, (engine, compiler, executionContext, timestampTypeName) -> {
                     engine.execute(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
                                     " -x j," +
-                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
                             executionContext
@@ -340,7 +329,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
-                                    " timestamp_sequence('2020-02-05T17:01', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-05T17:01', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(50))",
                             executionContext
                     );
@@ -366,7 +355,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitLastPartitionWithColumnTop() throws Exception {
         executeWithPool(
                 workerCount,
-                (engine, compiler, executionContext) -> {
+                (engine, compiler, executionContext, timestampTypeName) -> {
                     engine.execute(
                             "create table x as (" +
                                     "select" +
@@ -375,7 +364,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
                             executionContext
@@ -388,7 +377,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "str string," +
                                     "v1 varchar," +
                                     "v2 varchar," +
-                                    "ts timestamp, " +
+                                    "ts " + timestampTypeName + ", " +
                                     "k int," +
                                     "ks string, " +
                                     "kv1 varchar, " +
@@ -406,7 +395,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-05T14:01:07', 60*100000L) ts" +
+                                    " timestamp_sequence('2020-02-05T14:01:07', 60*100000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(100))",
                             executionContext
                     );
@@ -428,7 +417,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-05T00:01:07', 60*100000L) ts," +
+                                    " timestamp_sequence('2020-02-05T00:01:07', 60*100000L)::" + timestampTypeName + " ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks," +
                                     " rnd_varchar(5,16,2) as kv1," +
@@ -460,7 +449,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitMidPartition() throws Exception {
         executeWithPool(
                 workerCount,
-                (engine, compiler, executionContext) -> {
+                (engine, compiler, executionContext, timestampTypeName) -> {
                     engine.execute(
                             "create table x as (" +
                                     "select" +
@@ -469,7 +458,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(60*24*2)" +
                                     ") timestamp (ts) partition by DAY",
                             executionContext
@@ -483,7 +472,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(50))",
                             executionContext
                     );
@@ -509,7 +498,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitMidPartitionAfterStringColumnUpdate() throws Exception {
         executeWithPool(
                 workerCount,
-                (engine, compiler, executionContext) -> {
+                (engine, compiler, executionContext, timestampTypeName) -> {
                     FilesFacade ff = FilesFacadeImpl.INSTANCE;
                     engine.execute(
                             "create table x as (" +
@@ -517,7 +506,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(60*24*2)" +
                                     ") timestamp (ts) partition by DAY",
                             executionContext
@@ -541,7 +530,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(50))",
                             executionContext
                     );
@@ -567,7 +556,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitMidPartitionAfterVarcharColumnUpdate() throws Exception {
         executeWithPool(
                 workerCount,
-                (engine, compiler, executionContext) -> {
+                (engine, compiler, executionContext, timestampTypeName) -> {
                     FilesFacade ff = FilesFacadeImpl.INSTANCE;
                     engine.execute(
                             "create table x as (" +
@@ -576,7 +565,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " -x j," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(60*24*2)" +
                                     ") timestamp (ts) partition by DAY",
                             executionContext
@@ -611,7 +600,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " -x - 1000000L as j," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(50))",
                             executionContext
                     );
@@ -637,7 +626,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitOverrunLastPartition() throws Exception {
         executeWithPool(
                 workerCount,
-                (engine, compiler, executionContext) -> {
+                (engine, compiler, executionContext, timestampTypeName) -> {
                     engine.execute(
                             "create table x as (" +
                                     "select" +
@@ -646,7 +635,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
                             executionContext
@@ -660,7 +649,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-05T17:01', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-05T17:01', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(1000))",
                             executionContext
                     );
@@ -686,7 +675,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitPartitionWithColumnTop() throws Exception {
         executeWithPool(
                 workerCount,
-                (engine, compiler, executionContext) -> {
+                (engine, compiler, executionContext, timestampTypeName) -> {
                     engine.execute(
                             "create table x as (" +
                                     "select" +
@@ -695,7 +684,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
                             executionContext
@@ -713,7 +702,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
+                                    " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L)::" + timestampTypeName + " ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks," +
                                     " rnd_varchar(5,16,2) as kv1," +
@@ -738,7 +727,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitPartitionWithColumnTopResultsInSplitWithColumnTop() throws Exception {
         executeWithPool(
                 workerCount,
-                (engine, compiler, executionContext) -> {
+                (engine, compiler, executionContext, timestampTypeName) -> {
                     engine.execute(
                             "create table x as (" +
                                     "select" +
@@ -747,7 +736,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
                             executionContext
@@ -765,7 +754,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-05T20:01:05', 60*1000000L) ts," +
+                                    " timestamp_sequence('2020-02-05T20:01:05', 60*1000000L)::" + timestampTypeName + " ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks," +
                                     " rnd_varchar(5,16,2) as kv1," +
@@ -782,7 +771,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-05T21:01:05.2', 60*1000000L) ts," +
+                                    " timestamp_sequence('2020-02-05T21:01:05.2', 60*1000000L)::" + timestampTypeName + " ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks," +
                                     " rnd_varchar(5,16,2) as kv," +
@@ -808,7 +797,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitPartitionWithColumnTopResultsInSplitWithColumnTop2() throws Exception {
         executeWithPool(
                 workerCount,
-                (engine, compiler, executionContext) -> {
+                (engine, compiler, executionContext, timestampTypeName) -> {
                     engine.execute(
                             "create table x as (" +
                                     "select" +
@@ -817,7 +806,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
                             executionContext
@@ -835,7 +824,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-05T20:01:05', 60*1000000L) ts," +
+                                    " timestamp_sequence('2020-02-05T20:01:05', 60*1000000L)::" + timestampTypeName + " ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks," +
                                     " rnd_varchar(5,16,2) as kv1," +
@@ -852,7 +841,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_str(5,16,2) as str," +
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
-                                    " timestamp_sequence('2020-02-05T17:01:07', 60*1000000L) ts," +
+                                    " timestamp_sequence('2020-02-05T17:01:07', 60*1000000L)::" + timestampTypeName + " ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks," +
                                     " rnd_varchar(5,16,2) as kv1," +
@@ -878,7 +867,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitSquashMidPartitionWithDedupSameRowCount() throws Exception {
         executeWithPool(
                 workerCount,
-                (engine, compiler, executionContext) -> {
+                (engine, compiler, executionContext, timestampTypeName) -> {
                     engine.execute(
                             "create table x as (" +
                                     "select" +
@@ -888,7 +877,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
                                     " cast(null as string) str2," +
-                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(60*24*2)" +
                                     ") timestamp (ts) partition by DAY WAL dedup upsert keys(ts)",
                             executionContext
@@ -898,10 +887,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     // Open reader
                     TestUtils.assertSql(
-                            engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink, "sum\tts\tlast\n" +
-                                    "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
-                                    "-1987920\t2020-02-04T00:00:00.000000Z\t\n" +
-                                    "-1942590\t2020-02-05T00:00:00.000000Z\t\n"
+                            engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink,
+                            replaceTimestampSuffix1("""
+                                    sum\tts\tlast
+                                    -218130\t2020-02-03T00:00:00.000000Z\t
+                                    -1987920\t2020-02-04T00:00:00.000000Z\t
+                                    -1942590\t2020-02-05T00:00:00.000000Z\t
+                                    """, timestampTypeName)
                     );
 
                     engine.execute(
@@ -913,7 +905,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
                                     " rnd_str(1000, 1000, 0) as str2, " +
-                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(50))",
                             executionContext
                     );
@@ -923,10 +915,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     drainWalQueue(engine);
 
                     TestUtils.assertSql(
-                            engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink, "sum\tts\tlast\n" +
-                                    "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
-                                    "-51885870\t2020-02-04T00:00:00.000000Z\t\n" +
-                                    "-1942590\t2020-02-05T00:00:00.000000Z\t\n"
+                            engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink,
+                            replaceTimestampSuffix1("""
+                                    sum\tts\tlast
+                                    -218130\t2020-02-03T00:00:00.000000Z\t
+                                    -51885870\t2020-02-04T00:00:00.000000Z\t
+                                    -1942590\t2020-02-05T00:00:00.000000Z\t
+                                    """, timestampTypeName)
                     );
                 }
         );
@@ -936,7 +931,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitSquashMidPartitionWithDedupSameRowCountVarchar() throws Exception {
         executeWithPool(
                 workerCount,
-                (engine, compiler, executionContext) -> {
+                (engine, compiler, executionContext, timestampTypeName) -> {
                     engine.execute(
                             "create table x as (" +
                                     "select" +
@@ -946,7 +941,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
                                     " cast(null as varchar) str2," +
-                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(60*24*2)" +
                                     ") timestamp (ts) partition by DAY WAL dedup upsert keys(ts)",
                             executionContext
@@ -956,10 +951,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     // Open reader
                     TestUtils.assertSql(
-                            engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink, "sum\tts\tlast\n" +
-                                    "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
-                                    "-1987920\t2020-02-04T00:00:00.000000Z\t\n" +
-                                    "-1942590\t2020-02-05T00:00:00.000000Z\t\n"
+                            engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink,
+                            replaceTimestampSuffix1("""
+                                    sum\tts\tlast
+                                    -218130\t2020-02-03T00:00:00.000000Z\t
+                                    -1987920\t2020-02-04T00:00:00.000000Z\t
+                                    -1942590\t2020-02-05T00:00:00.000000Z\t
+                                    """, timestampTypeName)
                     );
 
                     engine.execute(
@@ -971,7 +969,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " rnd_varchar(5,16,2) as v1," +
                                     " rnd_varchar(1,1,1) as v2," +
                                     " rnd_varchar(1000, 1000, 0) as str2, " +
-                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
+                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L)::" + timestampTypeName + " ts" +
                                     " from long_sequence(50))",
                             executionContext
                     );
@@ -981,10 +979,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     drainWalQueue(engine);
 
                     TestUtils.assertSql(
-                            engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink, "sum\tts\tlast\n" +
-                                    "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
-                                    "-51885870\t2020-02-04T00:00:00.000000Z\t\n" +
-                                    "-1942590\t2020-02-05T00:00:00.000000Z\t\n"
+                            engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink,
+                            replaceTimestampSuffix1("""
+                                    sum\tts\tlast
+                                    -218130\t2020-02-03T00:00:00.000000Z\t
+                                    -51885870\t2020-02-04T00:00:00.000000Z\t
+                                    -1942590\t2020-02-05T00:00:00.000000Z\t
+                                    """, timestampTypeName)
                     );
                 }
         );
@@ -1030,13 +1031,5 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                 "select * from " + "x" + " where " + filter,
                 LOG
         );
-    }
-
-    public enum CommitModeParam {
-        NO_SYNC, SYNC
-    }
-
-    public enum MixedIOParam {
-        MIXED_IO_ALLOWED, NO_MIXED_IO
     }
 }

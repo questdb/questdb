@@ -70,7 +70,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 return NetworkSqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
             }
         };
-        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(config, MemoryTag.NATIVE_CB5) {
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config, MemoryTag.NATIVE_CB5) {
             @Override
             protected boolean testConnection(long fd) {
                 return false;
@@ -496,11 +496,11 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutInVectorizedNonKeyedGroupBy() throws Exception {
-        assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext);
-            }
-        });
+        executeWithPool(
+                4,
+                16,
+                (engine, compiler, sqlExecutionContext) -> testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext)
+        );
     }
 
     @Test // triggers timeout when processing task in main thread because queue is too small

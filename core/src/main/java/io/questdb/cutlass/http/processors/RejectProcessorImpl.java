@@ -30,6 +30,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8StringSink;
 
@@ -42,8 +43,8 @@ public class RejectProcessorImpl implements RejectProcessor {
     private final Utf8StringSink rejectMessage = new Utf8StringSink();
     protected byte authenticationType = AUTH_TYPE_NONE;
     protected int rejectCode = 0;
-    protected CharSequence rejectCookieName = null;
-    protected CharSequence rejectCookieValue = null;
+    protected ObjList<CharSequence> rejectCookieNames = new ObjList<>();
+    protected ObjList<CharSequence> rejectCookieValues = new ObjList<>();
     protected boolean shutdownWrite = false;
 
     public RejectProcessorImpl(HttpConnectionContext httpConnectionContext) {
@@ -54,8 +55,8 @@ public class RejectProcessorImpl implements RejectProcessor {
     public void clear() {
         rejectCode = 0;
         authenticationType = AUTH_TYPE_NONE;
-        rejectCookieName = null;
-        rejectCookieValue = null;
+        rejectCookieNames.clear();
+        rejectCookieValues.clear();
         rejectMessage.clear();
         shutdownWrite = false;
     }
@@ -76,7 +77,7 @@ public class RejectProcessorImpl implements RejectProcessor {
         if (rejectCode == HTTP_UNAUTHORIZED) {
             handleHttpUnauthorized(response);
         } else {
-            response.sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
+            response.sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieNames, rejectCookieValues);
         }
 
         if (shutdownWrite) {
@@ -87,7 +88,7 @@ public class RejectProcessorImpl implements RejectProcessor {
 
     @Override
     public RejectProcessor reject(int rejectCode) {
-        LOG.error().$("rejecting request [code=").$(rejectCode).I$();
+        LOG.error().$(rejectMessage).$(" [code=").$(rejectCode).I$();
         this.rejectCode = rejectCode;
         return this;
     }
@@ -108,8 +109,8 @@ public class RejectProcessorImpl implements RejectProcessor {
 
     @Override
     public RejectProcessor withCookie(CharSequence cookieName, CharSequence cookieValue) {
-        this.rejectCookieName = cookieName;
-        this.rejectCookieValue = cookieValue;
+        rejectCookieNames.add(cookieName);
+        rejectCookieValues.add(cookieValue);
         return this;
     }
 

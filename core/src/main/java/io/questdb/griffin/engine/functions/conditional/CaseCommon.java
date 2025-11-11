@@ -24,109 +24,26 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
-import org.jetbrains.annotations.NotNull;
-
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-
-import static io.questdb.cairo.ColumnType.BINARY;
-import static io.questdb.cairo.ColumnType.BOOLEAN;
-import static io.questdb.cairo.ColumnType.BYTE;
-import static io.questdb.cairo.ColumnType.CHAR;
-import static io.questdb.cairo.ColumnType.DATE;
-import static io.questdb.cairo.ColumnType.DOUBLE;
-import static io.questdb.cairo.ColumnType.FLOAT;
-import static io.questdb.cairo.ColumnType.GEOBYTE;
-import static io.questdb.cairo.ColumnType.GEOINT;
-import static io.questdb.cairo.ColumnType.GEOSHORT;
-import static io.questdb.cairo.ColumnType.INT;
-import static io.questdb.cairo.ColumnType.IPv4;
-import static io.questdb.cairo.ColumnType.LONG;
-import static io.questdb.cairo.ColumnType.LONG128;
-import static io.questdb.cairo.ColumnType.LONG256;
-import static io.questdb.cairo.ColumnType.NULL;
-import static io.questdb.cairo.ColumnType.SHORT;
-import static io.questdb.cairo.ColumnType.STRING;
-import static io.questdb.cairo.ColumnType.SYMBOL;
-import static io.questdb.cairo.ColumnType.TIMESTAMP;
-import static io.questdb.cairo.ColumnType.UNDEFINED;
-import static io.questdb.cairo.ColumnType.UUID;
-import static io.questdb.cairo.ColumnType.VARCHAR;
-import static io.questdb.cairo.ColumnType.isGeoHash;
-import static io.questdb.cairo.ColumnType.isNull;
-import static io.questdb.cairo.ColumnType.isUndefined;
-import static io.questdb.cairo.ColumnType.nameOf;
-import static io.questdb.cairo.ColumnType.tagOf;
-
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.cast.CastBooleanToLong256FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastByteToDateFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastByteToLong256FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastByteToSymbolFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastByteToTimestampFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastByteToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastCharToDateFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastCharToLong256FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastCharToTimestampFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastCharToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDateToLong256FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDateToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDateToSymbolFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDateToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDoubleToLong256FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDoubleToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDoubleToSymbolFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDoubleToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastFloatToDateFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastFloatToLong256FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastFloatToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastFloatToSymbolFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastFloatToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastIPv4ToIntFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastIPv4ToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastIntToIPv4FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastIntToLong256FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastIntToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastIntToSymbolFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastIntToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastLong256ToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastLong256ToSymbolFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastLong256ToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastLongToSymbolFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastLongToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastShortToDateFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastShortToLong256FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastShortToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastShortToSymbolFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastShortToTimestampFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastShortToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastStrToIPv4FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastTimestampToLong256FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastTimestampToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastTimestampToSymbolFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastTimestampToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastVarcharToIPv4FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastVarcharToUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
+
+import static io.questdb.cairo.ColumnType.*;
 
 public class CaseCommon {
     private static final LongObjHashMap<FunctionFactory> castFactories = new LongObjHashMap<>();
@@ -136,6 +53,7 @@ public class CaseCommon {
     private static final LongIntHashMap typeEscalationMap = new LongIntHashMap();
 
     // public for testing
+    @TestOnly
     public static Function getCastFunction(
             Function arg,
             int argPosition,
@@ -150,6 +68,9 @@ public class CaseCommon {
         if (ColumnType.isArray(argType)) {
             assert argType == toType; // no type escalation for arrays
             return arg;
+        }
+        if (ColumnType.isDecimal(toType)) {
+            return DecimalUtil.getImplicitCastFunction(arg, argPosition, toType, sqlExecutionContext);
         }
         final int keyIndex = castFactories.keyIndex(Numbers.encodeLowHighInts(argType, toType));
         if (keyIndex < 0) {
@@ -168,6 +89,7 @@ public class CaseCommon {
     }
 
     // public for testing
+    @TestOnly
     public static int getCommonType(int commonType, int valueType, int valuePos, String undefinedErrorMsg) throws SqlException {
         if (isUndefined(valueType)) {
             throw SqlException.$(valuePos, undefinedErrorMsg);
@@ -189,6 +111,10 @@ public class CaseCommon {
             throw SqlException.inconvertibleTypes(valuePos, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
         }
 
+        if (ColumnType.isDecimal(commonType) || ColumnType.isDecimal(valueType)) {
+            return getDecimalCommonType(commonType, valueType, valuePos);
+        }
+
         final int type = typeEscalationMap.get(Numbers.encodeLowHighInts(commonType, valueType));
         if (type == LongIntHashMap.NO_ENTRY_VALUE) {
             throw SqlException.inconvertibleTypes(valuePos, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
@@ -196,9 +122,34 @@ public class CaseCommon {
         return type;
     }
 
+    private static int getDecimalCommonType(int commonType, int valueType, int valuePos) throws SqlException {
+        if (commonType == valueType) {
+            return commonType;
+        }
+
+        commonType = DecimalUtil.getImplicitCastType(commonType);
+        valueType = DecimalUtil.getImplicitCastType(valueType);
+        if (commonType == 0 || valueType == 0) {
+            throw SqlException.inconvertibleTypes(valuePos, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
+        }
+
+        final int commonPrecision = ColumnType.getDecimalPrecision(commonType);
+        final int commonScale = ColumnType.getDecimalScale(commonType);
+        final int valuePrecision = ColumnType.getDecimalPrecision(valueType);
+        final int valueScale = ColumnType.getDecimalScale(valueType);
+
+        final int targetScale = Math.max(commonScale, valueScale);
+        final int targetPrecision = Math.min(
+                Math.max(commonPrecision - commonScale, valuePrecision - valueScale) + targetScale,
+                Decimals.MAX_PRECISION
+        );
+
+        return ColumnType.getDecimalType(targetPrecision, targetScale);
+    }
+
     @NotNull
     private static CaseFunctionConstructor getCaseFunctionConstructor(int position, int returnType) throws SqlException {
-        final CaseFunctionConstructor constructor = constructors.getQuick(returnType);
+        final CaseFunctionConstructor constructor = constructors.getQuick(tagOf(returnType));
         if (constructor == null) {
             throw SqlException.$(position, "unsupported CASE value type '").put(nameOf(returnType)).put('\'');
         }
@@ -207,22 +158,18 @@ public class CaseCommon {
 
     static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker, ObjList<Function> args) throws SqlException {
         if (isGeoHash(returnType)) {
-            switch (tagOf(returnType)) {
-                case GEOBYTE:
-                    return new GeoByteCaseFunction(returnType, picker, args);
-                case GEOSHORT:
-                    return new GeoShortCaseFunction(returnType, picker, args);
-                case GEOINT:
-                    return new GeoIntCaseFunction(returnType, picker, args);
-                default:
-                    return new GeoLongCaseFunction(returnType, picker, args);
-            }
+            return switch (tagOf(returnType)) {
+                case GEOBYTE -> new GeoByteCaseFunction(returnType, picker, args);
+                case GEOSHORT -> new GeoShortCaseFunction(returnType, picker, args);
+                case GEOINT -> new GeoIntCaseFunction(returnType, picker, args);
+                default -> new GeoLongCaseFunction(returnType, picker, args);
+            };
         }
         if (ColumnType.isArray(returnType)) {
             return new ArrayCaseFunction(returnType, picker, args);
         }
 
-        return getCaseFunctionConstructor(position, returnType).getInstance(position, picker, args);
+        return getCaseFunctionConstructor(position, returnType).getInstance(position, picker, args, returnType);
     }
 
     static {
@@ -233,19 +180,19 @@ public class CaseCommon {
         castFactories.put(Numbers.encodeLowHighInts(BYTE, SYMBOL), new CastByteToSymbolFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(BYTE, CHAR), new CastByteToCharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(BYTE, DATE), new CastByteToDateFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(BYTE, TIMESTAMP), new CastByteToTimestampFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(BYTE, TIMESTAMP_MICRO), new CastByteToTimestampFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, LONG256), new CastCharToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, STRING), new CastCharToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, VARCHAR), new CastCharToVarcharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, SYMBOL), new CastCharToSymbolFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, DATE), new CastCharToDateFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(CHAR, TIMESTAMP), new CastCharToTimestampFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(CHAR, TIMESTAMP_MICRO), new CastCharToTimestampFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, LONG256), new CastShortToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, STRING), new CastShortToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, VARCHAR), new CastShortToVarcharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, SYMBOL), new CastShortToSymbolFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, DATE), new CastShortToDateFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(SHORT, TIMESTAMP), new CastShortToTimestampFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(SHORT, TIMESTAMP_MICRO), new CastShortToTimestampFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(INT, LONG256), new CastIntToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(INT, STRING), new CastIntToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(INT, VARCHAR), new CastIntToVarcharFunctionFactory());
@@ -273,10 +220,10 @@ public class CaseCommon {
         castFactories.put(Numbers.encodeLowHighInts(DATE, STRING), new CastDateToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(DATE, VARCHAR), new CastDateToVarcharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(DATE, SYMBOL), new CastDateToSymbolFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(TIMESTAMP, LONG256), new CastTimestampToLong256FunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(TIMESTAMP, STRING), new CastTimestampToStrFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(TIMESTAMP, VARCHAR), new CastTimestampToVarcharFunctionFactory());
-        castFactories.put(Numbers.encodeLowHighInts(TIMESTAMP, SYMBOL), new CastTimestampToSymbolFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, LONG256), new CastTimestampToLong256FunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, STRING), new CastTimestampToStrFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, VARCHAR), new CastTimestampToVarcharFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, SYMBOL), new CastTimestampToSymbolFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(BOOLEAN, LONG256), new CastBooleanToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(LONG256, STRING), new CastLong256ToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(LONG256, VARCHAR), new CastLong256ToVarcharFunctionFactory());
@@ -340,7 +287,10 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(DOUBLE, DOUBLE), DOUBLE);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(DATE, DATE), DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP, TIMESTAMP), TIMESTAMP);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, TIMESTAMP_MICRO), TIMESTAMP_MICRO);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP_NANO, TIMESTAMP_NANO), TIMESTAMP_NANO);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, TIMESTAMP_NANO), TIMESTAMP_NANO);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP_NANO, TIMESTAMP_MICRO), TIMESTAMP_NANO);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, STRING), STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, SYMBOL), STRING);
@@ -373,25 +323,32 @@ public class CaseCommon {
 
     static {
         constructors.set(UNDEFINED, NULL + 1, null);
-        constructors.extendAndSet(STRING, (position, picker, args) -> new StrCaseFunction(picker, args));
-        constructors.extendAndSet(INT, (position, picker, args) -> new IntCaseFunction(picker, args));
-        constructors.extendAndSet(LONG, (position, picker, args) -> new LongCaseFunction(picker, args));
-        constructors.extendAndSet(BYTE, (position, picker, args) -> new ByteCaseFunction(picker, args));
-        constructors.extendAndSet(BOOLEAN, (position, picker, args) -> new BooleanCaseFunction(picker, args));
-        constructors.extendAndSet(SHORT, (position, picker, args) -> new ShortCaseFunction(picker, args));
-        constructors.extendAndSet(CHAR, (position, picker, args) -> new CharCaseFunction(picker, args));
-        constructors.extendAndSet(FLOAT, (position, picker, args) -> new FloatCaseFunction(picker, args));
-        constructors.extendAndSet(DOUBLE, (position, picker, args) -> new DoubleCaseFunction(picker, args));
-        constructors.extendAndSet(LONG256, (position, picker, args) -> new Long256CaseFunction(picker, args));
-        constructors.extendAndSet(SYMBOL, (position, picker, args) -> new StrCaseFunction(picker, args));
-        constructors.extendAndSet(DATE, (position, picker, args) -> new DateCaseFunction(picker, args));
-        constructors.extendAndSet(TIMESTAMP, (position, picker, args) -> new TimestampCaseFunction(picker, args));
-        constructors.extendAndSet(BINARY, (position, picker, args) -> new BinCaseFunction(picker, args));
-        constructors.extendAndSet(LONG128, (position, picker, args) -> new Long128CaseFunction(picker, args));
-        constructors.extendAndSet(UUID, (position, picker, args) -> new UuidCaseFunction(picker, args));
-        constructors.extendAndSet(IPv4, (position, picker, args) -> new IPv4CaseFunction(picker, args));
-        constructors.extendAndSet(VARCHAR, (position, picker, args) -> new VarcharCaseFunction(picker, args));
-        constructors.extendAndSet(NULL, (position, picker, args) -> new NullCaseFunction(args));
+        constructors.extendAndSet(STRING, (position, picker, args, returnType) -> new StrCaseFunction(picker, args));
+        constructors.extendAndSet(INT, (position, picker, args, returnType) -> new IntCaseFunction(picker, args));
+        constructors.extendAndSet(LONG, (position, picker, args, returnType) -> new LongCaseFunction(picker, args));
+        constructors.extendAndSet(BYTE, (position, picker, args, returnType) -> new ByteCaseFunction(picker, args));
+        constructors.extendAndSet(BOOLEAN, (position, picker, args, returnType) -> new BooleanCaseFunction(picker, args));
+        constructors.extendAndSet(SHORT, (position, picker, args, returnType) -> new ShortCaseFunction(picker, args));
+        constructors.extendAndSet(CHAR, (position, picker, args, returnType) -> new CharCaseFunction(picker, args));
+        constructors.extendAndSet(FLOAT, (position, picker, args, returnType) -> new FloatCaseFunction(picker, args));
+        constructors.extendAndSet(DOUBLE, (position, picker, args, returnType) -> new DoubleCaseFunction(picker, args));
+        constructors.extendAndSet(LONG256, (position, picker, args, returnType) -> new Long256CaseFunction(picker, args));
+        constructors.extendAndSet(SYMBOL, (position, picker, args, returnType) -> new StrCaseFunction(picker, args));
+        constructors.extendAndSet(DATE, (position, picker, args, returnType) -> new DateCaseFunction(picker, args));
+        constructors.extendAndSet(TIMESTAMP, (position, picker, args, returnType) -> new TimestampCaseFunction(picker, args, returnType));
+        constructors.extendAndSet(BINARY, (position, picker, args, returnType) -> new BinCaseFunction(picker, args));
+        constructors.extendAndSet(LONG128, (position, picker, args, returnType) -> new Long128CaseFunction(picker, args));
+        constructors.extendAndSet(UUID, (position, picker, args, returnType) -> new UuidCaseFunction(picker, args));
+        constructors.extendAndSet(IPv4, (position, picker, args, returnType) -> new IPv4CaseFunction(picker, args));
+        constructors.extendAndSet(VARCHAR, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
+        constructors.extendAndSet(DECIMAL8, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
+        constructors.extendAndSet(DECIMAL16, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
+        constructors.extendAndSet(DECIMAL32, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
+        constructors.extendAndSet(DECIMAL64, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
+        constructors.extendAndSet(DECIMAL128, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
+        constructors.extendAndSet(DECIMAL256, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
+        constructors.extendAndSet(VARCHAR, (position, picker, args, returnType) -> new VarcharCaseFunction(picker, args));
+        constructors.extendAndSet(NULL, (position, picker, args, returnType) -> new NullCaseFunction(args));
         constructors.setPos(NULL + 1);
     }
 }

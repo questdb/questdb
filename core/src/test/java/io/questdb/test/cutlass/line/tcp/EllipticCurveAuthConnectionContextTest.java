@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoException;
+import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.Files;
@@ -54,7 +54,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
     public void setUp() {
         super.setUp();
         nWriterThreads = 2;
-        microSecondTicks = -1;
+        timestampTicks = -1;
         recvBuffer = null;
         disconnected = true;
         maxRecvBufferSize.set(1024);
@@ -162,8 +162,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -179,8 +181,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -196,8 +200,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -213,8 +219,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -230,8 +238,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -247,8 +257,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -264,8 +276,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -290,8 +304,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -321,8 +337,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -344,27 +362,12 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             }
             Assert.assertFalse(disconnected);
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
-    }
-
-    @Test
-    public void testIncorrectConfig() throws Exception {
-        maxRecvBufferSize.set(200);
-        try {
-            runInAuthContext(() -> {
-                recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-                handleContextIO0();
-                Assert.assertFalse(disconnected);
-                waitForIOCompletion();
-                closeContext();
-                Assert.fail();
-            });
-        } catch (CairoException ex) {
-            TestUtils.assertEquals("Minimum buffer length is 513", ex.getFlyweightMessage());
-        }
     }
 
     @Test
@@ -392,6 +395,21 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             boolean authSequenceCompleted = authenticate(false, false, false, false, junkSignature);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertTrue(disconnected);
+        });
+    }
+
+    @Test
+    public void testMinBufferSizeForAuth() throws Exception {
+        maxRecvBufferSize.set(PropServerConfiguration.MIN_TCP_ILP_BUF_SIZE);
+        runInAuthContext(() -> {
+            // this is a big-ass token (that looks like valid ILP line)
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            handleContextIO0();
+            Assert.assertFalse(disconnected);
+            // asserting there is no exception out of this method
+            waitForIOCompletion();
+            closeContext();
+            drainWalQueue();
         });
     }
 

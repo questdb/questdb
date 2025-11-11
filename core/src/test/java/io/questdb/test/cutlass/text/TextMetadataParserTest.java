@@ -29,6 +29,7 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextMetadataParser;
 import io.questdb.cutlass.text.types.TypeManager;
+import io.questdb.std.Decimal256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf16Sink;
@@ -53,7 +54,8 @@ public class TextMetadataParserTest {
         typeManager = new TypeManager(
                 new DefaultTextConfiguration(),
                 utf16Sink,
-                utf8Sink
+                utf8Sink,
+                new Decimal256()
         );
         textMetadataParser = new TextMetadataParser(
                 new DefaultTextConfiguration(),
@@ -157,6 +159,25 @@ public class TextMetadataParserTest {
                 2,
                 "Must be an object"
         );
+    }
+
+    @Test
+    public void testTimestampNanosType() throws Exception {
+        String in = "[\n" +
+                "{\"name\": \"x\", \"type\": \"INT\", \"pattern\":\"xyz\", \"locale\": \"en-US\"},\n" +
+                "{\"name\": \"y\", \"type\": \"TIMESTAMP_NS\", \"pattern\":\"yyyy-MM-ddTHH:mm:ss.SSSSSSNNNZ\"}\n" +
+                "]";
+
+        long buf = TestUtils.toMemory(in);
+        try {
+            LEXER.parse(buf, buf + in.length(), textMetadataParser);
+            Assert.assertEquals(2, textMetadataParser.getColumnTypes().size());
+            Assert.assertEquals(2, textMetadataParser.getColumnNames().size());
+            Assert.assertEquals("[INT,TIMESTAMP_NS]", textMetadataParser.getColumnTypes().toString());
+            Assert.assertEquals("[x,y]", textMetadataParser.getColumnNames().toString());
+        } finally {
+            Unsafe.free(buf, in.length(), MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test

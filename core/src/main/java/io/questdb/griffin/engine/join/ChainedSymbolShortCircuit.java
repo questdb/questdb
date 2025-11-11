@@ -25,20 +25,18 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import org.jetbrains.annotations.NotNull;
 
-public final class ChainedSymbolShortCircuit implements SymbolShortCircuit {
-
-    private final SymbolShortCircuit[] shortCircuits;
-
-    public ChainedSymbolShortCircuit(SymbolShortCircuit[] shortCircuits) {
-        this.shortCircuits = shortCircuits;
-    }
+public record ChainedSymbolShortCircuit(
+        @NotNull SymbolJoinKeyMapping[] mappings
+) implements SymbolShortCircuit {
 
     @Override
     public boolean isShortCircuit(Record masterRecord) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            if (shortCircuits[i].isShortCircuit(masterRecord)) {
+        for (int i = 0, n = mappings.length; i < n; i++) {
+            if (mappings[i].getSlaveKey(masterRecord) == StaticSymbolTable.VALUE_NOT_FOUND) {
                 return true;
             }
         }
@@ -47,8 +45,8 @@ public final class ChainedSymbolShortCircuit implements SymbolShortCircuit {
 
     @Override
     public void of(TimeFrameRecordCursor slaveCursor) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            shortCircuits[i].of(slaveCursor);
+        for (int i = 0, n = mappings.length; i < n; i++) {
+            mappings[i].of(slaveCursor);
         }
     }
 }

@@ -76,7 +76,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         this.recordSink = recordSink;
         ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
         mapValueTypes.add(RECORD_INDEX_VALUE_IDX, ColumnType.LONG);
-        mapValueTypes.add(TIMESTAMP_VALUE_IDX, ColumnType.TIMESTAMP);
+        mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
         Map latestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes);
         this.cursor = new LatestByRecordCursor(latestByMap, timestampIndex);
         this.rowIndexesInitialCapacity = configuration.getSqlLatestByRowCount();
@@ -90,8 +90,6 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Forcefully disable column pre-touch for nested filter queries.
-        executionContext.setColumnPreTouchEnabled(false);
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             cursor.of(baseCursor, recordSink, rowIndexes, rowIndexesInitialCapacity, executionContext.getCircuitBreaker());

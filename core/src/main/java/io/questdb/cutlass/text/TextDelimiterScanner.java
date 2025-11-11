@@ -228,8 +228,8 @@ public class TextDelimiterScanner implements Closeable {
         // exclude '.' as delimiter
         if (delimiter != '.' && lastDelimiterStdDev < maxRequiredDelimiterStdDev) {
             LOG.info()
-                    .$("scan result [table=`").$safe(tableName)
-                    .$("`, delimiter='").$((char) delimiter)
+                    .$("scan result [table=").$safe(tableName)
+                    .$(", delimiter='").$((char) delimiter)
                     .$("', priority=").$(lastDelimiterPriority)
                     .$(", mean=").$(lastDelimiterMean)
                     .$(", stddev=").$(lastDelimiterStdDev)

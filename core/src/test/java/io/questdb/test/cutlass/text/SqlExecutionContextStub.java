@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
@@ -34,6 +35,9 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -67,12 +71,15 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
             boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
+            char rowsLoUnit,
             int rowsLoExprPos,
             long rowsHi,
+            char rowsHiUnit,
             int rowsHiExprPos,
             int exclusionKind,
             int exclusionKindPos,
             int timestampIndex,
+            int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
     ) {
@@ -98,6 +105,23 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
         return false;
     }
 
+    public Decimal128 getDecimal128() {
+        return null;
+    }
+
+    public Decimal256 getDecimal256() {
+        return null;
+    }
+
+    public Decimal64 getDecimal64() {
+        return null;
+    }
+
+    @Override
+    public int getIntervalFunctionType() {
+        return ColumnType.INTERVAL_TIMESTAMP_MICRO;
+    }
+
     @Override
     public int getJitMode() {
         return 0;
@@ -109,8 +133,18 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public long getNow() {
+    public long getNanosecondTimestamp() {
         return 0L;
+    }
+
+    @Override
+    public long getNow(int timestampType) {
+        return 0L;
+    }
+
+    @Override
+    public int getNowTimestampType() {
+        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override
@@ -134,6 +168,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public int getSharedQueryWorkerCount() {
+        return 0;
+    }
+
+    @Override
     public SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
         return null;
     }
@@ -144,26 +183,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public int getWorkerCount() {
-        return 0;
-    }
-
-    @Override
     public void initNow() {
     }
 
     @Override
     public boolean isCacheHit() {
-        return false;
-    }
-
-    @Override
-    public boolean isColumnPreTouchEnabled() {
-        return false;
-    }
-
-    @Override
-    public boolean isColumnPreTouchEnabledOverride() {
         return false;
     }
 
@@ -179,6 +203,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public boolean isParallelReadParquetEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelTopKEnabled() {
         return false;
     }
 
@@ -221,11 +250,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
-    }
-
-    @Override
-    public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
+    public void setIntervalFunctionType(int intervalFunctionType) {
     }
 
     @Override
@@ -233,7 +258,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void setNowAndFixClock(long now) {
+    public void setNowAndFixClock(long now, int nowTimestampType) {
     }
 
     @Override
@@ -246,6 +271,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
+    }
+
+    @Override
+    public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
     }
 
     @Override

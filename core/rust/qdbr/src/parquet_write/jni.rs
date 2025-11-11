@@ -28,6 +28,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     timestamp_index: jint,
     compression_codec: jlong,
     statistics_enabled: jboolean,
+    raw_array_encoding: jboolean,
     row_group_size: jlong,
     data_page_size: jlong,
 ) -> *mut ParquetUpdater {
@@ -37,6 +38,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         let allocator = unsafe { &*allocator }.clone();
 
         let statistics_enabled = statistics_enabled != 0;
+        let raw_array_encoding = raw_array_encoding != 0;
 
         let row_group_size = if row_group_size > 0 {
             Some(row_group_size as usize)
@@ -62,6 +64,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             file_size,
             sorting_columns,
             statistics_enabled,
+            raw_array_encoding,
             compression_options,
             row_group_size,
             data_page_size,
@@ -74,8 +77,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             let src_path = unsafe { slice::from_raw_parts(src_path_ptr, src_path_len as usize) };
             let src_path = std::str::from_utf8(src_path).unwrap_or("!!invalid path utf8!!");
             err.add_context(format!(
-                "could not open parquet file for update from path {}",
-                src_path
+                "could not open parquet file for update from path {src_path}"
             ));
             err.add_context("error in PartitionUpdater.create");
             err.into_cairo_exception().throw(&mut env)
@@ -130,6 +132,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     col_names_len: jint,
     col_data_ptr: *const i64,
     col_data_len: jlong,
+    timestamp_index: jint,
     row_count: jlong,
 ) {
     let orig_row_group_id = row_group_id;
@@ -152,6 +155,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             col_data_ptr,
             col_data_len,
             row_count,
+            timestamp_index,
         )?;
         if let Some(row_group_id) = row_group_id {
             parquet_updater.replace_row_group(&partition, row_group_id)
@@ -193,6 +197,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     dest_path_len: i32,
     compression_codec: jlong,
     statistics_enabled: jboolean,
+    raw_array_encoding: jboolean,
     row_group_size: jlong,
     data_page_size: jlong,
     version: jint,
@@ -207,6 +212,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             col_data_ptr,
             col_data_len,
             row_count,
+            timestamp_index,
         )?;
 
         let dest_path = unsafe {
@@ -218,6 +224,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             compression_from_i64(compression_codec).context("CompressionCodec")?;
 
         let statistics_enabled = statistics_enabled != 0;
+        let raw_array_encoding = raw_array_encoding != 0;
         let row_group_size = if row_group_size > 0 {
             Some(row_group_size as usize)
         } else {
@@ -236,16 +243,21 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             format!("Could not create parquet file for {}", dest_path.display())
         })?;
 
-        let sorting_columns = if timestamp_index != -1 {
-            Some(vec![SortingColumn::new(timestamp_index, false, false)])
-        } else {
-            None
-        };
+        let local_timestamp_index = partition.columns.iter().enumerate().find_map(|(i, c)| {
+            if c.designated_timestamp {
+                Some(i as i32)
+            } else {
+                None
+            }
+        });
+        let sorting_columns =
+            local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)]);
 
         ParquetWriter::new(&mut file)
             .with_version(version)
             .with_compression(compression_options)
             .with_statistics(statistics_enabled)
+            .with_raw_array_encoding(raw_array_encoding)
             .with_row_group_size(row_group_size)
             .with_data_page_size(data_page_size)
             .with_sorting_columns(sorting_columns)
@@ -265,8 +277,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 .expect("invalid table name utf8")
             };
             err.add_context(format!(
-                "could not encode partition for table {} and timestamp index {}",
-                table_name, timestamp_index
+                "could not encode partition for table {table_name} and timestamp index {timestamp_index}"
             ));
             err.add_context("error in PartitionEncoder.encodePartition");
             err.into_cairo_exception().throw(&mut env)
@@ -284,6 +295,7 @@ fn create_partition_descriptor(
     col_data_ptr: *const i64,
     col_data_len: jlong,
     row_count: jlong,
+    timestamp_index: jint,
 ) -> ParquetResult<Partition> {
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
@@ -320,6 +332,8 @@ fn create_partition_descriptor(
         let symbol_offsets_addr = col_data[raw_idx + 7];
         let symbol_offsets_size = col_data[raw_idx + 8];
 
+        let designated_timestamp = col_id == timestamp_index;
+
         let column = Column::from_raw_data(
             col_id,
             col_name,
@@ -332,6 +346,7 @@ fn create_partition_descriptor(
             secondary_col_size as usize,
             symbol_offsets_addr as *const u64,
             symbol_offsets_size as usize,
+            designated_timestamp,
         )?;
 
         columns.push(column);

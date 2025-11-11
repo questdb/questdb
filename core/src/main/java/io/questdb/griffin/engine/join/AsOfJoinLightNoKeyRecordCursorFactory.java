@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -34,6 +35,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
 public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfLightJoinRecordCursor cursor;
@@ -51,6 +54,8 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampIndex(),
+                masterFactory.getMetadata().getTimestampType(),
+                slaveFactory.getMetadata().getTimestampType(),
                 toleranceInterval
         );
     }
@@ -62,8 +67,6 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Forcefully disable column pre-touch for nested filter queries.
-        executionContext.setColumnPreTouchEnabled(false);
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {
@@ -103,8 +106,10 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
 
     private static class AsOfLightJoinRecordCursor extends AbstractJoinCursor {
         private final int masterTimestampIndex;
+        private final long masterTimestampScale;
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
+        private final long slaveTimestampScale;
         private final long toleranceInterval;
         private boolean isMasterHasNextPending;
         private long latestSlaveRowID = Long.MIN_VALUE;
@@ -115,11 +120,14 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
         private Record slaveRecA; // used by this cursor for internal navigation, never exposed to users
         private Record slaveRecB; // used by OuterJoinRecord
 
+
         public AsOfLightJoinRecordCursor(
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
+                int masterTimestampType,
+                int slaveTimestampType,
                 long toleranceInterval
         ) {
             super(columnSplit);
@@ -127,6 +135,12 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.toleranceInterval = toleranceInterval;
+            if (masterTimestampType == slaveTimestampType) {
+                masterTimestampScale = slaveTimestampScale = 1L;
+            } else {
+                masterTimestampScale = ColumnType.getTimestampDriver(masterTimestampType).toNanosScale();
+                slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
+            }
         }
 
         @Override
@@ -147,7 +161,7 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
             }
             if (masterHasNext) {
                 // great, we have a record no matter what
-                final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+                final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 if (masterTimestamp < slaveATimestamp) {
                     isMasterHasNextPending = true;
                     adjustForTolerance(masterTimestamp);
@@ -196,7 +210,7 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
                     slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
                 }
                 if (slaveHasNext) {
-                    slaveATimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
+                    slaveATimestamp = scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                     latestSlaveRowID = slaveRecA.getRowId();
                     if (slaveATimestamp > masterTimestamp) {
                         break;
@@ -207,7 +221,7 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
                 }
             }
             if (toleranceInterval != Numbers.LONG_NULL && record.hasSlave()) {
-                slaveBTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                slaveBTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 record.hasSlave(slaveBTimestamp >= masterTimestamp - toleranceInterval);
             }
             assert !record.hasSlave() || slaveBTimestamp <= masterTimestamp;

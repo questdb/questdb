@@ -126,7 +126,10 @@ public class InfluxDBClientStreamingTest extends AbstractTest {
                     influxDB.enableBatch(
                             BatchOptions.DEFAULTS
                                     .actions(batchSize)
-                                    .bufferLimit(batchSize * 1024)
+                                    .bufferLimit(Integer.MAX_VALUE)
+                                    .exceptionHandler((p, t) -> {
+                                        LOG.error().$("Error sending points ").$(p).$(" ").$(t).$();
+                                    })
                     );
 
                     while (!stop.get()) {

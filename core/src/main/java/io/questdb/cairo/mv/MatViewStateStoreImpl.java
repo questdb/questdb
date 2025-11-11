@@ -36,7 +36,7 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.tasks.TelemetryMatViewTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;

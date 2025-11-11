@@ -44,7 +44,7 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = JsonExtractSupportingState.EXTRACT_FUNCTION_NAME + "(ØØi)";
 
     public static boolean isIntrusivelyOptimized(int columnType) {
-        switch (columnType) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.SHORT:
             case ColumnType.INT:
@@ -95,7 +95,7 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
         // Therefore, we have to validate type input to provide user with actionable error message.
         if (targetTypeFn != null && targetTypeFn.isConstant()) {
             final int targetType = targetTypeFn.getInt(null);
-            if (isIntrusivelyOptimized(targetType)) {
+            if (isIntrusivelyOptimized(ColumnType.tagOf(targetType))) {
                 return targetType;
             }
         }

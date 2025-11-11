@@ -181,7 +181,7 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     public final boolean arrayEquals(ArrayView other) {
-        if (type != other.type || !shapeEquals(other)) {
+        if (type != other.type || shapeDiffers(other)) {
             return false;
         }
         // We need this check to protect from running arrayEqualsRecursive() for an almost unbounded
@@ -348,7 +348,7 @@ public abstract class ArrayView implements QuietCloseable {
      * Returns the number of dimensions in this array (i.e., its dimensionality).
      */
     public final int getDimCount() {
-        return ColumnType.decodeArrayDimensionality(type);
+        return ColumnType.decodeWeakArrayDimensionality(type);
     }
 
     /**
@@ -402,6 +402,14 @@ public abstract class ArrayView implements QuietCloseable {
      * of this array view is located.
      */
     public final int getFlatViewOffset() {
+        return flatViewOffset;
+    }
+
+    public final int getHi() {
+        return flatViewOffset + flatViewLength;
+    }
+
+    public final int getLo() {
         return flatViewOffset;
     }
 
@@ -506,23 +514,23 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     /**
-     * Tells whether this array has the same shape as the other one.
+     * Tells whether this array has the same shape as the other one, or not.
      * <p>
      * <strong>NOTE:</strong> arrays of the same shape do not necessarily have the same
      * strides.
      */
-    public final boolean shapeEquals(ArrayView other) {
+    public final boolean shapeDiffers(ArrayView other) {
         int nDims = shape.size();
         IntList otherShape = other.shape;
         if (otherShape.size() != nDims) {
-            return false;
+            return true;
         }
         for (int i = 0; i < nDims; i++) {
             if (shape.getQuick(i) != otherShape.getQuick(i)) {
-                return false;
+                return true;
             }
         }
-        return true;
+        return false;
     }
 
     /**

@@ -28,6 +28,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 
 public interface SymbolShortCircuit {
+
+    /**
+     * When joining on one or more symbol columns, detects when any slave column
+     * doesn't have the symbol at all (by inspecting its int-to-symbol mapping). This
+     * allows the record cursor to avoid searching for the matching slave row.
+     */
     boolean isShortCircuit(Record masterRecord);
 
     void of(TimeFrameRecordCursor slaveCursor);

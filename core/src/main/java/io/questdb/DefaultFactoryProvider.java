@@ -30,9 +30,16 @@ import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.http.*;
-import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
-import io.questdb.cutlass.pgwire.modern.DefaultPgWireAuthenticatorFactoryModern;
+import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
+import io.questdb.cutlass.http.DefaultHttpCookieHandler;
+import io.questdb.cutlass.http.DefaultHttpHeaderParserFactory;
+import io.questdb.cutlass.http.EmptyHttpSessionStore;
+import io.questdb.cutlass.http.HttpAuthenticatorFactory;
+import io.questdb.cutlass.http.HttpCookieHandler;
+import io.questdb.cutlass.http.HttpHeaderParserFactory;
+import io.questdb.cutlass.http.HttpSessionStore;
+import io.questdb.cutlass.pgwire.DefaultPGAuthenticatorFactory;
+import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.network.SocketFactory;
 import org.jetbrains.annotations.NotNull;
@@ -61,6 +68,11 @@ public class DefaultFactoryProvider implements FactoryProvider {
     }
 
     @Override
+    public @NotNull HttpSessionStore getHttpSessionStore() {
+        return EmptyHttpSessionStore.INSTANCE;
+    }
+
+    @Override
     public @NotNull SocketFactory getHttpSocketFactory() {
         return PlainSocketFactory.INSTANCE;
     }
@@ -81,8 +93,8 @@ public class DefaultFactoryProvider implements FactoryProvider {
     }
 
     @Override
-    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
-        return DefaultPgWireAuthenticatorFactoryModern.INSTANCE;
+    public @NotNull PGAuthenticatorFactory getPgWireAuthenticatorFactory() {
+        return DefaultPGAuthenticatorFactory.INSTANCE;
     }
 
     @Override

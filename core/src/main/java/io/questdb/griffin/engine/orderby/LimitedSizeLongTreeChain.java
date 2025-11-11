@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordRandomAccess;
 import io.questdb.griffin.engine.AbstractRedBlackTree;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
@@ -200,7 +201,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
      */
     public void put(
             Record currentRecord,
-            RecordCursor sourceCursor,
+            RecordRandomAccess sourceCursor,
             Record ownedRecord,
             RecordComparator comparator
     ) {
@@ -376,7 +377,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         return Unsafe.getUnsafe().getInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8);
     }
 
-    private void prepareComparatorLeftSideIfAtMaxCapacity(RecordCursor sourceCursor, Record ownedRecord, RecordComparator comparator) {
+    private void prepareComparatorLeftSideIfAtMaxCapacity(RecordRandomAccess sourceCursor, Record ownedRecord, RecordComparator comparator) {
         if (currentValues == limit) {
             assert minMaxRowId != -1;
             sourceCursor.recordAt(ownedRecord, minMaxRowId);

@@ -47,6 +47,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.TestServerMain;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -56,7 +57,7 @@ import java.util.HashMap;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE;
-import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V3;
 import static io.questdb.preferences.SettingsStore.Mode.MERGE;
 import static io.questdb.preferences.SettingsStore.Mode.OVERWRITE;
 import static io.questdb.test.tools.TestUtils.*;
@@ -76,7 +77,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"release.type\":\"OSS\"," +
             "\"release.version\":\"[DEVELOPMENT]\"," +
             "\"http.settings.readonly\":false," +
-            "\"line.proto.support.versions\":[1,2]," +
+            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+            "\"line.proto.support.versions\":[1,2,3]," +
             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
             "\"posthog.enabled\":false," +
             "\"posthog.api.key\":null," +
@@ -131,7 +133,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -152,7 +155,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -202,7 +206,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -251,7 +256,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                         responseHeaders.await();
                         assertEquals(String.valueOf(200), responseHeaders.getStatusCode());
                         parser.parse(responseHeaders.getResponse());
-                        Assert.assertEquals(PROTOCOL_VERSION_V2, parser.getDefaultProtocolVersion());
+                        Assert.assertEquals(PROTOCOL_VERSION_V3, parser.getDefaultProtocolVersion());
                     }
                 }
             }
@@ -277,7 +282,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -311,7 +317,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -332,7 +339,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -377,7 +385,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -414,7 +423,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -449,7 +459,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -482,7 +493,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -536,7 +548,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "{\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -581,6 +594,63 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testReadOnlyHttp() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), "true")
+            ) {
+                serverMain.start();
+
+                String expected = "{" +
+                        "\"config\":{" +
+                        "\"release.type\":\"OSS\"," +
+                        "\"release.version\":\"[DEVELOPMENT]\"," +
+                        "\"http.settings.readonly\":false," +
+                        "\"accepting.writes\":[\"tcp\", \"pgwire\"]," +
+                        "\"line.proto.support.versions\":[1,2,3]," +
+                        "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                        "\"posthog.enabled\":false," +
+                        "\"posthog.api.key\":null," +
+                        "\"cairo.max.file.name.length\":127" +
+                        "}," +
+                        "\"preferences.version\":0," +
+                        "\"preferences\":{" +
+                        "}" +
+                        "}";
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertSettingsRequest(httpClient, expected);
+                }
+            }
+
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.READ_ONLY_INSTANCE.getEnvVarName(), "true")
+            ) {
+                serverMain.start();
+
+                String expected = "{" +
+                        "\"config\":{" +
+                        "\"release.type\":\"OSS\"," +
+                        "\"release.version\":\"[DEVELOPMENT]\"," +
+                        "\"http.settings.readonly\":false," +
+                        "\"accepting.writes\":[]," +
+                        "\"line.proto.support.versions\":[1,2,3]," +
+                        "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                        "\"posthog.enabled\":false," +
+                        "\"posthog.api.key\":null," +
+                        "\"cairo.max.file.name.length\":127" +
+                        "}," +
+                        "\"preferences.version\":0," +
+                        "\"preferences\":{" +
+                        "}" +
+                        "}";
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertSettingsRequest(httpClient, expected);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSettingsOSS() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
@@ -613,7 +683,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.type\":\"OSS\"," +
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":true," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -748,7 +819,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     }
 
     private static void savePreferences(HttpClient httpClient, String preferences, SettingsStore.Mode mode, long version) {
-        assertPreferencesRequest(httpClient, preferences, mode, version, HTTP_OK, "");
+        assertPreferencesRequest(httpClient, preferences, mode, version, HTTP_OK, "{\"status\":\"OK\"}\r\n");
     }
 
     private void assertPreferencesStore(SettingsStore settingsStore, int expectedVersion, String expectedPreferences) {
@@ -770,7 +841,8 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 "\"release.type\":\"OSS\"," +
                 "\"release.version\":\"[DEVELOPMENT]\"," +
                 "\"http.settings.readonly\":false," +
-                "\"line.proto.support.versions\":[1,2]," +
+                "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                "\"line.proto.support.versions\":[1,2,3]," +
                 "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                 "\"posthog.enabled\":false," +
                 "\"posthog.api.key\":null," +

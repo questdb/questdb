@@ -40,6 +40,77 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoalesceDecimal128() throws Exception {
+        assertSql("c\n12.34\n", "select coalesce(null::decimal(24, 1), 12.34m) c");
+        assertSql("c\n\n", "select coalesce(null::decimal(25, 0), null::decimal(18, 1), null::decimal(6, 0)) c");
+        assertSql("c\n12345678.901\n", "select coalesce(12345678.901m, null::decimal(23, 0)) c");
+        assertSql("c\n1.2\n", "select coalesce(1.2m, 3m, null::decimal(22, 0)) c");
+        assertSql("c\n1.2\n", "select coalesce(null::decimal(21, 1), 1.2m, 3.1m) c");
+    }
+
+    @Test
+    public void testCoalesceDecimal16() throws Exception {
+        assertSql("c\n12.34\n", "select coalesce(null::decimal(2, 1), 12.34m) c");
+        assertSql("c\n\n", "select coalesce(null::decimal(3, 0), null::decimal(2, 1), null::decimal(1, 0)) c");
+        assertSql("c\n12.34\n", "select coalesce(12.34m, null::decimal(1, 0)) c");
+        assertSql("c\n1.2\n", "select coalesce(1.2m, 3m, null::decimal(3, 0)) c");
+        assertSql("c\n1.2\n", "select coalesce(null::decimal(3, 1), 1.2m, 3.1m) c");
+    }
+
+    @Test
+    public void testCoalesceDecimal256() throws Exception {
+        assertSql("c\n12.34\n", "select coalesce(null::decimal(73, 1), 12.34m) c");
+        assertSql("c\n\n", "select coalesce(null::decimal(70, 0), null::decimal(65, 1), null::decimal(6, 0)) c");
+        assertSql("c\n12345678.901\n", "select coalesce(12345678.901m, null::decimal(60, 0)) c");
+        assertSql("c\n1.2\n", "select coalesce(1.2m, 3m, null::decimal(55, 0)) c");
+        assertSql("c\n1.2\n", "select coalesce(null::decimal(50, 1), 1.2m, 3.1m) c");
+    }
+
+    @Test
+    public void testCoalesceDecimal32() throws Exception {
+        assertSql("c\n12.34\n", "select coalesce(null::decimal(6, 1), 12.34m) c");
+        assertSql("c\n\n", "select coalesce(null::decimal(6, 0), null::decimal(2, 1), null::decimal(1, 0)) c");
+        assertSql("c\n1234.5678\n", "select coalesce(1234.5678m, null::decimal(1, 0)) c");
+        assertSql("c\n1.2\n", "select coalesce(1.2m, 3m, null::decimal(5, 0)) c");
+        assertSql("c\n1.2\n", "select coalesce(null::decimal(5, 1), 1.2m, 3.1m) c");
+    }
+
+    @Test
+    public void testCoalesceDecimal64() throws Exception {
+        assertSql("c\n12.34\n", "select coalesce(null::decimal(9, 1), 12.34m) c");
+        assertSql("c\n\n", "select coalesce(null::decimal(12, 0), null::decimal(8, 1), null::decimal(6, 0)) c");
+        assertSql("c\n12345678.901\n", "select coalesce(12345678.901m, null::decimal(1, 0)) c");
+        assertSql("c\n1.2\n", "select coalesce(1.2m, 3m, null::decimal(12, 0)) c");
+        assertSql("c\n1.2\n", "select coalesce(null::decimal(10, 1), 1.2m, 3.1m) c");
+    }
+
+    @Test
+    public void testCoalesceDecimal8() throws Exception {
+        assertSql("c\n1.2\n", "select coalesce(null::decimal(2, 1), 1.2m) c");
+        assertSql("c\n\n", "select coalesce(null::decimal(2, 0), null::decimal(1, 0), null::decimal(1, 0)) c");
+        assertSql("c\n1.2\n", "select coalesce(1.2m, null::decimal(1, 0)) c");
+        assertSql("c\n1.2\n", "select coalesce(1.2m, 3m, null::decimal(1, 0)) c");
+        assertSql("c\n1.2\n", "select coalesce(null::decimal(2, 1), 1.2m, 3.1m) c");
+    }
+
+    @Test
+    public void testCoalesceDecimalImplicitCasting() throws Exception {
+        // Implicit cast byte
+        assertSql("c\n1.0\n", "select coalesce(1::byte, 1.2m) c");
+        // Implicit cast short
+        assertSql("c\n1.0\n", "select coalesce(1::short, 1.2m) c");
+        // Implicit cast int
+        assertSql("c\n1.0\n", "select coalesce(1::int, 1.2m) c");
+        // Implicit cast long
+        assertSql("c\n1.0\n", "select coalesce(1::long, 1.2m) c");
+    }
+
+    @Test
+    public void testCoalesceDecimalInvalidType() throws Exception {
+        assertException("select coalesce(1.2m, 'abc') c", 22, "inconvertible types");
+    }
+
+    @Test
     public void testCoalesceIPv4InvalidStringLiteral() throws Exception {
         assertException(
                 "select coalesce('192.168.1.1'::ipv4, 'foobar')",
@@ -828,6 +899,70 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         "  CASE WHEN x % 2 = 0 THEN CAST(x as Timestamp) ELSE CAST(NULL as Timestamp) END as x" +
                         ", CASE WHEN x % 4 = 0 THEN CAST(x * 10000000000 as Timestamp) ELSE CAST(NULL as Timestamp) END as a" +
                         ", CASE WHEN x % 4 = 1 THEN CAST(x * 50000000000 as Timestamp) ELSE CAST(NULL as Timestamp) END as b" +
+                        " from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampMixedCoalesce() throws Exception {
+        assertQuery(
+                "c1\tc2\ta\tb\tx\n" +
+                        "1970-01-01T00:00:50.000000000Z\t1970-01-01T00:00:50.000000000Z\t\t1970-01-01T00:00:50.000000000Z\t\n" +
+                        "1970-01-01T00:00:00.000000002Z\t\t\t\t1970-01-01T00:00:00.000000002Z\n" +
+                        "\t\t\t\t\n" +
+                        "1970-01-01T11:06:40.000000000Z\t1970-01-01T11:06:40.000000000Z\t1970-01-01T11:06:40.000000Z\t\t1970-01-01T00:00:00.000000004Z\n" +
+                        "1970-01-01T00:04:10.000000000Z\t1970-01-01T00:04:10.000000000Z\t\t1970-01-01T00:04:10.000000000Z\t\n",
+                "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
+                        "from alex",
+                "create table alex as (" +
+                        "select " +
+                        "  CASE WHEN x % 2 = 0 THEN CAST(x as Timestamp_NS) ELSE CAST(NULL as Timestamp_NS) END as x" +
+                        ", CASE WHEN x % 4 = 0 THEN CAST(x * 10000000000 as Timestamp) ELSE CAST(NULL as Timestamp) END as a" +
+                        ", CASE WHEN x % 4 = 1 THEN CAST(x * 50000000000 as Timestamp_NS) ELSE CAST(NULL as Timestamp_NS) END as b" +
+                        " from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+
+        assertQuery(
+                "coalesce\n" +
+                        "1970-01-01T00:00:00.000001000Z\n" +
+                        "1970-01-01T00:00:00.000002000Z\n",
+                "select coalesce(a, b) from tango",
+                "create table tango as (" +
+                        "select " +
+                        " x::timestamp a," +
+                        " x::timestamp_ns b" +
+                        " from long_sequence(2)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampNsCoalesce() throws Exception {
+        assertQuery(
+                "c1\tc2\ta\tb\tx\n" +
+                        "1970-01-01T00:00:50.000000000Z\t1970-01-01T00:00:50.000000000Z\t\t1970-01-01T00:00:50.000000000Z\t\n" +
+                        "1970-01-01T00:00:00.000000002Z\t\t\t\t1970-01-01T00:00:00.000000002Z\n" +
+                        "\t\t\t\t\n" +
+                        "1970-01-01T00:00:40.000000000Z\t1970-01-01T00:00:40.000000000Z\t1970-01-01T00:00:40.000000000Z\t\t1970-01-01T00:00:00.000000004Z\n" +
+                        "1970-01-01T00:04:10.000000000Z\t1970-01-01T00:04:10.000000000Z\t\t1970-01-01T00:04:10.000000000Z\t\n",
+                "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
+                        "from alex",
+                "create table alex as (" +
+                        "select " +
+                        "  CASE WHEN x % 2 = 0 THEN CAST(x as Timestamp_NS) ELSE CAST(NULL as Timestamp) END as x" +
+                        ", CASE WHEN x % 4 = 0 THEN CAST(x * 10000000000 as Timestamp_NS) ELSE CAST(NULL as Timestamp_NS) END as a" +
+                        ", CASE WHEN x % 4 = 1 THEN CAST(x * 50000000000 as Timestamp_NS) ELSE CAST(NULL as Timestamp_NS) END as b" +
                         " from long_sequence(5)" +
                         ")",
                 null,

@@ -25,6 +25,8 @@
 package io.questdb.cutlass.line;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.array.ArrayBufferAppender;
 import io.questdb.cutlass.line.array.ArrayDataAppender;
@@ -39,6 +41,10 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+
+@SuppressWarnings("resource")
 public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBufferAppender {
     public LineTcpSenderV2(LineChannel channel, int bufferCapacity, int maxNameLength) {
         super(channel, bufferCapacity, maxNameLength);
@@ -65,6 +71,20 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
             channel.close();
             throw t;
         }
+    }
+
+    @Override
+    public final void at(long timestamp, ChronoUnit unit) {
+        putAsciiInternal(' ');
+        putTimestamp(timestamp, unit);
+        atNow();
+    }
+
+    @Override
+    public final void at(Instant timestamp) {
+        putAsciiInternal(' ');
+        putTimestamp(timestamp);
+        atNow();
     }
 
     @Override
@@ -148,7 +168,6 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
         return this;
     }
 
-
     @Override
     public void putBlockOfBytes(long from, long len) {
         while (len > 0) {
@@ -194,6 +213,20 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
         ptr += Long.BYTES;
     }
 
+    @Override
+    public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
+        writeFieldName(name);
+        putTimestamp(value, unit);
+        return this;
+    }
+
+    @Override
+    public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
+        writeFieldName(name);
+        putTimestamp(value);
+        return this;
+    }
+
     private <T> Sender arrayColumn(
             CharSequence name,
             short columnType,
@@ -225,5 +258,26 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
             return true;
         }
         return false;
+    }
+
+    private void putTimestamp(long timestamp, ChronoUnit unit) {
+        // nanos sent as nanos, everything else is sent as micros
+        switch (unit) {
+            case NANOS -> put(timestamp).putAsciiInternal('n');
+            case MICROS -> put(timestamp).putAsciiInternal('t');
+            default ->
+                // unit needs conversion to micros
+                    put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).putAsciiInternal('t');
+        }
+    }
+
+    private void putTimestamp(Instant timestamp) {
+        // always send as nanos as long as it fits in a long
+        try {
+            put(NanosTimestampDriver.INSTANCE.from(timestamp)).putAsciiInternal('n');
+        } catch (ArithmeticException e) {
+            // value does not fit in a long, sending as micros
+            put(MicrosTimestampDriver.INSTANCE.from(timestamp)).putAsciiInternal('t');
+        }
     }
 }

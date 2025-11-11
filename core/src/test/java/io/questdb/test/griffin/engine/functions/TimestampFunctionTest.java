@@ -24,28 +24,48 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
+import io.questdb.test.TestTimestampType;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+// asserts that all type casts that are not possible will throw exception
+@RunWith(Parameterized.class)
 public class TimestampFunctionTest {
-    // assert that all type casts that are not possible will throw exception
+    private final TimestampFunction function;
+    private final TestTimestampType timestampType;
 
-    private static final TimestampFunction function = new TimestampFunction() {
-        @Override
-        public long getTimestamp(Record rec) {
-            return 145000L;
-        }
+    public TimestampFunctionTest(TestTimestampType timestampType) {
+        this.function = new TimestampFunction(timestampType.getTimestampType()) {
+            @Override
+            public long getTimestamp(Record rec) {
+                return 145000L;
+            }
 
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-    };
+            @Override
+            public boolean isThreadSafe() {
+                return true;
+            }
+        };
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetArray() {
@@ -79,7 +99,37 @@ public class TimestampFunctionTest {
 
     @Test
     public void testGetDate() {
-        Assert.assertEquals(145, function.getDate(null));
+        Assert.assertEquals(timestampType.getDriver().toDate(145000), function.getDate(null));
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal128() {
+        function.getDecimal128(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal16() {
+        function.getDecimal16(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256() {
+        function.getDecimal256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal32() {
+        function.getDecimal32(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal64() {
+        function.getDecimal64(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal8() {
+        function.getDecimal8(null);
     }
 
     @Test
@@ -154,7 +204,7 @@ public class TimestampFunctionTest {
 
     @Test
     public void testGetNullDate() {
-        final TimestampFunction function = new TimestampFunction() {
+        final TimestampFunction function = new TimestampFunction(ColumnType.TIMESTAMP_MICRO) {
             @Override
             public long getTimestamp(Record rec) {
                 return Numbers.LONG_NULL;

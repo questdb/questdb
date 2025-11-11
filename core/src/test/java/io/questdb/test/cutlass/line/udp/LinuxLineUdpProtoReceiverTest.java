@@ -54,9 +54,9 @@ import org.junit.Test;
 public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
 
     private final static ReceiverFactory GENERIC_FACTORY =
-            (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent) -> new LineUdpReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, sharedQueryWorkerCount, functionFactoryCache, snapshotAgent) -> new LineUdpReceiver(configuration, engine, workerPool);
     private final static ReceiverFactory LINUX_FACTORY =
-            (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, sharedQueryWorkerCount, functionFactoryCache, snapshotAgent) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
 
     @Test
     public void testGenericCannotBindSocket() throws Exception {
@@ -288,7 +288,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                 CairoEngine engine,
                 WorkerPool workerPool,
                 boolean isWorkerPoolLocal,
-                int sharedWorkerCount,
+                int sharedQueryWorkerCount,
                 @Nullable FunctionFactoryCache functionFactoryCache,
                 @Nullable DatabaseCheckpointStatus snapshotAgent
         );

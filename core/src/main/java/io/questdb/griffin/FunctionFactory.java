@@ -68,6 +68,7 @@ public interface FunctionFactory {
      * <li>Z = uuid</li>
      * <li>Ø(ø) = varchar</li>
      * <li>Δ(δ) = interval</li>
+     * <li>Ξ(ξ) = decimal</li>
      * </ul>
      * <p>
      * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and
@@ -116,7 +117,6 @@ public interface FunctionFactory {
      * <p>
      * SQL Compiler will use this as a hint to determine type of variadic arguments when they have the
      * UNDEFINED type at compile time.
-     * <p>
      *
      * @param sqlPos sql position of the argument being resolved
      * @param argPos index of the argument being resolved

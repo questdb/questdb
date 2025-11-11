@@ -169,5 +169,4 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     public long size() {
         return size;
     }
-
 }

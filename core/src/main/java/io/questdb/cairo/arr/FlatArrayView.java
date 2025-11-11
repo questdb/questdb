@@ -194,6 +194,36 @@ public interface FlatArrayView {
     }
 
     /**
+     * Returns the maximum element in the selected range of this flat array.
+     * If the range is empty, or it doesn't contain any finite elements, returns NaN.
+     */
+    default double maxDouble(int offset, int length) {
+        double max = Double.NEGATIVE_INFINITY;
+        for (int i = offset, n = offset + length; i < n; i++) {
+            double v = getDoubleAtAbsIndex(i);
+            if (Numbers.isFinite(v) && v > max) {
+                max = v;
+            }
+        }
+        return Numbers.isFinite(max) ? max : Double.NaN;
+    }
+
+    /**
+     * Returns the minimum element in the selected range of this flat array.
+     * If the range is empty, or it doesn't contain any finite elements, returns NaN.
+     */
+    default double minDouble(int offset, int length) {
+        double min = Double.POSITIVE_INFINITY;
+        for (int i = offset, n = offset + length; i < n; i++) {
+            double v = getDoubleAtAbsIndex(i);
+            if (Numbers.isFinite(v) && v < min) {
+                min = v;
+            }
+        }
+        return Numbers.isFinite(min) ? min : Double.NaN;
+    }
+
+    /**
      * Computes the average of the block of elements in this flat array.
      * Uses Kahan summation.
      *

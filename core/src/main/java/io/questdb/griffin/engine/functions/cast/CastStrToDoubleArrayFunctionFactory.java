@@ -27,15 +27,16 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -57,6 +58,9 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function typeFunc = args.getQuick(1);
         final int type = typeFunc.getType();
+        if (ColumnType.decodeWeakArrayDimensionality(type) == -1) {
+            throw SqlException.$(argPositions.getQuick(1), "cannot cast string to array with unknown number of dimensions");
+        }
         return new Func(args.getQuick(0), type);
     }
 
@@ -67,7 +71,8 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
 
         public Func(Function arg, int type) {
             this.type = type;
-            this.dims = ColumnType.decodeArrayDimensionality(type);
+            this.dims = ColumnType.decodeWeakArrayDimensionality(type);
+            assert dims > 0;
             this.arg = arg;
         }
 
@@ -79,8 +84,9 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
         @Override
         public ArrayView getArray(Record rec) {
             CharSequence str = arg.getStrA(rec);
-            assert str != null; // for now
-            assert str.length() > 0; // for now
+            if (str == null || str.length() == 0) {
+                return ArrayConstant.NULL;
+            }
             try {
                 parser.of(str, dims);
             } catch (IllegalArgumentException e) {

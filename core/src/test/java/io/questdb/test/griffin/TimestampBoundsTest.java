@@ -25,7 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assume;
 import org.junit.Before;
@@ -65,7 +65,7 @@ public class TimestampBoundsTest extends AbstractCairoTest {
             assertException("INSERT INTO tango VALUES (NULL)", 26, "designated timestamp column cannot be NULL");
             assertException("INSERT INTO tango VALUES (" + -1L + ")", 26, "designated timestamp before 1970-01-01 is not allowed");
             assertException("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900Z')", 26, "designated timestamp before 1970-01-01 is not allowed");
-            assertException("INSERT INTO tango VALUES (" + Timestamps.YEAR_10000 + ")", 26, "designated timestamp beyond 9999-12-31 is not allowed");
+            assertException("INSERT INTO tango VALUES (" + Micros.YEAR_10000 + ")", 26, "designated timestamp beyond 9999-12-31 is not allowed");
         });
     }
 
@@ -77,7 +77,7 @@ public class TimestampBoundsTest extends AbstractCairoTest {
             assertException("INSERT INTO tango VALUES (NULL)", 26, "designated timestamp column cannot be NULL");
             assertException("INSERT INTO tango VALUES (" + -1L + ")", 26, "designated timestamp before 1970-01-01 is not allowed");
             assertException("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900Z')", 26, "designated timestamp before 1970-01-01 is not allowed");
-            assertException("INSERT INTO tango VALUES (" + Timestamps.YEAR_10000 + ")", 26, "designated timestamp beyond 9999-12-31 is not allowed");
+            assertException("INSERT INTO tango VALUES (" + Micros.YEAR_10000 + ")", 26, "designated timestamp beyond 9999-12-31 is not allowed");
         });
     }
 
@@ -90,7 +90,7 @@ public class TimestampBoundsTest extends AbstractCairoTest {
             assertException("INSERT INTO tango VALUES (NULL)", 26, "designated timestamp column cannot be NULL");
             assertException("INSERT INTO tango VALUES (" + -1L + ")", 26, "designated timestamp before 1970-01-01 is not allowed");
             assertException("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900Z')", 26, "designated timestamp before 1970-01-01 is not allowed");
-            assertException("INSERT INTO tango VALUES (" + Timestamps.YEAR_10000 + ")", 26, "designated timestamp beyond 9999-12-31 is not allowed");
+            assertException("INSERT INTO tango VALUES (" + Micros.YEAR_10000 + ")", 26, "designated timestamp beyond 9999-12-31 is not allowed");
         });
     }
 
@@ -99,7 +99,7 @@ public class TimestampBoundsTest extends AbstractCairoTest {
         Assume.assumeFalse(walEnabled);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP)");
-            execute("INSERT INTO tango VALUES (" + Timestamps.YEAR_10000 + ")");
+            execute("INSERT INTO tango VALUES (" + Micros.YEAR_10000 + ")");
             execute("INSERT INTO tango VALUES (" + -1L + ")");
             execute("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900Z')");
         });

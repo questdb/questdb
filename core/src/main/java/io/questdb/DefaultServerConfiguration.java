@@ -26,8 +26,6 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.mv.DefaultMatViewRefreshWorkerPoolConfiguration;
-import io.questdb.cairo.wal.DefaultWalApplyWorkerPoolConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
@@ -35,8 +33,8 @@ import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.metrics.DefaultMetricsConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -46,17 +44,27 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultHttpServerConfiguration httpServerConfiguration;
     private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration;
     private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
+    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration;
+    private final WorkerPoolConfiguration exportPoolConfiguration;
     private final DefaultMemoryConfiguration memoryConfiguration = new DefaultMemoryConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
-    private final DefaultPGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration();
+    private final DefaultPGConfiguration pgWireConfiguration = new DefaultPGConfiguration();
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new DefaultPublicPassthroughConfiguration();
-    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new DefaultMatViewRefreshWorkerPoolConfiguration();
-    private final WorkerPoolConfiguration walApplyPoolConfiguration = new DefaultWalApplyWorkerPoolConfiguration();
+    private final DefaultWorkerPoolConfiguration sharedPoolNetworkConfiguration;
+    private final DefaultWorkerPoolConfiguration sharedPoolQueryConfiguration;
+    private final DefaultWorkerPoolConfiguration sharedPoolWriteConfiguration;
+    private final WorkerPoolConfiguration walApplyPoolConfiguration;
 
     public DefaultServerConfiguration(CharSequence dbRoot, CharSequence installRoot) {
         this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot, installRoot);
         this.lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration(cairoConfiguration);
         this.httpServerConfiguration = new DefaultHttpServerConfiguration(cairoConfiguration);
+        this.sharedPoolNetworkConfiguration = new DefaultWorkerPoolConfiguration("shared_network");
+        this.sharedPoolQueryConfiguration = new DefaultWorkerPoolConfiguration("shared_query");
+        this.sharedPoolWriteConfiguration = new DefaultWorkerPoolConfiguration("shared_write");
+        this.matViewRefreshPoolConfiguration = new DefaultWorkerPoolConfiguration("mat_view_refresh");
+        this.exportPoolConfiguration = new DefaultWorkerPoolConfiguration("export");
+        this.walApplyPoolConfiguration = new DefaultWorkerPoolConfiguration("wal_apply");
     }
 
     public DefaultServerConfiguration(CharSequence dbRoot) {
@@ -94,6 +102,16 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+        return matViewRefreshPoolConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getExportPoolConfiguration() {
+        return exportPoolConfiguration;
+    }
+
+    @Override
     public MemoryConfiguration getMemoryConfiguration() {
         return memoryConfiguration;
     }
@@ -109,7 +127,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public PGWireConfiguration getPGWireConfiguration() {
+    public PGConfiguration getPGWireConfiguration() {
         return pgWireConfiguration;
     }
 
@@ -119,8 +137,18 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
-        return matViewRefreshPoolConfiguration;
+    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
+        return sharedPoolNetworkConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
+        return sharedPoolQueryConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
+        return sharedPoolWriteConfiguration;
     }
 
     @Override
@@ -128,8 +156,24 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         return walApplyPoolConfiguration;
     }
 
-    @Override
-    public WorkerPoolConfiguration getWorkerPoolConfiguration() {
-        return httpServerConfiguration;
+    private static class DefaultWorkerPoolConfiguration implements WorkerPoolConfiguration {
+
+
+        private final String name;
+
+        private DefaultWorkerPoolConfiguration(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public String getPoolName() {
+            return name;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return 2;
+        }
+
     }
 }

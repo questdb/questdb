@@ -330,7 +330,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "          functions: [timestamp_floor('minute',ts),concat([address,workspace]),address]\n" +
                     "            SelectedRecord\n" +
                     "                Async JIT Filter workers: 1\n" +
-                    "                  filter: (workspace='a' and method_id='d') [pre-touch]\n" +
+                    "                  filter: (workspace='a' and method_id='d')\n" +
                     "                    PageFrame\n" +
                     "                        Row forward scan\n" +
                     "                        Frame forward scan on: tab\n");
@@ -370,7 +370,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "        VirtualRecord\n" +
                     "          functions: [timestamp_floor('minute',ts),concat([address,workspace]),ts,method_id]\n" +
                     "            Async JIT Filter workers: 1\n" +
-                    "              filter: (workspace='a' and method_id='d') [pre-touch]\n" +
+                    "              filter: (workspace='a' and method_id='d')\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: tab\n");
@@ -439,7 +439,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     query,
                     null,
                     true,
-                    true
+                    false
             );
         });
     }
@@ -468,7 +468,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "      keys: [mta_tax]\n" +
                     "        SelectedRecord\n" +
                     "            Async JIT Filter workers: 1\n" +
-                    "              filter: vendor_id in [A1,A2] [pre-touch]\n" +
+                    "              filter: vendor_id in [A1,A2]\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: trips\n" +
@@ -531,7 +531,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     query,
                     null,
                     true,
-                    true
+                    false
             );
         });
     }

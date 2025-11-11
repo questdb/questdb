@@ -24,7 +24,9 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -117,9 +119,17 @@ public interface PlanSink {
 
     PlanSink val(long hash, int geoHashBits);
 
+    PlanSink valDecimal(long value, int precision, int scale);
+
+    PlanSink valDecimal(long hi, long lo, int precision, int scale);
+
+    PlanSink valDecimal(long hh, long hl, long lh, long ll, int precision, int scale);
+
     PlanSink valIPv4(int ip);
 
-    PlanSink valISODate(long l);
+    PlanSink valISODate(TimestampDriver driver, long l);
+
+    PlanSink valInterval(Interval interval, int intervalType);
 
     PlanSink valLong256(long long0, long long1, long long2, long long3);
 

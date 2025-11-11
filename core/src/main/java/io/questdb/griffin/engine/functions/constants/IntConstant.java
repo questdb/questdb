@@ -30,9 +30,8 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Numbers;
 
 public class IntConstant extends IntFunction implements ConstantFunction {
-
     public static final IntConstant NULL = new IntConstant(Numbers.INT_NULL);
-
+    public static final IntConstant ZERO = new IntConstant(0);
     private final int value;
 
     public IntConstant(int value) {

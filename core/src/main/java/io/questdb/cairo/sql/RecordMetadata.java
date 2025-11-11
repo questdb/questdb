@@ -147,6 +147,14 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
      */
     int getTimestampIndex();
 
+    default int getTimestampType() {
+        int timestampIndex = getTimestampIndex();
+        if (timestampIndex < 0) {
+            return ColumnType.NULL;
+        }
+        return getColumnType(timestampIndex);
+    }
+
     /**
      * Writing index for the column
      *

@@ -35,12 +35,14 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
@@ -50,9 +52,10 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -70,9 +73,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -91,12 +91,18 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class TableWriterTest extends AbstractCairoTest {
+import static io.questdb.cairo.TableUtils.openSmallFile;
+import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
+import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 
-    public static final String PRODUCT = "product";
+public class TableWriterTest extends AbstractCairoTest {
     private static final FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
+    private static final String PRODUCT = "product";
+    private static final Rnd rnd = TestUtils.generateRandom(null);
     public static String PRODUCT_FS;
+    private TimestampDriver timestampDriver;
+    private int timestampType;
 
     @Before
     public void setUp() {
@@ -105,6 +111,8 @@ public class TableWriterTest extends AbstractCairoTest {
         if (configuration.mangleTableDirNames()) {
             PRODUCT_FS += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         }
+        timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
     }
 
     @Test
@@ -134,10 +142,10 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnCannotRemoveMeta() throws Exception {
-        String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
-        class X extends TestFilesFacadeImpl {
+        final String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
+        testUnrecoverableAddColumn(new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -157,8 +165,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
                 return super.rename(name1, name2);
             }
-        }
-        testUnrecoverableAddColumn(new X());
+        });
     }
 
     @Test
@@ -173,7 +180,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnCannotRenameMetaSwapAndUseIndexedPrevMeta() throws Exception {
-        FilesFacade ff = new SwapMetaRenameDenyingFacade() {
+        TestFilesFacade ff = new SwapMetaRenameDenyingFacade() {
             int count = 5;
 
             @Override
@@ -199,12 +206,12 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnCommitPartitioned() throws Exception {
+    public void testAddColumnCommitPartitioned() {
         int count = 10000;
         create(FF, PartitionBy.DAY, count);
         Rnd rnd = new Rnd();
         long interval = 60000L * 1000L;
-        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+        long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
             ts = populateProducts(writer, rnd, ts, count, interval);
             Assert.assertEquals(count, writer.size());
@@ -237,7 +244,7 @@ public class TableWriterTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1 << 20); // 1MB
 
             TableModel model = new TableModel(configuration, "testAddColumnConcurrentWithDataUpdates", PartitionBy.NONE);
-            model.timestamp();
+            model.timestamp(timestampType);
             TableToken token;
             try (
                     Path path = new Path();
@@ -252,7 +259,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 int i = 0;
                 while (columnsAdded.get() < totalColAddCount && exceptions.isEmpty()) {
                     try (TableWriter writer = getWriter(token)) {
-                        TableWriter.Row row = writer.newRow((i++) * Timestamps.HOUR_MICROS);
+                        TableWriter.Row row = writer.newRow(timestampDriver.fromHours(i++));
                         row.append();
                         writer.commit();
                         insertCount.incrementAndGet();
@@ -318,7 +325,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnDuplicate() throws Exception {
+    public void testAddColumnDuplicate() {
         long ts = populateTable(FF, PartitionBy.MONTH);
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
             try {
@@ -354,7 +361,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testAddColumnUnrecoverableFault(new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -368,7 +375,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.k";
         testAddColumnUnrecoverableFault(new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -384,7 +391,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -404,7 +411,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testAddColumnUnrecoverableFault(new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -421,7 +428,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int toCount = 5;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -465,7 +472,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         }, PRODUCT)) {
             writer.addColumn("xyz", ColumnType.STRING);
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
             populateProducts(writer, rnd, ts, N, 6 * 60000 * 1000L);
@@ -480,7 +487,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     counter = 1;
                     return -1;
@@ -494,12 +501,12 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnNonPartitioned() throws Exception {
+    public void testAddColumnNonPartitioned() {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
             writer.addColumn("xyz", ColumnType.STRING);
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
             populateProducts(writer, rnd, ts, N, 60L * 60000L * 1000L);
@@ -509,12 +516,12 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnPartitioned() throws Exception {
+    public void testAddColumnPartitioned() {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
             writer.addColumn("xyz", ColumnType.STRING);
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
             populateProducts(writer, rnd, ts, N, 60000 * 1000L);
@@ -525,11 +532,11 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnRepairFail() throws Exception {
-        class X extends FilesFacadeImpl {
+        testAddColumnErrorFollowedByRepairFail(new FilesFacadeImpl() {
             int counter = 2;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 // Cannot write to _meta.swp
                 if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     counter = 1;
@@ -546,13 +553,12 @@ public class TableWriterTest extends AbstractCairoTest {
             public boolean removeQuiet(LPSZ name) {
                 return !Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && super.removeQuiet(name);
             }
-        }
-        testAddColumnErrorFollowedByRepairFail(new X());
+        });
     }
 
     @Test
     public void testAddColumnRepairFail2() throws Exception {
-        class X extends FilesFacadeImpl {
+        testAddColumnErrorFollowedByRepairFail(new FilesFacadeImpl() {
             int counter = 1;
 
             @Override
@@ -568,18 +574,16 @@ public class TableWriterTest extends AbstractCairoTest {
                 // But rollback from meta.prev to _meta is ok
                 return super.rename(from, to);
             }
-        }
-        testAddColumnErrorFollowedByRepairFail(new X());
+        });
     }
 
     @Test
     public void testAddColumnSwpFileDelete() throws Exception {
-
         assertMemoryLeak(() -> {
             populateTable();
             // simulate existence of _meta.swp
 
-            class X extends FilesFacadeImpl {
+            final TestFilesFacade ff = new TestFilesFacade() {
                 boolean deleteAttempted = false;
 
                 @Override
@@ -594,9 +598,12 @@ public class TableWriterTest extends AbstractCairoTest {
                     }
                     return super.removeQuiet(name);
                 }
-            }
 
-            X ff = new X();
+                @Override
+                public boolean wasCalled() {
+                    return deleteAttempted;
+                }
+            };
 
             try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
@@ -607,7 +614,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(20, writer.getColumnCount());
                 writer.addColumn("abc", ColumnType.STRING);
                 Assert.assertEquals(22, writer.getColumnCount());
-                Assert.assertTrue(ff.deleteAttempted);
+                Assert.assertTrue(ff.wasCalled());
             }
         });
     }
@@ -615,28 +622,18 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnSwpFileDeleteFail() throws Exception {
         // simulate existence of _meta.swp
-        testAddColumnUnrecoverableFault(new TestFilesFacadeImpl() {
-            @Override
-            public boolean exists(LPSZ path) {
-                return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
-            }
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                return !Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME) && super.removeQuiet(name);
-            }
-        });
+        testAddColumnUnrecoverableFault(new FailMetadataSwapFilesFacade());
     }
 
     @Test
-    public void testAddColumnToNonEmptyNonPartitioned() throws Exception {
+    public void testAddColumnToNonEmptyNonPartitioned() {
         int n = 10000;
         create(FF, PartitionBy.NONE, n);
         populateAndColumnPopulate(n);
     }
 
     @Test
-    public void testAddColumnToNonEmptyPartitioned() throws Exception {
+    public void testAddColumnToNonEmptyPartitioned() {
         int n = 10000;
         create(FF, PartitionBy.DAY, n);
         populateAndColumnPopulate(n);
@@ -698,7 +695,7 @@ public class TableWriterTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                     .col("a", ColumnType.SYMBOL).cached(true)
                     .col("b", ColumnType.STRING)
-                    .timestamp();
+                    .timestamp(timestampType);
             AbstractCairoTest.create(model);
 
             final int N = 1000;
@@ -739,7 +736,7 @@ public class TableWriterTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                     .col("a", ColumnType.SYMBOL).cached(true)
                     .col("b", ColumnType.STRING)
-                    .timestamp();
+                    .timestamp(timestampType);
             AbstractCairoTest.create(model);
 
             final int N = 1000;
@@ -795,7 +792,7 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.NONE, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
 
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
                 TableWriter.Row r = writer.newRow(ts);
                 r.putInt(0, 1234);
                 populateProducts(writer, new Rnd(), ts, N, 60 * 60000 * 1000L);
@@ -815,14 +812,13 @@ public class TableWriterTest extends AbstractCairoTest {
             final int N = 47;
             create(FF, PartitionBy.DAY, N);
             Rnd rnd = new Rnd();
-            class X extends FilesFacadeImpl {
+
+            final FilesFacadeImpl ff = new FilesFacadeImpl() {
                 @Override
                 public boolean rmdir(Path name, boolean lazy) {
                     return false;
                 }
-            }
-
-            X ff = new X();
+            };
 
             try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
@@ -830,12 +826,12 @@ public class TableWriterTest extends AbstractCairoTest {
                     return ff;
                 }
             }, PRODUCT)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
                 ts = populateProducts(writer, rnd, ts, N, 60 * 60000 * 1000L);
                 writer.commit();
                 Assert.assertEquals(N, writer.size());
 
-                TableWriter.Row r = writer.newRow(ts + 60 * 60000 * 1000L);
+                TableWriter.Row r = writer.newRow(ts + timestampDriver.fromMicros(60 * 60000 * 1000L));
                 r.putInt(0, rnd.nextInt());
                 try {
                     r.cancel();
@@ -853,16 +849,12 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testCancelFirstRowFailurePartitioned() throws Exception {
         assertMemoryLeak(() -> {
-            class X extends FilesFacadeImpl {
-                boolean fail = false;
-
+            final LazyTestFilesFacade ff = new LazyTestFilesFacade() {
                 @Override
                 public boolean allocate(long fd, long size) {
-                    return !fail && super.allocate(fd, size);
+                    return !active && super.allocate(fd, size);
                 }
-            }
-
-            X ff = new X();
+            };
             Rnd rnd = new Rnd();
             int N = 94;
             create(ff, PartitionBy.DAY, N);
@@ -873,17 +865,17 @@ public class TableWriterTest extends AbstractCairoTest {
                     return ff;
                 }
             }, PRODUCT)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
                 // add 48 hours
                 ts = populateProducts(writer, rnd, ts, N / 2, increment);
-                TableWriter.Row r = writer.newRow(ts + increment);
+                TableWriter.Row r = writer.newRow(ts + timestampDriver.fromMicros(increment));
                 r.putInt(0, rnd.nextPositiveInt());
                 r.putStr(1, rnd.nextString(7));
                 r.putSym(2, rnd.nextString(4));
                 r.putSym(3, rnd.nextString(11));
                 r.putDouble(4, rnd.nextDouble());
 
-                ff.fail = true;
+                ff.activate();
                 try {
                     r.cancel();
                     Assert.fail();
@@ -899,7 +891,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "distressed");
                 }
 
-                // test that we cannot rollback
+                // test that we cannot roll back
                 try {
                     writer.rollback();
                     Assert.fail();
@@ -916,7 +908,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int N = 10000;
             create(FF, PartitionBy.NONE, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
                 TableWriter.Row r = writer.newRow(ts);
                 r.putInt(0, 1234);
@@ -933,7 +925,7 @@ public class TableWriterTest extends AbstractCairoTest {
         ff = new TestFilesFacadeImpl() {
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "2013-03-04") && Utf8s.endsWithAscii(name, "category.k")) {
                     return this.fd = super.openRW(name, opts);
                 }
@@ -953,7 +945,7 @@ public class TableWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             create(FF, PartitionBy.DAY, 4);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
                 TableWriter.Row r = writer.newRow(ts);
                 r.cancel();
                 writer.commit();
@@ -971,7 +963,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int N = 94;
             create(FF, PartitionBy.DAY, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
                 // add 48 hours
                 ts = populateProducts(writer, rnd, ts, N / 2, increment);
 
@@ -1000,18 +992,18 @@ public class TableWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             create(FF, PartitionBy.DAY, 4);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-01T00:00:00.000Z")).append();
-                writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-01T00:00:00.000Z")).append();
+                writer.newRow(timestampDriver.parseFloorLiteral("2013-03-01T00:00:00.000Z")).append();
+                writer.newRow(timestampDriver.parseFloorLiteral("2013-03-01T00:00:00.000Z")).append();
 
-                TableWriter.Row r = writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z"));
+                TableWriter.Row r = writer.newRow(timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z"));
                 r.cancel();
                 writer.commit();
                 Assert.assertEquals(2, writer.size());
 
 
-                writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-01T00:00:00.000Z")).append();
-                writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-01T00:00:00.000Z")).append();
-                r = writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-05T00:00:00.000Z"));
+                writer.newRow(timestampDriver.parseFloorLiteral("2013-03-01T00:00:00.000Z")).append();
+                writer.newRow(timestampDriver.parseFloorLiteral("2013-03-01T00:00:00.000Z")).append();
+                r = writer.newRow(timestampDriver.parseFloorLiteral("2013-03-05T00:00:00.000Z"));
                 r.cancel();
                 r.cancel();
                 Assert.assertEquals(4, writer.size());
@@ -1035,7 +1027,7 @@ public class TableWriterTest extends AbstractCairoTest {
             // supposed to be stored have matching partitions
             try (MemoryARW vmem = Vm.getCARWInstance(FF.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                    long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                    long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
                     int i = 0;
 
                     int cancelCount = 0;
@@ -1072,7 +1064,7 @@ public class TableWriterTest extends AbstractCairoTest {
             final int N = 10000;
             create(FF, PartitionBy.NONE, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
                 int cancelCount = 0;
                 Rnd rnd = new Rnd();
@@ -1103,12 +1095,12 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCancelRowAfterAddColumn() throws Exception {
+    public void testCancelRowAfterAddColumn() {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         Rnd rnd = new Rnd();
         long interval = 60000 * 1000L;
-        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+        long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
             ts = populateProducts(writer, rnd, ts, N, interval);
 
@@ -1146,11 +1138,11 @@ public class TableWriterTest extends AbstractCairoTest {
 
             DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
                 populateProducts(writer, rnd, ts, 1, 0);
                 writer.commit();
 
-                TableWriter.Row r = writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-02T09:00:00.000Z"));
+                TableWriter.Row r = writer.newRow(timestampDriver.parseFloorLiteral("2013-03-02T09:00:00.000Z"));
                 // One set of columns
                 r.putInt(0, rnd.nextPositiveInt());  // productId
                 r.putStr(1, "CANCELLED"); // productName
@@ -1180,9 +1172,11 @@ public class TableWriterTest extends AbstractCairoTest {
                     TableReader reader = newOffPoolReader(configuration, PRODUCT);
                     TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
             ) {
-                String expected = "productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
-                        "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:00:00.000000Z\n" +
-                        "null\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z\n";
+                String expected = replaceTimestampSuffix("""
+                        productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp
+                        1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:00:00.000000Z
+                        null\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z
+                        """, ColumnType.nameOf(timestampType));
                 assertCursor(expected, cursor, reader.getMetadata(), true);
             }
         });
@@ -1193,19 +1187,15 @@ public class TableWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final Rnd rnd = new Rnd();
 
-            class X extends FilesFacadeImpl {
-                boolean fail = false;
-
+            final LazyTestFilesFacade ff = new LazyTestFilesFacade() {
                 @Override
                 public boolean rmdir(Path name, boolean lazy) {
-                    if (fail) {
+                    if (active) {
                         return false;
                     }
                     return super.rmdir(name, lazy);
                 }
-            }
-
-            X ff = new X();
+            };
 
             final int N = 10000;
             create(ff, PartitionBy.DAY, N);
@@ -1219,7 +1209,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         return ff;
                     }
                 }, PRODUCT)) {
-                    long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                    long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
                     int i = 0;
 
                     int cancelCount = 0;
@@ -1232,15 +1222,15 @@ public class TableWriterTest extends AbstractCairoTest {
                         r.putSym(3, rnd.nextString(11));
                         r.putDouble(4, rnd.nextDouble());
                         if (rnd.nextPositiveInt() % 50 == 0) {
-                            ff.fail = true;
+                            ff.activate();
                             try {
                                 r.cancel();
                             } catch (CairoException ignored) {
                                 failCount++;
-                                ff.fail = false;
+                                ff.deactivate();
                                 r.cancel();
                             } finally {
-                                ff.fail = false;
+                                ff.deactivate();
                             }
                             cancelCount++;
                         } else {
@@ -1268,7 +1258,7 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.NONE, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
 
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
                 TableWriter.Row r = writer.newRow(ts);
                 r.putInt(0, 1234);
@@ -1313,12 +1303,12 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean ran = false;
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRWNoCache(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, PRODUCT_FS + ".lock")) {
                         ran = true;
                         return -1;
                     }
-                    return super.openRW(name, opts);
+                    return super.openRWNoCache(name, opts);
                 }
 
                 @Override
@@ -1356,7 +1346,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1369,7 +1359,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCannotOpenColumnFile() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "productName.i")) {
                     return -1;
                 }
@@ -1386,7 +1376,7 @@ public class TableWriterTest extends AbstractCairoTest {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                return !Utf8s.endsWithAscii(path, "category.o") && super.exists(path);
+                return !Utf8s.containsAscii(path, "category.o.2") && super.exists(path);
             }
         }, false);
     }
@@ -1398,7 +1388,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 1;
 
             @Override
-            public long openRW(LPSZ path, long opts) {
+            public long openRW(LPSZ path, int opts) {
                 if (Utf8s.endsWithAscii(path, TableUtils.TODO_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
@@ -1413,7 +1403,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
                     return -1;
                 }
@@ -1438,7 +1428,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "supplier.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1462,7 +1452,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "productName.i")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1487,7 +1477,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "productName.i")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1511,7 +1501,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1551,7 +1541,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1590,7 +1580,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1614,11 +1604,11 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCloseActivePartitionAndRollback() throws Exception {
+    public void testCloseActivePartitionAndRollback() {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
             populateProducts(writer, rnd, ts, N, 6 * 60000 * 1000L);
             writer.closeActivePartition(true);
@@ -1658,7 +1648,7 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.DAY, N);
 
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                populateProducts(writer, new Rnd(), TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z"), N, 60000 * 1000L);
+                populateProducts(writer, new Rnd(), timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z"), N, 60000 * 1000L);
                 writer.commit();
                 Assert.assertEquals(N, writer.size());
             }
@@ -1683,7 +1673,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             };
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
                 for (int k = 0; k < 3; k++) {
                     ts = populateProducts(writer, rnd, ts, N, increment);
@@ -1694,7 +1684,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2014-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2014-03-04T00:00:00.000Z");
                 Assert.assertEquals(0, writer.size());
                 populateProducts(writer, rnd, ts, N, increment);
                 writer.commit();
@@ -1717,7 +1707,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             };
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
                 for (int k = 0; k < 3; k++) {
                     ts = populateProducts(writer, rnd, ts, N, increment);
@@ -1728,7 +1718,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2014-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2014-03-04T00:00:00.000Z");
                 Assert.assertEquals(0, writer.size());
                 populateProducts(writer, rnd, ts, N, increment);
                 writer.commit();
@@ -1738,7 +1728,93 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDefaultPartition() throws Exception {
+    public void testDecimalAsStringDecimal16() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("99.99m", 4, 2, 9999L));
+    }
+
+    @Test
+    public void testDecimalAsStringDecimal32() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("12345.678m", 8, 3, 12345678L));
+    }
+
+    @Test
+    public void testDecimalAsStringDecimal64() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("123456789.1234m", 13, 4, 1234567891234L));
+    }
+
+    @Test
+    public void testDecimalAsStringDecimal8() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("9.5m", 2, 1, 95L));
+    }
+
+    @Test
+    public void testDecimalAsStringInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertDecimalStr("invalid", 10, 2, 0L);
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `invalid` [");
+                TestUtils.assertContains(e.getFlyweightMessage(), " -> DECIMAL(10,2)]");
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalAsStringMissingSuffix() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("123.45", 10, 2, 12345L));
+    }
+
+    @Test
+    public void testDecimalAsStringNegative() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("-99.99m", 6, 2, -9999L));
+    }
+
+    @Test
+    public void testDecimalAsStringNull() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr(null, 10, 2, Long.MIN_VALUE));
+    }
+
+    @Test
+    public void testDecimalAsStringPrecisionOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertDecimalStr("12345678901m", 10, 2, 0L); // Too many digits for precision 10
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `12345678901m` [");
+                TestUtils.assertContains(e.getFlyweightMessage(), " -> DECIMAL(10,2)]");
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalAsStringScaleOne() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("100.0m", 5, 1, 1000L));
+    }
+
+    @Test
+    public void testDecimalAsStringScaleTwo() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("100.25m", 6, 2, 10025L));
+    }
+
+    @Test
+    public void testDecimalAsStringScaleZero() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("100m", 5, 0, 100L));
+    }
+
+    @Test
+    public void testDecimalAsStringValid() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("123.45m", 10, 2, 12345L));
+    }
+
+    @Test
+    public void testDecimalAsStringZero() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("0.00m", 4, 2, 0L));
+    }
+
+    @Test
+    public void testDefaultPartition() {
         populateTable();
     }
 
@@ -1749,7 +1825,7 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.NONE, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
 
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
                 Rnd rnd = new Rnd();
                 for (int i = 0; i < N; i++) {
@@ -1854,7 +1930,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testGetColumnIndex() {
-        CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO);
         try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
             Assert.assertEquals(1, writer.getColumnIndex("short"));
             try {
@@ -1868,7 +1944,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testIncorrectTodoCode() throws Exception {
         assertMemoryLeak(() -> {
-            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
+            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO);
             String all = "all";
             TableToken tableToken = engine.verifyTableName(all);
             try (
@@ -1893,7 +1969,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIndexIsAddedToTable() throws Exception {
+    public void testIndexIsAddedToTable() {
         int partitionBy = PartitionBy.DAY;
         int N = 1000;
         TableToken tableToken;
@@ -1901,13 +1977,13 @@ public class TableWriterTest extends AbstractCairoTest {
         model.col("sym1", ColumnType.SYMBOL);
         model.col("sym2", ColumnType.SYMBOL);
         model.col("sym3", ColumnType.SYMBOL);
-        model.timestamp();
+        model.timestamp(timestampType);
 
         tableToken = AbstractCairoTest.create(model);
 
         // insert data
         final Rnd rnd = new Rnd();
-        long t = TimestampFormatUtils.parseTimestamp("2019-03-22T00:00:00.000000Z");
+        long t = timestampDriver.parseFloorLiteral("2019-03-22T00:00:00.000000Z");
         long increment = 2_000_000;
         try (TableWriter w = getWriter(tableToken)) {
             testIndexIsAddedToTableAppendData(N, rnd, t, increment, w);
@@ -1953,7 +2029,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testMetaFileDoesNotExist() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
@@ -1985,9 +2061,9 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testNulls() throws Exception {
         assertMemoryLeak(() -> {
-            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
+            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, timestampType);
             Rnd rnd = new Rnd();
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
             ts = testAppendNulls(rnd, ts);
             testAppendNulls(rnd, ts);
         });
@@ -1996,9 +2072,9 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testO3AfterReopen() throws Exception {
         assertMemoryLeak(() -> {
-            CreateTableTestUtils.createAllTableWithTimestamp(engine, PartitionBy.NONE);
+            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, timestampType);
             Rnd rnd = new Rnd();
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
             testAppendNulls(rnd, ts);
             try {
                 testAppendNulls(rnd, ts);
@@ -2013,22 +2089,22 @@ public class TableWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "weather", PartitionBy.DAY)
                     .col("windspeed", ColumnType.DOUBLE)
-                    .timestamp();
+                    .timestamp(timestampType);
             AbstractCairoTest.create(model);
 
             try (TableWriter writer = newOffPoolWriter(configuration, "weather")) {
                 TableWriter.Row r;
-                r = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2021-01-31"));
+                r = writer.newRow(MicrosTimestampDriver.floor("2021-01-31"));
                 r.putDouble(0, 1.0);
                 r.append();
 
                 // Out of order
-                r = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2021-01-30"));
+                r = writer.newRow(MicrosTimestampDriver.floor("2021-01-30"));
                 r.putDouble(0, 1.0);
                 r.cancel();
 
                 // Back in order
-                r = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2021-02-01"));
+                r = writer.newRow(MicrosTimestampDriver.floor("2021-02-01"));
                 r.putDouble(0, 1.0);
                 r.append();
 
@@ -2037,8 +2113,8 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             long[] expectedTs = new long[]{
-                    IntervalUtils.parseFloorPartialTimestamp("2021-01-31"),
-                    IntervalUtils.parseFloorPartialTimestamp("2021-02-01")
+                    MicrosTimestampDriver.floor("2021-01-31"),
+                    MicrosTimestampDriver.floor("2021-02-01")
             };
             try (
                     TableReader reader = newOffPoolReader(configuration, "weather");
@@ -2056,19 +2132,19 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testO3PartitionTruncate() throws Exception {
+    public void testO3PartitionTruncate() {
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
         final String tableName = "testO3PartitionTruncate";
 
         TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                 .col("productId", ColumnType.LONG256)
-                .timestamp();
+                .timestamp(timestampType);
         AbstractCairoTest.create(model);
 
         try (TableWriter writer = newOffPoolWriter(configuration, model.getName())) {
             // Add 46 rows in partition 2020-07-13T00
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2020-07-13");
-            long increment = Timestamps.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2020-07-13");
+            long increment = timestampDriver.fromSeconds(1);
             int rows = 46;
             for (int i = 0; i < rows; i++) {
                 TableWriter.Row row = writer.newRow(ts);
@@ -2089,7 +2165,7 @@ public class TableWriterTest extends AbstractCairoTest {
             row.append();
 
             // Add 1 row out of order in partition 2020-07-13T01
-            row = writer.newRow(ts + Timestamps.HOUR_MICROS);
+            row = writer.newRow(ts + timestampDriver.fromHours(1));
             row.putLong256(0, 2, 2, 2, 2);
             row.append();
 
@@ -2119,7 +2195,7 @@ public class TableWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "weather", PartitionBy.DAY)
                     .col("windspeed", ColumnType.DOUBLE)
-                    .timestamp();
+                    .timestamp(timestampType);
             AbstractCairoTest.create(model);
 
             long[] tss = new long[]{
@@ -2174,7 +2250,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     .col("a", ColumnType.SYMBOL).cached(true)
                     .col("b", ColumnType.STRING)
                     .col("c", ColumnType.STRING).indexed(true, 1024)
-                    .timestamp();
+                    .timestamp(timestampType);
 
             try {
                 AbstractCairoTest.create(model);
@@ -2189,7 +2265,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testOpenWriterMissingTxFile() throws Exception {
         assertMemoryLeak(() -> {
-            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
+            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO);
             try (Path path = new Path()) {
                 String all = "all";
                 TableToken tableToken = engine.verifyTableName(all);
@@ -2208,7 +2284,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TableModel model = new TableModel(configuration, "ABC", PartitionBy.DAY)
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
-                .timestamp()
+                .timestamp(timestampType)
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE);
@@ -2223,7 +2299,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE)
-                .timestamp();
+                .timestamp(timestampType);
         testRemoveColumn(model);
     }
 
@@ -2235,51 +2311,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("category", ColumnType.SYMBOL)
                 .col("productName", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE)
-                .timestamp();
+                .timestamp(timestampType);
         testRemoveColumn(model);
-    }
-
-    @Test
-    public void testRemoveColumnCannotOpenSwap() throws Exception {
-        class X extends TestFilesFacade {
-            boolean hit = false;
-
-            @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    hit = true;
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return hit;
-            }
-        }
-        testRemoveColumnRecoverableFailure(new X());
-    }
-
-    @Test
-    public void testRemoveColumnCannotRemoveAnyMetadataPrev() throws Exception {
-        testRemoveColumnRecoverableFailure(new TestFilesFacade() {
-            int removes = 0;
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                if (Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME)) {
-                    removes++;
-                    return false;
-                }
-                return super.removeQuiet(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return removes > 0;
-            }
-        });
     }
 
     @Test
@@ -2345,45 +2378,8 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveColumnCannotRemoveSwap() throws Exception {
-        class X extends TestFilesFacade {
-            boolean hit = false;
-
-            @Override
-            public boolean exists(LPSZ path) {
-                return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
-            }
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    hit = true;
-                    return false;
-                }
-                return super.removeQuiet(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return hit;
-            }
-        }
-        testRemoveColumnRecoverableFailure(new X());
-    }
-
-    @Test
-    public void testRemoveColumnCannotRenameMeta() throws Exception {
-        testRemoveColumnRecoverableFailure(new MetaRenameDenyingFacade());
-    }
-
-    @Test
-    public void testRemoveColumnCannotRenameMetaSwap() throws Exception {
-        testRemoveColumnRecoverableFailure(new SwapMetaRenameDenyingFacade());
-    }
-
-    @Test
     public void testRemoveColumnUnrecoverableRenameFailure() throws Exception {
-        class X extends FilesFacadeImpl {
+        testUnrecoverableRemoveColumn(new FilesFacadeImpl() {
             int count = 2;
 
             @Override
@@ -2393,21 +2389,20 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
                 return super.rename(from, to);
             }
-        }
-        testUnrecoverableRemoveColumn(new X());
+        });
     }
 
     @Test
-    public void testRemoveTimestamp() throws Exception {
+    public void testRemoveTimestamp() {
         TableModel model = new TableModel(configuration, "ABC", PartitionBy.NONE)
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
                 .col("category", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE)
-                .timestamp()
+                .timestamp(timestampType)
                 .col("supplier", ColumnType.SYMBOL);
         AbstractCairoTest.create(model);
-        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+        long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
         Rnd rnd = new Rnd();
         try (TableWriter writer = newOffPoolWriter(configuration, model.getName())) {
@@ -2437,7 +2432,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("productName", ColumnType.STRING)
                 .col("category", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE)
-                .timestamp()
+                .timestamp(timestampType)
                 .col("supplier", ColumnType.SYMBOL);
         AbstractCairoTest.create(model);
 
@@ -2455,7 +2450,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TableModel model = new TableModel(configuration, "ABC", PartitionBy.DAY)
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
-                .timestamp()
+                .timestamp(timestampType)
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE);
@@ -2470,51 +2465,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE)
-                .timestamp();
+                .timestamp(timestampType);
         testRenameColumn(model);
-    }
-
-    @Test
-    public void testRenameColumnCannotOpenSwap() throws Exception {
-        class X extends TestFilesFacade {
-            boolean hit = false;
-
-            @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    hit = true;
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return hit;
-            }
-        }
-        testRenameColumnRecoverableFailure(new X());
-    }
-
-    @Test
-    public void testRenameColumnCannotRemoveAnyMetadataPrev() throws Exception {
-        testRenameColumnRecoverableFailure(new TestFilesFacade() {
-            int removes = 0;
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                if (Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME)) {
-                    removes++;
-                    return false;
-                }
-                return super.removeQuiet(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return removes > 0;
-            }
-        });
     }
 
     @Test
@@ -2580,45 +2532,8 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRenameColumnCannotRemoveSwap() throws Exception {
-        class X extends TestFilesFacade {
-            boolean hit = false;
-
-            @Override
-            public boolean exists(LPSZ path) {
-                return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
-            }
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    hit = true;
-                    return false;
-                }
-                return super.removeQuiet(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return hit;
-            }
-        }
-        testRenameColumnRecoverableFailure(new X());
-    }
-
-    @Test
-    public void testRenameColumnCannotRenameMeta() throws Exception {
-        testRenameColumnRecoverableFailure(new MetaRenameDenyingFacade());
-    }
-
-    @Test
-    public void testRenameColumnCannotRenameMetaSwap() throws Exception {
-        testRenameColumnRecoverableFailure(new SwapMetaRenameDenyingFacade());
-    }
-
-    @Test
     public void testRenameColumnUnrecoverableRenameFailure() throws Exception {
-        class X extends FilesFacadeImpl {
+        testUnrecoverableRenameColumn(new FilesFacadeImpl() {
             int count = 2;
 
             @Override
@@ -2628,21 +2543,20 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
                 return super.rename(from, to);
             }
-        }
-        testUnrecoverableRenameColumn(new X());
+        });
     }
 
     @Test
-    public void testRenameTimestamp() throws Exception {
+    public void testRenameTimestamp() {
         TableModel model = new TableModel(configuration, "ABC", PartitionBy.NONE)
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
                 .col("category", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE)
-                .timestamp()
+                .timestamp(timestampType)
                 .col("supplier", ColumnType.SYMBOL);
         AbstractCairoTest.create(model);
-        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+        long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
         Rnd rnd = new Rnd();
         try (TableWriter writer = newOffPoolWriter(configuration, model.getName())) {
@@ -2666,16 +2580,16 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRenameTimestampFromPartitionedTable() throws Exception {
+    public void testRenameTimestampFromPartitionedTable() {
         TableModel model = new TableModel(configuration, "ABC", PartitionBy.DAY)
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
                 .col("category", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE)
-                .timestamp()
+                .timestamp(timestampType)
                 .col("supplier", ColumnType.SYMBOL);
         AbstractCairoTest.create(model);
-        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+        long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
         Rnd rnd = new Rnd();
         try (TableWriter writer = newOffPoolWriter(configuration, model.getName())) {
@@ -2699,116 +2613,14 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRollbackNonPartitioned() throws Exception {
+    public void testRollbackNonPartitioned() {
         final int N = 20000;
         create(FF, PartitionBy.NONE, N);
         testRollback(N);
     }
 
     @Test
-    public void testRollbackPartitionRemoveFailure() throws Exception {
-        final int N = 10000;
-        create(FF, PartitionBy.DAY, N);
-
-        class X extends FilesFacadeImpl {
-            boolean removeAttempted = false;
-
-            @Override
-            public boolean rmdir(Path from, boolean lazy) {
-                if (Utf8s.endsWithAscii(from, "2013-03-12.0")) {
-                    removeAttempted = true;
-                    return false;
-                }
-                return super.rmdir(from, lazy);
-            }
-        }
-
-        X ff = new X();
-
-        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-        final long increment = 60000L * 1000;
-        Rnd rnd = new Rnd();
-        try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
-            @Override
-            public @NotNull FilesFacade getFilesFacade() {
-                return ff;
-            }
-        }, PRODUCT)) {
-
-            ts = populateProducts(writer, rnd, ts, N, increment);
-            writer.commit();
-
-            populateProducts(writer, rnd, ts, N, increment);
-
-            Assert.assertEquals(2 * N, writer.size());
-            writer.rollback();
-
-            Assert.assertTrue(ff.removeAttempted);
-
-            // make sure row rollback works after rollback
-            writer.newRow(ts).cancel();
-
-            // we should be able to repeat timestamps
-            populateProducts(writer, rnd, ts, N, increment);
-            writer.commit();
-
-            Assert.assertEquals(2 * N, writer.size());
-        }
-    }
-
-    @Test
-    public void testRollbackPartitionRenameFailure() throws Exception {
-        final int N = 10000;
-        create(FF, PartitionBy.DAY, N);
-
-        class X extends FilesFacadeImpl {
-            boolean removeAttempted = false;
-
-            @Override
-            public boolean rmdir(Path path, boolean lazy) {
-                if (Utf8s.endsWithAscii(path, "2013-03-12.0")) {
-                    removeAttempted = true;
-                    return false;
-                }
-                return super.rmdir(path, lazy);
-            }
-        }
-
-        X ff = new X();
-
-        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-        final long increment = 60000L * 1000;
-        Rnd rnd = new Rnd();
-        try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
-            @Override
-            public @NotNull FilesFacade getFilesFacade() {
-                return ff;
-            }
-        }, PRODUCT)) {
-
-            ts = populateProducts(writer, rnd, ts, N, increment);
-            writer.commit();
-
-            populateProducts(writer, rnd, ts, N, increment);
-
-            Assert.assertEquals(2 * N, writer.size());
-            writer.rollback();
-
-            Assert.assertTrue(ff.removeAttempted);
-
-            // make sure row rollback works after rollback
-            writer.newRow(ts).cancel();
-
-            // we should be able to repeat timestamps
-            populateProducts(writer, rnd, ts, N, increment);
-            writer.commit();
-
-            Assert.assertEquals(2 * N, writer.size());
-        }
-    }
-
-    @Test
-    public void testRollbackPartitioned() throws Exception {
+    public void testRollbackPartitioned() {
         int N = 20000;
         create(FF, PartitionBy.DAY, N);
         testRollback(N);
@@ -2818,7 +2630,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testRollbackRestoreNullSetters() throws Exception {
         assertMemoryLeak(() -> {
             create(FF, PartitionBy.DAY, 1);
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
             final long increment = 60000L * 1000L;
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -2826,7 +2638,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 long maxTs = ts;
-                ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
                 populateProducts(writer, rnd, ts, 5, increment);
 
                 writer.rollback();
@@ -2842,22 +2654,24 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             assertTable(
-                    "productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
-                            "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:01:00.000000Z\n" +
-                            "761275053\tHBHFOWL\tPDXY\tSBEOUOJSHRU\t0.6761934857077543\tf\t6js\tu0x8u6\twc8jw257kp8b\t2013-03-04T00:02:00.000000Z\n" +
-                            "2034804966\tYRFBVTM\tHGOO\tZZVDZJMYICC\t0.2282233596526786\tp\tp16\t5ehgu7\tn5f7bnz2wzkr\t2013-03-04T00:03:00.000000Z\n" +
-                            "1775935667\tEDYYCTG\tQOLY\tXWCKYLSUWDS\t0.2820020716674768\tr\t2q2\tcsded1\tvqnqb4qjen3k\t2013-03-04T00:04:00.000000Z\n" +
-                            "68027832\tKJSMSSU\tQSRL\tTKVVSJOJIPH\t0.13006100084163252\t2\t06j\tuxnz7u\tpp3dqy3z5fzc\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n",
+                    replaceTimestampSuffix("""
+                            productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp
+                            1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:01:00.000000Z
+                            761275053\tHBHFOWL\tPDXY\tSBEOUOJSHRU\t0.6761934857077543\tf\t6js\tu0x8u6\twc8jw257kp8b\t2013-03-04T00:02:00.000000Z
+                            2034804966\tYRFBVTM\tHGOO\tZZVDZJMYICC\t0.2282233596526786\tp\tp16\t5ehgu7\tn5f7bnz2wzkr\t2013-03-04T00:03:00.000000Z
+                            1775935667\tEDYYCTG\tQOLY\tXWCKYLSUWDS\t0.2820020716674768\tr\t2q2\tcsded1\tvqnqb4qjen3k\t2013-03-04T00:04:00.000000Z
+                            68027832\tKJSMSSU\tQSRL\tTKVVSJOJIPH\t0.13006100084163252\t2\t06j\tuxnz7u\tpp3dqy3z5fzc\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            """, ColumnType.nameOf(timestampType)),
                     PRODUCT
             );
         });
@@ -2866,6 +2680,27 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testSetAppendPositionFailureBin2() throws Exception {
         testSetAppendPositionFailure();
+    }
+
+    @Test
+    public void testShouldThrowExceptionWhenTxnLogIsCorrupted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table product (ts TIMESTAMP, i INT) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            TableToken token = engine.getTableTokenIfExists("product");
+            engine.releaseAllWriters();
+            engine.getTableSequencerAPI().releaseAll();
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(SEQ_DIR);
+                openSmallFile(FF, path, path.size(), mem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                mem.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, 2);
+                mem.jumpTo(TableTransactionLogFile.HEADER_SIZE);
+                mem.putLong(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET, 2);
+                mem.sync(false);
+                mem.setTruncateSize(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES);
+            }
+            assertException("alter table " + PRODUCT + " add column abc INT;", 0, "possible corruption in transaction metadata [table=product~1, offset=24, newVersion=1]");
+        });
     }
 
     @Test
@@ -2899,10 +2734,10 @@ public class TableWriterTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("default").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("0001-01-01.123").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("1991-01-01.123").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(SEQ_DIR).slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
                 path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
@@ -2919,7 +2754,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("0001-01-01.123").slash$();
                 Assert.assertFalse(ff.exists(path.$()));
 
-                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(SEQ_DIR).slash$();
                 Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
@@ -2946,7 +2781,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(SEQ_DIR).slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
                 path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
@@ -2963,7 +2798,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(SEQ_DIR).slash$();
                 Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
@@ -2989,44 +2824,44 @@ public class TableWriterTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     TableToken tableToken;
-                    TableModel model = new TableModel(configuration, "xyz", PartitionBy.HOUR).col("x", ColumnType.LONG).timestamp();
+                    TableModel model = new TableModel(configuration, "xyz", PartitionBy.HOUR).col("x", ColumnType.LONG).timestamp(timestampType);
                     tableToken = createTable(model);
 
                     final Rnd rnd = new Rnd();
                     final ObjList<String> timestampsReported = new ObjList<>();
                     try (TableWriter w = getWriter(tableToken)) {
                         w.setExtensionListener(
-                                timestamp -> timestampsReported.add(Timestamps.toString(timestamp))
+                                timestamp -> timestampsReported.add(timestampDriver.toMSecString(timestamp))
                         );
 
-                        TableWriter.Row r = w.newRow(TimestampFormatUtils.parseTimestamp("2022-03-10T10:11:00.000000Z"));
+                        TableWriter.Row r = w.newRow(timestampDriver.parseFloorLiteral("2022-03-10T10:11:00.000000Z"));
                         r.putLong(0, rnd.nextLong());
                         r.append();
                         w.commit();
 
-                        r = w.newRow(TimestampFormatUtils.parseTimestamp("2022-03-10T12:22:00.000000Z"));
+                        r = w.newRow(timestampDriver.parseFloorLiteral("2022-03-10T12:22:00.000000Z"));
                         r.putLong(0, rnd.nextLong());
                         r.append();
                         w.commit();
 
                         // O3
-                        r = w.newRow(TimestampFormatUtils.parseTimestamp("2022-03-10T11:34:00.000000Z"));
+                        r = w.newRow(timestampDriver.parseFloorLiteral("2022-03-10T11:34:00.000000Z"));
                         r.putLong(0, rnd.nextLong());
                         r.append();
                         w.commit();
 
                         // O3, one old one new
-                        r = w.newRow(TimestampFormatUtils.parseTimestamp("2022-03-10T11:44:00.000000Z"));
+                        r = w.newRow(timestampDriver.parseFloorLiteral("2022-03-10T11:44:00.000000Z"));
                         r.putLong(0, rnd.nextLong());
                         r.append();
 
-                        r = w.newRow(TimestampFormatUtils.parseTimestamp("2022-03-10T13:22:00.000000Z"));
+                        r = w.newRow(timestampDriver.parseFloorLiteral("2022-03-10T13:22:00.000000Z"));
                         r.putLong(0, rnd.nextLong());
                         r.append();
                         w.commit();
 
                         // O3 - very old
-                        r = w.newRow(TimestampFormatUtils.parseTimestamp("2022-03-10T08:11:00.000000Z"));
+                        r = w.newRow(timestampDriver.parseFloorLiteral("2022-03-10T08:11:00.000000Z"));
                         r.putLong(0, rnd.nextLong());
                         r.append();
                         w.commit();
@@ -3043,7 +2878,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testTableLock() {
-        CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
+        CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO);
 
         try (TableWriter ignored = newOffPoolWriter(configuration, "all")) {
             try {
@@ -3065,7 +2900,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             };
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
                 Rnd rnd = new Rnd();
                 for (int i = 0; i < 100; i++) {
@@ -3094,17 +2929,17 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTruncateMidO3Transaction() throws Exception {
+    public void testTruncateMidO3Transaction() {
         testTruncate(TableWriterTest::danglingO3TransactionModifier);
     }
 
     @Test
-    public void testTruncateMidRowAppend() throws Exception {
+    public void testTruncateMidRowAppend() {
         testTruncate(TableWriterTest::danglingRowModifier);
     }
 
     @Test
-    public void testTruncateMidTransaction() throws Exception {
+    public void testTruncateMidTransaction() {
         testTruncate(TableWriterTest::danglingTransactionModifier);
     }
 
@@ -3113,7 +2948,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String name = "соотечественник";
         TableModel model = new TableModel(configuration, name, PartitionBy.NONE)
                 .col("секьюрити", ColumnType.STRING)
-                .timestamp();
+                .timestamp(timestampType);
         AbstractCairoTest.create(model);
 
         Rnd rnd = new Rnd();
@@ -3145,7 +2980,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testTxCannotMap() throws Exception {
         assertMemoryLeak(() -> {
-            class X extends CountingFilesFacade {
+            final CountingFilesFacade ff = new CountingFilesFacade() {
                 @Override
                 public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     if (--count > 0) {
@@ -3153,8 +2988,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     }
                     return -1;
                 }
-            }
-            X ff = new X();
+            };
             create(ff, PartitionBy.NONE, 4);
             try {
                 ff.count = 0;
@@ -3189,25 +3023,29 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testUncommittedEnforceTtl() throws Exception {
         String tango = "tango";
         TableModel model = new TableModel(configuration, tango, PartitionBy.HOUR)
-                .timestamp("ts")
+                .timestamp("ts", timestampType)
                 .ttlHoursOrMonths(1);
         AbstractCairoTest.create(model);
         try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
             writer.newRow(1).append();
-            writer.newRow(Timestamps.HOUR_MICROS + 1).append();
+            writer.newRow(timestampDriver.fromHours(1) + 1).append();
             writer.commit();
         }
-        assertSql("ts\n" +
-                "1970-01-01T00:00:00.000001Z\n" +
-                "1970-01-01T01:00:00.000001Z\n", "tango");
+        assertSql(replaceTimestampSuffix("""
+                ts
+                1970-01-01T00:00:00.000001Z
+                1970-01-01T01:00:00.000001Z
+                """, ColumnType.nameOf(timestampType)), "tango");
         try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
-            writer.newRow(2 * Timestamps.HOUR_MICROS + 1).append();
+            writer.newRow(timestampDriver.fromHours(2) + 1).append();
             writer.enforceTtl();
             writer.commit();
         }
-        assertSql("ts\n" +
-                "1970-01-01T01:00:00.000001Z\n" +
-                "1970-01-01T02:00:00.000001Z\n", "tango");
+        assertSql(replaceTimestampSuffix("""
+                ts
+                1970-01-01T01:00:00.000001Z
+                1970-01-01T02:00:00.000001Z
+                """, ColumnType.nameOf(timestampType)), "tango");
     }
 
     @Test
@@ -3216,7 +3054,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TableModel model = new TableModel(configuration, name, PartitionBy.NONE)
                 .col("str", ColumnType.STRING)
                 .col("sym", ColumnType.SYMBOL)
-                .timestamp();
+                .timestamp(timestampType);
         AbstractCairoTest.create(model);
         String something = "Щось";
         String boring = "Таке-Сяке";
@@ -3245,6 +3083,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         }
     }
+
 
     private static void danglingO3TransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
         TableWriter.Row r = w.newRow(timestamp - increment * 4);
@@ -3384,6 +3223,40 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
+    private void assertDecimalStr(String value, int precision, int scale, long expected) {
+        final String tableName = "decimal1";
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE);
+        model.col("d", ColumnType.getDecimalType(precision, scale));
+        AbstractCairoTest.create(model);
+
+        try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+            TableWriter.Row r = writer.newRow();
+            r.putDecimalStr(0, value);
+            r.append();
+            writer.commit();
+        }
+
+        try (
+                TableReader reader = newOffPoolReader(configuration, tableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
+            final Record record = cursor.getRecord();
+            final int type = reader.getMetadata().getColumnType(0);
+            Assert.assertTrue(cursor.hasNext());
+            final long actual = switch (ColumnType.tagOf(type)) {
+                case ColumnType.DECIMAL8 -> record.getByte(0);
+                case ColumnType.DECIMAL16 -> record.getShort(0);
+                case ColumnType.DECIMAL32 -> record.getInt(0);
+                case ColumnType.DECIMAL64 -> record.getLong(0);
+                case ColumnType.DECIMAL128 -> record.getLong128Lo(0);
+                default -> // DECIMAL256
+                        record.getLong256A(0).getLong0();
+            };
+
+            Assert.assertEquals(expected, actual);
+        }
+    }
+
     private void assertGeoStr(String hash, int tableBits, long expected) {
         assertGeoStringy(hash, tableBits, expected, true);
     }
@@ -3412,22 +3285,13 @@ public class TableWriterTest extends AbstractCairoTest {
             final Record record = cursor.getRecord();
             final int type = reader.getMetadata().getColumnType(0);
             Assert.assertTrue(cursor.hasNext());
-            final long actual;
+            final long actual = switch (ColumnType.tagOf(type)) {
+                case ColumnType.GEOBYTE -> record.getGeoByte(0);
+                case ColumnType.GEOSHORT -> record.getGeoShort(0);
+                case ColumnType.GEOINT -> record.getGeoInt(0);
+                default -> record.getGeoLong(0);
+            };
 
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.GEOBYTE:
-                    actual = record.getGeoByte(0);
-                    break;
-                case ColumnType.GEOSHORT:
-                    actual = record.getGeoShort(0);
-                    break;
-                case ColumnType.GEOINT:
-                    actual = record.getGeoInt(0);
-                    break;
-                default:
-                    actual = record.getGeoLong(0);
-                    break;
-            }
             Assert.assertEquals(expected, actual);
         }
     }
@@ -3471,7 +3335,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("locationShort", ColumnType.getGeoHashTypeWithBits(15))
                 .col("locationInt", ColumnType.getGeoHashTypeWithBits(30))
                 .col("locationLong", ColumnType.getGeoHashTypeWithBits(60))
-                .timestamp();
+                .timestamp(timestampType);
         AbstractCairoTest.create(model);
     }
 
@@ -3489,7 +3353,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void populateAndColumnPopulate(int n) throws NumericException {
         Rnd rnd = new Rnd();
-        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+        long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
         long interval = 60000L * 1000L;
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
             ts = populateProducts(writer, rnd, ts, n, interval);
@@ -3517,6 +3381,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private long populateProducts(TableWriter writer, Rnd rnd, long ts, int count, long increment) {
+        increment = timestampDriver.fromMicros(increment);
         for (int i = 0; i < count; i++) {
             ts = populateRow(writer, rnd, ts, increment);
         }
@@ -3530,7 +3395,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 return ff;
             }
         }, PRODUCT)) {
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
             ts = populateProducts(writer, new Rnd(), ts, N, 60000L * 1000L);
             writer.commit();
             Assert.assertEquals(N, writer.size());
@@ -3554,10 +3419,10 @@ public class TableWriterTest extends AbstractCairoTest {
                     .col("supplier", ColumnType.SYMBOL)
                     .col("category", ColumnType.SYMBOL)
                     .col("price", ColumnType.DOUBLE)
-                    .timestamp();
+                    .timestamp(timestampType);
             AbstractCairoTest.create(model);
 
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
 
@@ -3599,10 +3464,10 @@ public class TableWriterTest extends AbstractCairoTest {
                     .col("supplier", ColumnType.SYMBOL)
                     .col("category", ColumnType.SYMBOL)
                     .col("price", ColumnType.DOUBLE)
-                    .timestamp();
+                    .timestamp(timestampType);
             AbstractCairoTest.create(model);
 
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
 
@@ -3637,7 +3502,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void testAddColumnAndOpenWriter(int partitionBy, int N) throws Exception {
         assertMemoryLeak(() -> {
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
 
             create(FF, partitionBy, N);
@@ -3736,6 +3601,10 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(20, writer.getColumnCount());
                 ts = populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
                 writer.commit();
+
+                if (ff instanceof LazyTestFilesFacade) {
+                    ((LazyTestFilesFacade) ff).activate();
+                }
                 try {
                     writer.addColumn("abc", ColumnType.SYMBOL);
                     Assert.fail();
@@ -3766,7 +3635,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void testAddIndexAndFailToIndexHalfWay(CairoConfiguration configuration, int partitionBy, int N) throws Exception {
         assertMemoryLeak(() -> {
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
 
             create(FF, partitionBy, N);
@@ -3904,7 +3773,7 @@ public class TableWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
 
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
                 long size = 0;
                 Rnd rnd = new Rnd();
@@ -3951,8 +3820,8 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
 
                 long ts;
-                long ts1 = TimestampFormatUtils.parseTimestamp("2013-03-04T04:00:00.000Z");
-                long ts2 = TimestampFormatUtils.parseTimestamp("2013-03-04T02:00:00.000Z");
+                long ts1 = timestampDriver.parseFloorLiteral("2013-03-04T04:00:00.000Z");
+                long ts2 = timestampDriver.parseFloorLiteral("2013-03-04T02:00:00.000Z");
 
                 Rnd rnd = new Rnd();
                 int i = 0;
@@ -3987,7 +3856,7 @@ public class TableWriterTest extends AbstractCairoTest {
     private void testRemoveColumn(TableModel model) throws Exception {
         assertMemoryLeak(() -> {
             AbstractCairoTest.create(model);
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
             try (TableWriter writer = newOffPoolWriter(configuration, model.getName())) {
@@ -4027,44 +3896,10 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testRemoveColumnRecoverableFailure(TestFilesFacade ff) throws Exception {
-        assertMemoryLeak(() -> {
-            create(FF, PartitionBy.DAY, 10000);
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-            Rnd rnd = new Rnd();
-            try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            }, PRODUCT)) {
-                ts = append10KProducts(ts, rnd, writer);
-                writer.commit();
-
-                try {
-                    writer.removeColumn("productName");
-                    Assert.fail();
-                } catch (CairoException ignore) {
-                }
-
-                Assert.assertTrue(ff.wasCalled());
-
-                ts = append10KProducts(ts, rnd, writer);
-                writer.commit();
-            }
-
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                append10KProducts(ts, rnd, writer);
-                writer.commit();
-                Assert.assertEquals(30000, writer.size());
-            }
-        });
-    }
-
     private void testRenameColumn(TableModel model) throws Exception {
         assertMemoryLeak(() -> {
             AbstractCairoTest.create(model);
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
             int columnTypeTag;
@@ -4139,42 +3974,8 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testRenameColumnRecoverableFailure(TestFilesFacade ff) throws Exception {
-        assertMemoryLeak(() -> {
-            create(FF, PartitionBy.DAY, 10000);
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-            Rnd rnd = new Rnd();
-            try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            }, PRODUCT)) {
-                ts = append10KProducts(ts, rnd, writer);
-                writer.commit();
-
-                try {
-                    writer.renameColumn("productName", "nameOfProduct");
-                    Assert.fail();
-                } catch (CairoException ignore) {
-                }
-
-                Assert.assertTrue(ff.wasCalled());
-
-                ts = append10KProducts(ts, rnd, writer);
-                writer.commit();
-            }
-
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                append10KProducts(ts, rnd, writer);
-                writer.commit();
-                Assert.assertEquals(30000, writer.size());
-            }
-        });
-    }
-
     private void testRollback(int N) throws NumericException {
-        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+        long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
         Rnd rnd = new Rnd();
         final long increment = 60000L * 1000L;
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -4202,9 +4003,9 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void testSetAppendPositionFailure() throws Exception {
         assertMemoryLeak(() -> {
-            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
+            CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, timestampType);
 
-            class X extends FilesFacadeImpl {
+            final FilesFacadeImpl ff = new FilesFacadeImpl() {
                 long fd = -1;
 
                 @Override
@@ -4216,15 +4017,14 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, "bin.i")) {
                         return fd = super.openRW(name, opts);
                     }
                     return super.openRW(name, opts);
                 }
-            }
-            final X ff = new X();
-            testAppendNulls(new Rnd(), TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z"));
+            };
+            testAppendNulls(new Rnd(), timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z"));
             try {
                 newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
@@ -4243,7 +4043,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("a", ColumnType.SYMBOL).cached(cacheFlag)
                 .col("b", ColumnType.STRING)
                 .col("c", ColumnType.SYMBOL).cached(!cacheFlag)
-                .timestamp();
+                .timestamp(timestampType);
         AbstractCairoTest.create(model);
 
         int N = 1000;
@@ -4286,13 +4086,13 @@ public class TableWriterTest extends AbstractCairoTest {
         model.col("sym1", ColumnType.SYMBOL);
         model.col("sym2", ColumnType.SYMBOL);
         model.col("sym3", ColumnType.SYMBOL);
-        model.timestamp();
+        model.timestamp(timestampType);
 
         TableToken tableToken = AbstractCairoTest.create(model);
 
         // insert data
         final Rnd rnd = new Rnd();
-        long t = TimestampFormatUtils.parseTimestamp("2019-03-22T00:00:00.000000Z");
+        long t = timestampDriver.parseFloorLiteral("2019-03-22T00:00:00.000000Z");
         long increment = 2_000_000;
         TableWriter w = null;
         try {
@@ -4397,7 +4197,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     return ff;
                 }
             }, PRODUCT)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
                 Rnd rnd = new Rnd();
                 populateProducts(writer, rnd, ts, N, 60 * 60000L * 1000L);
                 writer.commit();
@@ -4442,7 +4242,7 @@ public class TableWriterTest extends AbstractCairoTest {
             };
             final int N = 20000;
             create(FF, PartitionBy.DAY, N);
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 ts = append10KProducts(ts, rnd, writer);
@@ -4473,7 +4273,7 @@ public class TableWriterTest extends AbstractCairoTest {
             };
             final int N = 20000;
             create(FF, PartitionBy.DAY, N);
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 ts = append10KProducts(ts, rnd, writer);
@@ -4523,8 +4323,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     void verifyTimestampPartitions(MemoryARW vmem) {
         int i;
-        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
-        DateFormat fmt = compiler.compile("yyyy-MM-dd");
+        DateFormat fmt = timestampDriver.getTimestampDateFormatFactory().get("yyyy-MM-dd");
         DateLocale enGb = DateLocaleFactory.INSTANCE.getLocale("en-gb");
 
         try (Path vp = new Path()) {
@@ -4547,13 +4346,51 @@ public class TableWriterTest extends AbstractCairoTest {
         long count = Long.MAX_VALUE;
     }
 
-    private static class MetaRenameDenyingFacade extends TestFilesFacade {
-        boolean hit = false;
+    private static class FailMetadataSwapFilesFacade extends LazyTestFilesFacade {
+        int count = configuration.getMaxSwapFileCount() + 1;
+
+        @Override
+        public boolean exists(LPSZ path) {
+            return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
+        }
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            if (active && Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME) && --count > 0) {
+                return false;
+            }
+            return super.removeQuiet(name);
+        }
+
+        @Override
+        public boolean wasCalled() {
+            return count != configuration.getMaxSwapFileCount();
+        }
+    }
+
+    private static abstract class LazyTestFilesFacade extends TestFilesFacade {
+        protected boolean active;
+
+        public void activate() {
+            active = true;
+        }
+
+        public void deactivate() {
+            active = false;
+        }
+
+        @Override
+        public boolean wasCalled() {
+            return active;
+        }
+    }
+
+    private static class MetaRenameDenyingFacade extends LazyTestFilesFacade {
+        int counter = configuration.getFileOperationRetryCount() + 1;
 
         @Override
         public int rename(LPSZ from, LPSZ to) {
-            if (Utf8s.containsAscii(to, TableUtils.META_PREV_FILE_NAME)) {
-                hit = true;
+            if (active && Utf8s.containsAscii(to, TableUtils.META_PREV_FILE_NAME) && --counter > 0) {
                 return Files.FILES_RENAME_ERR_OTHER;
             }
             return super.rename(from, to);
@@ -4561,16 +4398,16 @@ public class TableWriterTest extends AbstractCairoTest {
 
         @Override
         public boolean wasCalled() {
-            return hit;
+            return counter < configuration.getFileOperationRetryCount() + 1;
         }
     }
 
-    private static class SwapMetaRenameDenyingFacade extends TestFilesFacade {
+    private static class SwapMetaRenameDenyingFacade extends LazyTestFilesFacade {
         boolean hit = false;
 
         @Override
         public int rename(LPSZ from, LPSZ to) {
-            if (Utf8s.endsWithAscii(from, TableUtils.META_SWAP_FILE_NAME)) {
+            if (active && Utf8s.endsWithAscii(from, TableUtils.META_SWAP_FILE_NAME) && !hit) {
                 hit = true;
                 return Files.FILES_RENAME_ERR_OTHER;
             }

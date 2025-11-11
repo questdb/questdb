@@ -27,129 +27,150 @@ package io.questdb.test.cutlass.line.tcp;
 import org.junit.Test;
 
 public class LineTcpInsertShortGeoHashTest extends BaseLineTcpInsertGeoHashTest {
-    public LineTcpInsertShortGeoHashTest(WalMode walMode) {
-        super(walMode);
-    }
 
     @Override
     public void testExcessivelyLongGeoHashesAreTruncated() throws Exception {
         assertGeoHash(15,
                 "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
-                "geohash\ttimestamp\n" +
-                        "9v1\t1970-01-01T00:00:01.000000Z\n");
+                """
+                        geohash\ttimestamp
+                        9v1\t1970-01-01T00:00:01.000000Z
+                        """);
     }
 
     @Override
     public void testGeoHashes() throws Exception {
         assertGeoHash(15,
-                "tracking geohash=\"9v1\" 1000000000\n" +
-                        "tracking geohash=\"46s\" 2000000000\n" +
-                        "tracking geohash=\"jnw\" 3000000000\n" +
-                        "tracking geohash=\"zfu\" 4000000000\n" +
-                        "tracking geohash=\"hp4\" 5000000000\n" +
-                        "tracking geohash=\"wh4\" 6000000000\n" +
-                        "tracking geohash=\"s2z\" 7000000000\n",
-                "geohash\ttimestamp\n" +
-                        "9v1\t1970-01-01T00:00:01.000000Z\n" +
-                        "46s\t1970-01-01T00:00:02.000000Z\n" +
-                        "jnw\t1970-01-01T00:00:03.000000Z\n" +
-                        "zfu\t1970-01-01T00:00:04.000000Z\n" +
-                        "hp4\t1970-01-01T00:00:05.000000Z\n" +
-                        "wh4\t1970-01-01T00:00:06.000000Z\n" +
-                        "s2z\t1970-01-01T00:00:07.000000Z\n");
+                """
+                        tracking geohash="9v1" 1000000000
+                        tracking geohash="46s" 2000000000
+                        tracking geohash="jnw" 3000000000
+                        tracking geohash="zfu" 4000000000
+                        tracking geohash="hp4" 5000000000
+                        tracking geohash="wh4" 6000000000
+                        tracking geohash="s2z" 7000000000
+                        """,
+                """
+                        geohash\ttimestamp
+                        9v1\t1970-01-01T00:00:01.000000Z
+                        46s\t1970-01-01T00:00:02.000000Z
+                        jnw\t1970-01-01T00:00:03.000000Z
+                        zfu\t1970-01-01T00:00:04.000000Z
+                        hp4\t1970-01-01T00:00:05.000000Z
+                        wh4\t1970-01-01T00:00:06.000000Z
+                        s2z\t1970-01-01T00:00:07.000000Z
+                        """);
     }
 
     @Override
     public void testGeoHashesNotEnoughPrecision() throws Exception {
         assertGeoHash(15,
-                "tracking geohash=\"9v\" 1000000000\n" +
-                        "tracking geohash=\"46\" 2000000000\n" +
-                        "tracking geohash=\"jn\" 3000000000\n" +
-                        "tracking geohash=\"zf\" 4000000000\n" +
-                        "tracking geohash=\"hp\",name=\"questdb\" 5000000000\n" +
-                        "tracking geohash=\"wh\" 6000000000\n" +
-                        "tracking geohash=\"s2\",name=\"neptune\" 7000000000\n" +
-                        "tracking geohash=\"1c\" 8000000000\n" +
-                        "tracking geohash=\"mm\" 9000000000\n" +
-                        "tracking name=\"timeseries\",geohash=\"71\" 10000000000\n",
-                "geohash\ttimestamp\tname\n" +
-                        "\t1970-01-01T00:00:01.000000Z\t\n" +
-                        "\t1970-01-01T00:00:02.000000Z\t\n" +
-                        "\t1970-01-01T00:00:03.000000Z\t\n" +
-                        "\t1970-01-01T00:00:04.000000Z\t\n" +
-                        "\t1970-01-01T00:00:05.000000Z\tquestdb\n" +
-                        "\t1970-01-01T00:00:06.000000Z\t\n" +
-                        "\t1970-01-01T00:00:07.000000Z\tneptune\n" +
-                        "\t1970-01-01T00:00:08.000000Z\t\n" +
-                        "\t1970-01-01T00:00:09.000000Z\t\n" +
-                        "\t1970-01-01T00:00:10.000000Z\ttimeseries\n",
+                """
+                        tracking geohash="9v" 1000000000
+                        tracking geohash="46" 2000000000
+                        tracking geohash="jn" 3000000000
+                        tracking geohash="zf" 4000000000
+                        tracking geohash="hp",name="questdb" 5000000000
+                        tracking geohash="wh" 6000000000
+                        tracking geohash="s2",name="neptune" 7000000000
+                        tracking geohash="1c" 8000000000
+                        tracking geohash="mm" 9000000000
+                        tracking name="timeseries",geohash="71" 10000000000
+                        """,
+                """
+                        geohash\ttimestamp\tname
+                        \t1970-01-01T00:00:01.000000Z\t
+                        \t1970-01-01T00:00:02.000000Z\t
+                        \t1970-01-01T00:00:03.000000Z\t
+                        \t1970-01-01T00:00:04.000000Z\t
+                        \t1970-01-01T00:00:05.000000Z\tquestdb
+                        \t1970-01-01T00:00:06.000000Z\t
+                        \t1970-01-01T00:00:07.000000Z\tneptune
+                        \t1970-01-01T00:00:08.000000Z\t
+                        \t1970-01-01T00:00:09.000000Z\t
+                        \t1970-01-01T00:00:10.000000Z\ttimeseries
+                        """,
                 "name");
     }
 
     @Override
     public void testGeoHashesTruncating() throws Exception {
         assertGeoHash(13,
-                "tracking geohash=\"9v1\" 1000000000\n" +
-                        "tracking geohash=\"46s\" 2000000000\n" +
-                        "tracking geohash=\"jnw\" 3000000000\n" +
-                        "tracking geohash=\"zfu\" 4000000000\n" +
-                        "tracking geohash=\"hp4\" 5000000000\n" +
-                        "tracking geohash=\"wh4\" 6000000000\n" +
-                        "tracking geohash=\"s2z\" 7000000000\n" +
-                        "tracking geohash=\"1cj\" 8000000000\n" +
-                        "tracking geohash=\"mmt\" 9000000000\n" +
-                        "tracking geohash=\"71f\" 10000000000\n",
-                "geohash\ttimestamp\n" +
-                        "0100111011000\t1970-01-01T00:00:01.000000Z\n" +
-                        "0010000110110\t1970-01-01T00:00:02.000000Z\n" +
-                        "1000110100111\t1970-01-01T00:00:03.000000Z\n" +
-                        "1111101110110\t1970-01-01T00:00:04.000000Z\n" +
-                        "1000010101001\t1970-01-01T00:00:05.000000Z\n" +
-                        "1110010000001\t1970-01-01T00:00:06.000000Z\n" +
-                        "1100000010111\t1970-01-01T00:00:07.000000Z\n" +
-                        "0000101011100\t1970-01-01T00:00:08.000000Z\n" +
-                        "1001110011110\t1970-01-01T00:00:09.000000Z\n" +
-                        "0011100001011\t1970-01-01T00:00:10.000000Z\n");
+                """
+                        tracking geohash="9v1" 1000000000
+                        tracking geohash="46s" 2000000000
+                        tracking geohash="jnw" 3000000000
+                        tracking geohash="zfu" 4000000000
+                        tracking geohash="hp4" 5000000000
+                        tracking geohash="wh4" 6000000000
+                        tracking geohash="s2z" 7000000000
+                        tracking geohash="1cj" 8000000000
+                        tracking geohash="mmt" 9000000000
+                        tracking geohash="71f" 10000000000
+                        """,
+                """
+                        geohash\ttimestamp
+                        0100111011000\t1970-01-01T00:00:01.000000Z
+                        0010000110110\t1970-01-01T00:00:02.000000Z
+                        1000110100111\t1970-01-01T00:00:03.000000Z
+                        1111101110110\t1970-01-01T00:00:04.000000Z
+                        1000010101001\t1970-01-01T00:00:05.000000Z
+                        1110010000001\t1970-01-01T00:00:06.000000Z
+                        1100000010111\t1970-01-01T00:00:07.000000Z
+                        0000101011100\t1970-01-01T00:00:08.000000Z
+                        1001110011110\t1970-01-01T00:00:09.000000Z
+                        0011100001011\t1970-01-01T00:00:10.000000Z
+                        """);
     }
 
     @Test
     public void testNullGeoHash() throws Exception {
         assertGeoHash(15,
                 "tracking geohash=\"\" 1000000000\n",
-                "geohash\ttimestamp\n" +
-                        "\t1970-01-01T00:00:01.000000Z\n");
+                """
+                        geohash\ttimestamp
+                        \t1970-01-01T00:00:01.000000Z
+                        """);
     }
 
     @Override
     public void testTableHasGeoHashMessageDoesNot() throws Exception {
         assertGeoHash(15,
-                "tracking onions=\"9v1\" 1000000000\n" +
-                        "tracking onions=\"46s\" 2000000000\n" +
-                        "tracking onions=\"jnw\" 3000000000\n" +
-                        "tracking geohash=\"zfu\" 4000000000\n" +
-                        "tracking geohash=\"hp4\" 5000000000\n" +
-                        "tracking onions=\"wh4\" 6000000000\n" +
-                        "tracking mint=\"s2z\" 7000000000\n",
-                "geohash\ttimestamp\tonions\tmint\n" +
-                        "\t1970-01-01T00:00:01.000000Z\t9v1\t\n" +
-                        "\t1970-01-01T00:00:02.000000Z\t46s\t\n" +
-                        "\t1970-01-01T00:00:03.000000Z\tjnw\t\n" +
-                        "zfu\t1970-01-01T00:00:04.000000Z\t\t\n" +
-                        "hp4\t1970-01-01T00:00:05.000000Z\t\t\n" +
-                        "\t1970-01-01T00:00:06.000000Z\twh4\t\n" +
-                        "\t1970-01-01T00:00:07.000000Z\t\ts2z\n",
+                """
+                        tracking onions="9v1" 1000000000
+                        tracking onions="46s" 2000000000
+                        tracking onions="jnw" 3000000000
+                        tracking geohash="zfu" 4000000000
+                        tracking geohash="hp4" 5000000000
+                        tracking onions="wh4" 6000000000
+                        tracking mint="s2z" 7000000000
+                        """,
+                """
+                        geohash\ttimestamp\tonions\tmint
+                        \t1970-01-01T00:00:01.000000Z\t9v1\t
+                        \t1970-01-01T00:00:02.000000Z\t46s\t
+                        \t1970-01-01T00:00:03.000000Z\tjnw\t
+                        zfu\t1970-01-01T00:00:04.000000Z\t\t
+                        hp4\t1970-01-01T00:00:05.000000Z\t\t
+                        \t1970-01-01T00:00:06.000000Z\twh4\t
+                        \t1970-01-01T00:00:07.000000Z\t\ts2z
+                        """,
                 "onions", "mint");
     }
 
     @Override
     public void testWrongCharGeoHashes() throws Exception {
         assertGeoHash(13,
-                "tracking geohash=\"9v1@\" 1000000000\n" +
-                        "tracking geohash=\"@46s\" 2000000000\n" +
-                        "tracking geohash=\"jLnw\" 3000000000\n",
-                "geohash\ttimestamp\n" +
-                        "\t1970-01-01T00:00:01.000000Z\n" +
-                        "\t1970-01-01T00:00:02.000000Z\n" +
-                        "\t1970-01-01T00:00:03.000000Z\n");
+                """
+                        tracking geohash="9v1@" 1000000000
+                        tracking geohash="@46s" 2000000000
+                        tracking geohash="jLnw" 3000000000
+                        """,
+                """
+                        geohash\ttimestamp
+                        \t1970-01-01T00:00:01.000000Z
+                        \t1970-01-01T00:00:02.000000Z
+                        \t1970-01-01T00:00:03.000000Z
+                        """);
     }
 }

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DebugUtils;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -62,7 +63,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
@@ -113,6 +114,7 @@ public class FuzzRunner {
     private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
     private int strLen;
+    private double symbolAccessValidationProb;
     private int symbolCountMax;
     private int symbolStrLenMax;
     private double tableDropProb;
@@ -331,6 +333,8 @@ public class FuzzRunner {
                 }
             }
         } finally {
+            // Don't mess simulating failures anymore, we are done here.
+            ff.clearFailures();
             Misc.free(rdr1);
             Misc.free(rdr2);
             Misc.free(writer);
@@ -433,6 +437,10 @@ public class FuzzRunner {
         return createInitialTable(tableName, true, initialRowCount);
     }
 
+    public TableToken createInitialTableWal(String tableName, String timestampType) throws SqlException {
+        return createInitialTable(tableName, true, initialRowCount, timestampType);
+    }
+
     public TableToken createInitialTableWal(String tableName, int initialRowCount) throws SqlException {
         return createInitialTable(tableName, true, initialRowCount);
     }
@@ -484,6 +492,7 @@ public class FuzzRunner {
                 tableDropProb,
                 setTtlProb,
                 replaceInsertProb,
+                symbolAccessValidationProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion()
@@ -491,13 +500,13 @@ public class FuzzRunner {
     }
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start) {
-        long end = start + partitionCount * Timestamps.DAY_MICROS;
+        long end = start + partitionCount * Micros.DAY_MICROS;
         return generateTransactions(tableName, rnd, start, end);
     }
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd) throws NumericException {
-        long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
-        long end = start + partitionCount * Timestamps.DAY_MICROS;
+        long start = MicrosTimestampDriver.floor("2022-02-24T17");
+        long end = start + partitionCount * Micros.DAY_MICROS;
         return generateTransactions(tableName, rnd, start, end);
     }
 
@@ -594,7 +603,8 @@ public class FuzzRunner {
             double truncateProb,
             double tableDropProb,
             double setTtlProb,
-            double replaceInsertProb
+            double replaceInsertProb,
+            double symbolAccessValidationProb
     ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
@@ -611,6 +621,7 @@ public class FuzzRunner {
         this.tableDropProb = tableDropProb;
         this.setTtlProb = setTtlProb;
         this.replaceInsertProb = replaceInsertProb;
+        this.symbolAccessValidationProb = symbolAccessValidationProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -658,7 +669,7 @@ public class FuzzRunner {
                         "select ts from " + tableName + " order by ts limit 1",
                         sink,
                         "ts\n" +
-                                Timestamps.toUSecString(reader.getMinTimestamp())
+                                Micros.toUSecString(reader.getMinTimestamp())
                                 + "\n"
                 );
             }
@@ -670,7 +681,7 @@ public class FuzzRunner {
                         "select ts from " + tableName + " order by ts limit -1",
                         sink,
                         "ts\n" +
-                                Timestamps.toUSecString(reader.getMaxTimestamp())
+                                Micros.toUSecString(reader.getMaxTimestamp())
                                 + "\n"
                 );
             }
@@ -753,7 +764,7 @@ public class FuzzRunner {
                         if (i > 0) {
                             sink.put(" and");
                         }
-                        sink.put(" (ts not between '" + Timestamps.toUSecString(lo) + "' and '" + Timestamps.toUSecString(hi) + "')");
+                        sink.put(" (ts not between '" + Micros.toUSecString(lo) + "' and '" + Micros.toUSecString(hi) + "')");
                     }
                 }
             }
@@ -780,6 +791,45 @@ public class FuzzRunner {
                             "select x as c1, " +
                             " rnd_symbol('AB', 'BC', 'CD') c2, " +
                             " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                            " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
+                            " cast(x as int) c3," +
+                            " rnd_bin() c4," +
+                            " to_long128(3 * x, 6 * x) c5," +
+                            " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
+                            " rnd_boolean() bool1 " +
+                            " from long_sequence(" + rowCount + ")" +
+                            ")",
+                    sqlExecutionContext
+            );
+        }
+
+        if (engine.getTableTokenIfExists(tableName) == null) {
+            engine.execute(
+                    "create atomic table " + tableName + " as (" +
+                            "select * from data_temp" +
+                            "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                    sqlExecutionContext
+            );
+            // force few column tops
+            engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
+        }
+        return engine.verifyTableName(tableName);
+    }
+
+    private TableToken createInitialTable(String tableName, boolean isWal, int rowCount, String timestampType) throws SqlException {
+        SharedRandom.RANDOM.set(new Rnd());
+        TableToken tempTable = engine.getTableTokenIfExists("data_temp");
+
+        if (tempTable == null) {
+            engine.execute(
+                    "create atomic table data_temp as (" +
+                            "select x as c1, " +
+                            " rnd_symbol('AB', 'BC', 'CD') c2, " +
+                            " timestamp_sequence('2022-02-24'::" + timestampType + ", 1000000L) ts, " +
                             " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
                             " cast(x as int) c3," +
                             " rnd_bin() c4," +
@@ -848,17 +898,25 @@ public class FuzzRunner {
 
             try {
                 Rnd tempRnd = new Rnd();
-                while ((opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.isEmpty()) {
+                while (errors.isEmpty() && (opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.isEmpty()) {
                     FuzzTransaction transaction = transactions.getQuick(opIndex);
 
                     // wait until structure version, truncate, replace commit is applied
                     while (waitBarrierVersion.get() < transaction.waitBarrierVersion && errors.isEmpty()) {
                         Os.sleep(1);
+                        if (!errors.isEmpty()) {
+                            LOG.errorW().$("waiting for barrier version interrupted due to errors [table=").$(tableName).I$();
+                            return;
+                        }
                     }
 
                     if (transaction.waitAllDone) {
                         while (doneCount.get() != opIndex) {
                             Os.sleep(1);
+                            if (!errors.isEmpty()) {
+                                LOG.errorW().$("waiting for all done interrupted due to errors [table=").$(tableName).I$();
+                                return;
+                            }
                         }
                     }
 
@@ -921,6 +979,7 @@ public class FuzzRunner {
                     engine.releaseInactiveTableSequencers();
                 }
             } catch (Throwable e) {
+                e.printStackTrace();
                 errors.add(e);
             } finally {
                 Path.clearThreadLocals();
@@ -929,7 +988,7 @@ public class FuzzRunner {
     }
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {
-        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1);
+        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
              O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
              TableReader rdr1 = getReaderHandleTableDropped(tableName);
              TableReader rdr2 = getReaderHandleTableDropped(tableName)
@@ -976,7 +1035,7 @@ public class FuzzRunner {
             ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             int i = 0;
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
-            try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1)) {
+            try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
                 while (done.get() == 0 && errors.isEmpty()) {
                     Unsafe.getUnsafe().loadFence();
                     while (job.run(0) || checkJob.run(0)) {
@@ -1203,7 +1262,8 @@ public class FuzzRunner {
                             0.1 * rnd.nextDouble(),
                             rnd.nextDouble(),
                             0.0,
-                            0.05
+                            0.05,
+                            0.1 * rnd.nextDouble()
                     );
                 }
                 if (randomiseCounts) {

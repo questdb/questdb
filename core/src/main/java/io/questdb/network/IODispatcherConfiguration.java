@@ -34,7 +34,8 @@ public interface IODispatcherConfiguration {
     int BIAS_READ = 1;
     int BIAS_WRITE = 2;
 
-    Counter listenerStateChangeCounter();
+    // millis
+    long getAcceptLoopTimeout();
 
     int getBindIPv4Address();
 
@@ -51,7 +52,7 @@ public interface IODispatcherConfiguration {
     EpollFacade getEpollFacade();
 
     default int getEventCapacity() {
-        return Numbers.ceilPow2(getLimit());
+        return Numbers.ceilPow2(Math.max(getLimit(), 64));
     }
 
     long getHeartbeatInterval();
@@ -61,7 +62,7 @@ public interface IODispatcherConfiguration {
     }
 
     default int getIOQueueCapacity() {
-        return Numbers.ceilPow2(getLimit());
+        return Numbers.ceilPow2(Math.max(getLimit(), 64));
     }
 
     default int getInitialBias() {
@@ -69,7 +70,7 @@ public interface IODispatcherConfiguration {
     }
 
     default int getInterestQueueCapacity() {
-        return Numbers.ceilPow2(getLimit());
+        return Numbers.ceilPow2(Math.max(getLimit(), 64));
     }
 
     KqueueFacade getKqueueFacade();
@@ -112,4 +113,6 @@ public interface IODispatcherConfiguration {
     int getTestConnectionBufferSize();
 
     long getTimeout();
+
+    Counter listenerStateChangeCounter();
 }

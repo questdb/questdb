@@ -178,6 +178,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean recordCursorSupportsLongTopK(int columnIndex) {
+        return base.recordCursorSupportsLongTopK(columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }
@@ -340,13 +345,18 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public boolean isExternal() {
+            return baseCursor.isExternal();
+        }
+
+        @Override
         public SymbolTable newSymbolTable(int columnIndex) {
             return baseCursor.newSymbolTable(columnCrossIndex.getQuick(columnIndex));
         }
 
         @Override
-        public @Nullable PageFrame next() {
-            PageFrame baseFrame = baseCursor.next();
+        public @Nullable PageFrame next(long skipTarget) {
+            PageFrame baseFrame = baseCursor.next(skipTarget);
             return baseFrame != null ? pageFrame.of(baseFrame) : null;
         }
 
@@ -390,6 +400,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public void close() {
             baseCursor = Misc.free(baseCursor);
+        }
+
+        @Override
+        public BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
+            return baseCursor.getIndexReaderForCurrentFrame(columnCrossIndex.getQuick(columnIndex), direction);
         }
 
         @Override

@@ -96,9 +96,9 @@ public class TableWriterBenchmark {
 
         LogFactory.haltInstance();
 
-        TableToken tableToken1 = new TableToken("test1", "test1", 0, false, false, false);
-        TableToken tableToken2 = new TableToken("test2", "test2", 0, false, false, false);
-        TableToken tableToken3 = new TableToken("test3", "test3", 0, false, false, false);
+        TableToken tableToken1 = new TableToken("test1", "test1", null, 0, false, false, false);
+        TableToken tableToken2 = new TableToken("test2", "test2", null, 0, false, false, false);
+        TableToken tableToken3 = new TableToken("test3", "test3", null, 0, false, false, false);
 
         writer = new TableWriter(
                 configuration,

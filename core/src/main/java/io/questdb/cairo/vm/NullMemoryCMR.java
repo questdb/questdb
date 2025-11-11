@@ -28,6 +28,9 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
@@ -97,6 +100,36 @@ public class NullMemoryCMR implements MemoryCMR {
     @Override
     public char getChar(long offset) {
         return 0;
+    }
+
+    @Override
+    public void getDecimal128(long offset, Decimal128 sink) {
+        sink.ofRawNull();
+    }
+
+    @Override
+    public short getDecimal16(long offset) {
+        return Decimals.DECIMAL16_NULL;
+    }
+
+    @Override
+    public void getDecimal256(long offset, Decimal256 sink) {
+        sink.ofRawNull();
+    }
+
+    @Override
+    public int getDecimal32(long offset) {
+        return Decimals.DECIMAL32_NULL;
+    }
+
+    @Override
+    public long getDecimal64(long offset) {
+        return Decimals.DECIMAL64_NULL;
+    }
+
+    @Override
+    public byte getDecimal8(long offset) {
+        return Decimals.DECIMAL8_NULL;
     }
 
     @Override
@@ -227,7 +260,7 @@ public class NullMemoryCMR implements MemoryCMR {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts) {
         throw new UnsupportedOperationException();
     }
 
@@ -249,10 +282,5 @@ public class NullMemoryCMR implements MemoryCMR {
     @Override
     public long size() {
         return 0;
-    }
-
-    @Override
-    public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        throw new UnsupportedOperationException();
     }
 }

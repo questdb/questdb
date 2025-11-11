@@ -25,12 +25,12 @@
 package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -396,7 +396,7 @@ public class VarcharFunctionTest {
 
     @Test
     public void testCastToTimestamp() throws NumericException {
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-09-10T10:12:33.887889Z"), new VarcharConstant("2021-09-10T10:12:33.887889").getTimestamp(null));
+        Assert.assertEquals(NanosTimestampDriver.INSTANCE.parseFloorLiteral("2021-09-10T10:12:33.887889Z"), new VarcharConstant("2021-09-10T10:12:33.887889").getTimestamp(null));
     }
 
     @Test
@@ -405,7 +405,7 @@ public class VarcharFunctionTest {
             new VarcharConstant("").getTimestamp(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `` [VARCHAR -> TIMESTAMP]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `` [VARCHAR -> TIMESTAMP_NS]");
         }
     }
 
@@ -452,6 +452,36 @@ public class VarcharFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBool() {
         function.getBool(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal128() {
+        function.getDecimal128(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal16() {
+        function.getDecimal16(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256() {
+        function.getDecimal256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal32() {
+        function.getDecimal32(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal64() {
+        function.getDecimal64(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal8() {
+        function.getDecimal8(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

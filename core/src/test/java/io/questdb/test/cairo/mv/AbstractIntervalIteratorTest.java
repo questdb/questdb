@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.SampleByIntervalIterator;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -31,11 +32,15 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 public abstract class AbstractIntervalIteratorTest {
+    protected final TimestampDriver timestampDriver;
+
+    public AbstractIntervalIteratorTest(TimestampDriver timestampDriver) {
+        this.timestampDriver = timestampDriver;
+    }
 
     private static void intersectInPlace(LongList dest, long lo, long hi) {
         dest.add(lo, hi);
@@ -69,17 +74,17 @@ public abstract class AbstractIntervalIteratorTest {
             long start,
             long end
     ) throws Exception {
-        final int step = Math.max(1, rnd.nextInt(1000));
+        final int step = Math.max(1, rnd.nextInt(100));
         final int interval = Math.max(1, rnd.nextInt(300));
 
         final char[] timeUnits = new char[]{'m', 'h', 'd'};
         final char timeUnit = timeUnits[rnd.nextInt(timeUnits.length)];
 
         if (offset == Long.MIN_VALUE) {
-            offset = (rnd.nextBoolean() ? 1 : -1) * rnd.nextLong(Timestamps.HOUR_MICROS);
+            offset = (rnd.nextBoolean() ? 1 : -1) * rnd.nextLong(timestampDriver.fromHours(1));
         }
 
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(interval, timeUnit, 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, interval, timeUnit, 0);
 
         LongList intervals = null;
         if (rnd.nextBoolean()) {

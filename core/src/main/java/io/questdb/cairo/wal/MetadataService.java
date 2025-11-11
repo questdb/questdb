@@ -154,6 +154,8 @@ public interface MetadataService {
 
     TableToken getTableToken();
 
+    int getTimestampType();
+
     UpdateOperator getUpdateOperator();
 
     void removeColumn(@NotNull CharSequence columnName);
@@ -175,7 +177,7 @@ public interface MetadataService {
             int refreshType,
             int timerInterval,
             char timerUnit,
-            long timerStart,
+            long timerStartUs,
             @Nullable CharSequence timerTimeZone,
             int periodLength,
             char periodLengthUnit,
@@ -194,7 +196,7 @@ public interface MetadataService {
     /**
      * Sets incremental refresh timer values for materialized view.
      */
-    void setMatViewRefreshTimer(long start, int interval, char unit);
+    void setMatViewRefreshTimer(long startUs, int interval, char unit);
 
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 

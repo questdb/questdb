@@ -46,12 +46,8 @@ import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -59,7 +55,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.ColumnType.*;
 
-@RunWith(Parameterized.class)
 abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     protected static final Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
@@ -106,15 +101,8 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     private SOCountDownLatch threadPushFinished;
     private long timestampMark = -1;
 
-    public AbstractLineTcpReceiverFuzzTest(WalMode walMode) {
-        this.walEnabled = (walMode == WalMode.WITH_WAL);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
-        });
+    public AbstractLineTcpReceiverFuzzTest() {
+        this.walEnabled = TestUtils.isWal();
     }
 
     public void runTest() throws Exception {
@@ -373,9 +361,11 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         final String sql = tableName + " where timestamp > " + timestampMark;
         try (RecordCursorFactory factory = select(sql)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-
                 // Extract vars for safe logging
-                long size = cursor.size();
+                long size = 0;
+                while (cursor.hasNext()) {
+                    size++;
+                }
                 int tableSize = table.size();
                 CharSequence name = table.getName();
 
@@ -453,17 +443,23 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     void handleWriterGetEvent(CharSequence name) {
         final TableData table = tables.get(name);
-        table.obtainPermit();
+        if (table != null) {
+            table.obtainPermit();
+        }
     }
 
     void handleWriterReturnEvent(CharSequence name) {
         final TableData table = tables.get(name);
-        table.returnPermit();
+        if (table != null) {
+            table.returnPermit();
+        }
     }
 
     void handleWriterUnlockEvent(CharSequence name) {
-        final String tableName = name.toString();
-        tableNames.putIfAbsent(tableName.toLowerCase(), tableName);
+        if (tables.get(name) != null) {
+            final String tableName = name.toString();
+            tableNames.putIfAbsent(tableName.toLowerCase(), tableName);
+        }
     }
 
     void ingest(ObjList<Socket> sockets) {

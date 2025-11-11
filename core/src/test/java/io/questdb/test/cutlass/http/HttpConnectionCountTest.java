@@ -38,6 +38,7 @@ import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
 import io.questdb.mp.SOCountDownLatch;
@@ -54,6 +55,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -64,7 +66,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.PropertyKey.*;
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+import static io.questdb.cutlass.http.HttpResponseSink.HTTP_TOO_MANY_REQUESTS;
 import static io.questdb.test.tools.TestUtils.unchecked;
 import static java.net.HttpURLConnection.*;
 import static org.junit.Assert.assertEquals;
@@ -90,7 +92,6 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
         final long ilpConnLimit = numOfThreads - jsonQueryConnLimit;
 
         unchecked(() -> createDummyConfiguration(
-                METRICS_ENABLED + "=true",
                 HTTP_WORKER_COUNT + "=" + numOfThreads,
                 HTTP_NET_CONNECTION_LIMIT + "=" + (int) (numOfThreads * 1.5),
                 HTTP_JSON_QUERY_CONNECTION_LIMIT + "=" + jsonQueryConnLimit,
@@ -136,8 +137,8 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                                 }
                             }
                         } catch (Throwable e) {
-                            if (!Chars.contains(e.getMessage(), "exceeded connection limit [name=json_queries_connections")
-                                    && !Chars.contains(e.getMessage(), "exceeded connection limit [name=line_http_connections")) {
+                            if (!Chars.contains(e.getMessage(), "exceeded connection limit [name=json-http")
+                                    && !Chars.contains(e.getMessage(), "exceeded connection limit [name=ilp-http")) {
                                 errorCount.incrementAndGet();
                                 errorMessages.add(e.getMessage());
                                 LOG.error().$("Error executing query [thread=").$(threadIndex).$(", error=").$(e.getMessage()).$(']').$();
@@ -160,7 +161,6 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
     @Test
     public void testIlpConnectionLimit() throws Exception {
         unchecked(() -> createDummyConfiguration(
-                METRICS_ENABLED + "=true",
                 HTTP_WORKER_COUNT + "=6",
                 HTTP_ILP_CONNECTION_LIMIT + "=4"
         ));
@@ -175,8 +175,8 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 protected Services services() {
                     return new Services() {
                         @Override
-                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool workerPool, int sharedWorkerCount) {
-                            HttpServer server = super.createHttpServer(configuration, cairoEngine, workerPool, sharedWorkerCount);
+                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool networkSharedPool, int sharedQueryWorkerCount) {
+                            HttpServer server = super.createHttpServer(configuration, cairoEngine, networkSharedPool, sharedQueryWorkerCount);
                             if (server != null) {
                                 server.bind(new HttpRequestHandlerFactory() {
                                     @Override
@@ -188,9 +188,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                                     public HttpRequestHandler newInstance() {
                                         return new LineHttpProcessorImpl(
                                                 cairoEngine,
-                                                configuration.getHttpServerConfiguration().getRecvBufferSize(),
-                                                configuration.getHttpServerConfiguration().getSendBufferSize(),
-                                                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration()
+                                                configuration.getHttpServerConfiguration()
                                         ) {
                                             @Override
                                             public void onRequestComplete(
@@ -242,11 +240,11 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                     }
                 })) {
                     final HttpClient.ResponseHeaders responseHeaders = sendIlpRequest(httpClient, "tab col=1i 1000000");
-                    assertResponse(responseHeaders, HTTP_BAD_REQUEST, "exceeded connection limit [name=line_http_connections, numOfConnections=5, connectionLimit=4]\r\n");
+                    assertResponseContains(responseHeaders, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=ilp-http, numOfConnections=5, connectionLimit=4,");
 
                     // test that the connection cannot be used anymore
                     try {
-                        assertIlpRequest(httpClient, "tab col=3i 2000000", HTTP_BAD_REQUEST, "exceeded connection limit [name=line_http_connections, numOfConnections=5, connectionLimit=4]\r\n");
+                        assertIlpRequest(httpClient, "tab col=3i 2000000", HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=ilp-http, numOfConnections=5, connectionLimit=4,");
                         fail("Exception expected");
                     } catch (Exception e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -257,7 +255,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 }
 
                 // wait for the rejected connection to be closed to avoid race in the next assert
-                while (serverMain.getEngine().getMetrics().lineMetrics().httpConnectionCountGauge().getValue() > numOfThreads) {
+                while (serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_ILP) > numOfThreads) {
                     Os.sleep(50);
                 }
 
@@ -269,11 +267,12 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                     }
                 })) {
                     final HttpClient.ResponseHeaders responseHeaders = sendPingRequest(httpClient);
-                    assertResponse(responseHeaders, HTTP_BAD_REQUEST, "exceeded connection limit [name=line_http_connections, numOfConnections=5, connectionLimit=4]\r\n");
+                    assertResponseContains(responseHeaders, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=ilp-http, numOfConnections=5, connectionLimit=4,");
 
                     // test that the connection cannot be used anymore
                     try {
-                        assertPingRequest(httpClient, HTTP_BAD_REQUEST, "exceeded connection limit [name=line_http_connections, numOfConnections=5, connectionLimit=4]\r\n");
+                        final HttpClient.ResponseHeaders responseHeaders2 = sendPingRequest(httpClient);
+                        assertResponseContains(responseHeaders2, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=ilp-http, numOfConnections=5, connectionLimit=4,");
                         fail("Exception expected");
                     } catch (Exception e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -304,7 +303,6 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
     @Test
     public void testQueryConnectionLimit() throws Exception {
         unchecked(() -> createDummyConfiguration(
-                METRICS_ENABLED + "=true",
                 HTTP_WORKER_COUNT + "=6",
                 HTTP_JSON_QUERY_CONNECTION_LIMIT + "=4"
         ));
@@ -319,8 +317,8 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 protected Services services() {
                     return new Services() {
                         @Override
-                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool workerPool, int sharedWorkerCount) {
-                            HttpServer server = super.createHttpServer(configuration, cairoEngine, workerPool, sharedWorkerCount);
+                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool networkSharedPool, int sharedQueryWorkerCount) {
+                            HttpServer server = super.createHttpServer(configuration, cairoEngine, networkSharedPool, sharedQueryWorkerCount);
                             if (server != null) {
                                 server.bind(new HttpRequestHandlerFactory() {
                                     @Override
@@ -333,8 +331,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                                         return new JsonQueryProcessor(
                                                 configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration(),
                                                 cairoEngine,
-                                                workerPool.getWorkerCount(),
-                                                sharedWorkerCount
+                                                sharedQueryWorkerCount
                                         ) {
                                             @Override
                                             public void onRequestComplete(
@@ -383,12 +380,13 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                         return false;
                     }
                 })) {
-                    final HttpClient.ResponseHeaders responseHeaders = sendExecRequest(httpClient, EXEC_URI, "select 2");
-                    assertResponse(responseHeaders, HTTP_BAD_REQUEST, "exceeded connection limit [name=json_queries_connections, numOfConnections=5, connectionLimit=4]\r\n");
+                    HttpClient.ResponseHeaders responseHeaders = sendExecRequest(httpClient, EXEC_URI, "select 2");
+                    assertResponseContains(responseHeaders, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=json-http, numOfConnections=5, connectionLimit=4,");
 
                     // test that the connection cannot be used anymore
                     try {
-                        assertExecRequest(httpClient, EXEC_URI, "select 3", HTTP_BAD_REQUEST, "exceeded connection limit [name=json_queries_connections, numOfConnections=5, connectionLimit=4]\r\n");
+                        responseHeaders = sendExecRequest(httpClient, EXEC_URI, "select 3");
+                        assertResponseContains(responseHeaders, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=json-http, numOfConnections=5, connectionLimit=4,");
                         fail("Exception expected");
                     } catch (Exception e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -488,6 +486,31 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
 
         TestUtils.assertEquals(String.valueOf(expectedHttpStatusCode), responseHeaders.getStatusCode());
     }
+
+    private void assertResponseContains(
+            HttpClient.ResponseHeaders responseHeaders,
+            int expectedHttpStatusCode,
+            String expectedHttpResponse
+    ) {
+        responseHeaders.clear();
+        responseHeaders.await();
+
+        final Utf8StringSink sink = new Utf8StringSink();
+
+        Fragment fragment;
+        final Response response = responseHeaders.getResponse();
+        while ((fragment = response.recv()) != null) {
+            Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
+        }
+
+        if (!Utf8s.containsAscii(sink, expectedHttpResponse)) {
+            Assert.fail("Expected response to contain: " + expectedHttpResponse + ", actual: " + sink);
+        }
+        sink.clear();
+
+        TestUtils.assertEquals(String.valueOf(expectedHttpStatusCode), responseHeaders.getStatusCode());
+    }
+
 
     private HttpClient.ResponseHeaders sendExecRequest(
             HttpClient httpClient,

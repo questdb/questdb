@@ -52,7 +52,9 @@ import static org.junit.Assert.fail;
 
 public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
     private static final LogCapture capture = new LogCapture();
-    private static final Class<?>[] guaranteedLoggers = new Class[]{LineHttpProcessorState.class};
+    private static final Class<?>[] guaranteedLoggers = new Class[]{
+            LineHttpProcessorState.class
+    };
 
     @Before
     @Override
@@ -105,8 +107,7 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
     }
 
     private static void assertLogLevel(char errorLevel) {
-        capture.waitFor("http-server disconnected");
-        capture.assertLoggedRE(errorLevel + " i.q.c.h.p.LineHttpProcessorState \\[[0-9]*\\] could not commit");
+        capture.waitForRegex(errorLevel + " i.q.c.h.p.LineHttpProcessorState \\[[0-9]*\\] could not commit");
     }
 
     private static @NotNull Bootstrap createBootstrap(TestSecurityContext testSecurityContext) {
@@ -125,7 +126,7 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
                                 (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
                                     @Override
                                     public @NotNull SecurityContextFactory getSecurityContextFactory() {
-                                        return (principal, groups, authType, interfaceId) -> testSecurityContext;
+                                        return (principalContext, interfaceId) -> testSecurityContext;
                                     }
                                 }
                         );
@@ -151,6 +152,7 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
                     null,
                     127,
                     0,
+                    1_000,
                     0,
                     Long.MAX_VALUE
             )) {

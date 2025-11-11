@@ -29,7 +29,7 @@ import io.questdb.log.Log;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import org.jetbrains.annotations.Nullable;
 
@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class Worker extends Thread {
-    public static final MicrosecondClock CLOCK_MICROS = MicrosecondClockImpl.INSTANCE;
+    public static final Clock CLOCK_MICROS = MicrosecondClockImpl.INSTANCE;
     public static final int NO_THREAD_AFFINITY = -1;
     private final int affinity;
     private final String criticalErrorLine;

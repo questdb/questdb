@@ -27,6 +27,7 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -35,7 +36,6 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.Files;
@@ -44,7 +44,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
@@ -77,10 +77,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            long tsIncrement = Micros.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            ts += (Micros.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
@@ -155,10 +155,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final String tableCopyName = tableName + "_copy";
             TableToken tt = createTableAndCopy(tableName, tableCopyName);
 
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            long tsIncrement = Micros.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            ts += (Micros.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
@@ -183,10 +183,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final String tableCopyName = tableName + "_copy";
             TableToken tt = createTableAndCopy(tableName, tableCopyName);
 
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            long tsIncrement = Micros.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            ts += (Micros.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
@@ -197,7 +197,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                start += rowCount * tsIncrement - 2 * Timestamps.SECOND_MICROS;
+                start += rowCount * tsIncrement - 2 * Micros.SECOND_MICROS;
                 addRowsToWalAndApplyToTable(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
@@ -230,7 +230,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     int walIndex = rnd.nextInt(writers.length);
                     WalWriter walWriter = writers[walIndex];
                     int rowCount = rnd.nextInt(1000) + 2;
-                    tsIncrement = rnd.nextLong(Timestamps.MINUTE_MICROS);
+                    tsIncrement = rnd.nextLong(Micros.MINUTE_MICROS);
 
                     LOG.infoW().$("generating wal [")
                             .$("iteration:").$(i)
@@ -282,8 +282,8 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     WalWriter walWriter = writers[walIndex];
                     int rowCount = rnd.nextInt(10000) + 1;
                     int partitions = rnd.nextInt(3) + 1;
-                    tsIncrement = partitions * Timestamps.HOUR_MICROS / rowCount;
-                    long tsOffset = rnd.nextLong(2 * Timestamps.HOUR_MICROS);
+                    tsIncrement = partitions * Micros.HOUR_MICROS / rowCount;
+                    long tsOffset = rnd.nextLong(2 * Micros.HOUR_MICROS);
                     int sign = rnd.nextInt(overlapSeed);
                     tsOffset *= sign == 0 ? -1 : 1;
                     start += tsOffset;
@@ -476,10 +476,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            long tsIncrement = Micros.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            ts += (Micros.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             final int binarySize = 64;
@@ -513,6 +513,12 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     sqlExecutionContext.getBindVariableService().setGeoHash(15, rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
                     sqlExecutionContext.getBindVariableService().setGeoHash(16, rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
                     sqlExecutionContext.getBindVariableService().setVarchar(17, varChar);
+                    sqlExecutionContext.getBindVariableService().setDecimal(18, 0, 0, 0, 9, ColumnType.getDecimalType(2, 0));
+                    sqlExecutionContext.getBindVariableService().setDecimal(19, 0, 0, 0, 1234, ColumnType.getDecimalType(4, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal(20, 0, 0, 0, 123456, ColumnType.getDecimalType(9, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal(21, 0, 0, 0, 12345678, ColumnType.getDecimalType(18, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal(22, 0, 0, 0, 1234567890, ColumnType.getDecimalType(38, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal(23, 0, 0, 0, 123456789012L, ColumnType.getDecimalType(76, 1));
 
                     update(
                             "UPDATE " + tableName + " SET " +
@@ -533,7 +539,13 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                                     "GEOSHORT=$15, " +
                                     "GEOINT=$16, " +
                                     "GEOLONG=$17, " +
-                                    "VARCHAR=$18 " +
+                                    "VARCHAR=$18, " +
+                                    "DECIMAL8=$19, " +
+                                    "DECIMAL16=$20, " +
+                                    "DECIMAL32=$21, " +
+                                    "DECIMAL64=$22, " +
+                                    "DECIMAL128=$23, " +
+                                    "DECIMAL256=$24 " +
                                     "WHERE INT > 5"
                     );
 
@@ -558,7 +570,13 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                                     "GEOSHORT=$15, " +
                                     "GEOINT=$16, " +
                                     "GEOLONG=$17, " +
-                                    "VARCHAR=$18 " +
+                                    "VARCHAR=$18, " +
+                                    "DECIMAL8=$19, " +
+                                    "DECIMAL16=$20, " +
+                                    "DECIMAL32=$21, " +
+                                    "DECIMAL64=$22, " +
+                                    "DECIMAL128=$23, " +
+                                    "DECIMAL256=$24 " +
                                     "WHERE INT > 5"
                     );
 
@@ -577,10 +595,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            long tsIncrement = Micros.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            ts += (Micros.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
@@ -607,10 +625,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            long tsIncrement = Micros.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            ts += (Micros.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             final int binarySize = 64;
@@ -646,6 +664,12 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     sqlExecutionContext.getBindVariableService().setGeoHash("GEOLONGVAL", rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
                     sqlExecutionContext.getBindVariableService().setUuid("UUIDVAL", rnd.nextLong(), rnd.nextLong());
                     sqlExecutionContext.getBindVariableService().setVarchar("VARCHARVAL", varChar);
+                    sqlExecutionContext.getBindVariableService().setDecimal("DECIMAL8VAL", 0, 0, 0, 12, ColumnType.getDecimalType(2, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal("DECIMAL16VAL", 0, 0, 0, 1234, ColumnType.getDecimalType(4, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal("DECIMAL32VAL", 0, 0, 0, 123456, ColumnType.getDecimalType(9, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal("DECIMAL64VAL", 0, 0, 0, 12345678, ColumnType.getDecimalType(18, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal("DECIMAL128VAL", 0, 0, 0, 1234567890, ColumnType.getDecimalType(38, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal("DECIMAL256VAL", 0, 0, 0, 123456789012L, ColumnType.getDecimalType(76, 1));
 
                     update(
                             "UPDATE " + tableName + " SET " +
@@ -667,7 +691,13 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                                     "GEOINT=:GEOINTVAL, " +
                                     "GEOLONG=:GEOLONGVAL, " +
                                     "UUID=:UUIDVAL," +
-                                    "VARCHAR=:VARCHARVAL " +
+                                    "VARCHAR=:VARCHARVAL, " +
+                                    "DECIMAL8=:DECIMAL8VAL, " +
+                                    "DECIMAL16=:DECIMAL16VAL, " +
+                                    "DECIMAL32=:DECIMAL32VAL, " +
+                                    "DECIMAL64=:DECIMAL64VAL, " +
+                                    "DECIMAL128=:DECIMAL128VAL, " +
+                                    "DECIMAL256=:DECIMAL256VAL " +
                                     "WHERE INT > 5"
                     );
                     drainWalQueue();
@@ -692,7 +722,13 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                                     "GEOINT=:GEOINTVAL, " +
                                     "GEOLONG=:GEOLONGVAL, " +
                                     "UUID=:UUIDVAL, " +
-                                    "VARCHAR=:VARCHARVAL " +
+                                    "VARCHAR=:VARCHARVAL, " +
+                                    "DECIMAL8=:DECIMAL8VAL, " +
+                                    "DECIMAL16=:DECIMAL16VAL, " +
+                                    "DECIMAL32=:DECIMAL32VAL, " +
+                                    "DECIMAL64=:DECIMAL64VAL, " +
+                                    "DECIMAL128=:DECIMAL128VAL, " +
+                                    "DECIMAL256=:DECIMAL256VAL " +
                                     "WHERE INT > 5"
                     );
                     TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -719,10 +755,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            long tsIncrement = Micros.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            ts += (Micros.SECOND_MICROS * (60 * 60 - rowCount - 10));
 
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
@@ -749,10 +785,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            long tsIncrement = Micros.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            ts += (Micros.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
@@ -782,10 +818,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            long tsIncrement = Micros.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            ts += (Micros.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
@@ -811,10 +847,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            long tsIncrement = Micros.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            ts += (Micros.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
@@ -878,10 +914,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            long tsIncrement = Micros.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            ts += (Micros.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
@@ -912,10 +948,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            long tsIncrement = Micros.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            ts += (Micros.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
@@ -931,12 +967,12 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                         WalWriter walWriter2 = engine.getWalWriter(tableToken)
                 ) {
                     rnd.reset();
-                    start += rowCount * tsIncrement - Timestamps.HOUR_MICROS / 2 + 1;
+                    start += rowCount * tsIncrement - Micros.HOUR_MICROS / 2 + 1;
                     addRowsToWalAndApplyToTable(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter2, true);
                     TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
                 }
 
-                start += rowCount * tsIncrement - Timestamps.HOUR_MICROS / 2 + 3;
+                start += rowCount * tsIncrement - Micros.HOUR_MICROS / 2 + 3;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
@@ -965,7 +1001,14 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         row.putSym(col++, symbol);
         row.putLong128(col++, Hash.hashLong64(i), Hash.hashLong64(i + 1)); // UUID
         col++; // binary ('bin') column is not set
-        row.putVarchar(col, rndVarchar);
+        row.putVarchar(col++, rndVarchar);
+        row.putByte(col++, (byte) (i % 100)); // decimal8
+        row.putShort(col++, (short) (i % 10000)); // decimal16
+        row.putInt(col++, i); // decimal32
+        row.putLong(col++, i); // decimal64
+        row.putDecimal128(col++, 0, i); // decimal128
+        row.putDecimal256(col, 0, 0, 0, i); // decimal256
+
         row.append();
     }
 
@@ -1081,6 +1124,12 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 .col("uuid", ColumnType.UUID)
                 .col("bin", ColumnType.BINARY)
                 .col("varchar", ColumnType.VARCHAR)
+                .col("decimal8", ColumnType.getDecimalType(2, 1))
+                .col("decimal16", ColumnType.getDecimalType(4, 1))
+                .col("decimal32", ColumnType.getDecimalType(9, 1))
+                .col("decimal64", ColumnType.getDecimalType(18, 1))
+                .col("decimal128", ColumnType.getDecimalType(38, 1))
+                .col("decimal256", ColumnType.getDecimalType(76, 1))
                 .timestamp("ts");
     }
 
@@ -1094,10 +1143,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            long tsIncrement = Micros.SECOND_MICROS;
+            long ts = MicrosTimestampDriver.floor("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            ts += (Micros.SECOND_MICROS * (60 * 60 - rowCount - 10));
 
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {

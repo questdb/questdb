@@ -60,6 +60,7 @@ import org.jetbrains.annotations.Nullable;
 
 // Factory that adds query to registry on getCursor() and removes on cursor close().
 public class QueryProgress extends AbstractRecordCursorFactory implements ResourcePoolSupervisor<ReaderPool.R> {
+    // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(QueryProgress.class);
     private final RecordCursorFactory base;
@@ -338,7 +339,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             // In this scenario, the returned pool entry got used by another query and
             // readers.clear() came in tangentially to this query.
             LOG.critical().$("returned reader is not in supervisor's list [tableName=")
-                    .$(resource.getTableToken().getTableName()).I$();
+                    .$(resource.getTableToken()).I$();
         }
     }
 
@@ -374,7 +375,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     private static void appendLeakedReaderNames(ObjList<TableReader> leakedReaders, int leakedReadersCount, LogRecord log) {
         for (int i = 0; i < leakedReadersCount; i++) {
-            log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken().getTableName());
+            log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken());
         }
     }
 

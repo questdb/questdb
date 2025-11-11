@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.text.types;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -38,6 +39,11 @@ public final class BadTimestampAdapter extends TimestampAdapter {
     @Override
     public long getTimestamp(DirectUtf8Sequence value) {
         return Numbers.LONG_NULL;
+    }
+
+    @Override
+    public int getType() {
+        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override

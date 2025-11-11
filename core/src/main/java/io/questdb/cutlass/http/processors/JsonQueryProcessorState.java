@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -43,6 +44,7 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
@@ -52,17 +54,18 @@ import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -75,16 +78,26 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class JsonQueryProcessorState implements Mutable, Closeable {
     public static final String HIDDEN = "hidden";
-    static final int QUERY_METADATA = 2;
-    static final int QUERY_METADATA_SUFFIX = 3;
-    static final int QUERY_PREFIX = 1;
-    static final int QUERY_RECORD = 5;
-    static final int QUERY_RECORD_PREFIX = 9;
-    static final int QUERY_RECORD_START = 4;
-    static final int QUERY_RECORD_SUFFIX = 6;
-    static final int QUERY_SEND_RECORDS_LOOP = 8;
-    static final int QUERY_SETUP_FIRST_RECORD = 0;
-    static final int QUERY_SUFFIX = 7;
+    static final int QUERY_SETUP_FIRST_RECORD = 0; // 0
+    static final int QUERY_PREFIX = QUERY_SETUP_FIRST_RECORD + 1; // 1
+    static final int QUERY_METADATA = QUERY_PREFIX + 1; //2
+    static final int QUERY_METADATA_SUFFIX = QUERY_METADATA + 1; // 3
+    static final int QUERY_RECORD_START = QUERY_METADATA_SUFFIX + 1; // 4
+    static final int QUERY_RECORD = QUERY_RECORD_START + 1; // 5
+    static final int QUERY_RECORD_SUFFIX = QUERY_RECORD + 1; // 6
+    static final int QUERY_SUFFIX = QUERY_RECORD_SUFFIX + 1; // 7
+    static final int QUERY_SEND_RECORDS_LOOP = QUERY_SUFFIX + 1; // 8
+    static final int QUERY_RECORD_PREFIX = QUERY_SEND_RECORDS_LOOP + 1; // 9
+
+    // only used in Parquet export
+    static final int QUERY_PARQUET_EXPORT_INIT = QUERY_RECORD_PREFIX + 1; // 10
+    static final int QUERY_PARQUET_EXPORT_WAIT = QUERY_PARQUET_EXPORT_INIT + 1; // 11
+    static final int QUERY_PARQUET_SEND_HEADER = QUERY_PARQUET_EXPORT_WAIT + 1; // 12
+    static final int QUERY_PARQUET_TO_PARQUET_FILE = QUERY_PARQUET_SEND_HEADER + 1; // 14
+    static final int QUERY_PARQUET_FILE_SEND_INIT = QUERY_PARQUET_TO_PARQUET_FILE + 1; // 13
+    static final int QUERY_PARQUET_FILE_SEND_CHUNK = QUERY_PARQUET_FILE_SEND_INIT + 1; // 15
+    static final int QUERY_PARQUET_FILE_SEND_COMPLETE = QUERY_PARQUET_FILE_SEND_CHUNK + 1; // 15
+
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
@@ -95,10 +108,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final SCSequence eventSubSequence = new SCSequence();
     private final HttpConnectionContext httpConnectionContext;
     private final CharSequence keepAliveHeader;
-    private final NanosecondClock nanosecondClock;
+    private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
-    private final StringSink sink = new StringSink();
+    private final StringSink stringSink = new StringSink();
     private final long statementTimeout;
     private byte apiVersion = DEFAULT_API_VERSION;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -131,12 +144,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private RecordCursorFactory recordCursorFactory;
     private Rnd rnd;
     private long skip;
+    private SqlExecutionContext sqlExecutionContext;
     private long stop;
     private boolean timings = false;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
-            NanosecondClock nanosecondClock,
+            Clock nanosecondClock,
             CharSequence keepAliveHeader
     ) {
         this.httpConnectionContext = httpConnectionContext;
@@ -164,6 +178,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryTimestampIndex = -1;
         cursor = Misc.free(cursor);
         circuitBreaker = null;
+        sqlExecutionContext = null;
         record = null;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
@@ -174,7 +189,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             recordCursorFactory = null;
         }
         query.clear();
-        sink.clear();
+        stringSink.clear();
         queryState = QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
         columnValueFullySent = true;
@@ -205,6 +220,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         cursor = Misc.free(cursor);
         clearFactory();
         circuitBreaker = null;
+        sqlExecutionContext = null;
         freeAsyncOperation();
     }
 
@@ -393,6 +409,50 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.putAscii('"').putISODateMillis(d).putAscii('"');
     }
 
+    private static void putDecimal16Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        short l = rec.getDecimal16(col);
+        if (l == Decimals.DECIMAL16_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        response.putAscii('"');
+    }
+
+    private static void putDecimal32Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        int l = rec.getDecimal32(col);
+        if (l == Decimals.DECIMAL32_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        response.putAscii('"');
+    }
+
+    private static void putDecimal64Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        long l = rec.getDecimal64(col);
+        if (l == Decimals.DECIMAL64_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        response.putAscii('"');
+    }
+
+    private static void putDecimal8Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        byte l = rec.getDecimal8(col);
+        if (l == Decimals.DECIMAL8_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        response.putAscii('"');
+    }
+
     private static void putGeoHashStringByteValue(HttpChunkedResponse response, Record rec, int col, int bitFlags) {
         byte l = rec.getGeoByte(col);
         GeoHashes.append(l, bitFlags, response);
@@ -433,13 +493,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private static void putIntervalValue(HttpChunkedResponse response, Record rec, int col) {
+    private static void putIntervalValue(HttpChunkedResponse response, Record rec, int col, int intervalType) {
         final Interval interval = rec.getInterval(col);
         if (Interval.NULL.equals(interval)) {
             response.putAscii("null");
             return;
         }
-        response.putAscii('"').put(interval).putAscii('"');
+        response.putAscii('"').put(interval, intervalType).putAscii('"');
     }
 
     private static void putLong256Value(HttpChunkedResponse response, Record rec, int col) {
@@ -483,13 +543,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         putStringOrNull(response, rec.getSymA(col));
     }
 
-    private static void putTimestampValue(HttpChunkedResponse response, Record rec, int col) {
+    private static void putTimestampValue(HttpChunkedResponse response, Record rec, int col, TimestampDriver driver) {
         final long t = rec.getTimestamp(col);
         if (t == Long.MIN_VALUE) {
             response.putAscii("null");
             return;
         }
-        response.putAscii('"').putISODate(t).putAscii('"');
+        response.putAscii('"').putISODate(driver, t).putAscii('"');
     }
 
     private static void putUuidValue(HttpChunkedResponse response, Record rec, int col) {
@@ -538,6 +598,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             case ColumnType.IPv4:
             case ColumnType.INTERVAL:
             case ColumnType.ARRAY:
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
                 break;
             default:
                 throw CairoException.nonCritical().put("column type not supported [column=").put(columnName).put(", type=").put(ColumnType.nameOf(columnType)).put(']');
@@ -550,14 +616,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private boolean addSunkColumnToOutput(RecordMetadata metadata) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        int columnIndex = metadata.getColumnIndexQuiet(sink);
+        int columnIndex = metadata.getColumnIndexQuiet(stringSink);
         if (columnIndex == RecordMetadata.COLUMN_NOT_FOUND) {
-            info().$("column not found: '").$safe(sink).$('\'').$();
+            info().$("column not found: '").$safe(stringSink).$('\'').$();
             HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
             JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
             response.putAscii('{')
                     .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
-                    .putAsciiQuoted("error").putAscii(':').putAscii('\"').putAscii("column not found: '").escapeJsonStr(sink).putAscii("'\"")
+                    .putAsciiQuoted("error").putAscii(':').putAscii('\"').putAscii("column not found: '").escapeJsonStr(stringSink).putAscii("'\"")
                     .putAscii('}');
             response.sendChunk(true);
             return true;
@@ -591,7 +657,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     .putAsciiQuoted("name").putAscii(':').putQuote().escapeJsonStr(columnNames.getQuick(columnIndex)).putQuote().putAscii(',');
             if (ColumnType.tagOf(columnType) == ColumnType.ARRAY) {
                 response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted("ARRAY").put(',');
-                response.putAsciiQuoted("dim").putAscii(':').put(ColumnType.decodeArrayDimensionality(columnType)).put(',');
+                response.putAsciiQuoted("dim").putAscii(':').put(ColumnType.decodeWeakArrayDimensionality(columnType)).put(',');
                 response.putAsciiQuoted("elemType").putAscii(':').putAsciiQuoted(ColumnType.nameOf(ColumnType.decodeArrayElementType(columnType)));
             } else {
                 response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType));
@@ -666,7 +732,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putDateValue(response, record, columnIdx);
                     break;
                 case ColumnType.TIMESTAMP:
-                    putTimestampValue(response, record, columnIdx);
+                    putTimestampValue(response, record, columnIdx, ColumnType.getTimestampDriver(columnType));
                     break;
                 case ColumnType.SHORT:
                     putShortValue(response, record, columnIdx);
@@ -714,10 +780,28 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putIPv4Value(response, record, columnIdx);
                     break;
                 case ColumnType.INTERVAL:
-                    putIntervalValue(response, record, columnIdx);
+                    putIntervalValue(response, record, columnIdx, columnType);
                     break;
                 case ColumnType.ARRAY:
                     putArrayValue(response, columnIdx, columnType);
+                    break;
+                case ColumnType.DECIMAL8:
+                    putDecimal8Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    break;
+                case ColumnType.DECIMAL16:
+                    putDecimal16Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    break;
+                case ColumnType.DECIMAL32:
+                    putDecimal32Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    break;
+                case ColumnType.DECIMAL64:
+                    putDecimal64Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    break;
+                case ColumnType.DECIMAL128:
+                    putDecimal128Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    break;
+                case ColumnType.DECIMAL256:
+                    putDecimal256Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
                     break;
                 default:
                     // this should never happen since metadata are already validated
@@ -881,7 +965,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         while (rawLo < rawHi) {
             byte b = Unsafe.getUnsafe().getByte(rawLo);
             if (b < 0) {
-                int n = Utf8s.utf8DecodeMultiByte(rawLo, rawHi, b, sink);
+                int n = Utf8s.utf8DecodeMultiByte(rawLo, rawHi, b, stringSink);
                 if (n == -1) {
                     // Invalid code point
                     return 0;
@@ -892,7 +976,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 rawLo++;
                 if (escaped) {
                     escaped = false;
-                    sink.put((char) b);
+                    stringSink.put((char) b);
                     continue;
                 }
 
@@ -903,7 +987,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 } else if (!quoted && b == ',') {
                     return rawLo;
                 } else {
-                    sink.put((char) b);
+                    stringSink.put((char) b);
                 }
             }
         }
@@ -929,6 +1013,30 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private void putBinValue(HttpChunkedResponse response) {
         response.putAscii('[');
         response.putAscii(']');
+    }
+
+    private void putDecimal128Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        var decimal128 = sqlExecutionContext.getDecimal128();
+        rec.getDecimal128(col, decimal128);
+        if (decimal128.isNull()) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        Decimals.appendNonNull(decimal128, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        response.putAscii('"');
+    }
+
+    private void putDecimal256Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        var decimal256 = sqlExecutionContext.getDecimal256();
+        rec.getDecimal256(col, decimal256);
+        if (decimal256.isNull()) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        Decimals.appendNonNull(decimal256, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        response.putAscii('"');
     }
 
     private void putDoubleValue(HttpChunkedResponse response, Record rec, int col) {
@@ -993,11 +1101,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.recordCursorFactory = factory;
         this.queryCacheable = queryCacheable;
         this.queryJitCompiled = factory.usesCompiledFilter();
-        // Enable column pre-touch in REST API only when LIMIT K,N is not specified since when limit is defined
-        // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
-        // Make sure to use the override flag to avoid affecting the explain plan.
-        sqlExecutionContext.setColumnPreTouchEnabledOverride(stop == Long.MAX_VALUE);
         this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+        this.sqlExecutionContext = sqlExecutionContext;
         final RecordMetadata metadata = factory.getMetadata();
         this.queryTimestampIndex = metadata.getTimestampIndex();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
@@ -1012,7 +1117,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             long rawLo = columnNames.lo();
             final long rawHi = columnNames.hi();
             while (rawLo < rawHi) {
-                sink.clear();
+                stringSink.clear();
                 rawLo = parseNextColumnName(rawLo, rawHi);
                 if (rawLo <= 0) {
                     info().$("utf8 error when decoding column list '").$safe(columnNames).$('\'').$();
@@ -1025,7 +1130,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     return false;
                 }
 
-                if (sink.length() == 0) {
+                if (stringSink.isEmpty()) {
                     info().$("empty column in query parameter '").$(URL_PARAM_COLS).$(": ").$safe(columnNames).$('\'').$();
                     HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
                     JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);

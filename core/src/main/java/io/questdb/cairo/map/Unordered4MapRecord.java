@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
@@ -191,6 +193,40 @@ final class Unordered4MapRecord implements MapRecord {
     @Override
     public char getChar(int columnIndex) {
         return Unsafe.getUnsafe().getChar(addressOfColumn(columnIndex));
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        final long addr = addressOfColumn(col);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L)
+        );
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return Unsafe.getUnsafe().getShort(addressOfColumn(col));
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        sink.ofRawAddress(addressOfColumn(col));
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return Unsafe.getUnsafe().getInt(addressOfColumn(col));
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(col));
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return Unsafe.getUnsafe().getByte(addressOfColumn(col));
     }
 
     @Override

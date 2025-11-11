@@ -44,19 +44,18 @@ class OperationExecutor implements Closeable {
     private final BindVariableService bindVariableService;
     private final CairoEngine engine;
     private final WalApplySqlExecutionContext executionContext;
+    private final int maxRecompilationAttempts;
     private final Rnd rnd;
 
     OperationExecutor(
             CairoEngine engine,
-            int workerCount,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         rnd = new Rnd();
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         executionContext = new WalApplySqlExecutionContext(
                 engine,
-                workerCount,
-                sharedWorkerCount
+                sharedQueryWorkerCount
         );
         executionContext.with(
                 engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
@@ -66,6 +65,7 @@ class OperationExecutor implements Closeable {
                 null
         );
         this.engine = engine;
+        this.maxRecompilationAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
     }
 
     @Override
@@ -99,7 +99,7 @@ class OperationExecutor implements Closeable {
                         // of alter compilation but then renamed back.
                         // This is highly unlikely to stall in real life
                         // but keeping the DB in live lock is not a good idea, hence there is a limit
-                        if (stallCount++ > 10) {
+                        if (stallCount++ > maxRecompilationAttempts) {
                             throw ex;
                         }
                     }
@@ -140,7 +140,7 @@ class OperationExecutor implements Closeable {
         rnd.reset(seed0, seed1);
     }
 
-    public void setNowAndFixClock(long now) {
-        executionContext.setNowAndFixClock(now);
+    public void setNowAndFixClock(long now, int nowTimestampType) {
+        executionContext.setNowAndFixClock(now, nowTimestampType);
     }
 }

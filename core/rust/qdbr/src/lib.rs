@@ -48,7 +48,7 @@ pub static POOL: Lazy<ThreadPool> = Lazy::new(|| {
         });
     ThreadPoolBuilder::new()
         .num_threads(num_threads)
-        .thread_name(move |i| format!("questdb-parquet-{}", i))
+        .thread_name(|i| format!("qdb-parq-{i}"))
         .build()
         .expect("could not spawn threads")
 });
@@ -66,13 +66,14 @@ pub extern "system" fn Java_io_questdb_std_Os_initRust(_env: JNIEnv, _class: JCl
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Os_rustSmokeTest(
+pub extern "system" fn Java_io_questdb_std_Os_smokeTest(
     _env: JNIEnv,
     _class: JClass,
     a: i64,
     b: i64,
 ) -> i64 {
-    a + b
+    let result = a + b;
+    result
 }
 
 #[no_mangle]

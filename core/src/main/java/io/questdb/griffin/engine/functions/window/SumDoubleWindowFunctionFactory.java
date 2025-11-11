@@ -44,6 +44,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.IntList;
@@ -72,11 +73,14 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        checkWindowParameter(position, sqlExecutionContext);
+        WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        windowContext.validate(position, supportNullsDesc());
         int framingMode = windowContext.getFramingMode();
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
         if (rowsHi < rowsLo) {
             return new DoubleNullFunction(args.get(0),
                     NAME,
@@ -181,7 +185,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             args.get(0)
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new SumOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -268,7 +272,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new SumOverUnboundedRowsFrameFunction(args.get(0));
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new SumOverCurrentRowFunction(args.get(0));
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -334,7 +338,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
     }
 
-    // Handles sum() over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
+    // Handles sum() over (partition by x order by ts range between [unbounded | y] preceding and [z preceding | current row])
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
     // between upper bound and current row's value.
@@ -580,7 +584,6 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
 

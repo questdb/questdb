@@ -32,7 +32,7 @@ import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -76,17 +76,17 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                                     stringColumn("runner", "BallyMac Fifra")
                                     .longColumn("id", 548738)
                                     .longColumn("age", 58)
-                                    .at(TimestampFormatUtils.parseTimestamp("2024-06-30T00:00:00Z"), ChronoUnit.MICROS);
+                                    .at(MicrosFormatUtils.parseTimestamp("2024-06-30T00:00:00Z"), ChronoUnit.MICROS);
                             sender.table("betfairRunners").symbol("remarks", "Fcd-Ck1").
                                     stringColumn("runner", "BallyMac Fifra")
                                     .longColumn("id", 548738)
                                     .longColumn("age", 58)
-                                    .at(TimestampFormatUtils.parseTimestamp("2024-06-24T00:00:00Z"), ChronoUnit.MICROS);
+                                    .at(MicrosFormatUtils.parseTimestamp("2024-06-24T00:00:00Z"), ChronoUnit.MICROS);
                             sender.table("betfairRunners").symbol("remarks", "(R8) LdRnIn військові").
                                     stringColumn("runner", "BallyMac Fifra")
                                     .longColumn("id", 548738)
                                     .longColumn("age", 58)
-                                    .at(TimestampFormatUtils.parseTimestamp("2024-06-17T00:00:00Z"), ChronoUnit.MICROS);
+                                    .at(MicrosFormatUtils.parseTimestamp("2024-06-17T00:00:00Z"), ChronoUnit.MICROS);
                             sender.flush();
                         }
                     }

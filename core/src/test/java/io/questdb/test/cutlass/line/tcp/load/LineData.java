@@ -25,8 +25,15 @@
 package io.questdb.test.cutlass.line.tcp.load;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.BoolList;
+import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.line.tcp.ColumnNameType;
 
@@ -38,15 +45,15 @@ public class LineData {
     // column/tag name can be different to real name (dupes, uppercase...)
     private final ObjList<CharSequence> names = new ObjList<>();
     private final BoolList tagFlags = new BoolList();
-    private final long timestampNanos;
+    private final long timestampMicros;
     private final LowerCaseCharSequenceHashSet updated = new LowerCaseCharSequenceHashSet();
     private final ObjList<CharSequence> values = new ObjList<>();
     private int tagsCount;
 
     public LineData(long timestampMicros) {
-        timestampNanos = timestampMicros * 1000;
+        this.timestampMicros = timestampMicros;
         final StringSink timestampSink = new StringSink();
-        TimestampFormatUtils.appendDateTimeUSec(timestampSink, timestampMicros);
+        MicrosFormatUtils.appendDateTimeUSec(timestampSink, timestampMicros);
         addColumn("timestamp", timestampSink);
     }
 
@@ -95,14 +102,14 @@ public class LineData {
         }
 
         if (columnType == ColumnType.STRING || columnType == ColumnType.SYMBOL) {
-            return String.format("update \"%s\" set %s='%s' where timestamp='%s'", tableName, names.getQuick(fieldIndex), valueStr, TimestampsToString(timestampNanos / 1000));
+            return String.format("update \"%s\" set %s='%s' where timestamp='%s'", tableName, names.getQuick(fieldIndex), valueStr, toTimestampString(timestampMicros));
         } else {
-            return String.format("update \"%s\" set %s=%s where timestamp='%s'", tableName, names.getQuick(fieldIndex), valueStr, TimestampsToString(timestampNanos / 1000));
+            return String.format("update \"%s\" set %s=%s where timestamp='%s'", tableName, names.getQuick(fieldIndex), valueStr, toTimestampString(timestampMicros));
         }
     }
 
     public long getTimestamp() {
-        return timestampNanos;
+        return timestampMicros;
     }
 
     public String toLine(final CharSequence tableName) {
@@ -114,12 +121,6 @@ public class LineData {
     @Override
     public String toString() {
         return toString(new StringBuilder()).toString();
-    }
-
-    private String TimestampsToString(long uSecs) {
-        StringSink sink = Misc.getThreadLocalSink();
-        TimestampFormatUtils.USEC_UTC_FORMAT.format(uSecs, TimestampFormatUtils.EN_LOCALE, null, sink);
-        return sink.toString();
     }
 
     private void add(CharSequence name, CharSequence value, boolean isTag) {
@@ -134,6 +135,12 @@ public class LineData {
             return original;
         }
         return original.toString().substring(1, original.length() - 1);
+    }
+
+    private String toTimestampString(long micros) {
+        StringSink sink = Misc.getThreadLocalSink();
+        MicrosFormatUtils.USEC_UTC_FORMAT.format(micros, DateLocaleFactory.EN_LOCALE, null, sink);
+        return sink.toString();
     }
 
     CharSequence getRow(ObjList<CharSequence> columns, ObjList<CharSequence> defaults) {
@@ -179,6 +186,6 @@ public class LineData {
         if (!firstColumn) {
             sb.setLength(sb.length() - 1);
         }
-        return sb.append(" ").append(timestampNanos);
+        return sb.append(" ").append(timestampMicros * 1000);
     }
 }

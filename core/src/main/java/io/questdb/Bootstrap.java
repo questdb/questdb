@@ -47,7 +47,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.DirectUtf8StringZ;
@@ -83,6 +83,7 @@ public class Bootstrap {
     public static final String CONFIG_FILE = "/server.conf";
     public static final String CONTAINERIZED_SYSTEM_PROPERTY = "containerized";
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
+    private static final String CONSOLE_CONFIG_PATH = "assets/console-configuration.json";
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
@@ -174,6 +175,9 @@ public class Bootstrap {
             if (bootstrapConfiguration.useSite()) {
                 // site
                 extractSite();
+            } else {
+                // extract conf regardless
+                extractConfDir(buffer);
             }
 
             final ServerConfiguration configuration = bootstrapConfiguration.getServerConfiguration(this);
@@ -205,6 +209,8 @@ public class Bootstrap {
             } else {
                 config = configuration;
             }
+
+            Files.FS_CACHE_ENABLED = config.getCairoConfiguration().getFileDescriptorCacheEnabled();
             LogLevel.init(config.getCairoConfiguration());
             if (LogLevel.TIMESTAMP_TIMEZONE != null) {
                 log.infoW().$("changing logger timezone [from=`UTC`, to=`").$(LogLevel.TIMESTAMP_TIMEZONE).$('`').I$();
@@ -524,7 +530,10 @@ public class Bootstrap {
                     while ((ze = zip.getNextEntry()) != null) {
                         final File dest = new File(publicDir, ze.getName());
                         if (!ze.isDirectory()) {
-                            copyInputStream(true, buffer, dest, zip, log);
+                            // we do not want to override a console config if it already exists,
+                            // otherwise users would lose their changes on upgrades!
+                            boolean force = !CONSOLE_CONFIG_PATH.equals(ze.getName());
+                            copyInputStream(force, buffer, dest, zip, log);
                         }
                         zip.closeEntry();
                     }

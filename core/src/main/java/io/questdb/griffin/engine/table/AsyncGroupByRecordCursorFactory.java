@@ -28,6 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
@@ -63,8 +65,8 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
-import static io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory.applyCompiledFilter;
-import static io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory.applyFilter;
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
@@ -79,6 +81,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private final int workerCount;
 
     public AsyncGroupByRecordCursorFactory(
+            CairoEngine engine,
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
@@ -123,32 +126,21 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     perWorkerFilters,
                     workerCount
             );
-            if (filter != null) {
-                this.frameSequence = new PageFrameSequence<>(
-                        configuration,
-                        messageBus,
-                        atom,
-                        FILTER_AND_AGGREGATE,
-                        reduceTaskFactory,
-                        workerCount,
-                        PageFrameReduceTask.TYPE_GROUP_BY
-                );
-            } else {
-                this.frameSequence = new PageFrameSequence<>(
-                        configuration,
-                        messageBus,
-                        atom,
-                        AGGREGATE,
-                        reduceTaskFactory,
-                        workerCount,
-                        PageFrameReduceTask.TYPE_GROUP_BY
-                );
-            }
-            this.cursor = new AsyncGroupByRecordCursor(groupByFunctions, recordFunctions, messageBus);
+            this.frameSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    messageBus,
+                    atom,
+                    filter != null ? FILTER_AND_AGGREGATE : AGGREGATE,
+                    reduceTaskFactory,
+                    workerCount,
+                    PageFrameReduceTask.TYPE_GROUP_BY
+            );
+            this.cursor = new AsyncGroupByRecordCursor(engine, groupByFunctions, recordFunctions, messageBus);
             this.workerCount = workerCount;
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             close();
-            throw e;
+            throw th;
         }
     }
 
@@ -175,8 +167,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
-    public boolean recordCursorSupportsLongTopK() {
-        return true;
+    public boolean recordCursorSupportsLongTopK(int columnIndex) {
+        final int columnType = getMetadata().getColumnType(columnIndex);
+        return columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType);
     }
 
     @Override

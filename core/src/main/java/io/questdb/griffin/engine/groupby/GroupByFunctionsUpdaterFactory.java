@@ -179,7 +179,14 @@ public class GroupByFunctionsUpdaterFactory {
         asm.endMethod();
     }
 
-    private static void generateSetFunctions(BytecodeAssembler asm, int functionSize, int firstFieldIndex, int setFunctionsIndex, int setFunctionsSigIndex, int getIndex) {
+    private static void generateSetFunctions(
+            BytecodeAssembler asm,
+            int functionSize,
+            int firstFieldIndex,
+            int setFunctionsIndex,
+            int setFunctionsSigIndex,
+            int getIndex
+    ) {
         asm.startMethod(setFunctionsIndex, setFunctionsSigIndex, 3, 3);
         for (int i = 0; i < functionSize; i++) {
             asm.aload(0);

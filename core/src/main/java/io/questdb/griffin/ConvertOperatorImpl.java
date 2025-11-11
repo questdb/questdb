@@ -46,7 +46,7 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnTask;
 import org.jetbrains.annotations.NotNull;
@@ -66,7 +66,7 @@ public class ConvertOperatorImpl implements Closeable {
     private final CairoConfiguration configuration;
     private final SOUnboundedCountDownLatch countDownLatch;
     private final FilesFacade ff;
-    private final long fileOpenOpts;
+    private final int fileOpenOpts;
     private final MessageBus messageBus;
     private final ColumnConversionOffsetSink noopConversionOffsetSink = new ColumnConversionOffsetSink() {
         @Override
@@ -81,7 +81,7 @@ public class ConvertOperatorImpl implements Closeable {
     private final PurgingOperator purgingOperator;
     private final int rootLen;
     private final TableWriter tableWriter;
-    private final MicrosecondClock timer;
+    private final Clock timer;
     private CharSequence columnName;
     private long fixedFd;
     private int partitionUpdated;
@@ -136,6 +136,7 @@ public class ConvertOperatorImpl implements Closeable {
             purgingOperator.purge(
                     path.trimTo(rootLen),
                     tableWriter.getTableToken(),
+                    tableWriter.getMetadata().getTimestampType(),
                     tableWriter.getPartitionBy(),
                     tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
                     tableWriter.getTruncateVersion(),
@@ -204,9 +205,9 @@ public class ConvertOperatorImpl implements Closeable {
                 if (symbolMapReader == null) {
                     symbolMapReader = new SymbolMapReaderImpl();
                 }
-                long existingColNameTxn = columnVersionWriter.getDefaultColumnNameTxn(existingColIndex);
+                long existingSymbolTableNameTxn = columnVersionWriter.getSymbolTableNameTxn(existingColIndex);
                 int symbolCount = tableWriter.getSymbolMapWriter(existingColIndex).getSymbolCount();
-                symbolMapReader.of(configuration, path, columnName, existingColNameTxn, symbolCount);
+                symbolMapReader.of(configuration, path, columnName, existingSymbolTableNameTxn, symbolCount);
             }
 
             int queueCount = 0;
@@ -229,7 +230,12 @@ public class ConvertOperatorImpl implements Closeable {
                             if (rowCount > 0) {
                                 path.trimTo(rootLen);
                                 TableUtils.setPathForNativePartition(
-                                        path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+                                        path,
+                                        tableWriter.getMetadata().getTimestampType(),
+                                        tableWriter.getPartitionBy(),
+                                        partitionTimestamp,
+                                        partitionNameTxn
+                                );
                                 int pathTrimToLen = path.size();
 
                                 long srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
@@ -317,17 +323,31 @@ public class ConvertOperatorImpl implements Closeable {
             if (asyncProcessingErrorCount.get() == 0) {
 
                 SymbolTable symbolTable = ColumnType.isSymbol(existingType) ? symbolMapReader.newSymbolTableView() : null;
-                boolean ok = ColumnTypeConverter.convertColumn(0, rowCount,
-                        existingType, srcFixFd, srcVarFd, symbolTable,
-                        newType, dstFixFd, dstVarFd, symbolMapper,
-                        ff, appendPageSize, noopConversionOffsetSink);
+                boolean ok = ColumnTypeConverter.convertColumn(
+                        0,
+                        rowCount,
+                        existingType,
+                        srcFixFd,
+                        srcVarFd,
+                        symbolTable,
+                        newType,
+                        dstFixFd,
+                        dstVarFd,
+                        symbolMapper,
+                        ff,
+                        appendPageSize,
+                        noopConversionOffsetSink
+                );
 
                 if (!ok) {
                     LOG.critical().$("failed to convert column, column is corrupt [at=")
                             .$(tableWriter.getTableToken())
-                            .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
-                            .$(", to=").$(ColumnType.nameOf(newType)).$(", srcFixFd=").$(srcFixFd)
-                            .$(", srcVarFd=").$(srcVarFd).$(", partition ").$ts(partitionTimestamp)
+                            .$(", column=").$safe(columnName)
+                            .$(", from=").$(ColumnType.nameOf(existingType))
+                            .$(", to=").$(ColumnType.nameOf(newType))
+                            .$(", srcFixFd=").$(srcFixFd)
+                            .$(", srcVarFd=").$(srcVarFd)
+                            .$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp)
                             .I$();
                     asyncProcessingErrorCount.incrementAndGet();
                 }
@@ -336,10 +356,12 @@ public class ConvertOperatorImpl implements Closeable {
             asyncProcessingErrorCount.incrementAndGet();
             LogRecord log = LOG.critical().$("failed to convert column, column is corrupt [at=")
                     .$(tableWriter.getTableToken())
-                    .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
+                    .$(", column=").$safe(columnName)
+                    .$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType))
-                    .$(", srcFixFd=").$(srcFixFd).$(", srcVarFd=")
-                    .$(srcVarFd).$(", partition ").$ts(partitionTimestamp);
+                    .$(", srcFixFd=").$(srcFixFd)
+                    .$(", srcVarFd=").$(srcVarFd)
+                    .$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp);
             if (th instanceof CairoException) {
                 log.$(", errno=").$(((CairoException) th).getErrno());
             }

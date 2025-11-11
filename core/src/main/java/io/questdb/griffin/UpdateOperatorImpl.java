@@ -32,6 +32,7 @@ import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -48,6 +49,8 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -66,7 +69,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private final long dataAppendPageSize;
     private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
     private final FilesFacade ff;
-    private final long fileOpenOpts;
+    private final int fileOpenOpts;
     private final Path path;
     private final PurgingOperator purgingOperator;
     private final int rootLen;
@@ -177,14 +180,16 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                             if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
                                 throw CairoException.critical(0)
                                         .put("cannot update read-only partition [table=").put(tableToken.getTableName())
-                                        .put(", partitionTimestamp=").ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                        .put(", partitionTimestamp=").ts(
+                                                tableWriter.getTimestampType(),
+                                                tableWriter.getPartitionTimestamp(rowPartitionIndex))
                                         .put(']');
                             }
                             if (partitionIndex > -1) {
                                 LOG.info()
                                         .$("updating partition [partitionIndex=").$(partitionIndex)
                                         .$(", rowPartitionIndex=").$(rowPartitionIndex)
-                                        .$(", rowPartitionTs=").$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                        .$(", rowPartitionTs=").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), tableWriter.getPartitionTimestamp(rowPartitionIndex))
                                         .$(", affectedColumnCount=").$(affectedColumnCount)
                                         .$(", prevRow=").$(prevRow)
                                         .$(", minRow=").$(minRow)
@@ -217,10 +222,12 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         }
 
                         appendRowUpdate(
+                                sqlExecutionContext,
                                 rowPartitionIndex,
                                 affectedColumnCount,
                                 prevRow,
                                 currentRow,
+                                factory.getMetadata(),
                                 masterRecord,
                                 minRow
                         );
@@ -261,6 +268,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     purgingOperator.purge(
                             path.trimTo(rootLen),
                             tableWriter.getTableToken(),
+                            tableWriter.getMetadata().getTimestampType(),
                             tableWriter.getPartitionBy(),
                             tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
                             tableWriter.getTruncateVersion(),
@@ -287,7 +295,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         } catch (TableReferenceOutOfDateException e) {
             throw e;
         } catch (SqlException e) {
-            throw CairoException.critical(0).put("could not apply update on SPI side [e=").put((CharSequence) e).put(']');
+            throw CairoException.nonCritical().put("could not apply update on SPI side [error=").put(e.getFlyweightMessage())
+                    .put(", position=").put(e.getPosition()).put(']');
         } catch (CairoException e) {
             if (e.isAuthorizationError() || e.isCancellation()) {
                 LOG.error().$safe(e.getFlyweightMessage()).$();
@@ -356,10 +365,12 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     }
 
     private void appendRowUpdate(
+            SqlExecutionContext executionContext,
             int rowPartitionIndex,
             int affectedColumnCount,
             long prevRow,
             long currentRow,
+            RecordMetadata metadata,
             Record masterRecord,
             long firstUpdatedRowId
     ) {
@@ -403,7 +414,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     dstFixMem.putLong(masterRecord.getLong(i));
                     break;
                 case ColumnType.TIMESTAMP:
-                    dstFixMem.putLong(masterRecord.getTimestamp(i));
+                    TimestampDriver driver = ColumnType.getTimestampDriver(toType);
+                    dstFixMem.putLong(driver.from(masterRecord.getTimestamp(i), ColumnType.getTimestampType(metadata.getColumnType(i))));
                     break;
                 case ColumnType.DATE:
                     dstFixMem.putLong(masterRecord.getDate(i));
@@ -462,6 +474,35 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 case ColumnType.ARRAY:
                     ArrayTypeDriver.appendValue(dstFixMem, dstVarMem, masterRecord.getArray(i, toType));
                     break;
+                case ColumnType.DECIMAL8:
+                    dstFixMem.putByte(masterRecord.getDecimal8(i));
+                    break;
+                case ColumnType.DECIMAL16:
+                    dstFixMem.putShort(masterRecord.getDecimal16(i));
+                    break;
+                case ColumnType.DECIMAL32:
+                    dstFixMem.putInt(masterRecord.getDecimal32(i));
+                    break;
+                case ColumnType.DECIMAL64:
+                    dstFixMem.putLong(masterRecord.getDecimal64(i));
+                    break;
+                case ColumnType.DECIMAL128: {
+                    Decimal128 decimal128 = executionContext.getDecimal128();
+                    masterRecord.getDecimal128(i, decimal128);
+                    dstFixMem.putDecimal128(decimal128.getHigh(), decimal128.getLow());
+                    break;
+                }
+                case ColumnType.DECIMAL256: {
+                    Decimal256 decimal256 = executionContext.getDecimal256();
+                    masterRecord.getDecimal256(i, decimal256);
+                    dstFixMem.putDecimal256(
+                            decimal256.getHh(),
+                            decimal256.getHl(),
+                            decimal256.getLh(),
+                            decimal256.getLl()
+                    );
+                    break;
+                }
                 default:
                     throw CairoException.nonCritical()
                             .put("Column type ").put(ColumnType.nameOf(toType))
@@ -651,7 +692,13 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         RecordMetadata metadata = tableWriter.getMetadata();
         try {
             path.trimTo(rootLen);
-            TableUtils.setPathForNativePartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+            TableUtils.setPathForNativePartition(
+                    path,
+                    tableWriter.getMetadata().getTimestampType(),
+                    tableWriter.getPartitionBy(),
+                    partitionTimestamp,
+                    partitionNameTxn
+            );
             int pathTrimToLen = path.size();
             for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
                 int columnIndex = updateColumnIndexes.get(i);

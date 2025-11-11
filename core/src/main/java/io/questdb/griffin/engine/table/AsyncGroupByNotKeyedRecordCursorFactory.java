@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -70,6 +71,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private final int workerCount;
 
     public AsyncGroupByNotKeyedRecordCursorFactory(
+            @NotNull CairoEngine engine,
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
@@ -105,6 +107,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             );
             if (filter != null) {
                 this.frameSequence = new PageFrameSequence<>(
+                        engine,
                         configuration,
                         messageBus,
                         atom,
@@ -115,6 +118,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 );
             } else {
                 this.frameSequence = new PageFrameSequence<>(
+                        engine,
                         configuration,
                         messageBus,
                         atom,
@@ -269,9 +273,9 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             try {
                 if (compiledFilter == null || frameMemory.hasColumnTops()) {
                     // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                    applyFilter(filter, rows, record, frameRowCount);
+                    AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
                 } else {
-                    applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
+                    AsyncFilterUtils.applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
                 }
 
                 record.setRowIndex(0);
@@ -285,43 +289,18 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         }
     }
 
-    static void applyCompiledFilter(
-            CompiledFilter compiledFilter,
-            MemoryCARW bindVarMemory,
-            ObjList<Function> bindVarFunctions,
-            PageFrameReduceTask task
-    ) {
-        task.populateJitData();
-        final DirectLongList data = task.getDataAddresses();
-        final DirectLongList varSizeAux = task.getAuxAddresses();
-        final DirectLongList rows = task.getFilteredRows();
-        long hi = compiledFilter.call(
-                data.getAddress(),
-                data.size(),
-                varSizeAux.getAddress(),
-                bindVarMemory.getAddress(),
-                bindVarFunctions.size(),
-                rows.getAddress(),
-                task.getFrameRowCount(),
-                0
-        );
-        rows.setPos(hi);
-    }
-
-    static void applyFilter(Function filter, DirectLongList rows, PageFrameMemoryRecord record, long frameRowCount) {
-        for (long r = 0; r < frameRowCount; r++) {
-            record.setRowIndex(r);
-            if (filter.getBool(record)) {
-                rows.add(r);
-            }
-        }
-    }
-
+    /**
+     * Releases resources held by this factory.
+     * <p>
+     * Frees the underlying base factory, the prepared cursor, and the frame sequence,
+     * and also frees and clears the list of group-by function instances to remove
+     * references.
+     */
     @Override
     protected void _close() {
         Misc.free(base);
         Misc.free(cursor);
         Misc.free(frameSequence);
-        Misc.freeObjList(groupByFunctions);
+        Misc.freeObjListAndClear(groupByFunctions);
     }
 }

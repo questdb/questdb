@@ -57,10 +57,7 @@ impl<'de, const N: u32> Deserialize<'de> for U32Const<N> {
     {
         let n = u32::deserialize(deserializer)?;
         if n != N {
-            return Err(serde::de::Error::custom(format!(
-                "expected {}, got {}",
-                N, n
-            )));
+            return Err(serde::de::Error::custom(format!("expected {N}, got {n}")));
         }
         Ok(U32Const)
     }
@@ -104,8 +101,7 @@ impl<'de> Deserialize<'de> for QdbMetaColFormat {
         match format {
             1 => Ok(QdbMetaColFormat::LocalKeyIsGlobal),
             _ => Err(serde::de::Error::custom(format!(
-                "unsupported format: {}",
-                format
+                "unsupported format: {format}"
             ))),
         }
     }
@@ -113,6 +109,7 @@ impl<'de> Deserialize<'de> for QdbMetaColFormat {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Copy, Clone)]
 pub struct QdbMetaCol {
+    // designated timestamp has TYPE_FLAG_DESIGNATED_TIMESTAMP bit set
     pub column_type: ColumnType,
     pub column_top: usize,
 
@@ -134,8 +131,11 @@ pub struct QdbMetaV1 {
 }
 
 impl QdbMetaV1 {
-    pub fn new() -> Self {
-        Self { version: U32Const, schema: QdbMetaSchema::new() }
+    pub fn new(column_count: usize) -> Self {
+        Self {
+            version: U32Const,
+            schema: QdbMetaSchema::with_capacity(column_count),
+        }
     }
 }
 

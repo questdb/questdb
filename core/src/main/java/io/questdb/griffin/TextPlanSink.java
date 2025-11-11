@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
@@ -195,6 +196,24 @@ public class TextPlanSink extends BasePlanSink {
     }
 
     @Override
+    public PlanSink valDecimal(long value, int precision, int scale) {
+        Decimals.append(value, precision, scale, sink);
+        return this;
+    }
+
+    @Override
+    public PlanSink valDecimal(long hi, long lo, int precision, int scale) {
+        Decimals.append(hi, lo, precision, scale, sink);
+        return this;
+    }
+
+    @Override
+    public PlanSink valDecimal(long hh, long hl, long lh, long ll, int precision, int scale) {
+        Decimals.append(hh, hl, lh, ll, precision, scale, sink);
+        return this;
+    }
+
+    @Override
     public PlanSink valIPv4(int ip) {
         if (ip == Numbers.IPv4_NULL) {
             sink.put("null");
@@ -203,6 +222,7 @@ public class TextPlanSink extends BasePlanSink {
         }
         return this;
     }
+
 
     public PlanSink valLong256(long long0, long long1, long long2, long long3) {
         Numbers.appendLong256(long0, long1, long2, long3, sink);

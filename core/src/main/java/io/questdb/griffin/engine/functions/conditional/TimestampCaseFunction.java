@@ -24,27 +24,31 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
 
+@SuppressWarnings("resource")
 class TimestampCaseFunction extends TimestampFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
 
-    public TimestampCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
+    public TimestampCaseFunction(CaseFunctionPicker picker, ObjList<Function> args, int columnType) {
+        super(columnType);
         this.picker = picker;
         this.args = args;
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        return picker.pick(rec).getTimestamp(rec);
+        Function f = picker.pick(rec);
+        return timestampDriver.from(f.getTimestamp(rec), ColumnType.getTimestampType(f.getType()));
     }
 }

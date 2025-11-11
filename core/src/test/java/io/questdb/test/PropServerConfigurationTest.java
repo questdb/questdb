@@ -38,13 +38,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
-import io.questdb.cutlass.line.LineHourTimestampAdapter;
-import io.questdb.cutlass.line.LineMicroTimestampAdapter;
-import io.questdb.cutlass.line.LineMilliTimestampAdapter;
-import io.questdb.cutlass.line.LineMinuteTimestampAdapter;
-import io.questdb.cutlass.line.LineNanoTimestampAdapter;
-import io.questdb.cutlass.line.LineSecondTimestampAdapter;
-import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
+import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.EpollFacadeImpl;
@@ -57,18 +51,20 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -120,11 +116,13 @@ public class PropServerConfigurationTest {
 
         Assert.assertFalse(configuration.getCairoConfiguration().getLogLevelVerbose());
         Assert.assertEquals("Z", configuration.getCairoConfiguration().getLogTimestampTimezone());
+        Assert.assertEquals(500, configuration.getHttpServerConfiguration().getAcceptLoopTimeout());
         Assert.assertEquals(4, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(128, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
         Assert.assertEquals(512, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartHeaderBufferSize());
         Assert.assertEquals(10_000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
         Assert.assertEquals(64448, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRequestHeaderBufferSize());
+        Assert.assertEquals(1_800_000_000L, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout());
         Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
         Assert.assertEquals(-1, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getJsonQueryConnectionLimit());
         Assert.assertEquals(-1, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getIlpConnectionLimit());
@@ -135,18 +133,19 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getHttpServerConfiguration().isQueryCacheEnabled());
         Assert.assertFalse(configuration.getHttpServerConfiguration().isSettingsReadOnly());
         Assert.assertEquals(32, configuration.getHttpServerConfiguration().getConcurrentCacheConfiguration().getBlocks());
-        Assert.assertEquals(Math.max(configuration.getWorkerPoolConfiguration().getWorkerCount(), 4), configuration.getHttpServerConfiguration().getConcurrentCacheConfiguration().getRows());
+        Assert.assertEquals(Math.max(configuration.getSharedWorkerPoolNetworkConfiguration().getWorkerCount(), 4), configuration.getHttpServerConfiguration().getConcurrentCacheConfiguration().getRows());
 
-        Assert.assertEquals(10, configuration.getWorkerPoolConfiguration().getYieldThreshold());
-        Assert.assertEquals(10000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
-        Assert.assertEquals(7000, configuration.getWorkerPoolConfiguration().getNapThreshold());
-        Assert.assertEquals(10, configuration.getWorkerPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(10, configuration.getSharedWorkerPoolNetworkConfiguration().getYieldThreshold());
+        Assert.assertEquals(10000, configuration.getSharedWorkerPoolNetworkConfiguration().getSleepThreshold());
+        Assert.assertEquals(7000, configuration.getSharedWorkerPoolNetworkConfiguration().getNapThreshold());
+        Assert.assertEquals(10, configuration.getSharedWorkerPoolNetworkConfiguration().getSleepTimeout());
 
         Assert.assertEquals(10, configuration.getHttpMinServerConfiguration().getYieldThreshold());
         Assert.assertEquals(100, configuration.getHttpMinServerConfiguration().getNapThreshold());
         Assert.assertEquals(100, configuration.getHttpMinServerConfiguration().getSleepThreshold());
         Assert.assertEquals(50, configuration.getHttpMinServerConfiguration().getSleepTimeout());
         Assert.assertEquals(1, configuration.getHttpMinServerConfiguration().getWorkerCount());
+        Assert.assertEquals(500, configuration.getHttpMinServerConfiguration().getAcceptLoopTimeout());
 
         // this is going to need interesting validation logic
         // configuration path is expected to be relative, and we need to check if absolute path is good
@@ -207,13 +206,13 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
-        Assert.assertEquals(60_000_000, configuration.getCairoConfiguration().getMatViewMinRefreshInterval());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
         Assert.assertEquals(200, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
         Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
+        Assert.assertEquals(Micros.YEAR_MICROS_NONLEAP, configuration.getCairoConfiguration().getMatViewMaxRefreshStepUs());
         Assert.assertEquals(15_000, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
         Assert.assertTrue(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
@@ -229,7 +228,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getCairoConfiguration().getBindVariablePoolSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getQueryRegistryPoolSize());
         Assert.assertEquals(3, configuration.getCairoConfiguration().getCountDistinctCapacity());
-        Assert.assertEquals(0.75, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
+        Assert.assertEquals(0.5, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
 
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
@@ -258,7 +257,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlHashJoinLightValuePageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlHashJoinLightValueMaxPages());
         Assert.assertEquals(100, configuration.getCairoConfiguration().getSqlAsOfJoinLookAhead());
-        Assert.assertTrue(configuration.getCairoConfiguration().useFastAsOfJoin());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortValuePageSize());
@@ -302,7 +300,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(-1, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
-        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
         Assert.assertEquals(0.05, configuration.getCairoConfiguration().getSqlParallelFilterPreTouchThreshold(), 0.000001);
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
@@ -377,11 +374,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getListenBacklog());
         Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(8, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
-        Assert.assertEquals(LineNanoTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter().getDefaultAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_NANOS, configuration.getLineTcpReceiverConfiguration().getTimestampUnit());
         Assert.assertEquals(131072, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getNetRecvBufferSize());
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getSendBufferSize());
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getNetSendBufferSize());
+        Assert.assertEquals(500, configuration.getLineTcpReceiverConfiguration().getAcceptLoopTimeout());
         Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
         Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getWriterQueueCapacity());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount());
@@ -390,10 +388,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getSleepThreshold());
         Assert.assertArrayEquals(new int[]{}, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerAffinity());
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().haltOnError());
-        Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getYieldThreshold());
-        Assert.assertEquals(7_000, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getNapThreshold());
-        Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getSleepThreshold());
-        Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
+        Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration().getYieldThreshold());
+        Assert.assertEquals(7_000, configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration().getNapThreshold());
+        Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration().getSleepThreshold());
+        Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration().haltOnError());
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceInterval());
         Assert.assertEquals(PropServerConfiguration.COMMIT_INTERVAL_DEFAULT, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
@@ -428,7 +426,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(524288, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getMiscAppendPageSize());
-        Assert.assertEquals(262144, configuration.getCairoConfiguration().getSymbolTableAppendPageSize());
+        Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getSymbolTableMinAllocationPageSize());
         Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
         Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
@@ -438,11 +436,12 @@ public class PropServerConfigurationTest {
 
         // PG wire
         Assert.assertEquals(64, configuration.getPGWireConfiguration().getLimit());
+        Assert.assertEquals(500, configuration.getPGWireConfiguration().getAcceptLoopTimeout());
         Assert.assertEquals(64, configuration.getPGWireConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
         Assert.assertTrue(configuration.getPGWireConfiguration().isSelectCacheEnabled());
         Assert.assertEquals(32, configuration.getPGWireConfiguration().getConcurrentCacheConfiguration().getBlocks());
-        Assert.assertEquals(Math.max(configuration.getWorkerPoolConfiguration().getWorkerCount(), 4), configuration.getPGWireConfiguration().getConcurrentCacheConfiguration().getRows());
+        Assert.assertEquals(Math.max(configuration.getSharedWorkerPoolNetworkConfiguration().getWorkerCount(), 4), configuration.getPGWireConfiguration().getConcurrentCacheConfiguration().getRows());
         Assert.assertTrue(configuration.getPGWireConfiguration().isInsertCacheEnabled());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheRowCount());
@@ -480,7 +479,8 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getWalApplyPoolConfiguration().isEnabled());
         Assert.assertFalse(configuration.getWalApplyPoolConfiguration().haltOnError());
         Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());
-        Assert.assertTrue(configuration.getWalApplyPoolConfiguration().getWorkerCount() > 0);
+        Assert.assertTrue(configuration.getWalApplyPoolConfiguration().getWorkerCount() >= 2);
+        Assert.assertTrue(configuration.getWalApplyPoolConfiguration().getWorkerCount() <= 4);
         Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
         Assert.assertEquals(7_000, configuration.getWalApplyPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
@@ -501,13 +501,23 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
 
         Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0);
         Assert.assertFalse(configuration.getMatViewRefreshPoolConfiguration().haltOnError());
         Assert.assertEquals("mat-view-refresh", configuration.getMatViewRefreshPoolConfiguration().getPoolName());
-        Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0);
         Assert.assertEquals(10, configuration.getMatViewRefreshPoolConfiguration().getSleepTimeout());
         Assert.assertEquals(7_000, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(1000, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
+
+        Assert.assertTrue(configuration.getExportPoolConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getExportPoolConfiguration().getWorkerCount() > 0);
+        Assert.assertFalse(configuration.getExportPoolConfiguration().haltOnError());
+        Assert.assertEquals("export", configuration.getExportPoolConfiguration().getPoolName());
+        Assert.assertEquals(10, configuration.getExportPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(7_000, configuration.getExportPoolConfiguration().getNapThreshold());
+        Assert.assertEquals(10_000, configuration.getExportPoolConfiguration().getSleepThreshold());
+        Assert.assertEquals(1000, configuration.getExportPoolConfiguration().getYieldThreshold());
+
         Assert.assertFalse(configuration.getCairoConfiguration().useWithinLatestByOptimisation());
     }
 
@@ -656,6 +666,55 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testDefaultTimestampColumnType() throws Exception {
+        Properties properties = new Properties();
+
+        // default
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
+
+        // empty
+        properties.setProperty("line.timestamp.default.column.type", "");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
+
+        // timestamp
+        properties.setProperty("line.timestamp.default.column.type", "TIMESTAMP");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
+
+        // timestamp_ns
+        properties.setProperty("line.timestamp.default.column.type", "TIMESTAMP_NS");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
+
+        // lowercase
+        properties.setProperty("line.timestamp.default.column.type", "timestamp");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
+
+        // camel case
+        properties.setProperty("line.timestamp.default.column.type", "Timestamp_Ns");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
+
+        // not allowed
+        properties.setProperty("line.timestamp.default.column.type", "STRING");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
+
+        // not allowed
+        properties.setProperty("line.timestamp.default.column.type", "SHORT");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
+
+        // nonexistent type
+        properties.setProperty("line.timestamp.default.column.type", "TIMESTAMP_MS");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
+    }
+
+    @Test
     public void testDeprecatedConfigKeys() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("config.validation.strict", "true");
@@ -671,9 +730,9 @@ public class PropServerConfigurationTest {
         properties.setProperty("http.net.rcv.buf.size", "10000");
         PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
-        Assert.assertFalse(result.isError);
-        Assert.assertNotEquals(-1, result.message.indexOf("Deprecated settings"));
-        Assert.assertNotEquals(-1, result.message.indexOf(
+        Assert.assertFalse(result.isError());
+        Assert.assertNotEquals(-1, result.message().indexOf("Deprecated settings"));
+        Assert.assertNotEquals(-1, result.message().indexOf(
                 "Replaced by `http.min.net.connection.rcvbuf` and `http.net.connection.rcvbuf`"));
     }
 
@@ -710,7 +769,7 @@ public class PropServerConfigurationTest {
         properties.setProperty("shared.worker.count", "2");
         properties.setProperty("shared.worker.affinity", "2,3");
         env.put("QDB_SHARED_WORKER_COUNT", "3");
-        env.put("QDB_SHARED_WORKER_AFFINITY", "5,6,7");
+        env.put("QDB_SHARED_NETWORK_WORKER_AFFINITY", "5,6,7");
 
         // int size
         properties.setProperty("http.send.buffer.size", "4k");
@@ -738,6 +797,9 @@ public class PropServerConfigurationTest {
         properties.setProperty("http.ilp.connection.limit", "4");
         env.put("QDB_HTTP_ILP_CONNECTION_LIMIT", "8");
 
+        properties.setProperty("http.session.timeout", "30m");
+        env.put("QDB_HTTP_SESSION_TIMEOUT", "15m");
+
         properties.setProperty("telemetry.db.size.estimate.timeout", "2000");
         env.put("QDB_TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT", "3000");
 
@@ -745,17 +807,30 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1.5, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000001);
         Assert.assertEquals(3000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
         Assert.assertEquals("2.0 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
-        Assert.assertEquals(3, configuration.getWorkerPoolConfiguration().getWorkerCount());
-        Assert.assertArrayEquals(new int[]{5, 6, 7}, configuration.getWorkerPoolConfiguration().getWorkerAffinity());
+        Assert.assertEquals(3, configuration.getSharedWorkerPoolNetworkConfiguration().getWorkerCount());
+        Assert.assertArrayEquals(new int[]{5, 6, 7}, configuration.getSharedWorkerPoolNetworkConfiguration().getWorkerAffinity());
         Assert.assertEquals(12288, configuration.getHttpServerConfiguration().getSendBufferSize());
         Assert.assertEquals(12, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getJsonQueryConnectionLimit());
         Assert.assertEquals(8, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getIlpConnectionLimit());
         Assert.assertEquals(900, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
+        Assert.assertEquals(900_000_000L, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
         Assert.assertEquals(9663676416L, configuration.getCairoConfiguration().getDataAppendPageSize());
         Assert.assertEquals(60_000, configuration.getCairoConfiguration().getO3MaxLag());
         Assert.assertTrue(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
         Assert.assertEquals(3000, configuration.getCairoConfiguration().getTelemetryConfiguration().getDbSizeEstimateTimeout());
+    }
+
+    @Test
+    public void testExportTimeoutDependsOnQueryTimeout() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QUERY_TIMEOUT.getPropertyPath(), "600s");
+        var propConf = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        Assert.assertEquals(600_000, propConf.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getExportTimeout());
+
+        properties = new Properties();
+        propConf = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        Assert.assertEquals(300_000, propConf.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getExportTimeout());
     }
 
     @Test
@@ -769,6 +844,7 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "11");
         try {
             newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), "Json query connection limit cannot be greater than the overall " +
                     "HTTP connection limit [http.json.query.connection.limit=11, http.net.connection.limit=10]");
@@ -783,6 +859,7 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "11");
         try {
             newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), "HTTP over ILP connection limit cannot be greater than the overall " +
                     "HTTP connection limit [http.ilp.connection.limit=11, http.net.connection.limit=10]");
@@ -792,27 +869,67 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
 
         properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "6");
-        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "4");
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "1");
         newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
 
         properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "7");
         properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "4");
         try {
             newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
         } catch (ServerConfigurationException e) {
-            TestUtils.assertContains(e.getMessage(), "The sum of the json query and HTTP over ILP connection limits " +
-                    "cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=7, " +
-                    "http.ilp.connection.limit=4, http.net.connection.limit=10]");
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query, export and HTTP over ILP connection limits " +
+                    "cannot be greater than the overall HTTP connection limit " +
+                    "[http.json.query.connection.limit=7, http.ilp.connection.limit=4, http.net.connection.limit=10]");
         }
 
         properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "5");
         properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "6");
         try {
             newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
         } catch (ServerConfigurationException e) {
-            TestUtils.assertContains(e.getMessage(), "The sum of the json query and HTTP over ILP connection limits " +
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query, export and HTTP over ILP connection limits " +
                     "cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=5, " +
                     "http.ilp.connection.limit=6, http.net.connection.limit=10]");
+        }
+
+        properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
+        properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "7");
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "4");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query, export and HTTP over ILP connection limits " +
+                    "cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=7, " +
+                    "http.ilp.connection.limit=4, http.net.connection.limit=10]");
+        }
+
+        properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
+        properties.setProperty(PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath(), "20");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "HTTP export connection limit cannot be greater than " +
+                    "the overall HTTP connection limit [http.export.connection.limit=20, http.net.connection.limit=10]");
+        }
+
+        properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
+        properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "7");
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "3");
+        properties.setProperty(PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath(), "1");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query, export and HTTP over ILP connection limits" +
+                    " cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=7, " +
+                    "http.ilp.connection.limit=3, http.export.connection.limit=1, http.net.connection.limit=10]");
         }
     }
 
@@ -963,6 +1080,14 @@ public class PropServerConfigurationTest {
     }
 
     @Test(expected = ServerConfigurationException.class)
+    public void testInvalidLineTcpBufferSize() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("line.tcp.max.measurement.size", "14");
+        properties.setProperty("line.tcp.recv.buffer.size", "14");
+        newPropServerConfiguration(properties);
+    }
+
+    @Test(expected = ServerConfigurationException.class)
     public void testInvalidLong() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.idle.check.interval", "1234a");
@@ -999,9 +1124,9 @@ public class PropServerConfigurationTest {
         properties.setProperty("invalid.key", "value");
         PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
-        Assert.assertTrue(result.isError);
-        Assert.assertNotEquals(-1, result.message.indexOf("Invalid settings"));
-        Assert.assertNotEquals(-1, result.message.indexOf("* invalid.key"));
+        Assert.assertTrue(result.isError());
+        Assert.assertNotEquals(-1, result.message().indexOf("Invalid settings"));
+        Assert.assertNotEquals(-1, result.message().indexOf("* invalid.key"));
     }
 
     @Test
@@ -1037,39 +1162,45 @@ public class PropServerConfigurationTest {
         properties.setProperty("http.enabled", "false");
         properties.setProperty("line.udp.timestamp", "");
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_NANOS, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
 
         properties.setProperty("line.udp.timestamp", "n");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_NANOS, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
 
         properties.setProperty("line.udp.timestamp", "u");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineMicroTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_MICROS, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
 
         properties.setProperty("line.udp.timestamp", "ms");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineMilliTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_MILLIS, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
 
         properties.setProperty("line.udp.timestamp", "s");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineSecondTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_SECONDS, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
 
         properties.setProperty("line.udp.timestamp", "m");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineMinuteTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_MINUTES, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
 
         properties.setProperty("line.udp.timestamp", "h");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertSame(LineHourTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+        Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_HOURS, configuration.getLineUdpReceiverConfiguration().getTimestampUnit());
     }
 
     @Test
-    public void testMinimum4SharedWorkers() throws Exception {
+    public void testMinimum2SharedWorkers() throws Exception {
         final Properties properties = new Properties();
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals("shared", configuration.getWorkerPoolConfiguration().getPoolName());
-        Assert.assertTrue("must be minimum of 4 shared workers", configuration.getWorkerPoolConfiguration().getWorkerCount() >= 4);
+        Assert.assertEquals("shared-network", configuration.getSharedWorkerPoolNetworkConfiguration().getPoolName());
+        Assert.assertTrue("must be minimum of 2 shared workers", configuration.getSharedWorkerPoolNetworkConfiguration().getWorkerCount() >= 2);
+
+        Assert.assertEquals("shared-query", configuration.getSharedWorkerPoolQueryConfiguration().getPoolName());
+        Assert.assertTrue("must be minimum of 2 shared workers", configuration.getSharedWorkerPoolQueryConfiguration().getWorkerCount() >= 2);
+
+        Assert.assertEquals("shared-write", configuration.getSharedWorkerPoolWriteConfiguration().getPoolName());
+        Assert.assertTrue("must be minimum of 2 shared workers", configuration.getSharedWorkerPoolWriteConfiguration().getWorkerCount() >= 2);
     }
 
     @Test
@@ -1139,9 +1270,9 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.tcp.commit.timeout", "10000");
         PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
-        Assert.assertTrue(result.isError);
-        Assert.assertNotEquals(-1, result.message.indexOf("Obsolete settings"));
-        Assert.assertNotEquals(-1, result.message.indexOf(
+        Assert.assertTrue(result.isError());
+        Assert.assertNotEquals(-1, result.message().indexOf("Obsolete settings"));
+        Assert.assertNotEquals(-1, result.message().indexOf(
                 "Replaced by `line.tcp.commit.interval.default` and `line.tcp.commit.interval.fraction`"));
     }
 
@@ -1189,6 +1320,7 @@ public class PropServerConfigurationTest {
             testSetAllFromFile(configuration.getCairoConfiguration());
             testSetAllFromFile(new CairoConfigurationWrapper(configuration.getCairoConfiguration()));
 
+            Assert.assertEquals(1000, configuration.getHttpServerConfiguration().getAcceptLoopTimeout());
             Assert.assertEquals(64, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
             Assert.assertEquals(512, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
             Assert.assertEquals(256, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartHeaderBufferSize());
@@ -1199,6 +1331,7 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getHttpServerConfiguration().haltOnError());
             Assert.assertEquals(6, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getJsonQueryConnectionLimit());
             Assert.assertEquals(2, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getIlpConnectionLimit());
+            Assert.assertEquals(1_200_000_000L, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout());
             Assert.assertEquals(SecurityContext.AUTH_TYPE_NONE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRequiredAuthType());
             Assert.assertFalse(configuration.getHttpServerConfiguration().isQueryCacheEnabled());
             Assert.assertTrue(configuration.getHttpServerConfiguration().isSettingsReadOnly());
@@ -1213,10 +1346,10 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
 
-            Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
-            Assert.assertEquals(90000, configuration.getWorkerPoolConfiguration().getNapThreshold());
-            Assert.assertEquals(100000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
-            Assert.assertEquals(1000, configuration.getWorkerPoolConfiguration().getSleepTimeout());
+            Assert.assertEquals(100, configuration.getSharedWorkerPoolNetworkConfiguration().getYieldThreshold());
+            Assert.assertEquals(90000, configuration.getSharedWorkerPoolNetworkConfiguration().getNapThreshold());
+            Assert.assertEquals(100000, configuration.getSharedWorkerPoolNetworkConfiguration().getSleepThreshold());
+            Assert.assertEquals(1000, configuration.getSharedWorkerPoolNetworkConfiguration().getSleepTimeout());
 
             Assert.assertEquals(101, configuration.getHttpServerConfiguration().getYieldThreshold());
             Assert.assertEquals(90001, configuration.getHttpServerConfiguration().getNapThreshold());
@@ -1229,6 +1362,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1002, configuration.getHttpMinServerConfiguration().getSleepTimeout());
             Assert.assertEquals(16, configuration.getHttpMinServerConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(4, configuration.getHttpMinServerConfiguration().getWorkerCount());
+            Assert.assertEquals(750, configuration.getHttpMinServerConfiguration().getAcceptLoopTimeout());
 
             Assert.assertEquals(
                     new File(root, "public_ok").getAbsolutePath(),
@@ -1272,18 +1406,19 @@ public class PropServerConfigurationTest {
             // influxdb line TCP protocol
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
             Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().logMessageOnError());
+            Assert.assertEquals(1500, configuration.getLineTcpReceiverConfiguration().getAcceptLoopTimeout());
             Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getLimit());
             Assert.assertEquals(167903521, configuration.getLineTcpReceiverConfiguration().getBindIPv4Address());
             Assert.assertEquals(9916, configuration.getLineTcpReceiverConfiguration().getBindPort());
-            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getEventCapacity());
-            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getIOQueueCapacity());
+            Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getEventCapacity());
+            Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getIOQueueCapacity());
             Assert.assertEquals(400_000, configuration.getLineTcpReceiverConfiguration().getTimeout());
             Assert.assertEquals(1_002, configuration.getLineTcpReceiverConfiguration().getQueueTimeout());
-            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getInterestQueueCapacity());
+            Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getInterestQueueCapacity());
             Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getListenBacklog());
             Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(32, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
-            Assert.assertEquals(LineMicroTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter().getDefaultAdapter());
+            Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_MICROS, configuration.getLineTcpReceiverConfiguration().getTimestampUnit());
             Assert.assertEquals(2049, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
             Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getNetRecvBufferSize());
             Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
@@ -1294,12 +1429,12 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(9_002, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getNapThreshold());
             Assert.assertEquals(10_002, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getSleepThreshold());
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().haltOnError());
-            Assert.assertEquals(3, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerCount());
-            Assert.assertArrayEquals(new int[]{3, 4, 5}, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerAffinity());
-            Assert.assertEquals(30, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getYieldThreshold());
-            Assert.assertEquals(9_003, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getNapThreshold());
-            Assert.assertEquals(10_003, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getSleepThreshold());
-            Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
+            Assert.assertEquals(3, configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration().getWorkerCount());
+            Assert.assertArrayEquals(new int[]{3, 4, 5}, configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration().getWorkerAffinity());
+            Assert.assertEquals(30, configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration().getYieldThreshold());
+            Assert.assertEquals(9_003, configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration().getNapThreshold());
+            Assert.assertEquals(10_003, configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration().getSleepThreshold());
+            Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration().haltOnError());
             Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceInterval());
             Assert.assertEquals(PartitionBy.MONTH, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
             Assert.assertEquals(5_000, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
@@ -1317,7 +1452,6 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
 
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
-            Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewMinRefreshInterval());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
@@ -1325,6 +1459,7 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
             Assert.assertEquals(4200, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
+            Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewMaxRefreshStepUs());
 
             // PG wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());
@@ -1344,8 +1479,9 @@ public class PropServerConfigurationTest {
             Assert.assertEquals("my_quest_ro", configuration.getPGWireConfiguration().getReadOnlyPassword());
             Assert.assertEquals("my_user", configuration.getPGWireConfiguration().getReadOnlyUsername());
             Assert.assertEquals(16, configuration.getPGWireConfiguration().getTestConnectionBufferSize());
-            Assert.assertEquals(new DefaultPGWireConfiguration().getServerVersion(), configuration.getPGWireConfiguration().getServerVersion());
+            Assert.assertEquals(new DefaultPGConfiguration().getServerVersion(), configuration.getPGWireConfiguration().getServerVersion());
             Assert.assertEquals(10, configuration.getPGWireConfiguration().getNamedStatementLimit());
+            Assert.assertEquals(250, configuration.getPGWireConfiguration().getAcceptLoopTimeout());
 
             Assert.assertEquals(255, configuration.getLineTcpReceiverConfiguration().getMaxFileNameLength());
             Assert.assertEquals(255, configuration.getLineUdpReceiverConfiguration().getMaxFileNameLength());
@@ -1375,6 +1511,16 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(23, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
             Assert.assertEquals(33, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
             Assert.assertEquals(33033, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
+
+            Assert.assertTrue(configuration.getExportPoolConfiguration().isEnabled());
+            Assert.assertTrue(configuration.getExportPoolConfiguration().haltOnError());
+            Assert.assertEquals("export", configuration.getExportPoolConfiguration().getPoolName());
+            Assert.assertEquals(3, configuration.getExportPoolConfiguration().getWorkerCount());
+            Assert.assertArrayEquals(new int[]{1, 2, 3}, configuration.getExportPoolConfiguration().getWorkerAffinity());
+            Assert.assertEquals(55, configuration.getExportPoolConfiguration().getSleepTimeout());
+            Assert.assertEquals(23, configuration.getExportPoolConfiguration().getNapThreshold());
+            Assert.assertEquals(33, configuration.getExportPoolConfiguration().getSleepThreshold());
+            Assert.assertEquals(33033, configuration.getExportPoolConfiguration().getYieldThreshold());
 
             Assert.assertEquals(32, configuration.getCairoConfiguration().getPreferencesStringPoolCapacity());
         }
@@ -1663,7 +1809,7 @@ public class PropServerConfigurationTest {
         properties.setProperty("log.timestamp.timezone", timezone);
         properties.setProperty("log.timestamp.locale", locale);
         properties.setProperty("log.timestamp.format", format);
-        long epoch = TimestampFormatUtils.parseTimestamp(timestamp);
+        long epoch = MicrosFormatUtils.parseTimestamp(timestamp);
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
         DateFormat timestampFormat = configuration.getCairoConfiguration().getLogTimestampFormat();
         DateLocale timestampLocale = configuration.getCairoConfiguration().getLogTimestampTimezoneLocale();
@@ -1761,7 +1907,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(42, configuration.getSqlAsOfJoinLookAhead());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinMapEvacuationThreshold());
-        Assert.assertFalse(configuration.useFastAsOfJoin());
         Assert.assertEquals(4 * 1024 * 1024, configuration.getSqlSortValuePageSize());
         Assert.assertEquals(1028, configuration.getSqlSortValueMaxPages());
         Assert.assertEquals(1000000, configuration.getWorkStealTimeoutNanos());
@@ -1806,8 +1951,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0.4, configuration.getSqlDistinctTimestampLoadFactor(), 0.001);
 
         Assert.assertFalse(configuration.isSqlParallelFilterEnabled());
-        Assert.assertFalse(configuration.isSqlParallelFilterPreTouchEnabled());
         Assert.assertEquals(0.1, configuration.getSqlParallelFilterPreTouchThreshold(), 0.000001);
+        Assert.assertFalse(configuration.isSqlParallelTopKEnabled());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());
         Assert.assertFalse(configuration.isSqlOrderBySortEnabled());
@@ -1849,7 +1994,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getDataIndexKeyAppendPageSize());
         Assert.assertEquals(262144, configuration.getDataIndexValueAppendPageSize());
         Assert.assertEquals(131072, configuration.getMiscAppendPageSize());
-        Assert.assertEquals(65536, configuration.getSymbolTableAppendPageSize());
+        Assert.assertEquals(65536, configuration.getSymbolTableMinAllocationPageSize());
 
         Assert.assertEquals(512, configuration.getColumnPurgeQueueCapacity());
         Assert.assertEquals(5.0, configuration.getColumnPurgeRetryDelayMultiplier(), 0.00001);
@@ -1876,7 +2021,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4242, configuration.getWalMaxLagTxnCount());
         Assert.assertEquals(262144, configuration.getWalDataAppendPageSize());
         Assert.assertEquals(524288, configuration.getSystemWalDataAppendPageSize());
-        Assert.assertEquals(65536, configuration.getSymbolTableAppendPageSize());
+        Assert.assertEquals(65536, configuration.getSymbolTableMinAllocationPageSize());
 
         Assert.assertEquals(1, configuration.getO3LastPartitionMaxSplits());
         final long TB = (long) Numbers.SIZE_1MB * Numbers.SIZE_1MB;
@@ -1904,15 +2049,7 @@ public class PropServerConfigurationTest {
         return new PropServerConfiguration(root, properties, null, PropServerConfigurationTest.LOG, new BuildInformationHolder());
     }
 
-    private static class FuzzItem {
-        private final Function<HttpFullFatServerConfiguration, ObjList<String>> getter;
-        private final String key;
-        private final String value;
-
-        FuzzItem(String key, String value, Function<HttpFullFatServerConfiguration, ObjList<String>> getter) {
-            this.key = key;
-            this.value = value;
-            this.getter = getter;
-        }
+    private record FuzzItem(String key, String value,
+                            Function<HttpFullFatServerConfiguration, ObjList<String>> getter) {
     }
 }

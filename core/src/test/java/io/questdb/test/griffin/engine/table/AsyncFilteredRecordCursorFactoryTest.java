@@ -59,6 +59,9 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -84,7 +87,6 @@ import static io.questdb.PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
 
 public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
-
     private static final int QUEUE_CAPACITY = 4;
 
     @BeforeClass
@@ -144,17 +146,19 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
                         // Verify that all symbol tables (original and views) are refreshed to include the new symbols.
                         assertCursor(
-                                "s\tt\n" +
-                                        "C\t1970-01-02T03:46:40.000000Z\n" +
-                                        "C\t1970-01-02T03:46:40.100000Z\n" +
-                                        "D\t1970-01-02T03:46:40.200000Z\n" +
-                                        "C\t1970-01-02T03:46:40.300000Z\n" +
-                                        "D\t1970-01-02T03:46:40.400000Z\n" +
-                                        "C\t1970-01-02T03:46:40.500000Z\n" +
-                                        "D\t1970-01-02T03:46:40.600000Z\n" +
-                                        "D\t1970-01-02T03:46:40.700000Z\n" +
-                                        "C\t1970-01-02T03:46:40.800000Z\n" +
-                                        "D\t1970-01-02T03:46:40.900000Z\n",
+                                """
+                                        s\tt
+                                        C\t1970-01-02T03:46:40.000000Z
+                                        C\t1970-01-02T03:46:40.100000Z
+                                        D\t1970-01-02T03:46:40.200000Z
+                                        C\t1970-01-02T03:46:40.300000Z
+                                        D\t1970-01-02T03:46:40.400000Z
+                                        C\t1970-01-02T03:46:40.500000Z
+                                        D\t1970-01-02T03:46:40.600000Z
+                                        D\t1970-01-02T03:46:40.700000Z
+                                        C\t1970-01-02T03:46:40.800000Z
+                                        D\t1970-01-02T03:46:40.900000Z
+                                        """,
                                 factory,
                                 true,
                                 false,
@@ -164,7 +168,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
 
                     resetTaskCapacities();
-                }, new AtomicBooleanCircuitBreaker()
+                }, new AtomicBooleanCircuitBreaker(engine)
         );
     }
 
@@ -331,16 +335,18 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
 
                     assertSql(
-                            "QUERY PLAN\n" +
-                                    "Radix sort light\n" +
-                                    "  keys: [timestamp]\n" +
-                                    "    Async Group By workers: 1\n" +
-                                    "      keys: [timestamp]\n" +
-                                    "      values: [count(*)]\n" +
-                                    "      filter: (symbol ~ .*?.ETH [state-shared] and row_id!=100)\n" +
-                                    "        PageFrame\n" +
-                                    "            Row forward scan\n" +
-                                    "            Frame forward scan on: x\n",
+                            """
+                                    QUERY PLAN
+                                    Radix sort light
+                                      keys: [timestamp]
+                                        Async Group By workers: 1
+                                          keys: [timestamp]
+                                          values: [count(*)]
+                                          filter: (symbol ~ .*?.ETH [state-shared] and row_id!=100)
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                                    """,
                             "explain select timestamp, count() as trades" +
                                     " from x" +
                                     " where symbol like '%_ETH' and (row_id != 100)" +
@@ -377,7 +383,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "timeout, query aborted");
                     }
                 }, 4, 1
-        ); // sharedWorkerCount < workerCount
+        ); // sharedQueryWorkerCount < workerCount
     }
 
     @Test
@@ -398,9 +404,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testJitFullFwdCursorBwdSwitch() throws Exception {
         assertQuery(
-                "a\tb\tk\n" +
-                        "67.00476391801053\tBB\t1970-01-19T12:26:40.000000Z\n" +
-                        "37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z\n",
+                """
+                        a\tb\tk
+                        67.00476391801053\tBB\t1970-01-19T12:26:40.000000Z
+                        37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z
+                        """,
                 "x where b = 'BB' limit -2",
                 "create table x as " +
                         "(" +
@@ -419,8 +427,10 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testJitIntervalFwdCursorBwdSwitch() throws Exception {
         assertQuery(
-                "a\tb\tk\n" +
-                        "37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z\n",
+                """
+                        a\tb\tk
+                        37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z
+                        """,
                 "x where k > '1970-01-21T20:00:00' and b = 'BB' limit -2",
                 "create table x as " +
                         "(" +
@@ -454,10 +464,12 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     sqlExecutionContext.getBindVariableService().setLong(0, 3);
                     assertQueryNoLeakCheck(
                             compiler,
-                            "a\tt\n" +
-                                    "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                                    "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                                    "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n",
+                            """
+                                    a\tt
+                                    0.34574819315105954\t1970-01-01T15:03:20.500000Z
+                                    0.34574734261660356\t1970-01-02T02:14:37.600000Z
+                                    0.34574784156471083\t1970-01-02T08:17:06.600000Z
+                                    """,
                             sql,
                             "t",
                             true,
@@ -469,11 +481,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     sqlExecutionContext.getBindVariableService().setLong(0, 5);
                     assertQueryNoLeakCheck(
                             compiler,
-                            "a\tt\n" +
-                                    "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                                    "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                                    "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                                    "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                            """
+                                    a\tt
+                                    0.34574819315105954\t1970-01-01T15:03:20.500000Z
+                                    0.34574734261660356\t1970-01-02T02:14:37.600000Z
+                                    0.34574784156471083\t1970-01-02T08:17:06.600000Z
+                                    0.34574958643398823\t1970-01-02T20:31:57.900000Z
+                                    """,
                             sql,
                             "t",
                             true,
@@ -485,9 +499,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     sqlExecutionContext.getBindVariableService().setLong(0, 2);
                     assertQueryNoLeakCheck(
                             compiler,
-                            "a\tt\n" +
-                                    "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                                    "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n",
+                            """
+                                    a\tt
+                                    0.34574819315105954\t1970-01-01T15:03:20.500000Z
+                                    0.34574734261660356\t1970-01-02T02:14:37.600000Z
+                                    """,
                             sql,
                             "t",
                             true,
@@ -499,9 +515,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     sqlExecutionContext.getBindVariableService().setLong(0, -2);
                     assertQueryNoLeakCheck(
                             compiler,
-                            "a\tt\n" +
-                                    "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                                    "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                            """
+                                    a\tt
+                                    0.34574784156471083\t1970-01-02T08:17:06.600000Z
+                                    0.34574958643398823\t1970-01-02T20:31:57.900000Z
+                                    """,
                             sql,
                             "t",
                             true,
@@ -510,7 +528,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     );
 
                     resetTaskCapacities();
-                }, new AtomicBooleanCircuitBreaker()
+                }, new AtomicBooleanCircuitBreaker(engine)
         );
     }
 
@@ -531,11 +549,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
                     assertQueryNoLeakCheck(
                             compiler,
-                            "a\tt\n" +
-                                    "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                                    "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                                    "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                                    "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                            """
+                                    a\tt
+                                    0.34574819315105954\t1970-01-01T15:03:20.500000Z
+                                    0.34574734261660356\t1970-01-02T02:14:37.600000Z
+                                    0.34574784156471083\t1970-01-02T08:17:06.600000Z
+                                    0.34574958643398823\t1970-01-02T20:31:57.900000Z
+                                    """,
                             sql,
                             "t",
                             true,
@@ -544,7 +564,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     );
 
                     resetTaskCapacities();
-                }, new AtomicBooleanCircuitBreaker()
+                }, new AtomicBooleanCircuitBreaker(engine)
         );
     }
 
@@ -588,8 +608,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testPositiveLimit() throws Exception {
         final SqlExecutionCircuitBreakerConfiguration configuration = engine.getConfiguration().getCircuitBreakerConfiguration();
-        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(configuration)) {
-            wrapper.init(new AtomicBooleanCircuitBreaker());
+        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(engine, configuration)) {
+            wrapper.init(new AtomicBooleanCircuitBreaker(engine));
             withPool(
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -605,11 +625,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
                         assertQueryNoLeakCheck(
                                 compiler,
-                                "a\tt\n" +
-                                        "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                                        "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                                        "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                                        "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                                """
+                                        a\tt
+                                        0.34574819315105954\t1970-01-01T15:03:20.500000Z
+                                        0.34574734261660356\t1970-01-02T02:14:37.600000Z
+                                        0.34574784156471083\t1970-01-02T08:17:06.600000Z
+                                        0.34574958643398823\t1970-01-02T20:31:57.900000Z
+                                        """,
                                 sql,
                                 "t",
                                 true,
@@ -624,8 +646,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testPositiveLimitGroupBy() throws Exception {
         final SqlExecutionCircuitBreakerConfiguration configuration = engine.getConfiguration().getCircuitBreakerConfiguration();
-        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(configuration)) {
-            wrapper.init(new NetworkSqlExecutionCircuitBreaker(configuration, MemoryTag.NATIVE_CB2));
+        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(engine, configuration)) {
+            wrapper.init(new NetworkSqlExecutionCircuitBreaker(engine, configuration, MemoryTag.NATIVE_CB2));
             withPool(
                     (engine, compiler, sqlExecutionContext) -> {
                         execute(
@@ -637,8 +659,10 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
                         assertQueryNoLeakCheck(
                                 compiler,
-                                "sum\n" +
-                                        "1.382992963766362\n",
+                                """
+                                        sum
+                                        1.382992963766362
+                                        """,
                                 sql,
                                 null,
                                 false,
@@ -651,27 +675,28 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPreTouchDisabled() throws Exception {
+    public void testPreTouchEnabled() throws Exception {
         withPool(
                 (engine, compiler, sqlExecutionContext) -> {
-                    node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, false);
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
 
                     execute("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);
-                    final String sql = "select 'foobar' as c1, t as c2, a as c3, sqrt(a) as c4 from x where a > 0.345747032 and a < 0.34585 limit 5";
+                    final String sql = "select /*+ ENABLE_PRE_TOUCH(x) */ 'foobar' as c1, t as c2, a as c3, sqrt(a) as c4 from x where a > 0.345747032 and a < 0.34585 limit 5";
                     TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
                             sql,
                             sink,
-                            "c1\tc2\tc3\tc4\n" +
-                                    "foobar\t1970-01-01T00:29:28.300000Z\t0.3458428093770707\t0.5880840155769163\n" +
-                                    "foobar\t1970-01-01T00:34:42.600000Z\t0.3457731257014821\t0.5880247662313911\n" +
-                                    "foobar\t1970-01-01T00:42:39.700000Z\t0.3457641654104435\t0.5880171472078374\n" +
-                                    "foobar\t1970-01-01T00:52:14.800000Z\t0.345765350101064\t0.5880181545675813\n" +
-                                    "foobar\t1970-01-01T00:58:31.000000Z\t0.34580598176419974\t0.5880527032198728\n"
+                            """
+                                    c1\tc2\tc3\tc4
+                                    foobar\t1970-01-01T00:29:28.300000Z\t0.3458428093770707\t0.5880840155769163
+                                    foobar\t1970-01-01T00:34:42.600000Z\t0.3457731257014821\t0.5880247662313911
+                                    foobar\t1970-01-01T00:42:39.700000Z\t0.3457641654104435\t0.5880171472078374
+                                    foobar\t1970-01-01T00:52:14.800000Z\t0.345765350101064\t0.5880181545675813
+                                    foobar\t1970-01-01T00:58:31.000000Z\t0.34580598176419974\t0.5880527032198728
+                                    """
                     );
-                }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
+                }, new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
         );
     }
 
@@ -709,17 +734,19 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
                     assertQueryNoLeakCheck(
                             compiler,
-                            "s\tt\n" +
-                                    "C\t1970-01-01T00:00:20.300000Z\n" +
-                                    "C\t1970-01-01T00:00:20.400000Z\n" +
-                                    "C\t1970-01-01T00:00:20.500000Z\n" +
-                                    "C\t1970-01-01T00:00:20.600000Z\n" +
-                                    "C\t1970-01-01T00:00:21.100000Z\n" +
-                                    "C\t1970-01-01T00:00:22.300000Z\n" +
-                                    "C\t1970-01-01T00:00:22.600000Z\n" +
-                                    "C\t1970-01-01T00:00:23.000000Z\n" +
-                                    "C\t1970-01-01T00:00:23.200000Z\n" +
-                                    "C\t1970-01-01T00:00:23.300000Z\n",
+                            """
+                                    s\tt
+                                    C\t1970-01-01T00:00:20.300000Z
+                                    C\t1970-01-01T00:00:20.400000Z
+                                    C\t1970-01-01T00:00:20.500000Z
+                                    C\t1970-01-01T00:00:20.600000Z
+                                    C\t1970-01-01T00:00:21.100000Z
+                                    C\t1970-01-01T00:00:22.300000Z
+                                    C\t1970-01-01T00:00:22.600000Z
+                                    C\t1970-01-01T00:00:23.000000Z
+                                    C\t1970-01-01T00:00:23.200000Z
+                                    C\t1970-01-01T00:00:23.300000Z
+                                    """,
                             sql,
                             "t",
                             true,
@@ -728,7 +755,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     );
 
                     resetTaskCapacities();
-                }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
+                }, new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
         );
     }
 
@@ -783,17 +810,19 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             );
             // Verify that all symbol tables (original and views) are refreshed to include the new symbols.
             assertCursor(
-                    "s\tt\n" +
-                            "C\t1970-01-01T00:16:40.000000Z\n" +
-                            "C\t1970-01-01T00:16:40.100000Z\n" +
-                            "D\t1970-01-01T00:16:40.200000Z\n" +
-                            "C\t1970-01-01T00:16:40.300000Z\n" +
-                            "D\t1970-01-01T00:16:40.400000Z\n" +
-                            "C\t1970-01-01T00:16:40.500000Z\n" +
-                            "D\t1970-01-01T00:16:40.600000Z\n" +
-                            "D\t1970-01-01T00:16:40.700000Z\n" +
-                            "C\t1970-01-01T00:16:40.800000Z\n" +
-                            "D\t1970-01-01T00:16:40.900000Z\n",
+                    """
+                            s\tt
+                            C\t1970-01-01T00:16:40.000000Z
+                            C\t1970-01-01T00:16:40.100000Z
+                            D\t1970-01-01T00:16:40.200000Z
+                            C\t1970-01-01T00:16:40.300000Z
+                            D\t1970-01-01T00:16:40.400000Z
+                            C\t1970-01-01T00:16:40.500000Z
+                            D\t1970-01-01T00:16:40.600000Z
+                            D\t1970-01-01T00:16:40.700000Z
+                            C\t1970-01-01T00:16:40.800000Z
+                            D\t1970-01-01T00:16:40.900000Z
+                            """,
                     factory,
                     true,
                     false,
@@ -877,18 +906,20 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
                         assertQueryNoLeakCheck(
                                 compiler,
-                                "x\ta\tt\n" +
-                                        "541806\t0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                                        "944577\t0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                                        "1162067\t0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                                        "1602980\t0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                                """
+                                        x\ta\tt
+                                        541806\t0.34574819315105954\t1970-01-01T15:03:20.500000Z
+                                        944577\t0.34574734261660356\t1970-01-02T02:14:37.600000Z
+                                        1162067\t0.34574784156471083\t1970-01-02T08:17:06.600000Z
+                                        1602980\t0.34574958643398823\t1970-01-02T20:31:57.900000Z
+                                        """,
                                 sql,
                                 "t",
                                 true,
                                 sqlExecutionContext,
                                 false
                         );
-                    }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
+                    }, new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
             );
         } finally {
             sqlExecutionContext.setParallelFilterEnabled(true);
@@ -948,17 +979,19 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     compiler,
-                    "s\tt\n" +
-                            "C\t1970-01-01T00:00:20.300000Z\n" +
-                            "C\t1970-01-01T00:00:20.400000Z\n" +
-                            "C\t1970-01-01T00:00:20.500000Z\n" +
-                            "C\t1970-01-01T00:00:20.600000Z\n" +
-                            "C\t1970-01-01T00:00:21.100000Z\n" +
-                            "C\t1970-01-01T00:00:22.300000Z\n" +
-                            "C\t1970-01-01T00:00:22.600000Z\n" +
-                            "C\t1970-01-01T00:00:23.000000Z\n" +
-                            "C\t1970-01-01T00:00:23.200000Z\n" +
-                            "C\t1970-01-01T00:00:23.300000Z\n",
+                    """
+                            s\tt
+                            C\t1970-01-01T00:00:20.300000Z
+                            C\t1970-01-01T00:00:20.400000Z
+                            C\t1970-01-01T00:00:20.500000Z
+                            C\t1970-01-01T00:00:20.600000Z
+                            C\t1970-01-01T00:00:21.100000Z
+                            C\t1970-01-01T00:00:22.300000Z
+                            C\t1970-01-01T00:00:22.600000Z
+                            C\t1970-01-01T00:00:23.000000Z
+                            C\t1970-01-01T00:00:23.200000Z
+                            C\t1970-01-01T00:00:23.300000Z
+                            """,
                     sql,
                     "t",
                     true,
@@ -1001,7 +1034,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                                 }
 
                                                 @Override
-                                                public int getWorkerCount() {
+                                                public int getSharedQueryWorkerCount() {
                                                     return sharedPoolWorkerCount;
                                                 }
                                             }
@@ -1041,11 +1074,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         withPool0(runnable, workerCount, workerCount, circuitBreaker);
     }
 
-    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount) throws Exception {
-        withPool0(runnable, workerCount, sharedWorkerCount, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedQueryWorkerCount) throws Exception {
+        withPool0(runnable, workerCount, sharedQueryWorkerCount, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
     }
 
-    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount, SqlExecutionCircuitBreaker circuitBreaker) throws Exception {
+    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedQueryWorkerCount, SqlExecutionCircuitBreaker circuitBreaker) throws Exception {
         assertMemoryLeak(() -> {
             final TestWorkerPool pool = new TestWorkerPool(workerCount);
             TestUtils.setupWorkerPool(pool, engine);
@@ -1062,13 +1095,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                 }
 
                                 @Override
-                                public int getSharedWorkerCount() {
-                                    return sharedWorkerCount;
-                                }
-
-                                @Override
-                                public int getWorkerCount() {
-                                    return workerCount;
+                                public int getSharedQueryWorkerCount() {
+                                    return sharedQueryWorkerCount;
                                 }
                             }
                     );
@@ -1112,12 +1140,15 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 boolean baseSupportsRandomAccess,
                 int framingMode,
                 long rowsLo,
-                int rowsLoKindPos,
+                char rowsLoUnit,
+                int rowsLoExprPos,
                 long rowsHi,
-                int rowsHiKindPos,
+                char rowsHiUnit,
+                int rowsHiExprPos,
                 int exclusionKind,
                 int exclusionKindPos,
                 int timestampIndex,
+                int timestampType,
                 boolean ignoreNulls,
                 int nullsDescPos
         ) {
@@ -1131,12 +1162,15 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     baseSupportsRandomAccess,
                     framingMode,
                     rowsLo,
-                    rowsLoKindPos,
+                    rowsLoUnit,
+                    rowsLoExprPos,
                     rowsHi,
-                    rowsHiKindPos,
+                    rowsHiUnit,
+                    rowsHiExprPos,
                     exclusionKind,
                     exclusionKindPos,
                     timestampIndex,
+                    timestampType,
                     ignoreNulls,
                     nullsDescPos
             );
@@ -1163,6 +1197,26 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public Decimal128 getDecimal128() {
+            return sqlExecutionContext.getDecimal128();
+        }
+
+        @Override
+        public Decimal256 getDecimal256() {
+            return sqlExecutionContext.getDecimal256();
+        }
+
+        @Override
+        public Decimal64 getDecimal64() {
+            return sqlExecutionContext.getDecimal64();
+        }
+
+        @Override
+        public int getIntervalFunctionType() {
+            return sqlExecutionContext.getIntervalFunctionType();
+        }
+
+        @Override
         public int getJitMode() {
             return sqlExecutionContext.getJitMode();
         }
@@ -1173,8 +1227,18 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public long getNow() {
-            return sqlExecutionContext.getNow();
+        public long getNanosecondTimestamp() {
+            return sqlExecutionContext.getNanosecondTimestamp();
+        }
+
+        @Override
+        public long getNow(int timestampType) {
+            return sqlExecutionContext.getNow(timestampType);
+        }
+
+        @Override
+        public int getNowTimestampType() {
+            return sqlExecutionContext.getNowTimestampType();
         }
 
         @Override
@@ -1208,11 +1272,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public int getWorkerCount() {
-            return sqlExecutionContext.getWorkerCount();
-        }
-
-        @Override
         public void initNow() {
             sqlExecutionContext.initNow();
         }
@@ -1220,16 +1279,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public boolean isCacheHit() {
             return sqlExecutionContext.isCacheHit();
-        }
-
-        @Override
-        public boolean isColumnPreTouchEnabled() {
-            return sqlExecutionContext.isColumnPreTouchEnabled();
-        }
-
-        @Override
-        public boolean isColumnPreTouchEnabledOverride() {
-            return sqlExecutionContext.isColumnPreTouchEnabledOverride();
         }
 
         @Override
@@ -1245,6 +1294,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public boolean isParallelReadParquetEnabled() {
             return sqlExecutionContext.isParallelReadParquetEnabled();
+        }
+
+        @Override
+        public boolean isParallelTopKEnabled() {
+            return sqlExecutionContext.isParallelTopKEnabled();
         }
 
         @Override
@@ -1293,13 +1347,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
-            sqlExecutionContext.setColumnPreTouchEnabled(columnPreTouchEnabled);
-        }
-
-        @Override
-        public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
-            sqlExecutionContext.setColumnPreTouchEnabledOverride(columnPreTouchEnabledOverride);
+        public void setIntervalFunctionType(int intervalType) {
+            sqlExecutionContext.setIntervalFunctionType(intervalType);
         }
 
         @Override
@@ -1308,8 +1357,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void setNowAndFixClock(long now) {
-            sqlExecutionContext.setNowAndFixClock(now);
+        public void setNowAndFixClock(long now, int nowTimestampType) {
+            sqlExecutionContext.setNowAndFixClock(now, nowTimestampType);
         }
 
         @Override
@@ -1325,6 +1374,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
             sqlExecutionContext.setParallelReadParquetEnabled(parallelReadParquetEnabled);
+        }
+
+        @Override
+        public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
+            sqlExecutionContext.setParallelTopKEnabled(parallelTopKEnabled);
         }
 
         @Override

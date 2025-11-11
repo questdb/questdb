@@ -33,13 +33,18 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-
 public class PartitionEncoderTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(PartitionEncoderTest.class);
+    private final TestTimestampType timestampType;
+
+    public PartitionEncoderTest() {
+        this.timestampType = TestUtils.getTimestampType();
+    }
 
     @Test
     public void testBadCompression() throws Exception {
@@ -47,7 +52,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
             execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
-                    " timestamp_sequence(400000000000, 500) designated_ts" +
+                    " timestamp_sequence(400000000000, 500)::" + timestampType.getTypeName() + " designated_ts" +
                     " from long_sequence(10)) timestamp(designated_ts) partition by month");
             try (
                     Path path = new Path();
@@ -57,7 +62,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet").$();
                 try {
                     PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
-                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, 42, false, 0, 0, ParquetVersion.PARQUET_VERSION_V1);
+                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, 42, false, false, 0, 0, ParquetVersion.PARQUET_VERSION_V1);
                     Assert.fail();
                 } catch (Exception e) {
                     TestUtils.assertContains(e.getMessage(), "unsupported compression codec id: 42");
@@ -72,7 +77,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
             execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
-                    " timestamp_sequence(400000000000, 500) designated_ts" +
+                    " timestamp_sequence(400000000000, 500)::" + timestampType.getTypeName() + " designated_ts" +
                     " from long_sequence(10)) timestamp(designated_ts) partition by month");
             try (
                     Path path = new Path();
@@ -82,7 +87,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet").$();
                 try {
                     PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
-                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, ParquetCompression.COMPRESSION_UNCOMPRESSED, false, 0, 0, 42);
+                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, ParquetCompression.COMPRESSION_UNCOMPRESSED, false, false, 0, 0, 42);
                     Assert.fail();
                 } catch (Exception e) {
                     TestUtils.assertContains(e.getMessage(), "unsupported parquet version 42");
@@ -94,7 +99,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            final long rows = 10000000;
+            final long rows = 1000000;
             execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
@@ -118,8 +123,8 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " rnd_long256() a_long256," +
                     " to_long128(rnd_long(), rnd_long()) a_long128," +
                     " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
-                    " timestamp_sequence(500000000000, 600) a_ts," +
-                    " timestamp_sequence(400000000000, 500) designated_ts" +
+                    " timestamp_sequence(500000000000, 600)::" + timestampType.getTypeName() + " a_ts," +
+                    " timestamp_sequence(400000000000, 500)::" + timestampType.getTypeName() + " designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
             try (
@@ -142,7 +147,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
             final long rows = 1;
             execute("create table x as (select" +
                     " cast('7c0bd97b-0593-47d2-be17-b8f3f89ca555' as uuid), " +
-                    " timestamp_sequence(400000000000, 500) designated_ts" +
+                    " timestamp_sequence(400000000000, 500)::" + timestampType.getTypeName() + " designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
             try (

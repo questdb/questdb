@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
@@ -54,7 +55,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final long indexShift = 0;
     private final DirectLongList prefixes;
     private final DirectLongList rows;
-    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
     private long aIndex;
     private long aLimit;
     private long argumentsAddress;
@@ -63,9 +64,10 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private boolean isFrameCacheBuilt;
     private boolean isTreeMapBuilt;
     private int keyCount;
-    private int workerCount;
+    private int sharedQueryWorkerCount;
 
     public LatestByAllIndexedRecordCursor(
+            CairoEngine engine,
             @NotNull CairoConfiguration configuration,
             @NotNull @Transient RecordMetadata metadata,
             int columnIndex,
@@ -73,6 +75,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             @NotNull DirectLongList prefixes
     ) {
         super(configuration, metadata);
+        sharedCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
         this.rows = rows;
         this.columnIndex = columnIndex;
         this.prefixes = prefixes;
@@ -103,7 +106,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         bus = executionContext.getMessageBus();
-        workerCount = executionContext.getSharedWorkerCount();
+        // If the worker count is 0
+        sharedQueryWorkerCount = executionContext.getSharedQueryWorkerCount();
         rows.clear();
         keyCount = -1;
         argumentsAddress = 0;
@@ -126,7 +130,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Async index backward scan").meta("on").putColumnName(columnIndex);
-        sink.meta("workers").val(workerCount);
+        sink.meta("workers").val(sharedQueryWorkerCount + 1);
 
         if (prefixes.size() > 2) {
             int geoHashColumnIndex = (int) prefixes.get(0);
@@ -151,8 +155,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         aIndex = indexShift;
     }
 
-    private static long getChunkSize(int keyCount, int workerCount) {
-        return (keyCount + workerCount - 1) / workerCount;
+    private static long getChunkSize(int keyCount, int sharedWorkerCount) {
+        return sharedWorkerCount > 0 ? (keyCount + sharedWorkerCount - 1) / sharedWorkerCount : keyCount;
     }
 
     private static int getTaskCount(int keyCount, long chunkSize) {
@@ -163,7 +167,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         int taskCount;
         if (keyCount < 0) {
             keyCount = getSymbolTable(columnIndex).getSymbolCount() + 1;
-            final long chunkSize = getChunkSize(keyCount, workerCount);
+            final long chunkSize = getChunkSize(keyCount, sharedQueryWorkerCount);
             taskCount = getTaskCount(keyCount, chunkSize);
             rows.setCapacity(keyCount);
             GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
@@ -182,7 +186,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
             sharedCircuitBreaker.reset();
         } else {
-            final long chunkSize = getChunkSize(keyCount, workerCount);
+            final long chunkSize = getChunkSize(keyCount, sharedQueryWorkerCount);
             taskCount = getTaskCount(keyCount, chunkSize);
         }
 
@@ -228,7 +232,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 final long valueBaseAddress = indexReader.getValueBaseAddress();
                 final long valuesMemorySize = indexReader.getValueMemorySize();
                 final int valueBlockCapacity = indexReader.getValueBlockCapacity();
-                final long unIndexedNullCount = indexReader.getUnIndexedNullCount();
+                final long unIndexedNullCount = indexReader.getColumnTop();
 
                 doneLatch.reset();
 

@@ -29,6 +29,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Decimals;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -145,11 +146,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, int opts) {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts) {
         throw new UnsupportedOperationException();
     }
 
@@ -213,6 +214,14 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void putChar(long offset, char value) {
+    }
+
+    @Override
+    public void putDecimal128(long offset, long high, long low) {
+    }
+
+    @Override
+    public void putDecimal256(long offset, long hh, long hl, long lh, long ll) {
     }
 
     @Override

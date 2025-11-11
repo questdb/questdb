@@ -44,6 +44,6 @@ public class CairoExceptionTest extends AbstractTest {
 
     @Test
     public void testTableDroppedIsNotCriticial() {
-        Assert.assertFalse(CairoException.tableDropped(new TableToken("x", "x", 123, false, false, false)).isCritical());
+        Assert.assertFalse(CairoException.tableDropped(new TableToken("x", "x", null, 123, false, false, false)).isCritical());
     }
 }

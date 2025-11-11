@@ -551,7 +551,7 @@ public class DropIndexTest extends AbstractCairoTest {
     ) {
         try (TxReader txReader = new TxReader(ff)) {
             int pathLen = path.size();
-            txReader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionedBy);
+            txReader.ofRO(path.concat(TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, partitionedBy);
             path.trimTo(pathLen);
             txReader.unsafeLoadAll();
             Assert.assertEquals(expectedStructureVersion, txReader.getMetadataVersion());
@@ -635,7 +635,7 @@ public class DropIndexTest extends AbstractCairoTest {
             long lastPartition = rdr.getTxFile().getLastPartitionTimestamp();
             long lastPartitionNameTxn = rdr.getTxFile().getPartitionNameTxnByPartitionTimestamp(lastPartition);
             int partitionBy = rdr.getPartitionedBy();
-            TableUtils.setPathForNativePartition(path, partitionBy, lastPartition, lastPartitionNameTxn);
+            TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, partitionBy, lastPartition, lastPartitionNameTxn);
         }
         path.concat("sym").put(".k").put(".1");
         Assert.assertEquals(exists, engine.getConfiguration().getFilesFacade().exists(path.$()));

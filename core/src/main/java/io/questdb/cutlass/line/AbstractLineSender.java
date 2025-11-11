@@ -27,6 +27,7 @@ package io.questdb.cutlass.line;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.std.Decimal256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -45,7 +46,6 @@ import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.Signature;
 import java.security.SignatureException;
-import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
 public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender {
@@ -191,7 +191,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         if (hasTable) {
             throw new LineSenderException("duplicated table. call sender.at() or sender.atNow() to finish the current row first");
         }
-        if (metric.length() == 0) {
+        if (metric.isEmpty()) {
             throw new LineSenderException("table name cannot be empty");
         }
         quoted = false;
@@ -302,8 +302,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
 
     // doesn't do special char checks
     public AbstractLineSender putAsciiInternal(char c) {
-        put((byte) c);
-        return this;
+        return put((byte) c);
     }
 
     // doesn't do special char checks
@@ -319,6 +318,11 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
 
     @Override
     public AbstractLineSender putNonAscii(long lo, long hi) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void reset() {
         throw new UnsupportedOperationException();
     }
 
@@ -428,21 +432,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
             }
             throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
                     "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
-        }
-    }
-
-    protected static long unitToNanos(ChronoUnit unit) {
-        switch (unit) {
-            case NANOS:
-                return 1;
-            case MICROS:
-                return 1_000;
-            case MILLIS:
-                return 1_000_000;
-            case SECONDS:
-                return 1_000_000_000;
-            default:
-                return unit.getDuration().toNanos();
         }
     }
 

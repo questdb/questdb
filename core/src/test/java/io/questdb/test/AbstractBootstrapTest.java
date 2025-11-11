@@ -87,13 +87,17 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     public static TestServerMain startWithEnvVariables(String... envs) {
+        return startWithEnvVariables(root, envs);
+    }
+
+    public static TestServerMain startWithEnvVariables(CharSequence root, String... envs) {
         assert envs.length % 2 == 0;
 
         Map<String, String> envMap = new HashMap<>();
         for (int i = 0; i < envs.length; i += 2) {
             envMap.put(envs[i], envs[i + 1]);
         }
-        TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(envMap));
+        TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(root, envMap));
         try {
             serverMain.start();
             return serverMain;
@@ -113,7 +117,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             code.run();
-            CLOSEABLES.forEach(Misc::free);
+            CLOSEABLE.forEach(Misc::free);
         });
     }
 
@@ -188,13 +192,8 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(LINE_UDP_RECEIVE_BUFFER_SIZE + "=" + ILP_BUFFER_SIZE);
             writer.println(HTTP_FROZEN_CLOCK + "=true");
 
-            // configure worker pools
+            // Do not configure worker pools, use default values, e.g. 3 shared pools
             writer.println(SHARED_WORKER_COUNT + "=2");
-            writer.println(HTTP_WORKER_COUNT + "=1");
-            writer.println(HTTP_MIN_WORKER_COUNT + "=1");
-            writer.println(PG_WORKER_COUNT + "=1");
-            writer.println(LINE_TCP_WRITER_WORKER_COUNT + "=1");
-            writer.println(LINE_TCP_IO_WORKER_COUNT + "=" + ILP_WORKER_COUNT);
 
             // extra
             if (extra != null) {
@@ -274,7 +273,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     @NotNull
-    protected static Bootstrap newBootstrapWithEnvVariables(Map<String, String> envs) {
+    protected static Bootstrap newBootstrapWithEnvVariables(CharSequence root, Map<String, String> envs) {
         Map<String, String> env = new HashMap<>(System.getenv());
         env.putAll(envs);
         env.put(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false");
@@ -285,7 +284,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
                         return env;
                     }
                 },
-                getServerMainArgs()
+                getServerMainArgs(root)
         );
     }
 

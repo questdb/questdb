@@ -62,10 +62,6 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     private int numOfUpdates;
     private SOCountDownLatch updatesDone;
 
-    public LineTcpReceiverUpdateFuzzTest(WalMode walMode) {
-        super(walMode);
-    }
-
     @BeforeClass
     public static void setUpStatic() throws Exception {
         setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 1024);

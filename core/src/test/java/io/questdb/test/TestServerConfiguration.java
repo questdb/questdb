@@ -38,15 +38,15 @@ import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.StationaryNanosClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 
@@ -71,11 +71,12 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         }
     };
     private final WorkerPoolConfiguration confMatViewRefreshPool;
+    private final WorkerPoolConfiguration confExportPool;
     private final WorkerPoolConfiguration confSharedPool;
     private final WorkerPoolConfiguration confWalApplyPool;
     private final boolean enablePgWire;
     private final FactoryProvider factoryProvider;
-    private final PGWireConfiguration confPgWire = new DefaultPGWireConfiguration() {
+    private final PGConfiguration confPgWire = new DefaultPGConfiguration() {
         @Override
         public FactoryProvider getFactoryProvider() {
             return factoryProvider;
@@ -185,7 +186,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             }
 
             @Override
-            public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
+            public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
                 return confLineTcpIOPool;
             }
 
@@ -201,6 +202,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         };
 
         this.confMatViewRefreshPool = () -> 0; // shared pool
+        this.confExportPool = () -> 2; // default export pool worker count
         this.confWalApplyPool = () -> 0;
         this.confSharedPool = () -> workerCountShared;
         this.confLineTcpIOPool = () -> workerCountLineTcpIO;
@@ -243,7 +245,12 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     }
 
     @Override
-    public PGWireConfiguration getPGWireConfiguration() {
+    public WorkerPoolConfiguration getExportPoolConfiguration() {
+        return confExportPool;
+    }
+
+    @Override
+    public PGConfiguration getPGWireConfiguration() {
         return confPgWire;
     }
 
@@ -253,7 +260,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getWorkerPoolConfiguration() {
+    public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
         return confSharedPool;
     }
 }

@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
@@ -45,7 +46,7 @@ public class SecurityContextTest {
     private static final LongList permissions = new LongList();
     private final static String tableName = "tab";
     private static final Object[] THREE_PARAM_ARGS = {permissions, tableName, columns};
-    private static final TableToken userTableToken = new TableToken(tableName, tableName, 0, false, false, false);
+    private static final TableToken userTableToken = new TableToken(tableName, tableName, null, 0, false, false, false);
     private static final Object[] ONE_PARAM_ARGS = {userTableToken};
     private static final Object[] TWO_PARAM_ARGS = {userTableToken, columns};
 
@@ -64,12 +65,11 @@ public class SecurityContextTest {
                         method.invoke(sc, NO_PARAM_ARGS);
                         break;
                     case 1:
-                        if (name.equals("authorizeCopyCancel")) {
-                            method.invoke(sc, sc);
-                        } else if (name.equals("authorizeTableBackup")) {
-                            method.invoke(sc, new ObjHashSet<CharSequence>());
-                        } else {
-                            method.invoke(sc, ONE_PARAM_ARGS);
+                        switch (name) {
+                            case "authorizeCopyCancel" -> method.invoke(sc, sc);
+                            case "authorizeTableBackup" -> method.invoke(sc, new ObjHashSet<CharSequence>());
+                            case "authorizeTableCreate" -> method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
+                            default -> method.invoke(sc, ONE_PARAM_ARGS);
                         }
                         break;
                     case 2:
@@ -102,12 +102,11 @@ public class SecurityContextTest {
                             fail();
                             break;
                         case 1:
-                            if (name.equals("authorizeCopyCancel")) {
-                                method.invoke(sc, sc);
-                            } else if (name.equals("authorizeTableBackup")) {
-                                method.invoke(sc, new ObjHashSet<CharSequence>());
-                            } else {
-                                method.invoke(sc, ONE_PARAM_ARGS);
+                            switch (name) {
+                                case "authorizeCopyCancel" -> method.invoke(sc, sc);
+                                case "authorizeTableBackup" -> method.invoke(sc, new ObjHashSet<CharSequence>());
+                                case "authorizeTableCreate" -> method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
+                                default -> method.invoke(sc, ONE_PARAM_ARGS);
                             }
                             fail();
                             break;
@@ -151,12 +150,11 @@ public class SecurityContextTest {
                             fail();
                             break;
                         case 1:
-                            if (name.equals("authorizeCopyCancel")) {
-                                method.invoke(sc, sc);
-                            } else if (name.equals("authorizeTableBackup")) {
-                                method.invoke(sc, new ObjHashSet<CharSequence>());
-                            } else {
-                                method.invoke(sc, ONE_PARAM_ARGS);
+                            switch (name) {
+                                case "authorizeCopyCancel" -> method.invoke(sc, sc);
+                                case "authorizeTableBackup" -> method.invoke(sc, new ObjHashSet<CharSequence>());
+                                case "authorizeTableCreate" -> method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
+                                default -> method.invoke(sc, ONE_PARAM_ARGS);
                             }
                             if (name.startsWith("authorizeShow")
                                     || name.startsWith("authorizeSelect")) {

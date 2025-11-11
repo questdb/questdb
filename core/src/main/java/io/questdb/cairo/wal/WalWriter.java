@@ -44,6 +44,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -71,6 +72,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -98,7 +100,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.TableWriter.validateDesignatedTimestampBounds;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
@@ -131,6 +132,7 @@ public class WalWriter implements TableWriterAPI {
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
+    private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
@@ -189,7 +191,7 @@ public class WalWriter implements TableWriterAPI {
         this.walId = walId;
         this.path = new Path();
         path.of(configuration.getDbRoot());
-        this.pathRootSize = path.size();
+        this.pathRootSize = configuration.getDbLogName() == null ? path.size() : 0;
         this.path.concat(tableToken).concat(walName);
         this.pathSize = path.size();
         this.metrics = configuration.getMetrics();
@@ -200,8 +202,8 @@ public class WalWriter implements TableWriterAPI {
             mkWalDir();
 
             metadata = new WalWriterMetadata(ff);
-
             tableSequencerAPI.getTableMetadata(tableToken, metadata);
+            this.timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
             this.tableToken = metadata.getTableToken();
 
             columnCount = metadata.getColumnCount();
@@ -384,6 +386,7 @@ public class WalWriter implements TableWriterAPI {
                 Misc.free(path);
                 LOG.info().$("closed [table=").$(tableToken).I$();
             }
+            columnVersionReader = Misc.free(columnVersionReader);
         }
     }
 
@@ -481,7 +484,7 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public TableWriter.Row newRow(long timestamp) {
         checkDistressed();
-        validateDesignatedTimestampBounds(timestamp);
+        timestampDriver.validateBounds(timestamp);
         try {
             if (rollSegmentOnNextRow) {
                 rollSegment();
@@ -784,6 +787,24 @@ public class WalWriter implements TableWriterAPI {
                 case ColumnType.UUID:
                     nullers.add(() -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL));
                     break;
+                case ColumnType.DECIMAL8:
+                    nullers.add(() -> dataMem.putByte(Byte.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL16:
+                    nullers.add(() -> dataMem.putShort(Short.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL32:
+                    nullers.add(() -> dataMem.putInt(Integer.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL64:
+                    nullers.add(() -> dataMem.putLong(Long.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL128:
+                    nullers.add(() -> dataMem.putDecimal128(Long.MIN_VALUE, -1));
+                    break;
+                case ColumnType.DECIMAL256:
+                    nullers.add(() -> dataMem.putDecimal256(Long.MIN_VALUE, -1, -1, -1));
+                    break;
                 default:
                     throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
             }
@@ -1044,9 +1065,9 @@ public class WalWriter implements TableWriterAPI {
                             .$(", segTxn=").$(lastSegmentTxn)
                             .$(", seqTxn=").$(seqTxn)
                             .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
-                            .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp);
+                            .$(", minTs=").$ts(timestampDriver, txnMinTimestamp).$(", maxTs=").$ts(timestampDriver, txnMaxTimestamp);
                     if (replaceRangeHiTs > replaceRangeLowTs) {
-                        logLine.$(", replaceRangeLo=").$ts(replaceRangeLowTs).$(", replaceRangeHi=").$ts(replaceRangeHiTs);
+                        logLine.$(", replaceRangeLo=").$ts(timestampDriver, replaceRangeLowTs).$(", replaceRangeHi=").$ts(timestampDriver, replaceRangeHiTs);
                     }
                 } finally {
                     logLine.I$();
@@ -1223,7 +1244,7 @@ public class WalWriter implements TableWriterAPI {
 
                         // Does not matter which PartitionBy, as long as it is partitioned
                         // WAL tables must be partitioned
-                        txReader.ofRO(path.$(), PartitionBy.DAY);
+                        txReader.ofRO(path.$(), metadata.getTimestampType(), PartitionBy.DAY);
                         path.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
                         columnVersionReader.ofRO(ff, path.$());
 
@@ -1242,8 +1263,8 @@ public class WalWriter implements TableWriterAPI {
 
                     if (initialized) {
                         int symbolValueCount = txReader.getSymbolValueCount(denseSymbolIndex);
-                        long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(i);
-                        configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, columnNameTxn);
+                        long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(i);
+                        configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, symbolTableNameTxn);
                     } else {
                         // table on disk structure version does not match the structure version of the WalWriter
                         // it is not possible to re-use table symbol table because the column name may not match.
@@ -1259,7 +1280,6 @@ public class WalWriter implements TableWriterAPI {
                 }
             }
         } finally {
-            Misc.free(columnVersionReader);
             Misc.free(txReader);
         }
     }
@@ -1468,7 +1488,7 @@ public class WalWriter implements TableWriterAPI {
             if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
                 dirFd = -1;
             } else {
-                dirFd = TableUtils.openRO(ff, path.$(), LOG);
+                dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
             }
 
             for (int i = 0; i < columnCount; i++) {
@@ -1756,11 +1776,14 @@ public class WalWriter implements TableWriterAPI {
         auxMem.jumpTo(auxMemSize);
         if (rowCount > 0) {
             final long auxMemAddr = TableUtils.mapRW(ff, auxMem.getFd(), auxMemSize, MEM_TAG);
-            columnTypeDriver.setFullAuxVectorNull(auxMemAddr, rowCount);
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.msync(auxMemAddr, auxMemSize, commitMode == CommitMode.ASYNC);
+            try {
+                columnTypeDriver.setFullAuxVectorNull(auxMemAddr, rowCount);
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.msync(auxMemAddr, auxMemSize, commitMode == CommitMode.ASYNC);
+                }
+            } finally {
+                ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
             }
-            ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
         }
     }
 
@@ -1770,14 +1793,14 @@ public class WalWriter implements TableWriterAPI {
         dataMem.jumpTo(varColSize);
         if (rowCount > 0 && varColSize > 0) {
             final long dataMemAddr = TableUtils.mapRW(ff, dataMem.getFd(), varColSize, MEM_TAG);
-            columnTypeDriver.setDataVectorEntriesToNull(
-                    dataMemAddr,
-                    rowCount
-            );
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.msync(dataMemAddr, varColSize, commitMode == CommitMode.ASYNC);
+            try {
+                columnTypeDriver.setDataVectorEntriesToNull(dataMemAddr, rowCount);
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.msync(dataMemAddr, varColSize, commitMode == CommitMode.ASYNC);
+                }
+            } finally {
+                ff.munmap(dataMemAddr, varColSize, MEM_TAG);
             }
-            ff.munmap(dataMemAddr, varColSize, MEM_TAG);
         }
     }
 
@@ -1983,6 +2006,11 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public TableToken getTableToken() {
             return tableToken;
+        }
+
+        @Override
+        public int getTimestampType() {
+            return metadata.getTimestampType();
         }
 
         @Override
@@ -2226,6 +2254,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public int getTimestampType() {
+            return metadata.getTimestampType();
+        }
+
+        @Override
         public void removeColumn(@NotNull CharSequence columnNameSeq) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
             if (columnIndex > -1) {
@@ -2337,6 +2370,7 @@ public class WalWriter implements TableWriterAPI {
     private class RowImpl implements TableWriter.Row {
         private final StringSink tempSink = new StringSink();
         private final Utf8StringSink tempUtf8Sink = new Utf8StringSink();
+        private final Decimal256 decimal256Sink = new Decimal256();
         private long timestamp;
 
         @Override
@@ -2392,6 +2426,30 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public void putDate(int columnIndex, long value) {
             putLong(columnIndex, value);
+        }
+
+        @Override
+        public void putDecimal(int columnIndex, Decimal256 value) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimal(columnIndex, value, type, this);
+        }
+
+        @Override
+        public void putDecimal128(int columnIndex, long high, long low) {
+            getPrimaryColumn(columnIndex).putDecimal128(high, low);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll) {
+            getPrimaryColumn(columnIndex).putDecimal256(hh, hl, lh, ll);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
+            int columnType = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalStr(columnIndex, decimal256Sink, decimalValue, columnType, this);
         }
 
         @Override

@@ -27,7 +27,6 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -36,7 +35,7 @@ import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicReference;
@@ -48,6 +47,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     public LineTcpReceiverConfigurationWrapper(Metrics metrics) {
         this.metrics = metrics;
         delegate.set(null);
+    }
+
+    @Override
+    public long getAcceptLoopTimeout() {
+        return getDelegate().getAcceptLoopTimeout();
     }
 
     @Override
@@ -121,6 +125,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
+    public int getDefaultCreateTimestampColumnType() {
+        return getDelegate().getDefaultCreateTimestampColumnType();
+    }
+
+    @Override
     public int getDefaultPartitionBy() {
         return getDelegate().getDefaultPartitionBy();
     }
@@ -168,11 +177,6 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public int getIOQueueCapacity() {
         return getDelegate().getIOQueueCapacity();
-    }
-
-    @Override
-    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
-        return getDelegate().getIOWorkerPoolConfiguration();
     }
 
     @Override
@@ -251,6 +255,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
+    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+        return getDelegate().getNetworkWorkerPoolConfiguration();
+    }
+
+    @Override
     public boolean getPeerNoLinger() {
         return getDelegate().getPeerNoLinger();
     }
@@ -291,8 +300,8 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public LineTcpTimestampAdapter getTimestampAdapter() {
-        return getDelegate().getTimestampAdapter();
+    public byte getTimestampUnit() {
+        return getDelegate().getTimestampUnit();
     }
 
     @Override

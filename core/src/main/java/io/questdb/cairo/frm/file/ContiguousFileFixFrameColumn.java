@@ -43,7 +43,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     public static final int MEMORY_TAG = MemoryTag.MMAP_TABLE_WRITER;
     private static final Log LOG = LogFactory.getLog(ContiguousFileFixFrameColumn.class);
     protected final FilesFacade ff;
-    private final long fileOpts;
+    private final int fileOpts;
     private final boolean mixedIOFlag;
     // Introduce a flag to avoid double close, which will lead to very serious consequences.
     protected boolean closed;

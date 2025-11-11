@@ -27,12 +27,12 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryCMORImpl;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.ColumnConversionOffsetSink;
 import io.questdb.griffin.ConvertersNative;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SymbolMapWriterLite;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
@@ -43,7 +43,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -55,26 +54,22 @@ public class ColumnTypeConverter {
     private static final Fixed2VarConverter converterFromBoolean2String = ColumnTypeConverter::stringFromBoolean;
     private static final Fixed2VarConverter converterFromByte2String = ColumnTypeConverter::stringFromByte;
     private static final Fixed2VarConverter converterFromChar2String = ColumnTypeConverter::stringFromChar;
-    private static final Fixed2VarConverter converterFromDate2String = ColumnTypeConverter::stringFromDate;
     private static final Fixed2VarConverter converterFromDouble2String = ColumnTypeConverter::stringFromDouble;
     private static final Fixed2VarConverter converterFromFloat2String = ColumnTypeConverter::stringFromFloat;
     private static final Fixed2VarConverter converterFromIPv42String = ColumnTypeConverter::stringFromIPv4;
     private static final Fixed2VarConverter converterFromInt2String = ColumnTypeConverter::stringFromInt;
     private static final Fixed2VarConverter converterFromLong2String = ColumnTypeConverter::stringFromLong;
     private static final Fixed2VarConverter converterFromShort2String = ColumnTypeConverter::stringFromShort;
-    private static final Fixed2VarConverter converterFromTimestamp2String = ColumnTypeConverter::stringFromTimestamp;
     private static final Fixed2VarConverter converterFromUuid2String = ColumnTypeConverter::stringFromUuid;
     private static final Var2FixedConverter<CharSequence> converterStr2Boolean = ColumnTypeConverter::str2Boolean;
     private static final Var2FixedConverter<CharSequence> converterStr2Byte = ColumnTypeConverter::str2Byte;
     private static final Var2FixedConverter<CharSequence> converterStr2Char = ColumnTypeConverter::str2Char;
-    private static final Var2FixedConverter<CharSequence> converterStr2Date = ColumnTypeConverter::str2Date;
     private static final Var2FixedConverter<CharSequence> converterStr2Double = ColumnTypeConverter::str2Double;
     private static final Var2FixedConverter<CharSequence> converterStr2Float = ColumnTypeConverter::str2Float;
     private static final Var2FixedConverter<CharSequence> converterStr2IPv4 = ColumnTypeConverter::str2IpV4;
     private static final Var2FixedConverter<CharSequence> converterStr2Int = ColumnTypeConverter::str2Int;
     private static final Var2FixedConverter<CharSequence> converterStr2Long = ColumnTypeConverter::str2Long;
     private static final Var2FixedConverter<CharSequence> converterStr2Short = ColumnTypeConverter::str2Short;
-    private static final Var2FixedConverter<CharSequence> converterStr2Timestamp = ColumnTypeConverter::str2Timestamp;
     private static final Var2FixedConverter<CharSequence> converterStr2Uuid = ColumnTypeConverter::str2Uuid;
     private static final ThreadLocal<MemoryCMARW> dstFixMemTL = new ThreadLocal<>(io.questdb.cairo.vm.MemoryCMARWImpl::new);
     private static final ThreadLocal<MemoryCMARW> dstVarMemTL = new ThreadLocal<>(io.questdb.cairo.vm.MemoryCMARWImpl::new);
@@ -104,26 +99,26 @@ public class ColumnTypeConverter {
             assert symbolTable != null;
             convertFromSymbol(skipRows, rowCount, srcFixFd, symbolTable, dstColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
             return true;
+        } else if (ColumnType.isFixedSize(ColumnType.tagOf(srcColumnType)) && ColumnType.isDecimal(dstColumnType)) {
+            return convertToDecimal(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
         } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
             return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink);
         } else if (ColumnType.isVarSize(srcColumnType)) {
-            switch (srcColumnType) {
-                case ColumnType.STRING:
-                    return convertFromString(skipRows, rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter, columnSizesSink);
-                case ColumnType.VARCHAR:
-                    return convertFromVarchar(skipRows, rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter, columnSizesSink);
-                default:
-                    throw unsupportedConversion(srcColumnType, dstColumnType);
-            }
+            return switch (srcColumnType) {
+                case ColumnType.STRING ->
+                        convertFromString(skipRows, rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter, columnSizesSink);
+                case ColumnType.VARCHAR ->
+                        convertFromVarchar(skipRows, rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter, columnSizesSink);
+                default -> throw unsupportedConversion(srcColumnType, dstColumnType);
+            };
         } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
-            switch (dstColumnType) {
-                case ColumnType.STRING:
-                    return convertFixedToString(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
-                case ColumnType.VARCHAR:
-                    return convertFixedToVarchar(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
-                default:
-                    throw unsupportedConversion(srcColumnType, dstColumnType);
-            }
+            return switch (dstColumnType) {
+                case ColumnType.STRING ->
+                        convertFixedToString(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                case ColumnType.VARCHAR ->
+                        convertFixedToVarchar(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                default -> throw unsupportedConversion(srcColumnType, dstColumnType);
+            };
         } else if (ColumnType.isFixedSize(srcColumnType) && dstColumnType == ColumnType.SYMBOL) {
             assert symbolMapWriter != null;
             return convertFixedToSymbol(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, symbolMapWriter, ff, appendPageSize, columnSizesSink);
@@ -133,34 +128,21 @@ public class ColumnTypeConverter {
     }
 
     public static Var2FixedConverter<CharSequence> getConverterFromVarToFixed(short srcType, int dstColumnType) {
-        switch (dstColumnType) {
-            case ColumnType.IPv4:
-                return converterStr2IPv4;
-            case ColumnType.UUID:
-                return converterStr2Uuid;
-            case ColumnType.INT:
-                return converterStr2Int;
-            case ColumnType.SHORT:
-                return converterStr2Short;
-            case ColumnType.BYTE:
-                return converterStr2Byte;
-            case ColumnType.CHAR:
-                return converterStr2Char;
-            case ColumnType.LONG:
-                return converterStr2Long;
-            case ColumnType.DOUBLE:
-                return converterStr2Double;
-            case ColumnType.FLOAT:
-                return converterStr2Float;
-            case ColumnType.DATE:
-                return converterStr2Date;
-            case ColumnType.TIMESTAMP:
-                return converterStr2Timestamp;
-            case ColumnType.BOOLEAN:
-                return converterStr2Boolean;
-            default:
-                throw unsupportedConversion(srcType, dstColumnType);
-        }
+        return switch (ColumnType.tagOf(dstColumnType)) {
+            case ColumnType.IPv4 -> converterStr2IPv4;
+            case ColumnType.UUID -> converterStr2Uuid;
+            case ColumnType.INT -> converterStr2Int;
+            case ColumnType.SHORT -> converterStr2Short;
+            case ColumnType.BYTE -> converterStr2Byte;
+            case ColumnType.CHAR -> converterStr2Char;
+            case ColumnType.LONG -> converterStr2Long;
+            case ColumnType.DOUBLE -> converterStr2Double;
+            case ColumnType.FLOAT -> converterStr2Float;
+            case ColumnType.DATE -> MillsTimestampDriver.INSTANCE.getConverterStr2Timestamp();
+            case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(dstColumnType).getConverterStr2Timestamp();
+            case ColumnType.BOOLEAN -> converterStr2Boolean;
+            default -> throw unsupportedConversion(srcType, dstColumnType);
+        };
     }
 
     private static boolean convertFixedToFixed(
@@ -193,14 +175,13 @@ public class ColumnTypeConverter {
             columnSizesSink.setDestSizes(dstMapBytes, -1);
 
             long succeeded = ConvertersNative.fixedToFixed(srcMapAddress, srcColumnType, dstMapAddress, dstColumnType, rowCount);
-            switch ((int) succeeded) {
-                case ConvertersNative.ConversionError.NONE:
-                    return true;
-                case ConvertersNative.ConversionError.UNSUPPORTED_CAST:
-                    throw unsupportedConversion(srcColumnType, dstColumnType);
-                default:
-                    throw CairoException.critical(0).put("Unknown return code from native call: ").put(succeeded);
-            }
+            return switch ((int) succeeded) {
+                case ConvertersNative.ConversionError.NONE -> true;
+                case ConvertersNative.ConversionError.UNSUPPORTED_CAST ->
+                        throw unsupportedConversion(srcColumnType, dstColumnType);
+                default ->
+                        throw CairoException.critical(0).put("Unknown return code from native call: ").put(succeeded);
+            };
         } finally {
             if (srcMapAddress != 0) {
                 TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
@@ -860,161 +841,160 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static Fixed2VarConverter getFixedToVarConverter(int srcColumnType, int dstColumnType) {
-        switch (srcColumnType) {
-            case ColumnType.INT:
-                return (converterFromInt2String);
-            case ColumnType.UUID:
-                return (converterFromUuid2String);
-            case ColumnType.IPv4:
-                return (converterFromIPv42String);
-            case ColumnType.SHORT:
-                return (converterFromShort2String);
-            case ColumnType.BYTE:
-                return (converterFromByte2String);
-            case ColumnType.CHAR:
-                return (converterFromChar2String);
-            case ColumnType.LONG:
-                return (converterFromLong2String);
-            case ColumnType.DOUBLE:
-                return (converterFromDouble2String);
-            case ColumnType.FLOAT:
-                return (converterFromFloat2String);
-            case ColumnType.DATE:
-                return (converterFromDate2String);
-            case ColumnType.TIMESTAMP:
-                return (converterFromTimestamp2String);
-            case ColumnType.BOOLEAN:
-                return (converterFromBoolean2String);
-            default:
-                throw unsupportedConversion(srcColumnType, dstColumnType);
+    private static boolean convertToDecimal(
+            long skipRows,
+            long rowCount,
+            long srcFixFd,
+            int srcColumnType,
+            long dstFixFd,
+            int dstColumnType,
+            FilesFacade ff,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
+        final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
+        long srcMapAddress = 0;
+
+        long skipBytes = skipRows * srcColumnTypeSize;
+        long mapBytes = rowCount * srcColumnTypeSize;
+        long dstMapBytes = rowCount * dstColumnTypeSize;
+
+        MemoryCMARW dstFixMem = dstFixMemTL.get();
+        try {
+            srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+            columnSizesSink.setSrcOffsets(skipBytes, -1);
+
+            if (!ff.truncate(dstFixFd, dstMapBytes)) {
+                throw CairoException.critical(ff.errno()).put("Cannot allocate fd: ").put(dstFixFd).put(", size: ").put(dstMapBytes);
+            }
+
+            columnSizesSink.setDestSizes(dstMapBytes, -1);
+            dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, rowCount * dstColumnTypeSize, memoryTag);
+            dstFixMem.jumpTo(0);
+
+            return DecimalColumnTypeConverter.convertToDecimal(srcMapAddress, srcColumnType, dstFixMem, dstColumnType, srcColumnTypeSize, rowCount);
+        } finally {
+            if (srcMapAddress != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
+            }
+            dstFixMem.detachFdClose();
         }
     }
 
-    private static void str2Boolean(CharSequence str, MemoryCMARW memoryCMARW) {
-        memoryCMARW.putBool(str != null && SqlKeywords.isTrueKeyword(str));
+    private static Fixed2VarConverter getFixedToVarConverter(int srcColumnType, int dstColumnType) {
+        return switch (ColumnType.tagOf(srcColumnType)) {
+            case ColumnType.INT -> converterFromInt2String;
+            case ColumnType.UUID -> converterFromUuid2String;
+            case ColumnType.IPv4 -> converterFromIPv42String;
+            case ColumnType.SHORT -> converterFromShort2String;
+            case ColumnType.BYTE -> converterFromByte2String;
+            case ColumnType.CHAR -> converterFromChar2String;
+            case ColumnType.LONG -> converterFromLong2String;
+            case ColumnType.DOUBLE -> converterFromDouble2String;
+            case ColumnType.FLOAT -> converterFromFloat2String;
+            case ColumnType.DATE -> MillsTimestampDriver.INSTANCE.getConverterTimestamp2Str();
+            case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(srcColumnType).getConverterTimestamp2Str();
+            case ColumnType.BOOLEAN -> converterFromBoolean2String;
+            default -> throw unsupportedConversion(srcColumnType, dstColumnType);
+        };
     }
 
-    private static void str2Byte(CharSequence str, MemoryCMARW memoryCMARW) {
+    private static void str2Boolean(CharSequence str, MemoryA mem) {
+        mem.putBool(str != null && SqlKeywords.isTrueKeyword(str));
+    }
+
+    private static void str2Byte(CharSequence str, MemoryA memoryCMARW) {
         // Same as CAST(str as BYTE), same null, overflow problems
         byte num = (byte) Numbers.parseIntQuiet(str);
         memoryCMARW.putByte(num);
     }
 
-    private static void str2Char(CharSequence str, MemoryCMARW memoryCMARW) {
-        memoryCMARW.putChar(str == null || str.length() == 0 ? 0 : str.charAt(0));
+    private static void str2Char(CharSequence str, MemoryA mem) {
+        mem.putChar(str == null || str.isEmpty() ? 0 : str.charAt(0));
     }
 
-    private static void str2Date(CharSequence str, MemoryCMARW memoryCMARW) {
-        if (str != null) {
-            try {
-                long timestamp = IntervalUtils.parseFloorPartialTimestamp(str);
-                memoryCMARW.putLong(timestamp / 1000);
-                return;
-            } catch (NumericException e) {
-                // Fall through
-            }
-        }
-        memoryCMARW.putLong(Numbers.LONG_NULL);
-    }
-
-    private static void str2Double(CharSequence str, MemoryCMARW memoryCMARW) {
+    private static void str2Double(CharSequence str, MemoryA mem) {
         try {
             if (str != null) {
-                memoryCMARW.putDouble(Numbers.parseDouble(str));
+                mem.putDouble(Numbers.parseDouble(str));
                 return;
             }
         } catch (NumericException e) {
             // Fall through
         }
-        memoryCMARW.putDouble(Double.NaN);
+        mem.putDouble(Double.NaN);
     }
 
-    private static void str2Float(CharSequence str, MemoryCMARW memoryCMARW) {
+    private static void str2Float(CharSequence str, MemoryA mem) {
         try {
             if (str != null) {
-                memoryCMARW.putFloat(Numbers.parseFloat(str));
+                mem.putFloat(Numbers.parseFloat(str));
                 return;
             }
         } catch (NumericException e) {
             // Fall through
         }
-        memoryCMARW.putFloat(Float.NaN);
+        mem.putFloat(Float.NaN);
     }
 
-    private static void str2Int(CharSequence str, MemoryCMARW memoryCMARW) {
+    private static void str2Int(CharSequence str, MemoryA mem) {
         if (str != null) {
             try {
-                int num = Numbers.parseInt(str);
-                memoryCMARW.putInt(num);
+                mem.putInt(Numbers.parseInt(str));
                 return;
             } catch (NumericException e) {
                 // Fall through
             }
         }
-        memoryCMARW.putInt(Numbers.INT_NULL);
+        mem.putInt(Numbers.INT_NULL);
     }
 
-    private static void str2IpV4(CharSequence str, MemoryCMARW dstFixMem) {
-        int ipv4 = Numbers.parseIPv4Quiet(str);
-        dstFixMem.putInt(ipv4);
+    private static void str2IpV4(CharSequence str, MemoryA mem) {
+        mem.putInt(Numbers.parseIPv4Quiet(str));
     }
 
-    private static void str2Long(CharSequence str, MemoryCMARW memoryCMARW) {
+    private static void str2Long(CharSequence str, MemoryA mem) {
         if (str != null) {
             try {
                 long num = Numbers.parseLong(str);
-                memoryCMARW.putLong(num);
+                mem.putLong(num);
                 return;
             } catch (NumericException e) {
                 // Fall through
             }
         }
-        memoryCMARW.putLong(Numbers.LONG_NULL);
+        mem.putLong(Numbers.LONG_NULL);
     }
 
-    private static void str2Short(CharSequence value, MemoryCMARW memoryCMARW) {
+    private static void str2Short(CharSequence value, MemoryA mem) {
         // Same as CAST(str as SHORT), same null, overflow problems
         try {
             if (value != null) {
-                memoryCMARW.putShort((short) Numbers.parseInt(value));
+                mem.putShort((short) Numbers.parseInt(value));
                 return;
             }
         } catch (NumericException e) {
             // Fall through
         }
-        memoryCMARW.putShort((short) 0);
+        mem.putShort((short) 0);
     }
 
-    private static void str2Timestamp(CharSequence str, MemoryCMARW memoryCMARW) {
-        if (str != null) {
-            try {
-                long timestamp = IntervalUtils.parseFloorPartialTimestamp(str);
-                memoryCMARW.putLong(timestamp);
-                return;
-            } catch (NumericException e) {
-                // Fall through
-            }
-        }
-        memoryCMARW.putLong(Numbers.LONG_NULL);
-    }
-
-    private static void str2Uuid(CharSequence str, MemoryCMARW dstFixMem) {
+    private static void str2Uuid(CharSequence str, MemoryA mem) {
         if (str != null) {
             try {
                 Uuid.checkDashesAndLength(str);
                 long uuidHi = Uuid.parseHi(str);
                 long uuidLo = Uuid.parseLo(str);
-                dstFixMem.putLong(uuidLo);
-                dstFixMem.putLong(uuidHi);
+                mem.putLong(uuidLo);
+                mem.putLong(uuidHi);
                 return;
             } catch (NumericException e) {
                 // Fall through
             }
         }
 
-        dstFixMem.putLong(Numbers.LONG_NULL);
-        dstFixMem.putLong(Numbers.LONG_NULL);
+        mem.putLong(Numbers.LONG_NULL);
+        mem.putLong(Numbers.LONG_NULL);
     }
 
     private static boolean stringFromBoolean(long srcAddr, CharSink<?> sink) {
@@ -1033,15 +1013,6 @@ public class ColumnTypeConverter {
         char value = Unsafe.getUnsafe().getChar(srcAddr);
         if (value != 0) {
             sink.put(value);
-            return true;
-        }
-        return false;
-    }
-
-    private static boolean stringFromDate(long srcAddr, CharSink<?> sink) {
-        long value = Unsafe.getUnsafe().getLong(srcAddr);
-        if (value != Numbers.LONG_NULL) {
-            sink.putISODateMillis(value);
             return true;
         }
         return false;
@@ -1098,15 +1069,6 @@ public class ColumnTypeConverter {
         return true;
     }
 
-    private static boolean stringFromTimestamp(long srcAddr, CharSink<?> sink) {
-        long value = Unsafe.getUnsafe().getLong(srcAddr);
-        if (value != Numbers.LONG_NULL) {
-            TimestampFormatUtils.appendDateTimeUSec(sink, value);
-            return true;
-        }
-        return false;
-    }
-
     private static boolean stringFromUuid(long srcAddr, CharSink<?> sink) {
         long lo = Unsafe.getUnsafe().getLong(srcAddr);
         long hi = Unsafe.getUnsafe().getLong(srcAddr + 8L);
@@ -1118,16 +1080,18 @@ public class ColumnTypeConverter {
     }
 
     private static CairoException unsupportedConversion(int srcColumnType, int dstColumnType) {
-        return CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
+        return CairoException.critical(0)
+                .put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType))
+                .put(" to ").put(ColumnType.nameOf(dstColumnType));
     }
 
     @FunctionalInterface
-    private interface Fixed2VarConverter {
+    public interface Fixed2VarConverter {
         boolean convert(long fixedAddr, CharSink<?> stringSink);
     }
 
     @FunctionalInterface
     public interface Var2FixedConverter<T> {
-        void convert(T srcVar, MemoryCMARW dstFixMem);
+        void convert(T srcVar, MemoryA dstFixMem);
     }
 }

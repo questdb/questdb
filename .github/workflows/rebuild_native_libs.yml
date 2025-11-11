@@ -30,6 +30,9 @@ jobs:
           submodules: true
       - name: Install toolchains (CXX/NASM)
         run: |
+          # https://github.com/actions/runner-images/issues/12912
+          # Temporary fix (mtopolnik 2025-09-02): GH Action pre-installs a custom cmake version, install then fails
+          brew uninstall cmake
           brew install make cmake gcc nasm
       - name: Build CXX Library
         run: |
@@ -282,6 +285,17 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
           git add core/src/main/bin/linux-aarch64/libjemalloc.so
           git add core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
+          
+          echo "Removing exec permissions in Git index..."
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
+          
+          git update-index --chmod=-x core/src/main/bin/linux-x86-64/libjemalloc.so
+          git update-index --chmod=-x core/src/main/bin/linux-aarch64/libjemalloc.so
+          git update-index --chmod=-x core/src/main/bin/darwin-x86-64/libjemalloc.dylib
+          git update-index --chmod=-x core/src/main/bin/darwin-aarch64/libjemalloc.dylib
           
           git commit -m "Rebuild CXX libraries"
       - name: Check git status after

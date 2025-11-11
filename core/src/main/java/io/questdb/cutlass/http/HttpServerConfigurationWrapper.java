@@ -51,6 +51,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
+    public long getAcceptLoopTimeout() {
+        return getDelegate().getAcceptLoopTimeout();
+    }
+
+    @Override
     public int getBindIPv4Address() {
         return getDelegate().getBindIPv4Address();
     }
@@ -313,6 +318,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     @Override
     public boolean haltOnError() {
         return getDelegate().haltOnError();
+    }
+
+    @Override
+    public boolean isAcceptingWrites() {
+        return getDelegate().isAcceptingWrites();
     }
 
     @Override

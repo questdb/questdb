@@ -34,6 +34,7 @@ import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
@@ -45,6 +46,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
@@ -283,25 +285,25 @@ public abstract class HttpClient implements QuietCloseable {
         public Request DELETE() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("DELETE ");
+            return putAscii("DELETE ");
         }
 
         public Request GET() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("GET ");
+            return putAscii("GET ");
         }
 
         public Request POST() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("POST ");
+            return putAscii("POST ");
         }
 
         public Request PUT() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("PUT ");
+            return putAscii("PUT ");
         }
 
         public Request authBasic(CharSequence username, CharSequence password) {
@@ -475,18 +477,52 @@ public abstract class HttpClient implements QuietCloseable {
             return send(defaultTimeout);
         }
 
-        public ResponseHeaders send(int timeout) {
+        /**
+         * Sends the HTTP request to the specified host and port with connection management.
+         * <p>
+         * This method intelligently manages the underlying socket connection:
+         * <ul>
+         *   <li>Reuses the existing connection if already connected to the same host:port</li>
+         *   <li>Establishes a new connection if not connected or connecting to a different host:port</li>
+         *   <li>Automatically reconnects if the existing connection is closed or broken (when configured)</li>
+         * </ul>
+         * <p>
+         * The request must be in a valid state (URL set, optional query parameters, headers, or content added)
+         * before calling this method. The HTTP version (1.1) and Host header are automatically appended.
+         * <p>
+         * Common use cases include:
+         * <ul>
+         *   <li>Failover scenarios - retry the same request on a different server</li>
+         *   <li>Multi-publishing - send the same data to multiple endpoints</li>
+         * </ul>
+         * Important: If the request buffer already contains a HTTP request header with a host
+         * then the host will not change! This means reverse proxies routing requests to different
+         * host based on the Host header will not work! Routing on TLS SNI will not be affected.
+         *
+         * @param host    the hostname or IP address to connect to
+         * @param port    the port number to connect on
+         * @param timeout the request timeout in milliseconds for socket operations
+         * @return the parsed response headers from the server
+         * @throws AssertionError if the request is not in a valid state
+         */
+        public ResponseHeaders send(CharSequence host, int port, int timeout) {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
             if (socket == null || socket.isClosed()) {
                 connect(host, port);
             } else if (fixBrokenConnection && nf.testConnection(socket.getFd(), responseParserBufLo, 1)) {
                 socket.close();
                 connect(host, port);
+            } else if (!Chars.equalsNc(host, HttpClient.this.host) || (port != HttpClient.this.port)) {
+                socket.close();
+                connect(host, port);
+                HttpClient.this.host = host;
+                HttpClient.this.port = port;
             }
 
             if (state == STATE_URL_DONE || state == STATE_QUERY) {
                 putAsciiInternal(" HTTP/1.1").putEOL();
                 putAsciiInternal("Host: ").put(host).putAscii(':').put(port).putEOL();
+                state = STATE_HEADER;
             }
 
             if (contentStart > -1) {
@@ -498,6 +534,10 @@ public abstract class HttpClient implements QuietCloseable {
             }
             responseHeaders.clear();
             return responseHeaders;
+        }
+
+        public ResponseHeaders send(int timeout) {
+            return send(host, port, timeout);
         }
 
         public void sendPartialContent(int maxContentLen, int timeout) {
@@ -519,6 +559,15 @@ public abstract class HttpClient implements QuietCloseable {
             }
             eol();
             return this;
+        }
+
+        @Override
+        public String toString() {
+            StringSink ss = new StringSink();
+            DirectUtf8String s = new DirectUtf8String();
+            s.of(bufLo, ptr);
+            ss.put(s);
+            return ss.toString();
         }
 
         public void trimContentToLen(int contentLen) {
@@ -609,10 +658,15 @@ public abstract class HttpClient implements QuietCloseable {
             }
 
             if (socket.supportsTls()) {
-                if (socket.startTlsSession(host) < 0) {
+                try {
+                    socket.startTlsSession(host);
+                } catch (TlsSessionInitFailedException e) {
                     int errno = nf.errno();
                     disconnect();
-                    throw new HttpClientException("could not start TLS session [fd=").put(fd).put(", errno=").put(errno).put(']');
+                    throw new HttpClientException("could not start TLS session [fd=").put(fd)
+                            .put(", error=").put(e.getFlyweightMessage())
+                            .put(", errno=").put(errno)
+                            .put(']');
                 }
             }
             setupIoWait();
@@ -749,6 +803,15 @@ public abstract class HttpClient implements QuietCloseable {
                     break;
                 case '}':
                     putAsciiInternal("%7D");
+                    break;
+                case '\n':
+                    putAsciiInternal("%0A");
+                    break;
+                case '\r':
+                    putAsciiInternal("%0D");
+                    break;
+                case '\t':
+                    putAsciiInternal("%09");
                     break;
                 default:
                     // there are symbols to escape, but those we do not tend to use at all
