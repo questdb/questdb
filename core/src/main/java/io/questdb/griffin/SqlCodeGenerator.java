@@ -210,6 +210,7 @@ import io.questdb.griffin.engine.join.LtJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.MarkoutHorizonRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
@@ -220,7 +221,6 @@ import io.questdb.griffin.engine.join.SingleStringColumnAccessHelper;
 import io.questdb.griffin.engine.join.SingleSymbolColumnAccessHelper;
 import io.questdb.griffin.engine.join.SingleVarcharColumnAccessHelper;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
-import io.questdb.griffin.engine.join.TimestampLadderRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
@@ -1557,7 +1557,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Attempts to detect the "timestamp ladder" pattern in a cross-join with ORDER BY.
+     * Attempts to detect the "markout horizon" pattern in a cross-join with ORDER BY.
      * <p>
      * The pattern consists of:
      * 1. A cross-join between a table with a designated timestamp and an arithmetic sequence
@@ -1573,9 +1573,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * @param slaveModel          QueryModel for the RHS of the join
      * @param slaveMetadata       Metadata for the RHS of the join (should be an arithmetic sequence)
      * @param slaveCursorFactory  the RHS cursor factory (should produce an arithmetic sequence)
-     * @return TimestampLadderInfo if pattern is detected, null otherwise
+     * @return MarkoutHorizonInfo if pattern is detected, null otherwise
      */
-    private TimestampLadderInfo detectTimestampLadderPattern(
+    private MarkoutHorizonInfo detectMarkoutHorizonPattern(
             CharSequence masterAlias,
             QueryModel masterModel,
             RecordMetadata masterMetadata,
@@ -1584,6 +1584,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata slaveMetadata,
             RecordCursorFactory slaveCursorFactory
     ) {
+        // Detect the markout_horizon_join hint, and ensure the master cursor supports random access
         if (!SqlHints.hasMarkoutHorizonHint(masterModel, masterAlias, slaveModel.getName()) ||
                 !masterCursorFactory.recordCursorSupportsRandomAccess()
         ) {
@@ -1661,7 +1662,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         // Return the info needed to create the optimized factory.
         // resultTimestampColumnIndex will be -1 if no SELECT column matches the ORDER BY expression.
-        return new TimestampLadderInfo(timestampColumnIndex, slaveColumnIndex);
+        return new MarkoutHorizonInfo(timestampColumnIndex, slaveColumnIndex);
     }
 
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
@@ -3158,7 +3159,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateOuterJoinExpressions(slaveModel, "CROSS");
 
                                 // Try to detect the timestamp ladder pattern
-                                TimestampLadderInfo ladderInfo = detectTimestampLadderPattern(
+                                MarkoutHorizonInfo ladderInfo = detectMarkoutHorizonPattern(
                                         masterAlias,
                                         model,
                                         masterMetadata,
@@ -3177,8 +3178,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     entityColumnFilter.of(masterMetadata.getColumnCount());
                                     RecordSink masterRecordSink = RecordSinkFactory.getInstance(asm, masterMetadata, entityColumnFilter);
 
-                                    // Use the optimized TimestampLadderRecordCursorFactory
-                                    master = new TimestampLadderRecordCursorFactory(
+                                    // Use the optimized MarkoutHorizonRecordCursorFactory
+                                    master = new MarkoutHorizonRecordCursorFactory(
                                             configuration,
                                             createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
                                             master,
@@ -7126,6 +7127,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         void operate(ObjectPool<ExpressionNode> pool, QueryModel model);
     }
 
+    /**
+     * Container class to hold the detected parameters of a timestamp ladder pattern.
+     */
+    private static class MarkoutHorizonInfo {
+        int masterTimestampColumnIndex;
+        int slaveSequenceColumnIndex;
+
+        MarkoutHorizonInfo(int masterTimestampColumnIndex, int slaveSequenceColumnIndex) {
+            this.masterTimestampColumnIndex = masterTimestampColumnIndex;
+            this.slaveSequenceColumnIndex = slaveSequenceColumnIndex;
+        }
+    }
+
     private static class RecordCursorFactoryStub implements RecordCursorFactory {
         final ExecutionModel model;
         RecordCursorFactory factory;
@@ -7170,19 +7184,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (factory != null) {
                 sink.child(factory);
             }
-        }
-    }
-
-    /**
-     * Container class to hold the detected parameters of a timestamp ladder pattern.
-     */
-    private static class TimestampLadderInfo {
-        int masterTimestampColumnIndex;
-        int slaveSequenceColumnIndex;
-
-        TimestampLadderInfo(int masterTimestampColumnIndex, int slaveSequenceColumnIndex) {
-            this.masterTimestampColumnIndex = masterTimestampColumnIndex;
-            this.slaveSequenceColumnIndex = slaveSequenceColumnIndex;
         }
     }
 

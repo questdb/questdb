@@ -88,11 +88,11 @@ import io.questdb.std.Unsafe;
  * an iterator, check if it's exhausted, and if so, remove it from the list. Continue
  * this until both the master cursor and all the iterators are fully exhausted.
  * <p>
- * One invocation of {@link TimestampLadderRecordCursor#hasNext() hasNext()}
+ * One invocation of {@link MarkoutHorizonRecordCursor#hasNext() hasNext()}
  * executes one step of the algorithm, resulting in a single output row.
  */
-public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final TimestampLadderRecordCursor cursor;
+public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final MarkoutHorizonRecordCursor cursor;
     private final int masterColumnIndex;
     private final int slaveColumnIndex;
 
@@ -108,7 +108,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
      * @param slaveColumnIndex  index of slave's time offset column
      * @param slaveRecordSink   RecordSink for materializing slave records
      */
-    public TimestampLadderRecordCursorFactory(
+    public MarkoutHorizonRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
@@ -130,7 +130,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                     configuration.getSqlHashJoinValuePageSize(),
                     configuration.getSqlHashJoinValueMaxPages()
             );
-            this.cursor = new TimestampLadderRecordCursor(
+            this.cursor = new MarkoutHorizonRecordCursor(
                     columnSplit,
                     masterColumnIndex,
                     slaveColumnIndex,
@@ -200,7 +200,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
      * We materialize the slave cursor (arithmetic sequence) into a RecordArray
      * because we need random access to its rows.
      */
-    private static class TimestampLadderRecordCursor extends AbstractJoinCursor {
+    private static class MarkoutHorizonRecordCursor extends AbstractJoinCursor {
         // Native memory layout constants
         private static final int BLOCK_HEADER_SIZE = 16;
         private static final int BLOCK_OFFSET_NEXT_BLOCK_ADDR = 0;    // long (8 bytes)
@@ -235,7 +235,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         private long prevIterAddr;
         private long slaveRowCount;
 
-        public TimestampLadderRecordCursor(
+        public MarkoutHorizonRecordCursor(
                 int columnSplit,
                 int masterTimestampColumnIndex,
                 int slaveSequenceColumnIndex,
