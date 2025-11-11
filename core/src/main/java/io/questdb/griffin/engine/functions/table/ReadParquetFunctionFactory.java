@@ -91,22 +91,21 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             ObjList<Function> newArgs = new ObjList<>();
             newArgs.add(new StrConstant(path.toString()));
             // get file infos
-            Function f = new GlobFilesFunctionFactory().newInstance(position, newArgs, argPos, configuration, context);
-            RecordCursorFactory globFactory = f.getRecordCursorFactory();
-            RecordCursor cursor2 = globFactory.getCursor(context);
-            if (!cursor2.hasNext()) {
+            Function globFunc = new GlobFilesFunctionFactory().newInstance(position, newArgs, argPos, configuration, context);
+            RecordCursorFactory globFactory = globFunc.getRecordCursorFactory();
+            RecordCursor globCursor = globFactory.getCursor(context); // close?
+            if (!globCursor.hasNext()) {
                 throw SqlException.$(argPos.getQuick(0), "glob did not return any readable parquet files [glob=")
                         .put(filePath).put(']');
             }
 
             CharSequence nonGlobbedRoot = GlobFilesFunctionFactory.extractNonGlobPrefix(path.toString());
-            Utf8Sequence firstGlobbedPath = cursor2.getRecord().getVarcharA(0);
+            Utf8Sequence firstGlobbedPath = globCursor.getRecord().getVarcharA(0);
 
 
             try {
                 path = Path.getThreadLocal2("");
                 path.of(nonGlobbedRoot).concat(firstGlobbedPath);
-//                checkPathIsSafeToRead(path, firstGlobbedPath.asAsciiCharSequence(), argPos.getQuick(0), configuration);
                 final FilesFacade ff = configuration.getFilesFacade();
                 final long fd = TableUtils.openRO(ff, path.$(), LOG);
                 long addr = 0;

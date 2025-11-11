@@ -65,7 +65,7 @@ public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("parquet file sequential scan");
+        sink.type("Parquet Scan (sequential)");
     }
 
     @Override

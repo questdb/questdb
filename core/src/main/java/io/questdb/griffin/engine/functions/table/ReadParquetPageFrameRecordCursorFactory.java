@@ -102,7 +102,7 @@ public class ReadParquetPageFrameRecordCursorFactory extends AbstractRecordCurso
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("parquet page frame scan");
+        sink.type("Parquet Scan (parallel)");
     }
 
     @Override
