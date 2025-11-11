@@ -75,7 +75,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         FROM long_sequence(3)
                     ),
                     ladder AS (SELECT * FROM (
-                        SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ sec_offs, sym, order_ts + usec_offs AS ladder_ts
+                        SELECT /*+ markout_horizon_join(orders offsets) */ sec_offs, sym, order_ts + usec_offs AS ladder_ts
                         FROM orders CROSS JOIN offsets
                         ORDER BY order_ts + usec_offs
                     ) TIMESTAMP(ladder_ts)),
@@ -115,7 +115,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(100)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -149,7 +149,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) AS usec_offs
                         FROM long_sequence(2)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -182,7 +182,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     WITH offsets AS (
                         SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -205,7 +205,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
 
             String sql = """
                     WITH offsets AS (SELECT x AS usec_offs FROM long_sequence(0))
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -236,7 +236,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(2)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     WHERE id != 2
                     ORDER BY order_ts + usec_offs
@@ -276,7 +276,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(3)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -319,7 +319,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(5)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -368,7 +368,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(3)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -414,7 +414,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-3) usec_offs
                                 FROM long_sequence(5)
                             )
-                            SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                            SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs
                             """,
@@ -468,7 +468,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(3)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs""";
 
@@ -513,7 +513,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT (x-1) * 10_000_000 AS usec_offs
                         FROM long_sequence(6)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(sensor_readings time_offsets) */ sensor_id, temperature, reading_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(sensor_readings time_offsets) */ sensor_id, temperature, reading_ts + usec_offs AS ts
                     FROM sensor_readings CROSS JOIN time_offsets
                     ORDER BY reading_ts + usec_offs
                     """;
@@ -561,7 +561,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-601) AS usec_offs
                         FROM long_sequence(1201)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -583,7 +583,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             """,
-                    "SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, ts FROM (" + sql + ") LIMIT 1",
+                    "SELECT /*+ markout_horizon_join(orders offsets) */ id, ts FROM (" + sql + ") LIMIT 1",
                     EXPECTED_TS,
                     false,
                     true
@@ -594,7 +594,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             """,
-                    "SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, ts FROM (" + sql + ") LIMIT -1",
+                    "SELECT /*+ markout_horizon_join(orders offsets) */ id, ts FROM (" + sql + ") LIMIT -1",
                     EXPECTED_TS,
                     false,
                     true
@@ -613,7 +613,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) AS usec_offs
                         FROM long_sequence(3)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs""";
 
@@ -658,7 +658,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-1) usec_offs
                                 FROM long_sequence(1)
                             )
-                            SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                            SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
                     EXPECTED_TS,
@@ -673,7 +673,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             assertHintUsedAndResultSameAsWithoutHint("""
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)) offsets
                     ORDER BY order_ts + usec_offs
                     """);
@@ -681,7 +681,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     WITH offsets AS (
                         SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """);
@@ -689,7 +689,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     WITH offsets AS (
                         SELECT x AS offs, 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """);
@@ -697,7 +697,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     WITH offsets AS (
                         SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
                     )
-                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY usec_offs + order_ts
                     """);
@@ -731,7 +731,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-1) usec_offs
                                 FROM long_sequence(2)
                             )
-                            SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                            SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
                     EXPECTED_TS,
@@ -766,7 +766,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-1) usec_offs
                                 FROM long_sequence(3)
                             )
-                            SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, customer, amount, order_ts + usec_offs AS ts
+                            SELECT /*+ markout_horizon_join(orders offsets) */ id, customer, amount, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
                     EXPECTED_TS,
@@ -801,7 +801,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                                 SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
                                 FROM long_sequence(3)
                             )
-                            SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, sec_offs, order_ts + usec_offs AS ts
+                            SELECT /*+ markout_horizon_join(orders offsets) */ id, sec_offs, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs
                             """,
@@ -817,7 +817,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
         final StringSink resultWithHint = new StringSink();
         final StringSink resultWithoutHint = new StringSink();
         printSql(sqlWithHint, resultWithHint);
-        printSql(sqlWithHint.replace("TIMESTAMP_LADDER_JOIN", "XXX"), resultWithoutHint);
+        printSql(sqlWithHint.replace("markout_horizon_join", "XXX"), resultWithoutHint);
         TestUtils.assertEquals(resultWithoutHint, resultWithHint);
     }
 

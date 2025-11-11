@@ -37,7 +37,7 @@ public final class SqlHints {
     public static final String ASOF_MEMOIZED_HINT = "asof_memoized";
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
-    public static final String TIMESTAMP_LADDER_JOIN_HINT = "timestamp_ladder_join";
+    public static final String MARKOUT_HORIZON_JOIN_HINT = "markout_horizon_join";
 
     public static boolean hasAsOfIndexHint(
             @NotNull QueryModel queryModel,
@@ -81,12 +81,12 @@ public final class SqlHints {
         return Chars.containsWordIgnoreCase(params, tableName, HINTS_PARAMS_DELIMITER);
     }
 
-    public static boolean hasTimestampLadderHint(
+    public static boolean hasMarkoutHorizonHint(
             @NotNull QueryModel queryModel,
             @Nullable CharSequence tableNameA,
             @Nullable CharSequence tableNameB
     ) {
-        return hasHintWithParams(queryModel, TIMESTAMP_LADDER_JOIN_HINT, tableNameA, tableNameB);
+        return hasHintWithParams(queryModel, MARKOUT_HORIZON_JOIN_HINT, tableNameA, tableNameB);
     }
 
     private static boolean hasHintWithParams(

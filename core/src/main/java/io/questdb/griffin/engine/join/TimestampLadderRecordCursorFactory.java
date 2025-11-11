@@ -43,10 +43,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 
 /**
- * Specialized cursor factory to optimize the "timestamp ladder" cross-join used
- * in markout analysis. This is a cross-join between a table with a designated
- * timestamp, and an arithmetic sequence of time offsets, where the result is
- * ordered by the sum of the LHS timestamp and RHS time offset.
+ * Specialized cursor factory to optimize the cross-join used to create the
+ * time-offset grid for markout analysis. This is a cross-join between a table
+ * with a designated timestamp, and an arithmetic sequence of time offsets,
+ * where the result is ordered by the sum of the LHS timestamp and RHS time
+ * offset.
  * <p>
  * Example query:
  * <pre>
@@ -54,7 +55,7 @@ import io.questdb.std.Unsafe;
  *     SELECT 1_000_000 * sec_offs usec_offs
  *     FROM (SELECT x-601 AS sec_offs FROM long_sequence(1201))
  * )
- * SELECT id, order_ts + usec_offs AS ts
+ * SELECT /*+ markout_horizon_join(orders offsets) id, order_ts + usec_offs AS ts
  * FROM orders CROSS JOIN offsets
  * ORDER BY order_ts + usec_offs
  * </pre>
