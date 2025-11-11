@@ -94,10 +94,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         toParquetColumnIndexes.restoreInitialCapacity();
         fromParquetColumnIndexes.restoreInitialCapacity();
         parquetColumns.resetCapacity();
-        freeParquetBuffers.addAll(cachedParquetBuffers);
-        cachedParquetBuffers.clear();
-        Misc.freeObjListAndKeepObjects(freeParquetBuffers);
-        frameMemory.clear();
+        releaseParquetBuffers();
         addressCache = null;
     }
 
@@ -105,9 +102,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     public void close() {
         Misc.free(parquetDecoder);
         Misc.free(parquetColumns);
-        freeParquetBuffers.addAll(cachedParquetBuffers);
-        cachedParquetBuffers.clear();
-        Misc.freeObjListAndKeepObjects(freeParquetBuffers);
+        releaseParquetBuffers();
         addressCache = null;
     }
 
@@ -207,6 +202,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
+    }
+
+    public void releaseParquetBuffers() {
+        freeParquetBuffers.addAll(cachedParquetBuffers);
+        cachedParquetBuffers.clear();
+        Misc.freeObjListAndKeepObjects(freeParquetBuffers);
+        frameMemory.clear();
     }
 
     // We don't use additional data structures to speed up the lookups

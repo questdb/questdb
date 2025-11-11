@@ -235,6 +235,8 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 chain.put(record, frameMemoryPool, recordB, comparator);
             }
         } finally {
+            recordB.clear();
+            frameMemoryPool.releaseParquetBuffers();
             atom.release(slotId);
         }
     }
