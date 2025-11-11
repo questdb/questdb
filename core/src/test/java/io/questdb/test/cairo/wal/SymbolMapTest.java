@@ -24,14 +24,25 @@
 
 package io.questdb.test.cairo.wal;
 
-import io.questdb.std.Chars;
 import io.questdb.cairo.wal.SymbolMap;
+import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class SymbolMapTest {
+    @Test
+    public void overrideValue() {
+        try (SymbolMap map = new SymbolMap()) {
+            Assert.assertEquals(SymbolMap.NO_ENTRY_VALUE, map.get("a"));
+            map.put("a", 1);
+            Assert.assertEquals(1, map.get("a"));
+            map.put("a", 2);
+            Assert.assertEquals(2, map.get("a"));
+        }
+    }
+
     @Test
     public void testBasic() {
         final int N = 10000;
@@ -76,5 +87,6 @@ public class SymbolMapTest {
                 Assert.assertEquals(key, map.get(offset).toString());
             }
         }
+
     }
 }

@@ -121,13 +121,18 @@ public class SymbolMap extends AbstractOffsetCharSequenceHashSet implements Clos
     }
 
     public void put(@NotNull CharSequence key, int value) {
-        int hashCode = Chars.hashCode(key);
-        putAt(keyIndex(key, hashCode), key, value, hashCode);
+        final int hashCode = Chars.hashCode(key);
+        final int index = keyIndex(key, hashCode);
+        if (index < 0) {
+            values[-index - 1] = value;
+        } else {
+            putAt(index, key, value, hashCode);
+        }
     }
 
     public void putAt(int index, @NotNull CharSequence key, int value, int hashCode) {
         final int offset = this.writeKey(key, hashCode);
-        putAt0(index, offset, value, hashCode);
+        putAt0(index, offset, value);
     }
 
     public void rehash() {
@@ -159,7 +164,7 @@ public class SymbolMap extends AbstractOffsetCharSequenceHashSet implements Clos
         return index < 0 ? values[index1] : noEntryValue;
     }
 
-    private void putAt0(int index, int offset, int value, int hashCode) {
+    private void putAt0(int index, int offset, int value) {
         offsets[index] = offset;
         values[index] = value;
         if (--free == 0) {
