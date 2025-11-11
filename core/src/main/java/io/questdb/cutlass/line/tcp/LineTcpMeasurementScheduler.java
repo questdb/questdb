@@ -30,6 +30,7 @@ import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.SecurityContext;
@@ -441,8 +442,16 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         // validate that parser entities do not contain NULLs
                         TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);
                         for (int i = 0, n = tsa.getColumnCount(); i < n; i++) {
-                            if (tsa.getColumnType(i) == LineTcpParser.ENTITY_TYPE_NULL) {
+                            final int columnType = tsa.getColumnType(i);
+                            if (columnType == LineTcpParser.ENTITY_TYPE_NULL) {
                                 throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
+                            } else if (columnType == ColumnType.DECIMAL) {
+                                throw CairoException.nonCritical()
+                                        .put("decimal columns cannot be created automatically [table=")
+                                        .put(tableNameUtf16)
+                                        .put(", columnName=")
+                                        .put(tsa.getColumnName(i))
+                                        .put(']');
                             }
                         }
                         engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
