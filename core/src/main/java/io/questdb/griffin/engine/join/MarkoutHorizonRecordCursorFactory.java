@@ -97,7 +97,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
     private final int slaveColumnIndex;
 
     /**
-     * Creates a new timestamp ladder cursor factory.
+     * Creates a new markout horizon cursor factory.
      *
      * @param configuration     Cairo configuration
      * @param metadata          joined record metadata
@@ -180,7 +180,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Timestamp Ladder Join");
+        sink.type("Markout Horizon Join");
         sink.meta("timestampColumn").val(masterColumnIndex);
         sink.meta("offsetColumn").val(slaveColumnIndex);
         sink.child(masterFactory);

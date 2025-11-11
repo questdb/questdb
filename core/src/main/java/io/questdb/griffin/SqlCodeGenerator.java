@@ -435,7 +435,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
-    // Used to pass ORDER BY context from outer query down to join generation for timestamp ladder optimization
+    // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private QueryModel lastSeenOrderByModel;
 
@@ -3158,8 +3158,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_CROSS:
                                 validateOuterJoinExpressions(slaveModel, "CROSS");
 
-                                // Try to detect the timestamp ladder pattern
-                                MarkoutHorizonInfo ladderInfo = detectMarkoutHorizonPattern(
+                                // Try to detect the markout horizon pattern
+                                MarkoutHorizonInfo horizonInfo = detectMarkoutHorizonPattern(
                                         masterAlias,
                                         model,
                                         masterMetadata,
@@ -3169,7 +3169,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slave
                                 );
 
-                                if (ladderInfo != null) {
+                                if (horizonInfo != null) {
                                     // Create RecordSink for materializing slave records
                                     entityColumnFilter.of(slaveMetadata.getColumnCount());
                                     RecordSink slaveRecordSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter);
@@ -3185,8 +3185,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             master,
                                             slave,
                                             masterMetadata.getColumnCount(),
-                                            ladderInfo.masterTimestampColumnIndex,
-                                            ladderInfo.slaveSequenceColumnIndex,
+                                            horizonInfo.masterTimestampColumnIndex,
+                                            horizonInfo.slaveSequenceColumnIndex,
                                             slaveRecordSink
                                     );
                                 } else {
@@ -3990,7 +3990,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         // Remember the last model with non-empty ORDER BY as we descend through nested models.
-        // We need the ORDER BY clause in the Timestamp Ladder Join optimization, but it's stored
+        // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
         // several levels up from the model that holds the join clause.
         final QueryModel savedOrderByModel = lastSeenOrderByModel;
         try {
@@ -7128,7 +7128,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Container class to hold the detected parameters of a timestamp ladder pattern.
+     * Container class to hold the detected parameters of a markout horizon pattern.
      */
     private static class MarkoutHorizonInfo {
         int masterTimestampColumnIndex;

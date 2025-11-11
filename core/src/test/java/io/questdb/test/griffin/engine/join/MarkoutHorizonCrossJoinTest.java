@@ -32,7 +32,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
+public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
 
     // Used to easily switch to "ts" while making changes in SqlCodeGenerator
     // Safe to remove when code is stabilized
@@ -74,13 +74,13 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
                         FROM long_sequence(3)
                     ),
-                    ladder AS (SELECT * FROM (
-                        SELECT /*+ markout_horizon_join(orders offsets) */ sec_offs, sym, order_ts + usec_offs AS ladder_ts
+                    horizon AS (SELECT * FROM (
+                        SELECT /*+ markout_horizon_join(orders offsets) */ sec_offs, sym, order_ts + usec_offs AS horizon_ts
                         FROM orders CROSS JOIN offsets
                         ORDER BY order_ts + usec_offs
-                    ) TIMESTAMP(ladder_ts)),
+                    ) TIMESTAMP(horizon_ts)),
                     priced_orders AS (
-                        SELECT * FROM ladder l ASOF JOIN prices p ON (l.sym = p.sym)
+                        SELECT * FROM horizon l ASOF JOIN prices p ON (l.sym = p.sym)
                     )
                     SELECT sec_offs, avg(price) FROM priced_orders ORDER BY sec_offs;
                     """;
@@ -217,6 +217,42 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     false,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testMarkoutHorizonDetection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+            assertHintUsedAndResultSameAsWithoutHint("""
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)) offsets
+                    ORDER BY order_ts + usec_offs
+                    """);
+            assertHintUsedAndResultSameAsWithoutHint("""
+                    WITH offsets AS (
+                        SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
+                    )
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """);
+            assertHintUsedAndResultSameAsWithoutHint("""
+                    WITH offsets AS (
+                        SELECT x AS offs, 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
+                    )
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """);
+            assertHintUsedAndResultSameAsWithoutHint("""
+                    WITH offsets AS (
+                        SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
+                    )
+                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY usec_offs + order_ts
+                    """);
         });
     }
 
@@ -630,7 +666,6 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     true
             );
 
-            // Verify that Timestamp Ladder Join optimization is being used
             assertHintUsedAndResultSameAsWithoutHint(query);
         });
     }
@@ -665,42 +700,6 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     false,
                     true
             );
-        });
-    }
-
-    @Test
-    public void testTimestampLadderDetection() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            assertHintUsedAndResultSameAsWithoutHint("""
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
-                    FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)) offsets
-                    ORDER BY order_ts + usec_offs
-                    """);
-            assertHintUsedAndResultSameAsWithoutHint("""
-                    WITH offsets AS (
-                        SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
-                    )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
-                    FROM orders CROSS JOIN offsets
-                    ORDER BY order_ts + usec_offs
-                    """);
-            assertHintUsedAndResultSameAsWithoutHint("""
-                    WITH offsets AS (
-                        SELECT x AS offs, 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
-                    )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
-                    FROM orders CROSS JOIN offsets
-                    ORDER BY order_ts + usec_offs
-                    """);
-            assertHintUsedAndResultSameAsWithoutHint("""
-                    WITH offsets AS (
-                        SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
-                    )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
-                    FROM orders CROSS JOIN offsets
-                    ORDER BY usec_offs + order_ts
-                    """);
         });
     }
 
@@ -813,7 +812,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
     }
 
     private void assertHintUsedAndResultSameAsWithoutHint(String sqlWithHint) throws Exception {
-        assertTimestampLadderJoinUsed(sqlWithHint);
+        assertMarkoutHorizonJoinUsed(sqlWithHint);
         final StringSink resultWithHint = new StringSink();
         final StringSink resultWithoutHint = new StringSink();
         printSql(sqlWithHint, resultWithHint);
@@ -821,7 +820,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
         TestUtils.assertEquals(resultWithoutHint, resultWithHint);
     }
 
-    private void assertTimestampLadderJoinUsed(String query) throws Exception {
+    private void assertMarkoutHorizonJoinUsed(String query) throws Exception {
         // Get the execution plan
         try (RecordCursorFactory factory = select("EXPLAIN " + query)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -829,7 +828,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                 sink.clear();
                 CursorPrinter.println(cursor, factory.getMetadata(), sink);
                 // Check that it contains our optimization
-                TestUtils.assertContains(sink, "Timestamp Ladder Join");
+                TestUtils.assertContains(sink, "Markout Horizon Join");
             }
         }
     }
