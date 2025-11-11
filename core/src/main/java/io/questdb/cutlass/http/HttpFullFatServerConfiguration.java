@@ -59,6 +59,10 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
         return new ObjList<>("/imp");
     }
 
+    default ObjList<String> getContextPathSqlValidation() {
+        return new ObjList<>("/validate");
+    }
+
     default ObjList<String> getContextPathSettings() {
         return new ObjList<>("/settings");
     }

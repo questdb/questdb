@@ -149,7 +149,8 @@ public class HttpServer implements Closeable {
             WorkerPool workerPool,
             int sharedWorkerCount,
             HttpRequestHandlerBuilder jsonQueryProcessorBuilder,
-            HttpRequestHandlerBuilder ilpWriteProcessorBuilderV2
+            HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder,
+            HttpRequestHandlerBuilder sqlValidationProcessorBuilder
     ) {
         final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = httpServerConfiguration.getLineHttpProcessorConfiguration();
@@ -164,7 +165,7 @@ public class HttpServer implements Closeable {
 
                 @Override
                 public HttpRequestHandler newInstance() {
-                    return ilpWriteProcessorBuilderV2.newInstance();
+                    return ilpV2WriteProcessorBuilder.newInstance();
                 }
             });
 
@@ -231,6 +232,18 @@ public class HttpServer implements Closeable {
             @Override
             public HttpRequestHandler newInstance() {
                 return new TextImportProcessor(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
+            }
+        });
+
+        server.bind(new HttpRequestHandlerFactory() {
+            @Override
+            public ObjList<String> getUrls() {
+                return httpServerConfiguration.getContextPathSqlValidation();
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
+                return sqlValidationProcessorBuilder.newInstance();
             }
         });
 

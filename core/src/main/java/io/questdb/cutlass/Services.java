@@ -40,6 +40,7 @@ import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
+import io.questdb.cutlass.http.processors.SqlValidationProcessor;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
@@ -113,6 +114,13 @@ public class Services {
                 sharedWorkerCount
         );
 
+        HttpServer.HttpRequestHandlerBuilder sqlValidationProcessorBuilder = () -> new SqlValidationProcessor(
+                httpServerConfiguration.getJsonQueryProcessorConfiguration(),
+                cairoEngine,
+                workerPool.getWorkerCount(),
+                sharedWorkerCount
+        );
+
         HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
                 cairoEngine,
                 httpServerConfiguration.getRecvBufferSize(),
@@ -127,7 +135,8 @@ public class Services {
                 workerPool,
                 sharedWorkerCount,
                 jsonQueryProcessorBuilder,
-                ilpV2WriteProcessorBuilder
+                ilpV2WriteProcessorBuilder,
+                sqlValidationProcessorBuilder
         );
         return server;
     }
