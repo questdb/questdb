@@ -3186,8 +3186,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             masterMetadata.getColumnCount(),
                                             ladderInfo.masterTimestampColumnIndex,
                                             ladderInfo.slaveSequenceColumnIndex,
-                                            slaveRecordSink,
-                                            masterRecordSink
+                                            slaveRecordSink
                                     );
                                 } else {
                                     // Fall back to standard CrossJoinRecordCursorFactory

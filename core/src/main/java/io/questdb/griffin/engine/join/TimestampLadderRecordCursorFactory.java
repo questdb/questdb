@@ -38,8 +38,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.Unsafe;
 
 /**
  * Specialized cursor factory to optimize the "timestamp ladder" cross-join used
@@ -67,9 +68,9 @@ import org.jetbrains.annotations.NotNull;
  * numbers represent time offsets that are added to the master row's timestamp. The
  * output of the cross-join is sorted on (<code>master_row_timestamp + slave_time_offset</code>).
  * <p>
- * The algorithm deals with {@link TimestampLadderRecordCursor.SlaveRowIterator
- * SlaveRowIterator} objects. Each iterator represents all the output rows that originate
- * from a single master row. At any point in the algorithm, we deal with two things:
+ * The algorithm deals with SlaveRowIterator structs. Each iterator represents all the
+ * output rows that originate from a single master row. At any point in the algorithm,
+ * we deal with two things:
  * <ol>
  *     <li>the master cursor positioned at the master row that we haven't yet started using
  *     <li>a circular list of active iterators, representing all the master rows that we are
@@ -114,8 +115,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             int columnSplit,
             int masterColumnIndex,
             int slaveColumnIndex,
-            RecordSink slaveRecordSink,
-            RecordSink masterRecordSink
+            RecordSink slaveRecordSink
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         this.masterColumnIndex = masterColumnIndex;
@@ -200,6 +200,24 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
      * because we need random access to its rows.
      */
     private static class TimestampLadderRecordCursor extends AbstractJoinCursor {
+        // Native memory layout constants
+        // Block header: 16 bytes
+        private static final int BLOCK_HEADER_SIZE = 16;
+        private static final int BLOCK_OFFSET_NEXT_BLOCK_ADDR = 0;    // long (8 bytes)
+        private static final int BLOCK_OFFSET_NEXT_FREE_SLOT = 8;     // int (4 bytes)
+        private static final int BLOCK_OFFSET_USED_SLOT_COUNT = 12;   // int (4 bytes)
+        // Block capacity
+        private static final int ITERATORS_PER_BLOCK = 1024;
+        private static final int ITERATOR_OFFSET_MASTER_ROW_ID = 0;          // long (8 bytes)
+        private static final int ITERATOR_OFFSET_MASTER_TIMESTAMP = 8;       // long (8 bytes)
+        private static final int ITERATOR_OFFSET_NEXT_ITER_ADDR = 16;        // long (8 bytes)
+        private static final int ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM = 32;    // int (4 bytes)
+        private static final int ITERATOR_OFFSET_NEXT_TIMESTAMP = 24;        // long (8 bytes)
+        private static final int ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START = 36; // int (4 bytes)
+        // Iterator struct: 40 bytes per iterator
+        private static final int ITERATOR_SIZE = 40;
+        private static final long BLOCK_SIZE = BLOCK_HEADER_SIZE + (ITERATORS_PER_BLOCK * ITERATOR_SIZE);
+
         private final JoinRecord joinRecord;
         private final int masterTimestampColumnIndex;
         private final RecordArray slaveRecordArray;
@@ -208,12 +226,14 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long currMasterRowId = -1;
         // Merge algorithm state
-        private SlaveRowIterator currentIter;
+        private long currentIterAddr;  // Address of current iterator (instead of object reference)
+        private long firstIteratorBlockAddr;  // Address of first iterator block
         private long firstSlaveTimeOffset;  // Cache the first slave's offset value
         private boolean isMasterHasNextPending;
+        private long lastIteratorBlockAddr;  // Address of last iterator block
         private boolean masterHasNext;
         private Record masterRecord;
-        private SlaveRowIterator prevIter;
+        private long prevIterAddr;  // Address of previous iterator (instead of object reference)
         private long slaveRowCount;
 
         public TimestampLadderRecordCursor(
@@ -230,20 +250,22 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             this.slaveRecordOffsets = new LongList();
         }
 
+        // ===== Block header accessors =====
+
         @Override
         public void close() {
-            // Free all iterators in the circular list
-            if (currentIter != null) {
-                SlaveRowIterator iter = currentIter;
-                SlaveRowIterator start = currentIter;
-                do {
-                    SlaveRowIterator next = iter.nextIterator();
-                    iter.close();
-                    iter = next;
-                } while (iter != start && iter != null);
-                currentIter = null;
-                prevIter = null;
+            // Free all iterator blocks in the linked list
+            long blockAddr = firstIteratorBlockAddr;
+            while (blockAddr != 0) {
+                long nextBlockAddr = block_nextBlockAddr(blockAddr);
+                block_free(blockAddr);
+                blockAddr = nextBlockAddr;
             }
+            firstIteratorBlockAddr = 0;
+            lastIteratorBlockAddr = 0;
+            currentIterAddr = 0;
+            prevIterAddr = 0;
+
             Misc.free(slaveRecordArray);
             super.close();
         }
@@ -255,53 +277,54 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
         @Override
         public boolean hasNext() {
-            if (currentIter == null) {
+            if (currentIterAddr == 0) {
                 advanceMasterIfPending();
                 if (!masterHasNext || slaveRecordArray.size() == 0) {
                     return false;
                 }
                 isMasterHasNextPending = true;
-                currentIter = prevIter = new SlaveRowIterator(masterRecord);
-                setupJoinRecord(currentIter.getMasterRowId(), currentIter.currentRowNum());
+                currentIterAddr = prevIterAddr = createIterator(masterRecord);
+                setupJoinRecord(iter_masterRowId(currentIterAddr), currentRowNum(currentIterAddr));
                 return true;
             }
 
             circuitBreaker.statefulThrowExceptionIfTripped();
 
             advanceMasterIfPending();
-            SlaveRowIterator nextIter = currentIter.nextIterator();
+            long nextIterAddr = iter_nextIterAddr(currentIterAddr);
             final boolean nextIterNeedsSetup;
-            if (currentIter.isEmpty()) {
-                if (prevIter.removeNextIterator() == null) {
-                    currentIter = null;
-                    // prevIter.removeNextIterator() removed currentIter from the circular list.
-                    // If it returned null, it implies that nextIter == currentIter (we got it from
+            if (isEmpty(currentIterAddr)) {
+                long removedIterAddr = removeNextIterator(prevIterAddr);
+                if (removedIterAddr == 0) {
+                    currentIterAddr = 0;
+                    // removeNextIterator removed currentIterAddr from the circular list.
+                    // If it returned 0, it implies that nextIterAddr == currentIterAddr (we got it from
                     // the circular list of size one). So, there's no actual next iterator.
                     if (!masterHasNext) {
                         // No more iterators, no more master rows, we're all done.
-                        prevIter = null;
+                        prevIterAddr = 0;
                         return false;
                     }
                     // Activate the next master row, and use this iterator as the beginning of a new circular list.
-                    nextIter = activateMasterRow();
-                    prevIter = nextIter;
+                    nextIterAddr = activateMasterRow();
+                    prevIterAddr = nextIterAddr;
                     nextIterNeedsSetup = false;
                 } else {
                     nextIterNeedsSetup = true;
                 }
             } else {
-                prevIter = currentIter;
+                prevIterAddr = currentIterAddr;
                 nextIterNeedsSetup = true;
             }
             if (nextIterNeedsSetup) {
-                if (masterHasNext && initialTimestampOfMasterRow() < nextIter.peekNextTimestamp()) {
-                    nextIter = activateMasterRow();
+                if (masterHasNext && initialTimestampOfMasterRow() < peekNextTimestamp(nextIterAddr)) {
+                    nextIterAddr = activateMasterRow();
                 } else {
-                    nextIter.gotoNextRow();
+                    gotoNextRow(nextIterAddr);
                 }
             }
-            currentIter = nextIter;
-            setupJoinRecord(currentIter.getMasterRowId(), currentIter.currentRowNum());
+            currentIterAddr = nextIterAddr;
+            setupJoinRecord(iter_masterRowId(currentIterAddr), currentRowNum(currentIterAddr));
             return true;
         }
 
@@ -327,20 +350,19 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
         @Override
         public void toTop() {
-            // Free all existing iterators
-            if (currentIter != null) {
-                SlaveRowIterator iter = currentIter;
-                SlaveRowIterator start = currentIter;
-                do {
-                    SlaveRowIterator next = iter.nextIterator();
-                    iter.close();
-                    iter = next;
-                } while (iter != start && iter != null);
+            // Free all iterator blocks
+            long blockAddr = firstIteratorBlockAddr;
+            while (blockAddr != 0) {
+                long nextBlockAddr = block_nextBlockAddr(blockAddr);
+                block_free(blockAddr);
+                blockAddr = nextBlockAddr;
             }
 
             // Reset state
-            currentIter = null;
-            prevIter = null;
+            currentIterAddr = 0;
+            prevIterAddr = 0;
+            firstIteratorBlockAddr = 0;
+            lastIteratorBlockAddr = 0;
             isMasterHasNextPending = true;
             masterHasNext = false;
             currMasterRowId = -1;
@@ -348,12 +370,104 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             slaveRecordArray.toTop();
         }
 
-        private @NotNull SlaveRowIterator activateMasterRow() {
+        private static long block_alloc() {
+            long blockAddr = Unsafe.malloc(BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.getUnsafe().setMemory(blockAddr, BLOCK_SIZE, (byte) 0);
+            return blockAddr;
+        }
+
+        private static void block_decUsedSlotCount(long blockAddr) {
+            int count = Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
+            Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count - 1);
+        }
+
+        private static void block_free(long blockAddr) {
+            Unsafe.free(blockAddr, BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+
+        private static void block_incUsedSlotCount(long blockAddr) {
+            int count = Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
+            Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count + 1);
+        }
+
+        private static long block_iteratorAddr(long blockAddr, int slot) {
+            return blockAddr + BLOCK_HEADER_SIZE + ((long) slot * ITERATOR_SIZE);
+        }
+
+        private static long block_nextBlockAddr(long blockAddr) {
+            return Unsafe.getUnsafe().getLong(blockAddr + BLOCK_OFFSET_NEXT_BLOCK_ADDR);
+        }
+
+        private static int block_nextFreeSlot(long blockAddr) {
+            return Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_NEXT_FREE_SLOT);
+        }
+
+        private static void block_setNextBlockAddr(long blockAddr, long nextAddr) {
+            Unsafe.getUnsafe().putLong(blockAddr + BLOCK_OFFSET_NEXT_BLOCK_ADDR, nextAddr);
+        }
+
+        private static void block_setNextFreeSlot(long blockAddr, int slot) {
+            Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_NEXT_FREE_SLOT, slot);
+        }
+
+        private static int block_usedSlotCount(long blockAddr) {
+            return Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
+        }
+
+        private static long iter_masterRowId(long iterAddr) {
+            return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_MASTER_ROW_ID);
+        }
+
+        private static long iter_masterTimestamp(long iterAddr) {
+            return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_MASTER_TIMESTAMP);
+        }
+
+        private static long iter_nextIterAddr(long iterAddr) {
+            return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR);
+        }
+
+        private static int iter_nextSlaveRowNum(long iterAddr) {
+            return Unsafe.getUnsafe().getInt(iterAddr + ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM);
+        }
+
+        private static long iter_nextTimestamp(long iterAddr) {
+            return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_NEXT_TIMESTAMP);
+        }
+
+        private static int iter_offsetFromBlockStart(long iterAddr) {
+            return Unsafe.getUnsafe().getInt(iterAddr + ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START);
+        }
+
+        private static void iter_setMasterRowId(long iterAddr, long value) {
+            Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_MASTER_ROW_ID, value);
+        }
+
+        private static void iter_setMasterTimestamp(long iterAddr, long value) {
+            Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_MASTER_TIMESTAMP, value);
+        }
+
+        private static void iter_setNextIterAddr(long iterAddr, long value) {
+            Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR, value);
+        }
+
+        private static void iter_setNextSlaveRowNum(long iterAddr, int value) {
+            Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM, value);
+        }
+
+        private static void iter_setNextTimestamp(long iterAddr, long value) {
+            Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_NEXT_TIMESTAMP, value);
+        }
+
+        private static void iter_setOffsetFromBlockStart(long iterAddr, int value) {
+            Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START, value);
+        }
+
+        private long activateMasterRow() {
             isMasterHasNextPending = true;
-            if (currentIter != null) {
-                return currentIter.postInsertNewIterator(masterRecord);
+            if (currentIterAddr != 0) {
+                return postInsertNewIterator(currentIterAddr, masterRecord);
             }
-            return new SlaveRowIterator(masterRecord);
+            return createIterator(masterRecord);
         }
 
         private void advanceMasterIfPending() {
@@ -369,9 +483,114 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             }
         }
 
+        private long createIterator(Record masterRecord) {
+            // Get or create the last iterator block
+            if (lastIteratorBlockAddr == 0) {
+                // No iterator blocks so far. Allocate the first one.
+                lastIteratorBlockAddr = block_alloc();
+                firstIteratorBlockAddr = lastIteratorBlockAddr;
+            }
+
+            // Check if current block is exhausted
+            int nextFreeSlot = block_nextFreeSlot(lastIteratorBlockAddr);
+            if (nextFreeSlot == ITERATORS_PER_BLOCK) {
+                // Block is full, allocate a new one
+                long newBlockAddr = block_alloc();
+                block_setNextBlockAddr(lastIteratorBlockAddr, newBlockAddr);
+                lastIteratorBlockAddr = newBlockAddr;
+                nextFreeSlot = 0;
+            }
+
+            // Get the iterator address and initialize it
+            long iterAddr = block_iteratorAddr(lastIteratorBlockAddr, nextFreeSlot);
+            int offsetFromBlockStart = BLOCK_HEADER_SIZE + (nextFreeSlot * ITERATOR_SIZE);
+
+            // Initialize iterator fields
+            iter_setMasterRowId(iterAddr, masterRecord.getRowId());
+            iter_setMasterTimestamp(iterAddr, masterRecord.getTimestamp(masterTimestampColumnIndex));
+            iter_setNextIterAddr(iterAddr, iterAddr); // Initially points to itself (circular list of one)
+            iter_setNextSlaveRowNum(iterAddr, 0);
+            iter_setOffsetFromBlockStart(iterAddr, offsetFromBlockStart);
+
+            // Compute and set the next timestamp
+            gotoNextRow(iterAddr);
+
+            // Update block metadata
+            block_setNextFreeSlot(lastIteratorBlockAddr, nextFreeSlot + 1);
+            block_incUsedSlotCount(lastIteratorBlockAddr);
+
+            return iterAddr;
+        }
+
+        private int currentRowNum(long iterAddr) {
+            return iter_nextSlaveRowNum(iterAddr) - 1;
+        }
+
+        private void discardIterator(long iterAddr) {
+            // Compute the iterator block's base address
+            long blockAddr = iterAddr - iter_offsetFromBlockStart(iterAddr);
+
+            // Decrement used slot count
+            block_decUsedSlotCount(blockAddr);
+
+            // If usedSlotCount is now zero, deallocate the block
+            if (block_usedSlotCount(blockAddr) == 0) {
+                long nextBlockAddr = block_nextBlockAddr(blockAddr);
+                block_free(blockAddr);
+                if (blockAddr == lastIteratorBlockAddr) {
+                    lastIteratorBlockAddr = 0;
+                    assert nextBlockAddr == 0 : "nextBlockAddr != 0";
+                }
+                firstIteratorBlockAddr = nextBlockAddr;
+            }
+        }
+
+        private void gotoNextRow(long iterAddr) {
+            int nextSlaveRowNum = iter_nextSlaveRowNum(iterAddr);
+            if (nextSlaveRowNum == slaveRowCount) {
+                return;
+            }
+            iter_setNextSlaveRowNum(iterAddr, nextSlaveRowNum + 1);
+            long slaveRecordOffset = slaveRecordOffsets.getQuick(nextSlaveRowNum);
+            Record slaveRec = slaveRecordArray.getRecordAt(slaveRecordOffset);
+            long slaveOffset = slaveRec.getLong(slaveSequenceColumnIndex);
+            long masterTimestamp = iter_masterTimestamp(iterAddr);
+            iter_setNextTimestamp(iterAddr, masterTimestamp + slaveOffset);
+        }
+
         private long initialTimestampOfMasterRow() {
             long nextMasterTimestamp = masterRecord.getTimestamp(masterTimestampColumnIndex);
             return nextMasterTimestamp + firstSlaveTimeOffset;
+        }
+
+        private boolean isEmpty(long iterAddr) {
+            return iter_nextSlaveRowNum(iterAddr) == slaveRowCount;
+        }
+
+        private long peekNextTimestamp(long iterAddr) {
+            if (iter_nextSlaveRowNum(iterAddr) == slaveRowCount) {
+                return Long.MIN_VALUE;
+            }
+            return iter_nextTimestamp(iterAddr);
+        }
+
+        private long postInsertNewIterator(long iterAddr, Record masterRecord) {
+            long newIterAddr = createIterator(masterRecord);
+            long nextIterAddr = iter_nextIterAddr(iterAddr);
+            iter_setNextIterAddr(newIterAddr, nextIterAddr);
+            iter_setNextIterAddr(iterAddr, newIterAddr);
+            return newIterAddr;
+        }
+
+        private long removeNextIterator(long iterAddr) {
+            long toRemoveAddr = iter_nextIterAddr(iterAddr);
+            long nextAddr = iter_nextIterAddr(toRemoveAddr);
+            iter_setNextIterAddr(iterAddr, nextAddr);
+            discardIterator(toRemoveAddr);
+            if (toRemoveAddr == iterAddr) {
+                return 0;  // this is the only iterator in the list, and we just closed it
+            }
+            return nextAddr;
         }
 
         private void setupJoinRecord(long masterRowId, int slaveRowNum) {
@@ -409,89 +628,21 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             }
 
             // Reset iterator state for new execution
-            currentIter = null;
-            prevIter = null;
+            // Free any existing iterator blocks from previous execution
+            long blockAddr = firstIteratorBlockAddr;
+            while (blockAddr != 0) {
+                long nextBlockAddr = block_nextBlockAddr(blockAddr);
+                block_free(blockAddr);
+                blockAddr = nextBlockAddr;
+            }
+
+            currentIterAddr = 0;
+            prevIterAddr = 0;
+            firstIteratorBlockAddr = 0;
+            lastIteratorBlockAddr = 0;
             isMasterHasNextPending = true;
             masterHasNext = false;
             currMasterRowId = -1;
-        }
-
-        // Specifically designed for this algorithm:
-        // - initially positioned at the first slave row
-        // - you can get the current slave row number, but can't access that row at all
-        // - you can peek the timestamp of the next slave row
-        // - also works as a node in a circular list of iterators
-        private class SlaveRowIterator {
-            private final long masterRowId;
-            private final long masterTimestamp;
-            private SlaveRowIterator nextIter;
-            private int nextSlaveRowNum;
-            private long nextTimestamp = Long.MIN_VALUE;
-
-            SlaveRowIterator(Record masterRecord) {
-                // Create a RecordChain to hold a single master record
-                masterRowId = masterRecord.getRowId();
-                masterTimestamp = masterRecord.getTimestamp(masterTimestampColumnIndex);
-
-                // Initialize iteration state
-                nextSlaveRowNum = 0;
-                nextIter = this;  // Initially points to itself (circular list of one)
-                gotoNextRow();
-            }
-
-            void close() {
-            }
-
-            int currentRowNum() {
-                return nextSlaveRowNum - 1;
-            }
-
-            long getMasterRowId() {
-                return masterRowId;
-            }
-
-            void gotoNextRow() {
-                if (nextSlaveRowNum == slaveRowCount) {
-                    return;
-                }
-                nextSlaveRowNum++;
-                long slaveRecordOffset = slaveRecordOffsets.getQuick(nextSlaveRowNum);
-                Record slaveRec = slaveRecordArray.getRecordAt(slaveRecordOffset);
-                long slaveOffset = slaveRec.getLong(slaveSequenceColumnIndex);
-                nextTimestamp = masterTimestamp + slaveOffset;
-            }
-
-            boolean isEmpty() {
-                return nextSlaveRowNum == slaveRowCount;
-            }
-
-            SlaveRowIterator nextIterator() {
-                return nextIter;
-            }
-
-            long peekNextTimestamp() {
-                if (nextSlaveRowNum == slaveRowCount) {
-                    return Long.MIN_VALUE;
-                }
-                return nextTimestamp;
-            }
-
-            SlaveRowIterator postInsertNewIterator(Record masterRecord) {
-                SlaveRowIterator iter = new SlaveRowIterator(masterRecord);
-                iter.nextIter = this.nextIter;
-                this.nextIter = iter;
-                return iter;
-            }
-
-            SlaveRowIterator removeNextIterator() {
-                SlaveRowIterator toRemove = nextIter;
-                nextIter = toRemove.nextIter;
-                toRemove.close();
-                if (toRemove == this) {
-                    return null;  // this is the only iterator in the list, and we just closed it
-                }
-                return nextIter;
-            }
         }
     }
 }
