@@ -3370,10 +3370,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     entityColumnFilter.of(slaveMetadata.getColumnCount());
                                     RecordSink slaveRecordSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter);
 
-                                    // Create RecordSink for materializing master records
-                                    entityColumnFilter.of(masterMetadata.getColumnCount());
-                                    RecordSink masterRecordSink = RecordSinkFactory.getInstance(asm, masterMetadata, entityColumnFilter);
-
                                     // Use the optimized MarkoutHorizonRecordCursorFactory
                                     master = new MarkoutHorizonRecordCursorFactory(
                                             configuration,
