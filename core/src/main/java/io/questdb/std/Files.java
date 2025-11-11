@@ -524,7 +524,7 @@ public final class Files {
                             }
                         }
                     } else if (notDots(nameUtf8Ptr)) {
-                        res = type == Files.DT_LNK ? unlink(path.ptr()) == 0 : rmdir(path, haltOnFail, recursiveDepth, maxRecursiveDepth);
+                        res = type == Files.DT_LNK ? unlink(path.ptr()) == 0 : rmdir(path, haltOnFail, recursiveDepth + 1, maxRecursiveDepth);
                         if (!res) {
                             if (haltOnFail || Files.isSecurityError(Os.errno())) {
                                 return false;

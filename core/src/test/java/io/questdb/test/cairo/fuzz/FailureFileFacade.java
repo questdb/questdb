@@ -545,6 +545,14 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
+    public boolean unlinkOrRemoveTable(Path path, Log LOG) {
+        if (checkForFailure()) {
+            return false;
+        }
+        return ff.unlinkOrRemoveTable(path, LOG);
+    }
+
+    @Override
     public boolean unlinkOrRemove(Path path, int checkedType, Log LOG) {
         if (checkForFailure()) {
             return false;

@@ -182,6 +182,8 @@ public interface FilesFacade {
 
     boolean unlinkOrRemove(Path path, int checkedType, Log LOG);
 
+    boolean unlinkOrRemoveTable(Path path, Log LOG);
+
     void walk(Path src, FindVisitor func);
 
     long write(long fd, long address, long len, long offset);

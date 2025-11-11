@@ -25,6 +25,7 @@
 package io.questdb.test;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
@@ -33,7 +34,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -45,6 +46,7 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -1076,6 +1078,47 @@ public class FilesTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testRecursiveRmdirLimit() throws IOException {
+        var ff = new FilesFacadeImpl();
+        temporaryFolder.newFolder("a", "b");
+
+        try (Path path = new Path().of(temporaryFolder.getRoot().getAbsolutePath()).concat("a")) {
+            try {
+                ff.rmdir(path);
+                Assert.fail();
+            } catch (CairoError e) {
+            }
+
+            Assert.assertTrue(ff.rmdirTable(path));
+
+            temporaryFolder.newFolder("a", "partition");
+            temporaryFolder.newFolder("a", "wal", "segment");
+
+            Assert.assertTrue(ff.rmdirTable(path));
+
+            temporaryFolder.newFolder("a", "wal", "segment", "extra");
+            try {
+                ff.rmdirTable(path);
+                Assert.fail();
+            } catch (CairoError e) {
+            }
+
+            Assert.assertTrue(ff.rmdirDbRoot(path));
+            temporaryFolder.newFolder("a", "table", "wal", "segment");
+            temporaryFolder.newFolder("a", ".download", "table", "wal", "segment");
+
+            Assert.assertTrue(ff.rmdirDbRoot(path));
+
+            temporaryFolder.newFolder("a", ".download", "table", "wal", "segment", "extra");
+            try {
+                ff.rmdirTable(path);
+                Assert.fail();
+            } catch (CairoError e) {
+            }
+        }
     }
 
     @Test

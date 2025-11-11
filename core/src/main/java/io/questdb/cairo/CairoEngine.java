@@ -591,7 +591,7 @@ public class CairoEngine implements Closeable, WriterSource {
             if (lockedReason == null) {
                 try {
                     path.of(configuration.getDbRoot()).concat(tableToken).$();
-                    if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
+                    if (!configuration.getFilesFacade().unlinkOrRemoveTable(path, LOG)) {
                         throw CairoException.critical(configuration.getFilesFacade().errno())
                                 .put("could not remove table [table=").put(tableToken).put(']');
                     }
