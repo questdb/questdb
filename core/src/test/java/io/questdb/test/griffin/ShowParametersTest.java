@@ -34,10 +34,32 @@ public class ShowParametersTest extends AbstractCairoTest {
         assertQuery(
                 "property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
                         "cairo.commit.lag\tQDB_CAIRO_COMMIT_LAG\t300000000\tconf\tfalse\tfalse\n",
-                "(show parameters) where property_path = 'cairo.commit.lag'",
+                "show parameters where property_path = 'cairo.commit.lag'",
                 null,
                 null,
                 false
+        );
+    }
+
+    @Test
+    public void testWithoutBraces() throws Exception {
+        assertQuery(
+                "property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
+                        "cairo.sql.copy.root\tQDB_CAIRO_SQL_COPY_ROOT\timport\tdefault\tfalse\tfalse\n",
+                "SHOW PARAMETERS WHERE property_path = 'cairo.sql.copy.root';",
+                null,
+                null,
+                false
+        );
+
+        assertQuery(
+                "property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
+                        "cairo.sql.backup.root\tQDB_CAIRO_SQL_BACKUP_ROOT\t\tdefault\tfalse\tfalse\n" +
+                        "cairo.root\tQDB_CAIRO_ROOT\tdb\tdefault\tfalse\tfalse\n",
+                "SHOW PARAMETERS WHERE property_path IN ('cairo.root', 'cairo.sql.backup.root') ORDER BY 1 desc;",
+                null,
+                null,
+                true
         );
     }
 }

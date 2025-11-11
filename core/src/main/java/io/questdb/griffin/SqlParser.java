@@ -2076,6 +2076,56 @@ public class SqlParser {
                     }
                 } else if (isParametersKeyword(tok)) {
                     showKind = QueryModel.SHOW_PARAMETERS;
+                    tok = SqlUtil.fetchNext(lexer);
+
+                    if (tok != null && isWhereKeyword(tok)) {
+                        ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls());
+                        if (expr != null) {
+                            model.setWhereClause(expr);
+                            tok = optTok(lexer);
+                        } else {
+                            throw SqlException.$((lexer.lastTokenPosition()), "empty where clause");
+                        }
+                    }
+
+                    if (tok != null && isOrderKeyword(tok)) {
+                        model.setOrderByPosition(lexer.lastTokenPosition());
+                        expectBy(lexer);
+                        do {
+                            tokIncludingLocalBrace(lexer, "literal");
+                            lexer.unparseLast();
+
+                            ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
+                            if (n == null || (n.type == ExpressionNode.QUERY || n.type == ExpressionNode.SET_OPERATION)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
+                            }
+
+                            if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token))
+                                    || (n.type == ExpressionNode.LITERAL && n.token.isEmpty())) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
+                            }
+
+                            tok = optTok(lexer);
+
+                            if (tok != null && isDescKeyword(tok)) {
+                                model.addOrderBy(n, QueryModel.ORDER_DIRECTION_DESCENDING);
+                                tok = optTok(lexer);
+                            } else {
+                                model.addOrderBy(n, QueryModel.ORDER_DIRECTION_ASCENDING);
+
+                                if (tok != null && isAscKeyword(tok)) {
+                                    tok = optTok(lexer);
+                                }
+                            }
+
+                            if (model.getOrderBy().size() >= MAX_ORDER_BY_COLUMNS) {
+                                throw err(lexer, tok, "Too many columns");
+                            }
+                        } while (tok != null && Chars.equals(tok, ','));
+                    }
+                    if (tok != null) {
+                        lexer.unparseLast();
+                    }
                 } else if (isServerVersionKeyword(tok)) {
                     showKind = QueryModel.SHOW_SERVER_VERSION;
                 } else if (isServerVersionNumKeyword(tok)) {

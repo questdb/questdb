@@ -4966,7 +4966,13 @@ public class SqlOptimiser implements Mutable {
         int sz = orderByNodes.size();
         if (sz > 0) {
             final ObjList<QueryColumn> columns = baseParent.getBottomUpColumns();
-            final int columnCount = columns.size();
+            LowerCaseCharSequenceIntHashMap index = baseParent.getColumnAliasIndex();
+            ObjList<CharSequence> alias = index.keys();
+            int columnCount = columns.size();
+            if (columnCount == 0) {
+                columnCount = alias.size();
+            }
+
             for (int i = 0; i < sz; i++) {
                 final ExpressionNode orderBy = orderByNodes.getQuick(i);
                 final CharSequence column = orderBy.token;
@@ -4993,11 +4999,24 @@ public class SqlOptimiser implements Mutable {
                                     .put(']');
                         }
                     }
+
+                    CharSequence name = null;
+                    if (columns.size() == 0) {
+                        for (int j = 0, n = index.size(); j < n; j++) {
+                            int pos = index.valueAt(index.keyIndex(alias.get(j)));
+                            if (pos == position - 1) {
+                                name = alias.get(j);
+                                break;
+                            }
+                        }
+                    } else {
+                        name = columns.get(position - 1).getName();
+                    }
                     orderByNodes.setQuick(
                             i,
                             expressionNodePool.next().of(
                                     LITERAL,
-                                    columns.get(position - 1).getName(),
+                                    name,
                                     -1,
                                     orderBy.position
                             )

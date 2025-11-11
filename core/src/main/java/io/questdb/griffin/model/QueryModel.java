@@ -747,6 +747,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return columnAliasIndexes.get(alias);
     }
 
+    public LowerCaseCharSequenceIntHashMap getColumnAliasIndex() {
+        return columnAliasIndexes;
+    }
+
     public LowerCaseCharSequenceObjHashMap<CharSequence> getColumnNameToAliasMap() {
         return columnNameToAliasMap;
     }
