@@ -55,11 +55,17 @@ pub enum ColumnTypeTag {
     IPv4 = 25,
     Varchar = 26,
     Array = 27,
+    Decimal8 = 28,
+    Decimal16 = 29,
+    Decimal32 = 30,
+    Decimal64 = 31,
+    Decimal128 = 33,
+    Decimal256 = 34,
 }
 
 impl ColumnTypeTag {
     #[cfg(test)]
-    const VALUES: [Self; 23] = [
+    const VALUES: [Self; 29] = [
         Self::Boolean,
         Self::Byte,
         Self::Short,
@@ -83,6 +89,12 @@ impl ColumnTypeTag {
         Self::IPv4,
         Self::Varchar,
         Self::Array,
+        Self::Decimal8,
+        Self::Decimal16,
+        Self::Decimal32,
+        Self::Decimal64,
+        Self::Decimal128,
+        Self::Decimal256,
     ];
 
     /// If true, the column is encoded with both data and aux vectors.
@@ -95,25 +107,33 @@ impl ColumnTypeTag {
     /// N.B. Symbol columns are _also_ considered fixed size.
     pub const fn fixed_size(self) -> Option<usize> {
         match self {
-            ColumnTypeTag::Boolean | ColumnTypeTag::GeoByte | ColumnTypeTag::Byte => Some(1),
+            ColumnTypeTag::Boolean
+            | ColumnTypeTag::GeoByte
+            | ColumnTypeTag::Byte
+            | ColumnTypeTag::Decimal8 => Some(1),
 
-            ColumnTypeTag::Short | ColumnTypeTag::GeoShort | ColumnTypeTag::Char => Some(2),
+            ColumnTypeTag::Short
+            | ColumnTypeTag::GeoShort
+            | ColumnTypeTag::Char
+            | ColumnTypeTag::Decimal16 => Some(2),
 
             ColumnTypeTag::Float
             | ColumnTypeTag::Int
             | ColumnTypeTag::IPv4
             | ColumnTypeTag::GeoInt
-            | ColumnTypeTag::Symbol => Some(4),
+            | ColumnTypeTag::Symbol
+            | ColumnTypeTag::Decimal32 => Some(4),
 
             ColumnTypeTag::Double
             | ColumnTypeTag::Long
             | ColumnTypeTag::Date
             | ColumnTypeTag::GeoLong
-            | ColumnTypeTag::Timestamp => Some(8),
+            | ColumnTypeTag::Timestamp
+            | ColumnTypeTag::Decimal64 => Some(8),
 
-            ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => Some(16),
+            ColumnTypeTag::Long128 | ColumnTypeTag::Uuid | ColumnTypeTag::Decimal128 => Some(16),
 
-            ColumnTypeTag::Long256 => Some(32),
+            ColumnTypeTag::Long256 | ColumnTypeTag::Decimal256 => Some(32),
 
             _ => None,
         }
@@ -144,6 +164,12 @@ impl ColumnTypeTag {
             ColumnTypeTag::IPv4 => "ipv4",
             ColumnTypeTag::Varchar => "varchar",
             ColumnTypeTag::Array => "array",
+            ColumnTypeTag::Decimal8 => "decimal8",
+            ColumnTypeTag::Decimal16 => "decimal16",
+            ColumnTypeTag::Decimal32 => "decimal32",
+            ColumnTypeTag::Decimal64 => "decimal64",
+            ColumnTypeTag::Decimal128 => "decimal128",
+            ColumnTypeTag::Decimal256 => "decimal256",
         }
     }
 
@@ -184,6 +210,12 @@ impl TryFrom<u8> for ColumnTypeTag {
             25 => Ok(ColumnTypeTag::IPv4),
             26 => Ok(ColumnTypeTag::Varchar),
             27 => Ok(ColumnTypeTag::Array),
+            33 => Ok(ColumnTypeTag::Decimal8),
+            34 => Ok(ColumnTypeTag::Decimal16),
+            35 => Ok(ColumnTypeTag::Decimal32),
+            36 => Ok(ColumnTypeTag::Decimal64),
+            37 => Ok(ColumnTypeTag::Decimal128),
+            38 => Ok(ColumnTypeTag::Decimal256),
             _ => Err(fmt_err!(
                 InvalidType,
                 "unknown QuestDB column tag code: {}",
@@ -208,7 +240,6 @@ const ARRAY_NDIMS_FIELD_POS: i32 = 14;
 #[derive(Copy, Clone, PartialEq, Serialize, Ord, PartialOrd, Eq)]
 #[serde(transparent)]
 pub struct ColumnType {
-    // Optimization so `Option<ColumnType>` is the same size as `ColumnType`.
     code: NonZeroI32,
 }
 
@@ -410,6 +441,12 @@ mod tests {
         assert_eq!(ColumnTypeTag::String.fixed_size(), None);
         assert_eq!(ColumnTypeTag::Varchar.fixed_size(), None);
         assert_eq!(ColumnTypeTag::Array.fixed_size(), None);
+        assert_eq!(ColumnTypeTag::Decimal8.fixed_size(), Some(1));
+        assert_eq!(ColumnTypeTag::Decimal16.fixed_size(), Some(2));
+        assert_eq!(ColumnTypeTag::Decimal32.fixed_size(), Some(4));
+        assert_eq!(ColumnTypeTag::Decimal64.fixed_size(), Some(8));
+        assert_eq!(ColumnTypeTag::Decimal128.fixed_size(), Some(16));
+        assert_eq!(ColumnTypeTag::Decimal256.fixed_size(), Some(32));
     }
 
     #[test]

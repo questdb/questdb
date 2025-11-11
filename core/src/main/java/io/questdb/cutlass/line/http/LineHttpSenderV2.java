@@ -299,7 +299,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
     }
 
     private void putTimestamp(Instant timestamp) {
-        // always send as nanos as long as it fits in a long 
+        // always send as nanos as long as it fits in a long
         try {
             request.put(NanosTimestampDriver.INSTANCE.from(timestamp)).putAscii('n');
         } catch (ArithmeticException e) {

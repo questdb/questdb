@@ -28,14 +28,16 @@ import java.math.RoundingMode;
 import java.util.Arrays;
 
 /**
- * Thread-safe implementation of Knuth's division algorithm (Algorithm D from TAOCP Vol 2, Section 4.3.1).
- * This class provides high-precision division for 256-bit decimal numbers using the classical
- * long division algorithm optimized for multi-precision arithmetic.
+ * Thread-safe implementation of Knuth's division algorithm (Algorithm D from TAOCP Vol. 2, §4.3.1).
  * <p>
- * The algorithm divides a dividend u by a divisor v, producing quotient q and remainder r
- * such that u = q * v + r, where 0 <= r < v.
+ * This class provides high-precision division for 256-bit decimal numbers using the classical
+ * long-division algorithm optimized for multi-precision arithmetic.
+ * <p>
+ * The algorithm divides a dividend {@code u} by a divisor {@code v}, producing quotient {@code q}
+ * and remainder {@code r} such that:
+ * {@code u = q * v + r}, where {@code 0 <= r &lt; v}.
  */
-class DecimalKnuthDivider {
+public class DecimalKnuthDivider {
     private final int[] q = new int[8];
     private final int[] u = new int[9];
     private final int[] v = new int[8];
