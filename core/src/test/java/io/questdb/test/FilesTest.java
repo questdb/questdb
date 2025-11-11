@@ -1092,29 +1092,29 @@ public class FilesTest {
             } catch (CairoError e) {
             }
 
-            Assert.assertTrue(ff.rmdirTable(path));
+            Assert.assertTrue(ff.rmdir(path));
 
             temporaryFolder.newFolder("a", "partition");
             temporaryFolder.newFolder("a", "wal", "segment");
 
-            Assert.assertTrue(ff.rmdirTable(path));
+            Assert.assertTrue(ff.rmdir(path));
 
             temporaryFolder.newFolder("a", "wal", "segment", "extra");
             try {
-                ff.rmdirTable(path);
+                ff.rmdir(path);
                 Assert.fail();
             } catch (CairoError e) {
             }
 
-            Assert.assertTrue(ff.rmdirDbRoot(path));
+            Assert.assertTrue(ff.rmdir(path));
             temporaryFolder.newFolder("a", "table", "wal", "segment");
             temporaryFolder.newFolder("a", ".download", "table", "wal", "segment");
 
-            Assert.assertTrue(ff.rmdirDbRoot(path));
+            Assert.assertTrue(ff.rmdir(path));
 
             temporaryFolder.newFolder("a", ".download", "table", "wal", "segment", "extra");
             try {
-                ff.rmdirTable(path);
+                ff.rmdir(path);
                 Assert.fail();
             } catch (CairoError e) {
             }

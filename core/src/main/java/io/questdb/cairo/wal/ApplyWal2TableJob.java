@@ -139,7 +139,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     int type = ff.findType(p);
                     if (ff.isDirOrSoftLinkDirNoDots(tempPath, rootLen, pUtf8NameZ, type)) {
                         if (!CairoKeywords.isTxnSeq(pUtf8NameZ) && !CairoKeywords.isWal(pUtf8NameZ)) {
-                            if (!ff.unlinkOrRemoveTable(tempPath, LOG)) {
+                            if (!ff.unlinkOrRemove(tempPath, LOG)) {
                                 allClean = false;
                             }
                         }

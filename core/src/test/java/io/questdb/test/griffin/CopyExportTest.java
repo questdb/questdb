@@ -79,7 +79,7 @@ public class CopyExportTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             path.of(exportRoot).$();
             if (ff.exists(path.$())) {
-                ff.rmdirTable(path);
+                ff.rmdir(path);
             }
         }
     }

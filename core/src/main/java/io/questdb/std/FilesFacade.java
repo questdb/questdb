@@ -162,12 +162,6 @@ public interface FilesFacade {
 
     boolean rmdir(Path name, boolean haltOnError);
 
-    boolean rmdirDbRoot(Path path);
-
-    boolean rmdirTable(Path path);
-
-    boolean rmdirWal(Path path);
-
     int softLink(LPSZ src, LPSZ softLink);
 
     int sync();
@@ -183,8 +177,6 @@ public interface FilesFacade {
     boolean unlinkOrRemove(Path path, Log LOG);
 
     boolean unlinkOrRemove(Path path, int checkedType, Log LOG);
-
-    boolean unlinkOrRemoveTable(Path path, Log LOG);
 
     void walk(Path src, FindVisitor func);
 

@@ -41,21 +41,10 @@ public class FilesFacadeImpl implements FilesFacade {
     // db/.download/tableDir/wal/segmentDir
     private static final int DB_DIR_MAX_DEPTH = 5;
     private final static Log LOG = LogFactory.getLog(FilesFacadeImpl.class);
-    // table max directory depth is 3, the expected structure is:
-    // table/partitionDir
-    // table/wal/segmentDir
-    private static final int TABLE_DIR_MAX_DEPTH = 3;
-    // wal max directory depth is 2, the expected structure is:
-    // wal/segmentDir
-    private static final int WAL_DIR_MAX_DEPTH = 2;
     private static final long ZFS_MAGIC_NUMBER = 0x2fc12fc1;
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
     private long mapPageSize = 0;
-
-    public FilesFacadeImpl() {
-    }
-
 
     @Override
     public boolean allocate(long fd, long size) {
@@ -466,22 +455,22 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean rmdir(Path name, boolean haltOnError) {
-        return rmdir0(name, haltOnError, 1);
-    }
+        // Rmdir is potentially dangerous operation. Verify it
+        // against installation root dir to avoid catastrophic mistakes
+        Path pathSecureCopy = SecurePath.PATH.get().of(name);
 
-    @Override
-    public boolean rmdirDbRoot(Path path) {
-        return rmdir0(path, false, DB_DIR_MAX_DEPTH);
-    }
-
-    @Override
-    public boolean rmdirTable(Path path) {
-        return rmdir0(path, false, TABLE_DIR_MAX_DEPTH);
-    }
-
-    @Override
-    public boolean rmdirWal(Path path) {
-        return rmdir0(path, false, WAL_DIR_MAX_DEPTH);
+        if (DB_DIR_MAX_DEPTH > 1) {
+            // Always log all recursive rmdir attempts
+            LOG.info().$("removing dir [path=").$(pathSecureCopy)
+                    .$(", haltOnError=").$(haltOnError)
+                    .$(", maxRecursiveDepth=").$(DB_DIR_MAX_DEPTH).I$();
+        }
+        try {
+            return Files.rmdir(pathSecureCopy, haltOnError, 0, DB_DIR_MAX_DEPTH);
+        } catch (CairoError e) {
+            LOG.error().$("could not remove dir [path=").$(name).$(", error=").$(e.getFlyweightMessage()).I$();
+            throw e;
+        }
     }
 
     @Override
@@ -515,20 +504,32 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean unlinkOrRemove(Path path, int checkedType, Log LOG) {
-        return unlinkOrRemove0(path, checkedType, LOG, 1);
-    }
-
-    @Override
     public boolean unlinkOrRemove(Path path, Log LOG) {
         int checkedType = isSoftLink(path.$()) ? Files.DT_LNK : Files.DT_UNKNOWN;
         return unlinkOrRemove(path, checkedType, LOG);
     }
 
     @Override
-    public boolean unlinkOrRemoveTable(Path path, Log LOG) {
-        int checkedType = isSoftLink(path.$()) ? Files.DT_LNK : Files.DT_UNKNOWN;
-        return unlinkOrRemove0(path, checkedType, LOG, TABLE_DIR_MAX_DEPTH);
+    public boolean unlinkOrRemove(Path path, int checkedType, Log LOG) {
+        if (checkedType == Files.DT_LNK) {
+            // in Windows ^ ^ will return DT_DIR, but that is ok as the behaviour
+            // is to delete the link, not the contents of the target. in *nix
+            // systems we can simply unlink, which deletes the link and leaves
+            // the contents of the target intact
+            if (unlink(path.$()) == 0) {
+                LOG.debug().$("removed by unlink [path=").$(path).I$();
+                return true;
+            } else {
+                LOG.debug().$("failed to unlink, will remove [path=").$(path).I$();
+            }
+        }
+
+        if (rmdir(path)) {
+            LOG.debug().$("removed [path=").$(path).I$();
+            return true;
+        }
+        LOG.debug().$("cannot remove [path=").$(path).$(", errno=").$(errno()).I$();
+        return false;
     }
 
     public void walk(Path path, FindVisitor func) {
@@ -550,25 +551,6 @@ public class FilesFacadeImpl implements FilesFacade {
             return pageSize;
         } else {
             return mapPageSize;
-        }
-    }
-
-    private boolean rmdir0(Path path, boolean haltOnError, int maxRecursiveDepth) {
-        // Rmdir is potentially dangerous operation. Verify it
-        // against installation root dir to avoid catastrophic mistakes
-        Path pathSecureCopy = SecurePath.PATH.get().of(path);
-
-        if (maxRecursiveDepth > 1) {
-            // Always log all recursive rmdir attempts
-            LOG.info().$("removing dir [path=").$(pathSecureCopy)
-                    .$(", haltOnError=").$(haltOnError)
-                    .$(", maxRecursiveDepth=").$(maxRecursiveDepth).I$();
-        }
-        try {
-            return Files.rmdir(pathSecureCopy, haltOnError, 0, maxRecursiveDepth);
-        } catch (CairoError e) {
-            LOG.error().$("could not remove dir [path=").$(path).$(", error=").$(e.getFlyweightMessage()).I$();
-            throw e;
         }
     }
 
@@ -617,28 +599,6 @@ public class FilesFacadeImpl implements FilesFacade {
         }
 
         return 0;
-    }
-
-    private boolean unlinkOrRemove0(Path path, int checkedType, Log LOG, int maxDepth) {
-        if (checkedType == Files.DT_LNK) {
-            // in Windows ^ ^ will return DT_DIR, but that is ok as the behaviour
-            // is to delete the link, not the contents of the target. in *nix
-            // systems we can simply unlink, which deletes the link and leaves
-            // the contents of the target intact
-            if (unlink(path.$()) == 0) {
-                LOG.debug().$("removed by unlink [path=").$(path).I$();
-                return true;
-            } else {
-                LOG.debug().$("failed to unlink, will remove [path=").$(path).I$();
-            }
-        }
-
-        if (rmdir0(path, true, maxDepth)) {
-            LOG.debug().$("removed [path=").$(path).I$();
-            return true;
-        }
-        LOG.debug().$("cannot remove [path=").$(path).$(", errno=").$(errno()).I$();
-        return false;
     }
 
     @FunctionalInterface

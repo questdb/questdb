@@ -101,7 +101,7 @@ public class ImportFilesFunctionFactoryTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 path.of(inputRoot).$();
                 if (ff.exists(path.$())) {
-                    ff.rmdirTable(path);
+                    ff.rmdir(path);
                 }
                 ff.mkdir(path.$(), 493);
             }
@@ -154,7 +154,7 @@ public class ImportFilesFunctionFactoryTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             path.of(inputRoot).$();
             if (ff.exists(path.$())) {
-                ff.rmdirTable(path);
+                ff.rmdir(path);
             }
             ff.mkdir(path.$(), 493);
 

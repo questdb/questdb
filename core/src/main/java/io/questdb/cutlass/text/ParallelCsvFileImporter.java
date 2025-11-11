@@ -293,7 +293,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         try (Path path = new Path()) {
             switch (TableUtils.exists(ff, path, root, tableDir)) {
                 case TableUtils.TABLE_EXISTS:
-                    if (!ff.rmdirTable(path)) {
+                    if (!ff.rmdir(path)) {
                         LOG.error()
                                 .$("could not overwrite table [tableName='").$safe(tableName)
                                 .$("',path='").$(path)
@@ -1373,7 +1373,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
             LOG.info().$("removing import work directory [path='").$(workDirPath).$("']").$();
 
-            if (!ff.rmdirDbRoot(workDirPath)) {
+            if (!ff.rmdir(workDirPath)) {
                 throw TextException.$("could not remove import work directory [path='").put(workDirPath).put("', errno=").put(ff.errno()).put(']');
             }
         }

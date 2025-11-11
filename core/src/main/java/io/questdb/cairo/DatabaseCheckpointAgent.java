@@ -185,7 +185,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 // delete contents of the checkpoint's "db" dir.
                 if (ff.exists(path.slash$())) {
                     path.trimTo(checkpointDbLen).$();
-                    if (!ff.rmdirDbRoot(path)) {
+                    if (!ff.rmdir(path)) {
                         throw CairoException.critical(ff.errno()).put("Could not remove checkpoint dir [dir=").put(path).put(']');
                     }
                 }
@@ -552,7 +552,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             path.of(configuration.getCheckpointRoot());
             if (ff.exists(path.$())) {
                 LOG.info().$("removing checkpoint directory to create legacy snapshot [path=").$(path).I$();
-                ff.rmdirDbRoot(path);
+                ff.rmdir(path);
             }
         }
         checkpointCreate(executionContext, checkpointRoot);
@@ -567,11 +567,13 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
             // Delete checkpoint's "db" directory.
             path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).$();
-            ff.rmdirDbRoot(path); // it's fine to ignore errors here
+            // it's fine to ignore errors here
+            ff.rmdir(path);
 
             // Delete snapshot's "db" directory.
             path.of(configuration.getLegacyCheckpointRoot()).concat(configuration.getDbDirectory()).$();
-            ff.rmdirDbRoot(path); // it's fine to ignore errors here
+            // it's fine to ignore errors here
+            ff.rmdir(path);
 
             // Resume the WalPurgeJob
             if (walPurgeJobRunLock != null) {
@@ -795,7 +797,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             // Delete checkpoint directory to avoid recovery on next restart.
             srcPath.trimTo(checkpointRootLen).$();
             memFile.close();
-            if (!ff.rmdirDbRoot(srcPath)) {
+            if (!ff.rmdir(srcPath)) {
                 throw CairoException.critical(ff.errno())
                         .put("could not remove checkpoint dir [dir=").put(srcPath)
                         .put(", errno=").put(ff.errno())

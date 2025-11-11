@@ -209,9 +209,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             symLinkTarget = null;
                         }
                     }
-                    boolean fullyDeleted = ff.rmdirTable(pathToDelete);
+                    boolean fullyDeleted = ff.rmdir(pathToDelete);
                     if (symLinkTarget != null) {
-                        ff.rmdirTable(symLinkTarget);
+                        ff.rmdir(symLinkTarget);
                     }
 
                     // Sometimes on Windows sequencer files can be open at this point,
