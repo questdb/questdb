@@ -265,24 +265,12 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
-        final LongList groupByColumnSinkPtrs = atom.getGroupByColumnSinkData(slotId);
 
         final GroupByLongList rowIds = atom.getRowIdsGroupByList(slotId);
         final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
-        long rowIdPtr = groupByColumnSinkPtrs.getQuick(0);
-        long timestampPtr = groupByColumnSinkPtrs.getQuick(1);
-        rowIds.of(rowIdPtr);
-        timestamps.of(timestampPtr);
-        if (rowIdPtr != 0) {
-            rowIds.clear();
-        } else {
-            groupByColumnSinkPtrs.set(0, rowIds.ptr());
-        }
-        if (timestampPtr != 0) {
-            timestamps.clear();
-        } else {
-            groupByColumnSinkPtrs.set(1, timestamps.ptr());
-        }
+        Misc.free(atom.getAllocator(workerId));
+        rowIds.of(0);
+        timestamps.of(0);
 
         try {
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -325,8 +313,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 }
             }
 
-            groupByColumnSinkPtrs.set(0, rowIds.ptr());
-            groupByColumnSinkPtrs.set(1, timestamps.ptr());
             long rowLo = 0;
             for (long r = 0; r < frameRowCount; r++) {
                 record.setRowIndex(r);
@@ -417,25 +403,11 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final var columnTags = atom.getGroupByColumnTypes();
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
+        Misc.free(atom.getAllocator(workerId));
         final LongList groupByColumnSinkPtrs = atom.getGroupByColumnSinkData(slotId);
         final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
-        long timestampPtr = groupByColumnSinkPtrs.getQuick(0);
-        timestamps.of(timestampPtr);
-        if (timestampPtr != 0) {
-            timestamps.clear();
-        } else {
-            groupByColumnSinkPtrs.set(0, timestamps.ptr());
-        }
-
-        for (int i = 1, n = groupByColumnSinkPtrs.size(); i < n; i++) {
-            long ptr = groupByColumnSinkPtrs.getQuick(i);
-            columnSink.of(ptr);
-            if (ptr != 0) {
-                columnSink.clear();
-            } else {
-                groupByColumnSinkPtrs.set(i, columnSink.ptr());
-            }
-        }
+        timestamps.of(0);
+        groupByColumnSinkPtrs.fillWithDefault();
 
         try {
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -466,12 +438,11 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         break;
                     }
                     timestamps.add(slaveTimestamp);
-                    groupByColumnSinkPtrs.set(0, timestamps.ptr());
 
                     for (int i = 0; i < columnCount; i++) {
-                        long ptr = groupByColumnSinkPtrs.getQuick(i + 1);
+                        long ptr = groupByColumnSinkPtrs.getQuick(i);
                         columnSink.of(ptr).put(joinRecord, columnIndexes.getQuick(i), columnTags.getQuick(i));
-                        groupByColumnSinkPtrs.set(i + 1, columnSink.ptr());
+                        groupByColumnSinkPtrs.set(i, columnSink.ptr());
                     }
 
                     if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
@@ -519,7 +490,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                     for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                         int mapIndex = mapIndexes.getQuick(i);
-                        final long ptr = groupByColumnSinkPtrs.getQuick(mapIndex + 1);
+                        final long ptr = groupByColumnSinkPtrs.getQuick(mapIndex);
                         if (ptr != 0) {
                             columnSink.of(ptr);
                             if (columnSink.size() > 0 && rowLo < rowHi) {
@@ -590,25 +561,11 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
-                final LongList groupByColumnSinkPtrs = atom.getGroupByColumnSinkData(slotId);
+                Misc.free(atom.getAllocator(workerId));
                 final GroupByLongList rowIds = atom.getRowIdsGroupByList(slotId);
                 final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
-                long rowIdPtr = groupByColumnSinkPtrs.getQuick(0);
-                long timestampPtr = groupByColumnSinkPtrs.getQuick(1);
-
-                rowIds.of(rowIdPtr);
-                timestamps.of(timestampPtr);
-                if (rowIdPtr != 0) {
-                    rowIds.clear();
-                } else {
-                    groupByColumnSinkPtrs.set(0, rowIds.ptr());
-                }
-                timestamps.of(timestampPtr);
-                if (timestampPtr != 0) {
-                    timestamps.clear();
-                } else {
-                    groupByColumnSinkPtrs.set(1, timestamps.ptr());
-                }
+                rowIds.of(0);
+                timestamps.of(0);
 
                 final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
                 record.setRowIndex(rows.get(0));
@@ -650,8 +607,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         }
                     }
                 }
-                groupByColumnSinkPtrs.set(0, rowIds.ptr());
-                groupByColumnSinkPtrs.set(1, timestamps.ptr());
 
                 // Now iterate through filtered master rows and perform batch aggregation
                 long rowLo = 0;
@@ -763,25 +718,11 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 final var columnTags = atom.getGroupByColumnTypes();
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
+                Misc.free(atom.getAllocator(workerId));
                 final LongList groupByColumnSinkPtrs = atom.getGroupByColumnSinkData(slotId);
                 final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
-                long timestampPtr = groupByColumnSinkPtrs.getQuick(0);
-                timestamps.of(timestampPtr);
-                if (timestampPtr != 0) {
-                    timestamps.clear();
-                } else {
-                    groupByColumnSinkPtrs.set(0, timestamps.ptr());
-                }
-
-                for (int i = 1, n = groupByColumnSinkPtrs.size(); i < n; i++) {
-                    long ptr = groupByColumnSinkPtrs.getQuick(i);
-                    columnSink.of(ptr);
-                    if (ptr != 0) {
-                        columnSink.clear();
-                    } else {
-                        groupByColumnSinkPtrs.set(i, columnSink.ptr());
-                    }
-                }
+                timestamps.of(0);
+                groupByColumnSinkPtrs.fillWithDefault();
 
                 final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
                 record.setRowIndex(rows.get(0));
@@ -812,12 +753,11 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             break;
                         }
                         timestamps.add(slaveTimestamp);
-                        groupByColumnSinkPtrs.set(0, timestamps.ptr());
 
                         for (int i = 0; i < columnCount; i++) {
-                            long ptr = groupByColumnSinkPtrs.getQuick(i + 1);
+                            long ptr = groupByColumnSinkPtrs.getQuick(i);
                             columnSink.of(ptr).put(joinRecord, columnIndexes.getQuick(i), columnTags.getQuick(i));
-                            groupByColumnSinkPtrs.set(i + 1, columnSink.ptr());
+                            groupByColumnSinkPtrs.set(i, columnSink.ptr());
                         }
 
                         if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
@@ -867,7 +807,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
                         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                             int mapIndex = mapIndexes.getQuick(i);
-                            final long ptr = groupByColumnSinkPtrs.getQuick(mapIndex + 1);
+                            final long ptr = groupByColumnSinkPtrs.getQuick(mapIndex);
                             if (ptr != 0) {
                                 columnSink.of(ptr);
                                 if (columnSink.size() > 0 && rowLo < rowHi) {

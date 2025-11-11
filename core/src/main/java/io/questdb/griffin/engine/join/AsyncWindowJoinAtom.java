@@ -87,14 +87,19 @@ public class AsyncWindowJoinAtom extends AbstractWindowJoinAtom {
                 workerCount
         );
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
-        int slaveDataLen = isVectorized() ? this.groupByColumnIndexes.size() + 1 : 2;
-        ownSlaveData = new LongList(slaveDataLen, 0);
-        ownSlaveData.setPos(slaveDataLen);
-        this.perWorkerSlaveData = new ObjList<>(slotCount);
-        for (int i = 0; i < slotCount; i++) {
-            LongList perWorkerSlave = new LongList(slaveDataLen, 0);
-            perWorkerSlave.setPos(slaveDataLen);
-            perWorkerSlaveData.extendAndSet(i, perWorkerSlave);
+        if (isVectorized()) {
+            int slaveDataLen = this.groupByColumnIndexes.size();
+            ownSlaveData = new LongList(slaveDataLen, 0);
+            ownSlaveData.setPos(slaveDataLen);
+            this.perWorkerSlaveData = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                LongList perWorkerSlave = new LongList(slaveDataLen, 0);
+                perWorkerSlave.setPos(slaveDataLen);
+                perWorkerSlaveData.extendAndSet(i, perWorkerSlave);
+            }
+        } else {
+            ownSlaveData = null;
+            perWorkerSlaveData = null;
         }
     }
 

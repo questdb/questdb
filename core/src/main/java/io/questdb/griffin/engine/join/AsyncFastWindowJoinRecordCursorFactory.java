@@ -65,7 +65,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
-import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -282,30 +281,10 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
         Function joinFilter = atom.getJoinFilter(workerId);
 
         final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+        Misc.free(atom.getAllocator(workerId));
+        slaveData.clear();
         final GroupByLongList rowIds = atom.getRowIdsGroupByList(slotId);
         final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
-        long dataPtr = slaveData.ptr();
-        if (dataPtr != 0) {
-            long entrySize = slaveData.entrySize();
-            long capacity = slaveData.capacity();
-
-            // reuse existing GroupByLongList
-            for (long p = dataPtr, lim = dataPtr + entrySize * capacity; p < lim; p += entrySize) {
-                int key = Unsafe.getUnsafe().getInt(p);
-                if (key != 0) {
-                    long rowIdsPtr = Unsafe.getUnsafe().getLong(p + 4);
-                    if (rowIdsPtr != 0) {
-                        rowIds.of(rowIdsPtr).clear();
-                    }
-                    long timestampsPtr = Unsafe.getUnsafe().getLong(p + 12);
-                    if (timestampsPtr != 0) {
-                        timestamps.of(timestampsPtr).clear();
-                    }
-                    Unsafe.getUnsafe().putInt(p, 0);
-                    Unsafe.getUnsafe().putLong(p + 20, 0);
-                }
-            }
-        }
 
         try {
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
@@ -465,33 +444,9 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
         final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
 
         final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+        Misc.free(atom.getAllocator(workerId));
+        slaveData.clear();
         final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
-        long dataPtr = slaveData.ptr();
-        // TODO: this clean up is so-so as it leaves timestamps list and column sink addresses in-place,
-        //   but erases the symbol key. This means that there is no guarantee that the memory will be reused.
-        //   We could free the allocator instead as long as aggregate functions don't use it.
-        if (dataPtr != 0) {
-            long entrySize = slaveData.entrySize();
-            long capacity = slaveData.capacity();
-
-            for (long p = dataPtr, lim = dataPtr + entrySize * capacity; p < lim; p += entrySize) {
-                int key = Unsafe.getUnsafe().getInt(p);
-                if (key != 0) {
-                    long ptr1 = Unsafe.getUnsafe().getLong(p + 4);
-                    if (ptr1 != 0) {
-                        timestamps.of(ptr1).clear();
-                    }
-                    Unsafe.getUnsafe().putInt(p, 0);
-                    Unsafe.getUnsafe().putLong(p + 12, 0);
-                    for (int i = 0; i < columnCount; i++) {
-                        long ptr = Unsafe.getUnsafe().getLong(p + 20 + 8L * i);
-                        if (ptr != 0) {
-                            columnSink.of(ptr).clear();
-                        }
-                    }
-                }
-            }
-        }
 
         try {
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
@@ -651,30 +606,10 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                 final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
 
                 final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+                Misc.free(atom.getAllocator(workerId));
+                slaveData.clear();
                 final GroupByLongList rowIds = atom.getRowIdsGroupByList(slotId);
                 final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
-                long dataPtr = slaveData.ptr();
-                if (dataPtr != 0) {
-                    long entrySize = slaveData.entrySize();
-                    long capacity = slaveData.capacity();
-
-                    for (long p = dataPtr, lim = dataPtr + entrySize * capacity; p < lim; p += entrySize) {
-                        int key = Unsafe.getUnsafe().getInt(p);
-                        if (key != 0) {
-                            long rowIdsPtr = Unsafe.getUnsafe().getLong(p + 4);
-                            if (rowIdsPtr != 0) {
-                                rowIds.of(rowIdsPtr).clear();
-                            }
-                            long timestampsPtr = Unsafe.getUnsafe().getLong(p + 12);
-                            if (timestampsPtr != 0) {
-                                timestamps.of(timestampsPtr).clear();
-                            }
-                            Unsafe.getUnsafe().putInt(p, 0);
-                            Unsafe.getUnsafe().putLong(p + 20, 0);
-                        }
-                    }
-                }
-
                 final int masterSymbolIndex = atom.getMasterSymbolIndex();
                 final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
                 final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -844,34 +779,9 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                 final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
 
                 final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+                Misc.free(atom.getAllocator(workerId));
+                slaveData.clear();
                 final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
-                long dataPtr = slaveData.ptr();
-                // TODO: this clean up is so-so as it leaves timestamps list and column sink addresses in-place,
-                //   but erases the symbol key. This means that there is no guarantee that the memory will be reused.
-                //   We could free the allocator instead as long as aggregate functions don't use it.
-                if (dataPtr != 0) {
-                    long entrySize = slaveData.entrySize();
-                    long capacity = slaveData.capacity();
-
-                    for (long p = dataPtr, lim = dataPtr + entrySize * capacity; p < lim; p += entrySize) {
-                        int key = Unsafe.getUnsafe().getInt(p);
-                        if (key != 0) {
-                            long timestampsPtr = Unsafe.getUnsafe().getLong(p + 4);
-                            if (timestampsPtr != 0) {
-                                timestamps.of(timestampsPtr).clear();
-                            }
-                            Unsafe.getUnsafe().putInt(p, 0);
-                            Unsafe.getUnsafe().putLong(p + 12, 0);
-                            for (int i = 0; i < columnCount; i++) {
-                                long columnSinkPtr = Unsafe.getUnsafe().getLong(p + 20 + 8L * i);
-                                if (columnSinkPtr != 0) {
-                                    columnSink.of(columnSinkPtr).clear();
-                                }
-                            }
-                        }
-                    }
-                }
-
                 final int masterSymbolIndex = atom.getMasterSymbolIndex();
                 final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
                 final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
