@@ -153,16 +153,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public CharSequence getSqlCopyInputRoot() {
-        return overrides.getInputRoot();
-    }
-
-    @Override
-    public CharSequence getSqlCopyInputWorkRoot() {
-        return overrides.getInputWorkRoot();
-    }
-
-    @Override
     public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
     }

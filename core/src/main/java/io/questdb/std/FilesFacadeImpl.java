@@ -33,6 +33,7 @@ import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class FilesFacadeImpl implements FilesFacade {
@@ -42,6 +43,7 @@ public class FilesFacadeImpl implements FilesFacade {
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
     private final Utf8String installationRootDir;
+    private final ObjList<Utf8String> ioRoots = new ObjList<>();
     private long mapPageSize = 0;
 
     public FilesFacadeImpl(CharSequence installationRootDir) {
@@ -53,6 +55,13 @@ public class FilesFacadeImpl implements FilesFacade {
         } else {
             this.installationRootDir = null;
         }
+    }
+
+    public void addIORoot(@NotNull String ioRoot) {
+        if (installationRootDir == null) {
+            return;
+        }
+        ioRoots.add(new Utf8String(ioRoot));
     }
 
     @Override
@@ -571,10 +580,21 @@ public class FilesFacadeImpl implements FilesFacade {
         // against installation root dir to avoid catastrophic mistakes
         Path pathSecureCopy = SecurePath.PATH.get().of(path);
         if (installationRootDir != null && !Utf8s.startsWith(pathSecureCopy, installationRootDir)) {
-            var exception = new IllegalArgumentException("Refusing to rmdir outside installation root [path=" + path + ", root=" + installationRootDir + ']');
-            // Log stack trace for further analysis, don't rely on the caller to log it
-            log.critical().$(exception).I$();
-            throw exception;
+            boolean allow = false;
+            for (int i = 0, n = ioRoots.size(); i < n; i++) {
+                Utf8String ioRoot = ioRoots.getQuick(i);
+                if (Utf8s.startsWith(pathSecureCopy, ioRoot)) {
+                    allow = true;
+                    break;
+                }
+            }
+
+            if (!allow) {
+                var exception = new IllegalArgumentException("Refusing to rmdir outside installation root [path=" + path + ", root=" + installationRootDir + ']');
+                // Log stack trace for further analysis, don't rely on the caller to log it
+                log.critical().$(exception).I$();
+                throw exception;
+            }
         }
 
         if (maxRecursiveDepth > 1) {

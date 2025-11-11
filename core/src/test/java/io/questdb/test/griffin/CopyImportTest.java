@@ -51,6 +51,8 @@ import static org.junit.Assert.*;
 
 public class CopyImportTest extends AbstractCairoTest {
     private final boolean walEnabled;
+    private static String inputRootDir;
+    private static String inputWorkRootDir;
 
     public CopyImportTest() {
         this.walEnabled = TestUtils.isWal();
@@ -58,14 +60,16 @@ public class CopyImportTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        inputRoot = TestUtils.getCsvRoot();
-        inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
+        inputRootDir = TestUtils.getCsvRoot();
+        inputWorkRootDir = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
         AbstractCairoTest.setUpStatic();
     }
 
     @Before
     public void setUp() {
         super.setUp();
+        node1.setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, inputRootDir);
+        node1.setProperty(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, inputWorkRootDir);
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
     }
 
@@ -423,10 +427,10 @@ public class CopyImportTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCopyIntoExistingTableWithDefaultWorkDir() throws Exception {
-        String inputWorkRootTmp = inputWorkRoot;
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
-            inputWorkRoot = path.toString();
+            var inputWorkRoot = path.toString();
+            setProperty(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, inputWorkRoot);
         }
 
         CopyRunnable stmt = () -> {
@@ -438,8 +442,6 @@ public class CopyImportTest extends AbstractCairoTest {
         CopyRunnable test = this::assertQuotesTableContentExisting;
 
         testCopy(stmt, test);
-
-        inputWorkRoot = inputWorkRootTmp;
     }
 
     @Test
@@ -496,10 +498,10 @@ public class CopyImportTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCopyIntoNewTableWithDefaultWorkDir() throws Exception {
-        String inputWorkRootTmp = inputWorkRoot;
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
-            inputWorkRoot = path.toString();
+            var inputWorkRoot = path.toString();
+            setProperty(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, inputWorkRoot);
         }
 
         CopyRunnable stmt = () -> runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
@@ -508,8 +510,6 @@ public class CopyImportTest extends AbstractCairoTest {
         CopyRunnable test = this::assertQuotesTableContent;
 
         testCopy(stmt, test);
-
-        inputWorkRoot = inputWorkRootTmp;
     }
 
     @Test

@@ -772,7 +772,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         } catch (NumericException e) {
             throw new ServerConfigurationException("Invalid log timezone: '" + logTimestampTimezone + "'");
         }
-        this.filesFacade = filesFacade != null ? filesFacade : new FilesFacadeImpl(installRoot);
+        FilesFacadeImpl ffImpl = filesFacade != null ? null : new FilesFacadeImpl(installRoot);
+        this.filesFacade = filesFacade != null ? filesFacade : ffImpl;
         this.fpf = fpf;
         this.microsecondClock = microsecondClock;
         this.validator = newValidator();
@@ -882,6 +883,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoSqlCopyRoot = null;
             this.cairoSqlCopyWorkRoot = null;
         }
+        if (ffImpl != null && cairoSqlCopyWorkRoot != null) {
+            ffImpl.addIORoot(cairoSqlCopyWorkRoot);
+        }
 
         String configuredCairoSqlCopyExportRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, "export");
         if (!Chars.empty(configuredCairoSqlCopyExportRoot)) {
@@ -896,6 +900,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         } else {
             this.cairoSqlCopyExportRoot = null;
+        }
+        if (ffImpl != null && cairoSqlCopyExportRoot != null) {
+            ffImpl.addIORoot(cairoSqlCopyExportRoot);
         }
 
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);

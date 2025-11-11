@@ -178,8 +178,8 @@ public class ParallelFilterTest extends AbstractCairoTest {
         setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, root);
         super.setUp();
-        inputRoot = root;
     }
 
     @Test

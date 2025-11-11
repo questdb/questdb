@@ -64,9 +64,6 @@ public class CopyExportTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         exportRoot = TestUtils.unchecked(() -> temp.newFolder("export").getAbsolutePath());
-        inputRoot = exportRoot;
-        staticOverrides.setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, exportRoot);
-        staticOverrides.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, exportRoot);
         AbstractCairoTest.setUpStatic();
     }
 
@@ -82,6 +79,8 @@ public class CopyExportTest extends AbstractCairoTest {
                 ff.rmdir(path);
             }
         }
+
+        staticOverrides.setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, exportRoot);
     }
 
     @Test

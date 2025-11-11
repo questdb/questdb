@@ -200,7 +200,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         engine.getMatViewStateStore().clear();
-        inputRoot = root;
+        setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, root);
     }
 
     @Test

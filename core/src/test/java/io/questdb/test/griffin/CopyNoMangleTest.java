@@ -24,29 +24,40 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 // Runs some tests from CopyTest, but without mangling private table names
 public class CopyNoMangleTest extends AbstractCairoTest {
 
+    private static String inputRoot;
+    private static String inputWorkRoot;
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
         inputRoot = TestUtils.getCsvRoot();
         inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
+
         AbstractCairoTest.setUpStatic();
         node1.initGriffin(circuitBreaker);
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
     }
 
+    @Before
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, inputRoot);
+        setProperty(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, inputWorkRoot);
+        super.setUp();
+    }
+
     @Test
     public void testWhenWorkIsTheSameAsDataDirThenParallelCopyThrowsException() throws Exception {
         configOverrideMangleTableDirNames(false);
-        String inputWorkRootTmp = inputWorkRoot;
-        inputWorkRoot = temp.getRoot().getAbsolutePath();
 
         CopyImportTest.CopyRunnable stmt = () -> CopyImportTest.runAndFetchCopyID(
                 "copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
@@ -63,7 +74,5 @@ public class CopyNoMangleTest extends AbstractCairoTest {
         );
 
         CopyImportTest.testCopy(stmt, test);
-
-        inputWorkRoot = inputWorkRootTmp;
     }
 }

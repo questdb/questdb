@@ -166,8 +166,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static TestCairoEngineFactory engineFactory;
     protected static FactoryProvider factoryProvider;
     protected static FilesFacade ff;
-    protected static String inputRoot = null;
-    protected static String inputWorkRoot = null;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
     protected static MessageBus messageBus;
     protected static QuestDBTestNode node1;
@@ -657,6 +655,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
         sink.clear();
         memoryUsage = -1;
+        var inputWorkRoot = configuration.getSqlCopyInputWorkRoot();
         if (inputWorkRoot != null) {
             try (Path path = new Path().of(inputWorkRoot)) {
                 if (Files.exists(path.$())) {

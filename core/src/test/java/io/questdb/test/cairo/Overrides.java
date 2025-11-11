@@ -97,14 +97,6 @@ public class Overrides {
         return ff;
     }
 
-    public String getInputRoot() {
-        return null;
-    }
-
-    public String getInputWorkRoot() {
-        return null;
-    }
-
     public RostiAllocFacade getRostiAllocFacade() {
         return rostiAllocFacade;
     }
@@ -166,9 +158,9 @@ public class Overrides {
                 }
             }
             properties.setProperty(propertyPath, value);
-            changed = !Chars.equalsNc(value, existing);
+            changed |= !Chars.equalsNc(value, existing);
         } else {
-            changed = properties.remove(propertyPath) != null;
+            changed |= properties.remove(propertyPath) != null;
         }
     }
 

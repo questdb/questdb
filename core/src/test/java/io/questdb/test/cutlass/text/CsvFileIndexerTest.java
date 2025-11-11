@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.text;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
@@ -46,7 +47,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -60,6 +60,9 @@ import static io.questdb.test.cutlass.text.ParallelCsvFileImporterTest.*;
 
 public class CsvFileIndexerTest extends AbstractCairoTest {
 
+    private String inputRoot;
+    private String inputWorkRoot;
+
     public void assertFailureFor(FilesFacade ff, String fileName, int timestampIndex, String errorMessage) {
         try {
             assertChunksFor(ff, fileName, 10, timestampIndex, 16);
@@ -72,7 +75,9 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
     @Before
     public void before() throws IOException {
         inputRoot = TestUtils.getCsvRoot();
-        inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();
+        inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
+        setProperty(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, inputWorkRoot);
+        setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, inputRoot);
     }
 
     @Test//timestamp should be reassembled properly via rolling buffer

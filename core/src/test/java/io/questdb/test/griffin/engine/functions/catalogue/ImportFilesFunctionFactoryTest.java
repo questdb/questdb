@@ -31,26 +31,24 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
 
 public class ImportFilesFunctionFactoryTest extends AbstractCairoTest {
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        inputRoot = TestUtils.unchecked(() -> temp.newFolder("import").getAbsolutePath());
-        staticOverrides.setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, inputRoot);
-        AbstractCairoTest.setUpStatic();
-    }
+
+    private String inputRoot;
 
     @Before
     @Override
     public void setUp() {
-        super.setUp();
+        inputRoot = TestUtils.getCsvRoot();
+        setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, inputRoot);
         setupTestFiles();
+        super.setUp();
     }
 
     @Test
@@ -79,25 +77,19 @@ public class ImportFilesFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testImportFilesDisabled() throws Exception {
         assertMemoryLeak(() -> {
-            String oldInputRoot = inputRoot;
-            try {
-                inputRoot = null;
-                assertException(
-                        "select * from import_files()",
-                        14,
-                        "import_files() is disabled ['cairo.sql.copy.root' is not set?]"
-                );
-            } finally {
-                inputRoot = oldInputRoot;
-            }
-
+            setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, "");
+            assertException(
+                    "select * from import_files()",
+                    14,
+                    "import_files() is disabled ['cairo.sql.copy.root' is not set?]"
+            );
         });
     }
 
     @Test
     public void testImportFilesEmptyDirectory() throws Exception {
         assertMemoryLeak(() -> {
-            FilesFacade ff = configuration.getFilesFacade();
+            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
                 path.of(inputRoot).$();
                 if (ff.exists(path.$())) {
@@ -150,7 +142,7 @@ public class ImportFilesFunctionFactoryTest extends AbstractCairoTest {
     }
 
     private void setupTestFiles() {
-        FilesFacade ff = configuration.getFilesFacade();
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         try (Path path = new Path()) {
             path.of(inputRoot).$();
             if (ff.exists(path.$())) {

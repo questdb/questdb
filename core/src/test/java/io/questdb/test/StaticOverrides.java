@@ -45,14 +45,6 @@ public class StaticOverrides extends Overrides {
         return AbstractCairoTest.ff;
     }
 
-    public String getInputRoot() {
-        return AbstractCairoTest.inputRoot;
-    }
-
-    public String getInputWorkRoot() {
-        return AbstractCairoTest.inputWorkRoot;
-    }
-
     @Override
     public long getSpinLockTimeout() {
         return AbstractCairoTest.spinLockTimeout;

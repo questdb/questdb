@@ -71,7 +71,6 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -92,17 +91,15 @@ public class MatViewTest extends AbstractCairoTest {
         this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        // override default to test copy
-        inputRoot = TestUtils.getCsvRoot();
-        inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
-        AbstractCairoTest.setUpStatic();
-    }
-
     @Before
     public void setUp() {
         super.setUp();
+        // override default to test copy
+        var inputRoot = TestUtils.getCsvRoot();
+        var inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
+        setProperty(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, inputWorkRoot);
+        setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, inputRoot);
+
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         if (rowsPerQuery > 0) {
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);

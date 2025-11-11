@@ -66,7 +66,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -87,14 +86,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     private static final Rnd rnd = new Rnd();
     private static final String stringTypeName = ColumnType.nameOf(ColumnType.VARCHAR);
+    private String inputRoot;
+    private String inputWorkRoot;
 
     @Override
     @Before
     public void setUp() {
-        super.setUp();
-        rnd.reset();
         inputRoot = TestUtils.getCsvRoot();
         inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
+        setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, inputRoot);
+        setProperty(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, inputWorkRoot);
+        super.setUp();
+        rnd.reset();
     }
 
     @Test
@@ -3005,8 +3008,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             String fileName, IndexChunk... expectedChunks
     ) {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        inputRoot = TestUtils.getCsvRoot();
-
         try (
                 Path path = new Path().of(inputRoot).concat(fileName);
                 ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, workerCount)
@@ -3540,12 +3541,12 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                     @Override
                     public CharSequence getSqlCopyInputRoot() {
-                        return ParallelCsvFileImporterTest.inputRoot;
+                        return inputRoot;
                     }
 
                     @Override
                     public CharSequence getSqlCopyInputWorkRoot() {
-                        return ParallelCsvFileImporterTest.inputWorkRoot;
+                        return inputWorkRoot;
                     }
 
                     @Override
