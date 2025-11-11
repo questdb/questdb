@@ -49,7 +49,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class AsyncFastWindowJoinAtom extends AbstractWindowJoinAtom {
+public class AsyncWindowJoinFastAtom extends AbstractWindowJoinAtom {
     private final int masterSymbolIndex;
     private final DirectIntMultiLongHashMap ownerSlaveData;
     private final ObjList<DirectIntMultiLongHashMap> perWorkerSlaveData;
@@ -57,7 +57,7 @@ public class AsyncFastWindowJoinAtom extends AbstractWindowJoinAtom {
     // slave-to-master symbol key lookup hash table
     private final DirectIntIntHashMap slaveSymbolLookupTable;
 
-    public AsyncFastWindowJoinAtom(
+    public AsyncWindowJoinFastAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull RecordCursorFactory slaveFactory,

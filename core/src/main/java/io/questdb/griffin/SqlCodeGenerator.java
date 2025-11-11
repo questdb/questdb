@@ -205,7 +205,7 @@ import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.AsyncFastWindowJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
@@ -334,8 +334,8 @@ import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.SqlOptimiser.concatFilters;
 import static io.questdb.griffin.SqlOptimiser.evalNonNegativeLongConstantOrDie;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -3561,7 +3561,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
 
                                     if (leftSymbolIndex != -1) {
-                                        master = new AsyncFastWindowJoinRecordCursorFactory(
+                                        master = new AsyncWindowJoinFastRecordCursorFactory(
                                                 executionContext.getCairoEngine(),
                                                 asm,
                                                 configuration,

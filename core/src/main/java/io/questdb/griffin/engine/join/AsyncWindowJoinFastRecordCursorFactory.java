@@ -75,11 +75,11 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
-public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final PageFrameReducer AGGREGATE = AsyncFastWindowJoinRecordCursorFactory::aggregate;
-    private static final PageFrameReducer AGGREGATE_VECT = AsyncFastWindowJoinRecordCursorFactory::aggregateVect;
-    private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncFastWindowJoinRecordCursorFactory::filterAndAggregate;
-    private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT = AsyncFastWindowJoinRecordCursorFactory::filterAndAggregateVect;
+public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final PageFrameReducer AGGREGATE = AsyncWindowJoinFastRecordCursorFactory::aggregate;
+    private static final PageFrameReducer AGGREGATE_VECT = AsyncWindowJoinFastRecordCursorFactory::aggregateVect;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregate;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateVect;
 
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncWindowJoinRecordCursor cursor;
@@ -89,7 +89,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
     private final RecordCursorFactory slaveFactory;
     private final int workerCount;
 
-    public AsyncFastWindowJoinRecordCursorFactory(
+    public AsyncWindowJoinFastRecordCursorFactory(
             @NotNull CairoEngine engine,
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
@@ -141,7 +141,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
             masterTsScale = ColumnType.getTimestampDriver(masterTsType).toNanosScale();
             slaveTsScale = ColumnType.getTimestampDriver(slaveTsType).toNanosScale();
         }
-        final AsyncFastWindowJoinAtom atom = new AsyncFastWindowJoinAtom(
+        final AsyncWindowJoinFastAtom atom = new AsyncWindowJoinFastAtom(
                 asm,
                 configuration,
                 slaveFactory,
@@ -223,7 +223,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
     public void toPlan(PlanSink sink) {
         sink.type("Async Window Fast Join");
         sink.meta("workers").val(workerCount);
-        final AsyncFastWindowJoinAtom atom = (AsyncFastWindowJoinAtom) frameSequence.getAtom();
+        final AsyncWindowJoinFastAtom atom = (AsyncWindowJoinFastAtom) frameSequence.getAtom();
         sink.attr("symbol")
                 .val(masterFactory.getMetadata().getColumnName(atom.getMasterSymbolIndex()))
                 .val("=")
@@ -250,7 +250,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
     ) {
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
-        final AsyncFastWindowJoinAtom atom = task.getFrameSequence(AsyncFastWindowJoinAtom.class).getAtom();
+        final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
@@ -409,7 +409,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
     ) {
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
-        final AsyncFastWindowJoinAtom atom = task.getFrameSequence(AsyncFastWindowJoinAtom.class).getAtom();
+        final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
@@ -564,7 +564,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
     ) {
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
-        final AsyncFastWindowJoinAtom atom = task.getFrameSequence(AsyncFastWindowJoinAtom.class).getAtom();
+        final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
@@ -733,7 +733,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
     ) {
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
-        final AsyncFastWindowJoinAtom atom = task.getFrameSequence(AsyncFastWindowJoinAtom.class).getAtom();
+        final AsyncWindowJoinFastAtom atom = task.getFrameSequence(AsyncWindowJoinFastAtom.class).getAtom();
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
