@@ -1566,32 +1566,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Detection isn't foolproof and can result in false positives. We do not attempt it unless
      * the hint {@value SqlHints#TIMESTAMP_LADDER_JOIN_HINT} is present in the query.
      *
-     * @param masterAlias        alias for the master LHS of the join
-     * @param masterModel        QueryModel for the LHS of the join
-     * @param masterMetadata     Metadata for the LHS of the join
-     * @param slaveModel         QueryModel for the RHS of the join
-     * @param slaveMetadata      Metadata for the RHS of the join (should be an arithmetic sequence)
-     * @param slaveCursorFactory The RHS cursor factory (should produce an arithmetic sequence)
+     * @param masterAlias         alias for the master LHS of the join
+     * @param masterModel         QueryModel for the LHS of the join
+     * @param masterMetadata      Metadata for the LHS of the join
+     * @param masterCursorFactory the LHS cursor factory
+     * @param slaveModel          QueryModel for the RHS of the join
+     * @param slaveMetadata       Metadata for the RHS of the join (should be an arithmetic sequence)
+     * @param slaveCursorFactory  the RHS cursor factory (should produce an arithmetic sequence)
      * @return TimestampLadderInfo if pattern is detected, null otherwise
      */
     private TimestampLadderInfo detectTimestampLadderPattern(
             CharSequence masterAlias,
             QueryModel masterModel,
             RecordMetadata masterMetadata,
+            RecordCursorFactory masterCursorFactory,
             QueryModel slaveModel,
             RecordMetadata slaveMetadata,
             RecordCursorFactory slaveCursorFactory
     ) {
-        // Without the query hint, don't even try to detect the pattern
-        if (!SqlHints.hasTimestampLadderHint(masterModel, masterAlias, slaveModel.getName())) {
+        if (!SqlHints.hasTimestampLadderHint(masterModel, masterAlias, slaveModel.getName()) ||
+                !masterCursorFactory.recordCursorSupportsRandomAccess()
+        ) {
             return null;
         }
 
         // Ensure the slave table is `long_sequence()`, or based on it
-        RecordCursorFactory sourceFac = slaveCursorFactory;
-        while (!sourceFac.getClass().getSimpleName().contains("LongSequence")) {
-            sourceFac = sourceFac.getBaseFactory();
-            if (sourceFac == null) {
+        RecordCursorFactory rootFac = slaveCursorFactory;
+        while (!rootFac.getClass().getSimpleName().contains("LongSequence")) {
+            rootFac = rootFac.getBaseFactory();
+            if (rootFac == null) {
                 return null;
             }
         }
@@ -3159,6 +3162,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         masterAlias,
                                         model,
                                         masterMetadata,
+                                        master,
                                         slaveModel,
                                         slaveMetadata,
                                         slave

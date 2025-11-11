@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.RecordArray;
-import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
@@ -133,11 +132,9 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             this.cursor = new TimestampLadderRecordCursor(
                     configuration,
                     columnSplit,
-                    masterFactory.getMetadata(),
                     masterColumnIndex,
                     slaveColumnIndex,
-                    slaveRecordArray,
-                    masterRecordSink
+                    slaveRecordArray
             );
         } catch (Throwable th) {
             Misc.free(slaveRecordArray);
@@ -205,40 +202,36 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
      */
     private static class TimestampLadderRecordCursor extends AbstractJoinCursor {
         private final CairoConfiguration configuration;
-        private final RecordMetadata masterMetadata;
-        private final RecordSink masterRecordSink;
+        private final JoinRecord joinRecord;
         private final int masterTimestampColumnIndex;
-        private final JoinRecord record;
         private final RecordArray slaveRecordArray;
         private final LongList slaveRecordOffsets;
         private final int slaveSequenceColumnIndex;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private long currMasterRowId = -1;
         // Merge algorithm state
         private SlaveRowIterator currentIter;
         private long firstSlaveTimeOffset;  // Cache the first slave's offset value
         private boolean isMasterHasNextPending;
         private boolean masterHasNext;
+        private Record masterRecord;
         private SlaveRowIterator prevIter;
         private long slaveRowCount;
 
         public TimestampLadderRecordCursor(
                 CairoConfiguration configuration,
                 int columnSplit,
-                RecordMetadata masterMetadata,
                 int masterTimestampColumnIndex,
                 int slaveSequenceColumnIndex,
-                RecordArray slaveRecordArray,
-                RecordSink masterRecordSink
+                RecordArray slaveRecordArray
         ) {
             super(columnSplit);
             this.configuration = configuration;
-            this.masterMetadata = masterMetadata;
-            this.record = new JoinRecord(columnSplit);
+            this.joinRecord = new JoinRecord(columnSplit);
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.slaveSequenceColumnIndex = slaveSequenceColumnIndex;
             this.slaveRecordArray = slaveRecordArray;
             this.slaveRecordOffsets = new LongList();
-            this.masterRecordSink = masterRecordSink;
         }
 
         @Override
@@ -261,7 +254,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
         @Override
         public Record getRecord() {
-            return record;
+            return joinRecord;
         }
 
         @Override
@@ -272,8 +265,8 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                     return false;
                 }
                 isMasterHasNextPending = true;
-                currentIter = prevIter = new SlaveRowIterator(masterCursor.getRecord());
-                setupJoinRecord(currentIter.getMasterRecord(), currentIter.currentRowNum());
+                currentIter = prevIter = new SlaveRowIterator(masterRecord);
+                setupJoinRecord(currentIter.getMasterRowId(), currentIter.currentRowNum());
                 return true;
             }
 
@@ -312,7 +305,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                 }
             }
             currentIter = nextIter;
-            setupJoinRecord(currentIter.getMasterRecord(), currentIter.currentRowNum());
+            setupJoinRecord(currentIter.getMasterRowId(), currentIter.currentRowNum());
             return true;
         }
 
@@ -354,6 +347,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             prevIter = null;
             isMasterHasNextPending = true;
             masterHasNext = false;
+            currMasterRowId = -1;
             masterCursor.toTop();
             slaveRecordArray.toTop();
         }
@@ -361,32 +355,37 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         private @NotNull SlaveRowIterator activateMasterRow() {
             isMasterHasNextPending = true;
             if (currentIter != null) {
-                return currentIter.postInsertNewIterator(masterCursor.getRecord());
+                return currentIter.postInsertNewIterator(masterRecord);
             }
-            return new SlaveRowIterator(masterCursor.getRecord());
+            return new SlaveRowIterator(masterRecord);
         }
 
         private void advanceMasterIfPending() {
+            if (currMasterRowId != -1) {
+                masterCursor.recordAt(masterRecord, currMasterRowId);
+            }
             if (isMasterHasNextPending) {
                 masterHasNext = masterCursor.hasNext();
+                currMasterRowId = masterRecord.getRowId();
                 isMasterHasNextPending = false;
             }
         }
 
         private long initialTimestampOfMasterRow() {
-            Record nextMasterRecord = masterCursor.getRecord();
-            long nextMasterTimestamp = nextMasterRecord.getTimestamp(masterTimestampColumnIndex);
+            long nextMasterTimestamp = masterRecord.getTimestamp(masterTimestampColumnIndex);
             return nextMasterTimestamp + firstSlaveTimeOffset;
         }
 
-        private void setupJoinRecord(Record masterRecord, int slaveRowNum) {
+        private void setupJoinRecord(long masterRowId, int slaveRowNum) {
             long slaveOffset = slaveRecordOffsets.getQuick(slaveRowNum);
             Record slaveRecord = slaveRecordArray.getRecordAt(slaveOffset);
-            record.of(masterRecord, slaveRecord);
+            masterCursor.recordAt(masterRecord, masterRowId);
+            joinRecord.of(masterRecord, slaveRecord);
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             this.masterCursor = masterCursor;
+            this.masterRecord = masterCursor.getRecord();
             this.slaveCursor = slaveCursor;
             this.circuitBreaker = circuitBreaker;
 
@@ -416,6 +415,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             prevIter = null;
             isMasterHasNextPending = true;
             masterHasNext = false;
+            currMasterRowId = -1;
         }
 
         // Specifically designed for this algorithm:
@@ -424,7 +424,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         // - you can peek the timestamp of the next slave row
         // - also works as a node in a circular list of iterators
         private class SlaveRowIterator {
-            private final RecordChain masterRecordChain;
+            private final long masterRowId;
             private final long masterTimestamp;
             private SlaveRowIterator nextIter;
             private int nextSlaveRowNum;
@@ -432,17 +432,8 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
             SlaveRowIterator(Record masterRecord) {
                 // Create a RecordChain to hold a single master record
-                masterRecordChain = new RecordChain(
-                        masterMetadata,
-                        masterRecordSink,
-                        configuration.getSqlHashJoinValuePageSize(),
-                        configuration.getSqlHashJoinValueMaxPages()
-                );
-                // Put the master record in the record chain
-                masterRecordChain.put(masterRecord, -1);
-                masterRecordChain.toTop();
-                masterRecordChain.hasNext(); // Position at the record
-                masterTimestamp = getMasterRecord().getTimestamp(masterTimestampColumnIndex);
+                masterRowId = masterRecord.getRowId();
+                masterTimestamp = masterRecord.getTimestamp(masterTimestampColumnIndex);
 
                 // Initialize iteration state
                 nextSlaveRowNum = 0;
@@ -451,15 +442,14 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             }
 
             void close() {
-                Misc.free(masterRecordChain);
             }
 
             int currentRowNum() {
                 return nextSlaveRowNum - 1;
             }
 
-            Record getMasterRecord() {
-                return masterRecordChain.getRecord();
+            long getMasterRowId() {
+                return masterRowId;
             }
 
             void gotoNextRow() {
