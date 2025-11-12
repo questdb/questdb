@@ -26,7 +26,6 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.Reopenable;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
@@ -80,7 +79,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory = new PageFrameMemoryImpl();
             toParquetColumnIndexes = new IntList(16);
             fromParquetColumnIndexes = new IntList(16);
-            parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
+            parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
             parquetDecoder = new PartitionDecoder();
         } catch (Throwable th) {
             close();
@@ -91,23 +90,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     @Override
     public void clear() {
         Misc.free(parquetDecoder);
-        toParquetColumnIndexes.restoreInitialCapacity();
-        fromParquetColumnIndexes.restoreInitialCapacity();
-        parquetColumns.resetCapacity();
-        freeParquetBuffers.addAll(cachedParquetBuffers);
-        cachedParquetBuffers.clear();
-        Misc.freeObjListAndKeepObjects(freeParquetBuffers);
-        frameMemory.clear();
-        addressCache = null;
+        Misc.free(parquetColumns);
+        releaseParquetBuffers();
     }
 
     @Override
     public void close() {
         Misc.free(parquetDecoder);
         Misc.free(parquetColumns);
-        freeParquetBuffers.addAll(cachedParquetBuffers);
-        cachedParquetBuffers.clear();
-        Misc.freeObjListAndKeepObjects(freeParquetBuffers);
+        releaseParquetBuffers();
         addressCache = null;
     }
 
@@ -194,10 +185,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
     public void of(PageFrameAddressCache addressCache) {
         this.addressCache = addressCache;
-        parquetColumns.reopen();
-        for (int i = 0, n = freeParquetBuffers.size(); i < n; i++) {
-            freeParquetBuffers.getQuick(i).reopen();
-        }
         frameMemory.clear();
         Misc.free(parquetDecoder);
     }
@@ -207,6 +194,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
+    }
+
+    public void releaseParquetBuffers() {
+        freeParquetBuffers.addAll(cachedParquetBuffers);
+        cachedParquetBuffers.clear();
+        Misc.freeObjListAndKeepObjects(freeParquetBuffers);
+        frameMemory.clear();
     }
 
     // We don't use additional data structures to speed up the lookups
@@ -293,6 +287,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             metadataIndex++;
         }
         // Now do the final remapping.
+        parquetColumns.reopen();
         parquetColumns.clear();
         fromParquetColumnIndexes.clear();
         fromParquetColumnIndexes.setAll(parquetMetadata.getColumnCount(), -1);
@@ -392,7 +387,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
     }
 
-    private class ParquetBuffers implements QuietCloseable, Reopenable {
+    private class ParquetBuffers implements QuietCloseable {
         private final LongList auxPageAddresses = new LongList();
         private final LongList auxPageSizes = new LongList();
         private final LongList pageAddresses = new LongList();
@@ -421,6 +416,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             clearAddresses();
             if (parquetColumns.size() > 0) {
                 // Decode the requested columns from the row group.
+                rowGroupBuffers.reopen();
                 parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
 
                 // Now, we need to remap parquet column indexes to the query ones.
@@ -442,11 +438,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     }
                 }
             }
-        }
-
-        @Override
-        public void reopen() {
-            rowGroupBuffers.reopen();
         }
     }
 }
