@@ -188,6 +188,13 @@ public class ServerMain implements Closeable {
         }
     }
 
+    public long getActiveConnectionCount(String processorName) {
+        if (httpServer == null) {
+            return 0;
+        }
+        return httpServer.getActiveConnectionTracker().getActiveConnections(processorName);
+    }
+
     public ServerConfiguration getConfiguration() {
         return bootstrap.getConfiguration();
     }
@@ -204,13 +211,6 @@ public class ServerMain implements Closeable {
             return httpServer.getPort();
         }
         throw CairoException.nonCritical().put("http server is not running");
-    }
-
-    public long getActiveConnectionCount(String processorName) {
-        if (httpServer == null) {
-            return 0;
-        }
-        return httpServer.getActiveConnectionTracker().getActiveConnections(processorName);
     }
 
     public int getPgWireServerPort() {
@@ -298,7 +298,6 @@ public class ServerMain implements Closeable {
                     }
                     if (cairoConfig.getAsyncMunmapEnabled()) {
                         AsyncMunmapJob asyncMunmapJob = new AsyncMunmapJob();
-                        // todo: shared pool might be too busy? consider a different pool
                         sharedPoolQuery.assign(asyncMunmapJob);
                     }
 

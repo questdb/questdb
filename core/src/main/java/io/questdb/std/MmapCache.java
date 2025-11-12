@@ -25,7 +25,10 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
+import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.YieldingWaitStrategy;
@@ -35,8 +38,10 @@ import io.questdb.mp.YieldingWaitStrategy;
  * Reuses existing mappings for the same file when possible to reduce system calls.
  */
 public class MmapCache {
+    private static final Log LOG = LogFactory.getLog(MmapCache.class);
     private static final int MAX_RECORD_POOL_CAPACITY = 16 * 1024;
     private static final int MUNMAP_QUEUE_CAPACITY = 8 * 1024;
+    private static final QueueConsumer<MunmapTask> MUNMAP_TASK_QUEUE_CONSUMER = MmapCache::munmapTaskConsumer;
     private final LongObjHashMap<MmapCacheRecord> mmapAddrCache = new LongObjHashMap<>();
     private final LongObjHashMap<MmapCacheRecord> mmapFileCache = new LongObjHashMap<>();
     private final SCSequence munmapConsumerSequence;
@@ -53,13 +58,7 @@ public class MmapCache {
     }
 
     public boolean asyncMunmap() {
-        // todo: handle errors
-        return munmapConsumerSequence.consumeAll(munmapTaskRingQueue, task -> {
-            int result = Files.munmap0(task.address, task.size);
-            if (result != -1) {
-                Unsafe.recordMemAlloc(-task.size, task.memoryTag);
-            }
-        });
+        return munmapConsumerSequence.consumeAll(munmapTaskRingQueue, MUNMAP_TASK_QUEUE_CONSUMER);
     }
 
     /**
@@ -327,6 +326,18 @@ public class MmapCache {
         return address;
     }
 
+    private static void munmapTaskConsumer(MunmapTask task) {
+        int result = Files.munmap0(task.address, task.size);
+        if (result != -1) {
+            Unsafe.recordMemAlloc(-task.size, task.memoryTag);
+        } else {
+            LOG.critical().$("munmap failed [address=").$(task.address)
+                    .$(", size=").$(task.size)
+                    .$(", tag=").$(MemoryTag.nameOf(task.memoryTag))
+                    .I$();
+        }
+    }
+
     private MmapCacheRecord createMmapCacheRecord(int fd, long fileCacheKey, long len, long address, int memoryTag) {
         MmapCacheRecord rec = recordPool.pop();
         if (rec != null) {
@@ -390,8 +401,8 @@ public class MmapCache {
     }
 
     private static class MunmapTask {
-        long address;
-        int memoryTag;
-        long size;
+        private long address;
+        private int memoryTag;
+        private long size;
     }
 }
