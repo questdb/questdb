@@ -41,18 +41,12 @@ public class RecordArray extends RecordChain {
 
     // auxMem is used to store records startOffset in dataMem
     private final MemoryARW auxMem;
-    private long size = 0L;
     private long nextRecordIndex = 0L;
+    private long size = 0L;
 
     public RecordArray(@NotNull ColumnTypes columnTypes, @NotNull RecordSink recordSink, long pageSize, int maxPages) {
         super(columnTypes, recordSink, pageSize, maxPages);
         this.auxMem = Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
-    }
-
-    public long put(Record record) {
-        long offset = beginRecord();
-        recordSink.copy(record, this);
-        return offset;
     }
 
     public long beginRecord() {
@@ -62,6 +56,18 @@ public class RecordArray extends RecordChain {
         mem.jumpTo(recordOffset + varOffset);
         varAppendOffset = recordOffset + varOffset + fixOffset;
         return recordOffset;
+    }
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        counter.add(size - nextRecordIndex);
+    }
+
+    @Override
+    public void clear() {
+        super.clear();
+        size = 0L;
+        auxMem.close();
     }
 
     @Override
@@ -75,15 +81,6 @@ public class RecordArray extends RecordChain {
         return false;
     }
 
-    @Override
-    public void toTop() {
-        nextRecordIndex = 0;
-    }
-
-    public void toBottom() {
-        nextRecordIndex = size - 1;
-    }
-
     public boolean hasPrev() {
         if (nextRecordIndex >= 0) {
             final long offset = auxMem.getLong(nextRecordIndex * 8);
@@ -94,26 +91,29 @@ public class RecordArray extends RecordChain {
         return false;
     }
 
-    @Override
-    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        counter.add(size);
+    public long put(Record record) {
+        long offset = beginRecord();
+        recordSink.copy(record, this);
+        return offset;
+    }
+
+    public void toBottom() {
+        nextRecordIndex = size - 1;
     }
 
     @Override
-    public void clear() {
-        super.clear();
-        size = 0L;
-        auxMem.close();
-    }
-
-    @Override
-    protected long rowToDataOffset(long row) {
-        return row;
+    public void toTop() {
+        nextRecordIndex = 0;
     }
 
     @Override
     protected RecordChainRecord newChainRecord() {
         return new RecordArrayRecord(columnCount);
+    }
+
+    @Override
+    protected long rowToDataOffset(long row) {
+        return row;
     }
 
     class RecordArrayRecord extends RecordChainRecord {
