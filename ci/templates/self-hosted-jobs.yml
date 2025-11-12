@@ -3,39 +3,6 @@ jobs:
     workspace:
       clean: all
     displayName: "on linux-arm64"
-    strategy:
-      matrix:
-        arm64-griffin:
-          testset: "all"
-          includeTests: "**/griffin/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        arm64-cairo:
-          testset: "all"
-          includeTests: "**/cairo/**"
-          # Exclude cairo fuzz tests: run in arm64-cairo-fuzz
-          excludeTests: "**/cairo/fuzz/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        arm64-cairo-fuzz:
-          testset: "all"
-          includeTests: "**/cairo/fuzz/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        arm64-pgwire:
-          testset: "all"
-          includeTests: "**/pgwire/**/*.java"
-          javadoc_step: ""
-          javadoc_profile: ""
-        arm64-other:
-          testset: "all"
-          # Exclude griffin: run in arm64-griffin
-          # Exclude cairo: run in arm64-cairo and arm64-cairo-fuzz
-          # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
-          # Exclude pgwire: run in arm64-pgwire
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
-          javadoc_step: ""
-          javadoc_profile: ""
     pool:
       name: "hetzner-docker-arm"
     timeoutInMinutes: 60
