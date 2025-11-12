@@ -36,6 +36,7 @@ import io.questdb.mp.YieldingWaitStrategy;
  */
 public class MmapCache {
     private static final int MAX_RECORD_POOL_CAPACITY = 16 * 1024;
+    private static final int MUNMAP_QUEUE_CAPACITY = 8 * 1024;
     private final LongObjHashMap<MmapCacheRecord> mmapAddrCache = new LongObjHashMap<>();
     private final LongObjHashMap<MmapCacheRecord> mmapFileCache = new LongObjHashMap<>();
     private final SCSequence munmapConsumerSequence;
@@ -45,8 +46,7 @@ public class MmapCache {
     private long mmapReuseCount = 0;
 
     public MmapCache() {
-        // todo: configurable queue size
-        munmapTaskRingQueue = new RingQueue<>(MunmapTask::new, Numbers.ceilPow2(10000));
+        munmapTaskRingQueue = new RingQueue<>(MunmapTask::new, MUNMAP_QUEUE_CAPACITY);
         munmapProducesSequence = new MPSequence(munmapTaskRingQueue.getCycle());
         munmapConsumerSequence = new SCSequence(new YieldingWaitStrategy());
         munmapProducesSequence.then(munmapConsumerSequence).then(munmapProducesSequence);
