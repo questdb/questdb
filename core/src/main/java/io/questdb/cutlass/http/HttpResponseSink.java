@@ -698,6 +698,16 @@ public class HttpResponseSink implements Closeable, Mutable {
             headerSent = false;
         }
 
+        public void sendStatusJsonApiContent(
+                int code,
+                @NotNull Utf8Sequence message,
+                boolean appendEOL
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            final long contentLength = message.size();
+            assert contentLength > 0 : "json content is missing";
+            sendStatusWithContent(CONTENT_TYPE_JSON_API, code, message, null, null, null, contentLength, appendEOL);
+        }
+
         public void sendStatusJsonContent(
                 int code
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {

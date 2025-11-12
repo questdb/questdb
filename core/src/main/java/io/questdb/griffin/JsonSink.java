@@ -283,9 +283,10 @@ public class JsonSink {
 
     /**
      * Adds a substring of a CharSequence as a string value.
+     *
      * @param value the CharSequence to extract from
      * @param start the starting index (inclusive)
-     * @param end the ending index (exclusive)
+     * @param end   the ending index (exclusive)
      */
     public JsonSink val(CharSequence value, int start, int end) {
         if (value == null) {
@@ -325,9 +326,10 @@ public class JsonSink {
 
     /**
      * Adds a substring of a Utf8Sequence as a string value.
-     * @param utf8 the Utf8Sequence to extract from
+     *
+     * @param utf8  the Utf8Sequence to extract from
      * @param start the starting byte index (inclusive)
-     * @param end the ending byte index (exclusive)
+     * @param end   the ending byte index (exclusive)
      */
     public JsonSink val(Utf8Sequence utf8, int start, int end) {
         if (utf8 == null) {
@@ -492,6 +494,17 @@ public class JsonSink {
     public JsonSink valNull() {
         appendValue();
         sink.put("null");
+        return this;
+    }
+
+    /**
+     * Adds an integer value.
+     */
+    public JsonSink valQuoted(long value) {
+        appendValue();
+        sink.put('"');
+        sink.put(value);
+        sink.put('"');
         return this;
     }
 

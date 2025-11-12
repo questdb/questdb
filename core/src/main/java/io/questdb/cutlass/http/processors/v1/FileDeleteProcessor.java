@@ -185,7 +185,7 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
                 .startObject()
                 .key("errors").startArray()
                 .startObject()
-                .key("status").val(errorCode)
+                .key("status").val(String.valueOf(errorCode))
                 .key("detail").val(message)
                 .endObject()
                 .endArray()

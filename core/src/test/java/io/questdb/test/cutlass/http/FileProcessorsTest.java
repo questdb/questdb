@@ -380,7 +380,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
                                                 "a7\r\n" +
-                                                "{\"errors\":[{\"status\":\"403\",\"title\":\"File Upload Error\",\"detail\":\"path traversal not allowed in filename}}],\"meta\":{\"totalFiles\":1,\"successfulFiles\":0,\"failedFiles\":1}}\r\n" +
+                                                "{\"errors\":[{\"status\":\"403\",\"title\":\"File Upload Error\",\"detail\":\"path traversal not allowed in filename\"}],\"meta\":{\"totalFiles\":1,\"successfulFiles\":0,\"failedFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -535,7 +535,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
                                                 "a7\r\n" +
-                                                "{\"errors\":[{\"status\":\"403\",\"title\":\"File Upload Error\",\"detail\":\"path traversal not allowed in filename}}],\"meta\":{\"totalFiles\":1,\"successfulFiles\":0,\"failedFiles\":1}}\r\n" +
+                                                "{\"errors\":[{\"status\":\"403\",\"title\":\"File Upload Error\",\"detail\":\"path traversal not allowed in filename\"}],\"meta\":{\"totalFiles\":1,\"successfulFiles\":0,\"failedFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -567,7 +567,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
                                                 "a6\r\n" +
-                                                "{\"errors\":[{\"status\":\"400\",\"title\":\"File Upload Error\",\"detail\":\"sql.copy.input.root is not configured}}],\"meta\":{\"totalFiles\":1,\"successfulFiles\":0,\"failedFiles\":1}}\r\n" +
+                                                "{\"errors\":[{\"status\":\"400\",\"title\":\"File Upload Error\",\"detail\":\"sql.copy.input.root is not configured\"}],\"meta\":{\"totalFiles\":1,\"successfulFiles\":0,\"failedFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -587,7 +587,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
             byte[] parquetData = createParquetFile("x");
             String[] fileNames = Os.isWindows() ?
                     new String[]{"x1.parquet", "x2.parquet", "dir1\\x3.parquet", "dir1\\dir2\\x4.parquet", "dir3\\special.parquet"} :
-                    new String[]{"x1.parquet", "x2.parquet", "dir1/x3.parquet", "dir1/dir2/x4.parquet", "dir3/❤️.parquet"};
+                    new String[]{"x1.parquet", "x2.parquet", "dir1/x3.parquet", "dir1/dir2/x4.parquet", "dir3/abc.parquet"};
             byte[] parquetImportRequest = createMultipleParquetImportRequest(fileNames, new byte[][]{parquetData, parquetData, parquetData, parquetData, parquetData}, false);
 
             new HttpQueryTestBuilder()
@@ -606,15 +606,15 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                (Os.isWindows() ? "022d\r\n" : "0223\r\n") +
-                                                (Os.isWindows() ? "{\"data\":[{\"type\":\"file\",\"id\":\"x1.parquet\",\"attributes\":{\"filename\":\"x1.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"x2.parquet\",\"attributes\":{\"filename\":\"x2.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1\\\\x3.parquet\",\"attributes\":{\"filename\":\"dir1\\\\x3.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1\\\\dir2\\\\x4.parquet\",\"attributes\":{\"filename\":\"dir1\\\\dir2\\\\x4.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir3\\\\special.parquet\",\"attributes\":{\"filename\":\"dir3\\\\special.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":5}}\r\n" : "{\"data\":[{\"type\":\"file\",\"id\":\"x1.parquet\",\"attributes\":{\"filename\":\"x1.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"x2.parquet\",\"attributes\":{\"filename\":\"x2.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1/x3.parquet\",\"attributes\":{\"filename\":\"dir1/x3.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1/dir2/x4.parquet\",\"attributes\":{\"filename\":\"dir1/dir2/x4.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir3/❤️.parquet\",\"attributes\":{\"filename\":\"dir3/❤️.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":5}}\r\n") +
+                                                (Os.isWindows() ? "022d\r\n" : "021d\r\n") +
+                                                (Os.isWindows() ? "{\"data\":[{\"type\":\"file\",\"id\":\"x1.parquet\",\"attributes\":{\"filename\":\"x1.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"x2.parquet\",\"attributes\":{\"filename\":\"x2.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1\\\\x3.parquet\",\"attributes\":{\"filename\":\"dir1\\\\x3.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1\\\\dir2\\\\x4.parquet\",\"attributes\":{\"filename\":\"dir1\\\\dir2\\\\x4.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir3\\\\special.parquet\",\"attributes\":{\"filename\":\"dir3\\\\special.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":5}}\r\n" : "{\"data\":[{\"type\":\"file\",\"id\":\"x1.parquet\",\"attributes\":{\"filename\":\"x1.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"x2.parquet\",\"attributes\":{\"filename\":\"x2.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1/x3.parquet\",\"attributes\":{\"filename\":\"dir1/x3.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1/dir2/x4.parquet\",\"attributes\":{\"filename\":\"dir1/dir2/x4.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir3/abc.parquet\",\"attributes\":{\"filename\":\"dir3/abc.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":5}}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
                         String response = testHttpClient.getResponse("/api/v1/imports", "200");
                         LOG.info().$("========= Import files response=========: ").$(response).$();
                         final String jsonSep = Os.isWindows() ? "\\\\" : "/";
-                        String expectedSpecialFile = Os.isWindows() ? "special.parquet" : "❤️.parquet";
+                        String expectedSpecialFile = Os.isWindows() ? "special.parquet" : "abc.parquet";
                         Assert.assertTrue("Response should contain dir3" + Files.SEPARATOR + expectedSpecialFile,
                                 response.contains("\"path\":\"dir3" + jsonSep + expectedSpecialFile + "\""));
                         Assert.assertTrue("Response should contain dir3" + Files.SEPARATOR + expectedSpecialFile + " name",

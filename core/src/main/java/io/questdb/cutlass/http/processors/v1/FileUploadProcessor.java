@@ -30,7 +30,7 @@ import io.questdb.std.str.Utf8StringSink;
 import java.io.Closeable;
 import java.util.function.LongSupplier;
 
-import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
+import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON_API;
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_OVERWRITE;
 import static io.questdb.cutlass.http.HttpResponseSink.HTTP_MULTI_STATUS;
 import static io.questdb.cutlass.http.processors.v1.FileGetProcessor.containsAbsOrRelativePath;
@@ -258,7 +258,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
             JsonSink json = Misc.getThreadLocalJsonSink();
 
             if (state.successfulFiles.size() > 0) {
-                response.status(HTTP_MULTI_STATUS, CONTENT_TYPE_JSON);
+                response.status(HTTP_MULTI_STATUS, CONTENT_TYPE_JSON_API);
                 response.sendHeader();
                 response.sendChunk(false);
 
@@ -271,7 +271,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                 json.endArray()
                         .key("errors").startArray()
                         .startObject()
-                        .key("status").val(errorCode)
+                        .key("status").val(String.valueOf(errorCode))
                         .key("title").val("File Upload Error")
                         .key("detail").val(errorMsg);
 
@@ -294,7 +294,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                 response.done();
             } else {
                 LOG.error().$("import file(s) failed [status=").$(errorCode).$(", fd=").$(context.getFd()).$(", msg=").$(errorMsg).I$();
-                response.status(errorCode, CONTENT_TYPE_JSON);
+                response.status(errorCode, CONTENT_TYPE_JSON_API);
                 response.sendHeader();
                 response.sendChunk(false);
 
@@ -302,7 +302,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                         .startObject()
                         .key("errors").startArray()
                         .startObject()
-                        .key("status").val(errorCode)
+                        .key("status").val(String.valueOf(errorCode))
                         .key("title").val("File Upload Error")
                         .key("detail").val(errorMsg);
 
@@ -334,7 +334,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
         try {
             HttpChunkedResponse response = context.getChunkedResponse();
             response.bookmark();
-            response.status(200, CONTENT_TYPE_JSON);
+            response.status(200, CONTENT_TYPE_JSON_API);
             response.sendHeader();
             response.sendChunk(false);
             encodeSuccessJson(response, state);

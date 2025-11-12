@@ -39,6 +39,7 @@ public final class Misc {
     private static final ThreadLocal<Decimal128> tlDecimal128 = new ThreadLocal<>(Decimal128::new);
     private static final ThreadLocal<Decimal256> tlDecimal256 = new ThreadLocal<>(Decimal256::new);
     private static final ThreadLocal<JsonSink> tlJsonSink = new ThreadLocal<>(JsonSink::new);
+    private static final ThreadLocal<JsonSink> tlJsonSink2 = new ThreadLocal<>(JsonSink::new);
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private static final ThreadLocal<Utf8StringSink> tlUtf8Sink = new ThreadLocal<>(Utf8StringSink::new);
 
@@ -132,6 +133,10 @@ public final class Misc {
 
     public static JsonSink getThreadLocalJsonSink() {
         return tlJsonSink.get();
+    }
+
+    public static JsonSink getThreadLocalJsonSink2() {
+        return tlJsonSink2.get();
     }
 
     public static StringSink getThreadLocalSink() {

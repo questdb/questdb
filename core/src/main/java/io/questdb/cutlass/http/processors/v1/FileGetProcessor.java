@@ -30,7 +30,6 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
@@ -79,10 +78,8 @@ public class FileGetProcessor implements HttpRequestProcessor {
 
         HttpRequestHeader request = context.getRequestHeader();
         final DirectUtf8Sequence file = extractFilePathFromUrl(request);
-        LOG.info().$("FileGetProcessor: extracted file path: ").$(file == null ? "null" : file).$();
         if (file == null || file.size() == 0) {
             // No file in path - list all files in root directory
-            LOG.info().$("FileGetProcessor: listing all files from root: ").$(root).$();
             sendFileList(context, root, state);
             return;
         }
@@ -170,252 +167,6 @@ public class FileGetProcessor implements HttpRequestProcessor {
         }
     }
 
-    private String getContentType(DirectUtf8Sequence filename) {
-        if (Utf8s.endsWithAscii(filename, ".parquet")) {
-            return CONTENT_TYPE_PARQUET;
-        } else if (Utf8s.endsWithAscii(filename, ".csv")) {
-            return CONTENT_TYPE_CSV;
-        } else if (Utf8s.endsWithAscii(filename, ".json")) {
-            return CONTENT_TYPE_JSON;
-        } else if (Utf8s.endsWithAscii(filename, ".txt")) {
-            return CONTENT_TYPE_TEXT;
-        }
-        return CONTENT_TYPE_OCTET_STREAM;
-    }
-
-    private void header(
-            HttpChunkedResponse response,
-            State state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        response.status(200, state.contentType);
-        response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.file).putAscii("\"").putEOL();
-        response.sendHeader();
-    }
-
-    private void headerJsonError(int errorCode, HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        response.status(errorCode, CONTENT_TYPE_JSON);
-        response.sendHeader();
-    }
-
-    private void initFileSending(HttpChunkedResponse response, State state) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        Path path = Path.getThreadLocal(FilesRootDir.getRootPath(filesRoot, engine.getConfiguration()));
-        path.concat(state.file);
-        if (!state.ff.exists(path.$())) {
-            sendException(404, response, "file not found", state);
-            state.state = FILE_SEND_COMPLETED;
-            return;
-        }
-        if (state.ff.isDirOrSoftLinkDir(path.$())) {
-            sendException(400, response, "cannot download directory", state);
-            state.state = FILE_SEND_COMPLETED;
-            return;
-        }
-        state.fd = state.ff.openRO(path.$());
-        if (state.fd < 0) {
-            sendException(404, response, "file not found", state);
-            state.state = FILE_SEND_COMPLETED;
-            return;
-        }
-
-        state.fileSize = state.ff.length(state.fd);
-        if (state.fileSize > 0) {
-            state.fileAddress = TableUtils.mapRO(state.ff, state.fd, state.fileSize, MemoryTag.MMAP_DEFAULT);
-            if (state.fileAddress == 0) {
-                sendException(500, response, "failed to memory-map file", state);
-                state.state = FILE_SEND_COMPLETED;
-                return;
-            }
-        }
-
-        header(response, state);
-        state.state = FILE_SEND_CHUNK;
-    }
-
-    private void scanDirectory(
-            CharSequence rootPath,
-            Utf8Sink sink,
-            State state
-    ) {
-        int rootLen = rootPath.length();
-        Path path = Path.getThreadLocal(rootPath);
-        Utf8StringSink tempSink = Misc.getThreadLocalUtf8Sink();
-        state.findStack.clear();
-        state.pathLenStack.clear();
-        long pFind = state.ff.findFirst(path.$());
-        if (pFind == -1) {
-            return;
-        }
-
-        try {
-            while (true) {
-                while (pFind <= 0 && state.findStack.notEmpty()) {
-                    pFind = state.findStack.pop();
-                    int pathLen = state.pathLenStack.pop();
-                    path.trimTo(pathLen);
-                }
-                if (pFind <= 0) {
-                    break;
-                }
-
-                long pUtf8NameZ = state.ff.findName(pFind);
-                if (pUtf8NameZ == 0) {
-                    if (state.ff.findNext(pFind) <= 0) {
-                        state.ff.findClose(pFind);
-                        pFind = 0;
-                    }
-                    continue;
-                }
-
-                int type = state.ff.findType(pFind);
-                tempSink.clear();
-                Utf8s.utf8ZCopy(pUtf8NameZ, tempSink);
-
-                if (!Files.notDots(tempSink)) {
-                    if (state.ff.findNext(pFind) <= 0) {
-                        state.ff.findClose(pFind);
-                        pFind = 0;
-                    }
-                    continue;
-                }
-
-                if (type == Files.DT_DIR) {
-                    if (state.ff.findNext(pFind) > 0) {
-                        state.findStack.push(pFind);
-                        state.pathLenStack.push(path.size());
-                    } else {
-                        state.ff.findClose(pFind);
-                    }
-                    path.concat(tempSink).slash();
-                    pFind = state.ff.findFirst(path.$());
-                    continue;
-                } else if (type == Files.DT_FILE) {
-                    if (!state.firstFile) {
-                        sink.put(',');
-                    }
-                    state.firstFile = false;
-                    state.fileCount++;
-
-                    tempSink.clear();
-                    if (path.size() > rootLen) {
-                        Utf8s.utf8ZCopyEscaped(path.ptr() + rootLen + 1, path.end(), tempSink);
-                    }
-                    Utf8s.utf8ZCopyEscaped(pUtf8NameZ, tempSink);
-
-                    JsonSink jsonSink = Misc.getThreadLocalJsonSink();
-                    jsonSink.of(sink, false);
-
-                    jsonSink
-                            .startObject()
-                            .key("type").val("file")
-                            .key("id").val(tempSink)
-                            .key("attributes")
-                            .startObject();
-
-                    int lastSlash = Utf8s.lastIndexOfAscii(tempSink, '/');
-                    if (lastSlash >= 0) {
-                        jsonSink.key("filename").val(tempSink, lastSlash + 1, tempSink.size());
-                    } else {
-                        jsonSink.key("filename").val(tempSink);
-                    }
-
-                    int oldLen = path.size();
-                    path.trimTo(rootLen);
-                    path.concat(tempSink);
-
-                    jsonSink.key("path").val(path);
-
-
-                    long fileSize = state.ff.length(path.$());
-                    long lastModified = state.ff.getLastModified(path.$());
-                    path.trimTo(oldLen);
-
-                    tempSink.clear();
-                    SizePrettyFunctionFactory.toSizePretty(tempSink, fileSize);
-
-                    jsonSink.key("size").val(fileSize)
-                            .key("size_pretty").val(tempSink)
-                            .key("last_modified").valMillis(lastModified)
-                            .endObject()
-                            .endObject();
-                }
-
-                if (state.ff.findNext(pFind) <= 0) {
-                    state.ff.findClose(pFind);
-                    pFind = 0;
-                }
-            }
-        } finally {
-            if (pFind > 0) {
-                state.ff.findClose(pFind);
-            }
-            while (state.findStack.notEmpty()) {
-                state.ff.findClose(state.findStack.pop());
-                state.pathLenStack.pop();
-            }
-        }
-    }
-
-    private void sendException(
-            int errorCode,
-            HttpChunkedResponse response,
-            CharSequence message,
-            State state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (state.fileOffset > 0) {
-            LOG.error().$("partial file response sent, closing connection on error [fd=").$(state.getFd())
-                    .$(", fileOffset=").$(state.fileOffset)
-                    .$(", errorMessage=").$safe(message)
-                    .I$();
-            throw PeerDisconnectedException.INSTANCE;
-        }
-        headerJsonError(errorCode, response);
-        response.putAscii("{\"errors\":[{\"status\":\"").put(errorCode)
-                .putAscii("\",\"detail\":\"").putAscii(message).putAscii("\"}]}");
-        response.sendChunk(true);
-    }
-
-    private void sendFileChunk(HttpChunkedResponse response, State state) throws PeerIsSlowToReadException, PeerDisconnectedException {
-        if (state.fileOffset >= state.fileSize) {
-            return;
-        }
-
-        long remainingSize = state.fileSize - state.fileOffset;
-        int sendLSize = (int) Math.min(Integer.MAX_VALUE, remainingSize);
-        long bytesWritten = response.writeBytes(state.fileAddress + state.fileOffset, sendLSize);
-        state.fileOffset += bytesWritten;
-        response.bookmark();
-        if (state.fileOffset < state.fileSize) {
-            response.sendChunk(false);
-        }
-    }
-
-    private void sendFileList(
-            HttpConnectionContext context,
-            CharSequence root,
-            State state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        Utf8StringSink listSink = state.sink;
-        listSink.put("{\"data\":[");
-        try {
-            scanDirectory(root, listSink, state);
-            LOG.info().$("FileGetProcessor: found files: ").$(state.fileCount).$();
-            listSink.put("],\"meta\":{\"totalFiles\":").put(state.fileCount).put("}}");
-            context.simpleResponse().sendStatusJsonContent(HTTP_OK, listSink, false);
-        } catch (CairoException e) {
-            LOG.error().$("failed to list files: ").$(e.getFlyweightMessage()).I$();
-            HttpChunkedResponse response = context.getChunkedResponse();
-            StringSink sink = Misc.getThreadLocalSink();
-            sink.put("failed to list files, error: ").put(e.getFlyweightMessage());
-            sendException(500, response, sink, state);
-        } catch (Throwable e) {
-            LOG.error().$("failed to list files: ").$(e).I$();
-            HttpChunkedResponse response = context.getChunkedResponse();
-            StringSink sink = Misc.getThreadLocalSink();
-            sink.put("failed to list files, error: ").put(e.getMessage());
-            sendException(500, response, sink, state);
-        }
-    }
-
     private DirectUtf8Sequence extractFilePathFromUrl(HttpRequestHeader request) {
         DirectUtf8String url = request.getUrl();
         if (url == null || url.size() == 0) {
@@ -492,6 +243,254 @@ public class FileGetProcessor implements HttpRequestProcessor {
         DirectUtf8String result = new DirectUtf8String();
         result.of(urlPtr + fileStart, urlPtr + endPos);
         return result;
+    }
+
+    private String getContentType(DirectUtf8Sequence filename) {
+        if (Utf8s.endsWithAscii(filename, ".parquet")) {
+            return CONTENT_TYPE_PARQUET;
+        } else if (Utf8s.endsWithAscii(filename, ".csv")) {
+            return CONTENT_TYPE_CSV;
+        } else if (Utf8s.endsWithAscii(filename, ".json")) {
+            return CONTENT_TYPE_JSON;
+        } else if (Utf8s.endsWithAscii(filename, ".txt")) {
+            return CONTENT_TYPE_TEXT;
+        }
+        return CONTENT_TYPE_OCTET_STREAM;
+    }
+
+    private void header(
+            HttpChunkedResponse response,
+            State state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        response.status(200, state.contentType);
+        response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.file).putAscii("\"").putEOL();
+        response.sendHeader();
+    }
+
+    private void headerJsonError(int errorCode, HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        response.status(errorCode, CONTENT_TYPE_JSON_API);
+        response.sendHeader();
+    }
+
+    private void initFileSending(HttpChunkedResponse response, State state) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        Path path = Path.getThreadLocal(FilesRootDir.getRootPath(filesRoot, engine.getConfiguration()));
+        path.concat(state.file);
+        if (!state.ff.exists(path.$())) {
+            sendException(404, response, "file not found", state);
+            state.state = FILE_SEND_COMPLETED;
+            return;
+        }
+        if (state.ff.isDirOrSoftLinkDir(path.$())) {
+            sendException(400, response, "cannot download directory", state);
+            state.state = FILE_SEND_COMPLETED;
+            return;
+        }
+        state.fd = state.ff.openRO(path.$());
+        if (state.fd < 0) {
+            sendException(404, response, "file not found", state);
+            state.state = FILE_SEND_COMPLETED;
+            return;
+        }
+
+        state.fileSize = state.ff.length(state.fd);
+        if (state.fileSize > 0) {
+            state.fileAddress = TableUtils.mapRO(state.ff, state.fd, state.fileSize, MemoryTag.MMAP_DEFAULT);
+            if (state.fileAddress == 0) {
+                sendException(500, response, "failed to memory-map file", state);
+                state.state = FILE_SEND_COMPLETED;
+                return;
+            }
+        }
+
+        header(response, state);
+        state.state = FILE_SEND_CHUNK;
+    }
+
+    private void scanDirectory(
+            CharSequence rootPath,
+            JsonSink jsonSink,
+            State state
+    ) {
+        int rootLen = rootPath.length();
+        Path path = Path.getThreadLocal(rootPath);
+        Utf8StringSink tempSink = Misc.getThreadLocalUtf8Sink();
+        state.findStack.clear();
+        state.pathLenStack.clear();
+        long pFind = state.ff.findFirst(path.$());
+        if (pFind == -1) {
+            return;
+        }
+
+        try {
+            while (true) {
+                while (pFind <= 0 && state.findStack.notEmpty()) {
+                    pFind = state.findStack.pop();
+                    int pathLen = state.pathLenStack.pop();
+                    path.trimTo(pathLen);
+                }
+                if (pFind <= 0) {
+                    break;
+                }
+
+                long pUtf8NameZ = state.ff.findName(pFind);
+                if (pUtf8NameZ == 0) {
+                    if (state.ff.findNext(pFind) <= 0) {
+                        state.ff.findClose(pFind);
+                        pFind = 0;
+                    }
+                    continue;
+                }
+
+                int type = state.ff.findType(pFind);
+                tempSink.clear();
+                Utf8s.utf8ZCopy(pUtf8NameZ, tempSink);
+
+                if (!Files.notDots(tempSink)) {
+                    if (state.ff.findNext(pFind) <= 0) {
+                        state.ff.findClose(pFind);
+                        pFind = 0;
+                    }
+                    continue;
+                }
+
+                if (type == Files.DT_DIR) {
+                    if (state.ff.findNext(pFind) > 0) {
+                        state.findStack.push(pFind);
+                        state.pathLenStack.push(path.size());
+                    } else {
+                        state.ff.findClose(pFind);
+                    }
+                    path.concat(tempSink).slash();
+                    pFind = state.ff.findFirst(path.$());
+                    continue;
+                } else if (type == Files.DT_FILE) {
+                    state.firstFile = false;
+                    state.fileCount++;
+
+                    tempSink.clear();
+                    if (path.size() > rootLen) {
+                        Utf8s.utf8ZCopyEscaped(path.ptr() + rootLen + 1, path.end(), tempSink);
+                    }
+                    Utf8s.utf8ZCopyEscaped(pUtf8NameZ, tempSink);
+
+                    jsonSink
+                            .startObject()
+                            .key("type").val("file")
+                            .key("id").val(tempSink)
+                            .key("attributes")
+                            .startObject();
+
+                    int lastSlash = Utf8s.lastIndexOfAscii(tempSink, '/');
+                    if (lastSlash >= 0) {
+                        jsonSink.key("filename").val(tempSink, lastSlash + 1, tempSink.size());
+                    } else {
+                        jsonSink.key("filename").val(tempSink);
+                    }
+
+                    int oldLen = path.size();
+                    path.trimTo(rootLen);
+                    path.concat(tempSink);
+
+                    // Store the relative path before tempSink is cleared
+                    CharSequence relativePath = tempSink.toString();
+                    jsonSink.key("path").val(relativePath);
+
+                    long fileSize = state.ff.length(path.$());
+                    long lastModified = state.ff.getLastModified(path.$());
+                    path.trimTo(oldLen);
+
+                    tempSink.clear();
+                    SizePrettyFunctionFactory.toSizePretty(tempSink, fileSize);
+
+                    jsonSink.key("size").val(fileSize)
+                            .key("size_pretty").val(tempSink)
+                            .key("lastModified").valMillis(lastModified)
+                            .endObject()
+                            .endObject();
+                }
+
+                if (state.ff.findNext(pFind) <= 0) {
+                    state.ff.findClose(pFind);
+                    pFind = 0;
+                }
+            }
+        } finally {
+            if (pFind > 0) {
+                state.ff.findClose(pFind);
+            }
+            while (state.findStack.notEmpty()) {
+                state.ff.findClose(state.findStack.pop());
+                state.pathLenStack.pop();
+            }
+        }
+    }
+
+    private void sendException(
+            int errorCode,
+            HttpChunkedResponse response,
+            CharSequence message,
+            State state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.fileOffset > 0) {
+            LOG.error().$("partial file response sent, closing connection on error [fd=").$(state.getFd())
+                    .$(", fileOffset=").$(state.fileOffset)
+                    .$(", errorMessage=").$safe(message)
+                    .I$();
+            throw PeerDisconnectedException.INSTANCE;
+        }
+        headerJsonError(errorCode, response);
+        JsonSink sink = Misc.getThreadLocalJsonSink();
+        sink.of(response).startObject()
+                .key("errors").startArray().startObject()
+                .key("status").valQuoted(errorCode)
+                .key("detail").val(message)
+                .endObject().endArray().endObject();
+        response.sendChunk(true);
+    }
+
+    private void sendFileChunk(HttpChunkedResponse response, State state) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        if (state.fileOffset >= state.fileSize) {
+            return;
+        }
+
+        long remainingSize = state.fileSize - state.fileOffset;
+        int sendLSize = (int) Math.min(Integer.MAX_VALUE, remainingSize);
+        long bytesWritten = response.writeBytes(state.fileAddress + state.fileOffset, sendLSize);
+        state.fileOffset += bytesWritten;
+        response.bookmark();
+        if (state.fileOffset < state.fileSize) {
+            response.sendChunk(false);
+        }
+    }
+
+    private void sendFileList(
+            HttpConnectionContext context,
+            CharSequence root,
+            State state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        Utf8StringSink listSink = state.sink;
+        JsonSink jsonSink = Misc.getThreadLocalJsonSink();
+        jsonSink.of(listSink).startObject().key("data").startArray();
+        try {
+            scanDirectory(root, jsonSink, state); // acquires the sink
+            jsonSink.endArray()
+                    .key("meta").startObject()
+                    .key("totalFiles").val(state.fileCount)
+                    .endObject().endObject();
+            context.simpleResponse().sendStatusJsonApiContent(HTTP_OK, listSink, false);
+        } catch (CairoException e) {
+            LOG.error().$("failed to list files: ").$(e.getFlyweightMessage()).I$();
+            HttpChunkedResponse response = context.getChunkedResponse();
+            StringSink sink = Misc.getThreadLocalSink();
+            sink.put("failed to list files, error: ").put(e.getFlyweightMessage());
+            sendException(500, response, sink, state);
+        } catch (Throwable e) {
+            LOG.error().$("failed to list files: ").$(e).I$();
+            HttpChunkedResponse response = context.getChunkedResponse();
+            StringSink sink = Misc.getThreadLocalSink();
+            sink.put("failed to list files, error: ").put(e.getMessage());
+            sendException(500, response, sink, state);
+        }
     }
 
     static boolean containsAbsOrRelativePath(DirectUtf8Sequence filename) {
