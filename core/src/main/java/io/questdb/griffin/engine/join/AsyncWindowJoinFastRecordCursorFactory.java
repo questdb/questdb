@@ -83,7 +83,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncWindowJoinRecordCursor cursor;
-    private final PageFrameSequence<AbstractWindowJoinAtom> frameSequence;
+    private final PageFrameSequence<AsyncWindowJoinAtom> frameSequence;
     private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
@@ -181,7 +181,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
-    public PageFrameSequence<AbstractWindowJoinAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<AsyncWindowJoinAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(masterFactory, executionContext, collectSubSeq, order);
     }
 
@@ -280,11 +280,10 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
         Function joinFilter = atom.getJoinFilter(workerId);
 
+        atom.clearTemporaryData(workerId);
         final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-        Misc.free(atom.getAllocator(workerId));
-        slaveData.clear();
-        final GroupByLongList rowIds = atom.getRowIdsGroupByList(slotId);
-        final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
+        final GroupByLongList rowIds = atom.getLongList(slotId);
+        final GroupByLongList timestamps = atom.getTimestampList(slotId);
 
         try {
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
@@ -443,10 +442,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long masterTsScale = atom.getMasterTsScale();
         final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
 
+        atom.clearTemporaryData(workerId);
         final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-        Misc.free(atom.getAllocator(workerId));
-        slaveData.clear();
-        final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
+        final GroupByLongList timestamps = atom.getTimestampList(slotId);
 
         try {
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
@@ -605,11 +603,11 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final long masterTsScale = atom.getMasterTsScale();
                 final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
 
+                atom.clearTemporaryData(workerId);
                 final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-                Misc.free(atom.getAllocator(workerId));
-                slaveData.clear();
-                final GroupByLongList rowIds = atom.getRowIdsGroupByList(slotId);
-                final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
+                final GroupByLongList rowIds = atom.getLongList(slotId);
+                final GroupByLongList timestamps = atom.getTimestampList(slotId);
+
                 final int masterSymbolIndex = atom.getMasterSymbolIndex();
                 final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
                 final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -778,10 +776,10 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final long masterTsScale = atom.getMasterTsScale();
                 final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
 
+                atom.clearTemporaryData(workerId);
                 final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-                Misc.free(atom.getAllocator(workerId));
-                slaveData.clear();
-                final GroupByLongList timestamps = atom.getTimestampsGroupByList(slotId);
+                final GroupByLongList timestamps = atom.getTimestampList(slotId);
+
                 final int masterSymbolIndex = atom.getMasterSymbolIndex();
                 final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
                 final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();

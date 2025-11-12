@@ -49,7 +49,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class AsyncWindowJoinFastAtom extends AbstractWindowJoinAtom {
+public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
     private final int masterSymbolIndex;
     private final DirectIntMultiLongHashMap ownerSlaveData;
     private final ObjList<DirectIntMultiLongHashMap> perWorkerSlaveData;
@@ -127,6 +127,15 @@ public class AsyncWindowJoinFastAtom extends AbstractWindowJoinAtom {
         super.clear();
         Misc.clear(ownerSlaveData);
         Misc.clearObjList(perWorkerSlaveData);
+    }
+
+    public void clearTemporaryData(int slotId) {
+        super.clearTemporaryData(slotId);
+        if (slotId == -1) {
+            ownerSlaveData.clear();
+        } else {
+            perWorkerSlaveData.getQuick(slotId).clear();
+        }
     }
 
     @Override

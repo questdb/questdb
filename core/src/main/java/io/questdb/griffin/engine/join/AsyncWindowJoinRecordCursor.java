@@ -83,7 +83,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private DirectMapValue groupByValue;
     private boolean isOpen;
     private boolean isSlaveTimeFrameCacheBuilt;
-    private PageFrameSequence<AbstractWindowJoinAtom> masterFrameSequence;
+    private PageFrameSequence<AsyncWindowJoinAtom> masterFrameSequence;
     private TablePageFrameCursor slaveFrameCursor;
     private long valueSizeBytes;
 
@@ -485,7 +485,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     void of(
-            PageFrameSequence<AbstractWindowJoinAtom> masterFrameSequence,
+            PageFrameSequence<AsyncWindowJoinAtom> masterFrameSequence,
             TablePageFrameCursor slaveFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
@@ -501,7 +501,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         frameValueOffset = -1;
         frameRowCount = -1;
         masterRecord.of(masterFrameSequence.getSymbolTableSource());
-        final AbstractWindowJoinAtom atom = masterFrameSequence.getAtom();
+        final AsyncWindowJoinAtom atom = masterFrameSequence.getAtom();
         valueSizeBytes = atom.getValueSizeBytes();
         groupByValue = atom.getOwnerGroupByValue();
         groupByRecord.of(groupByValue);

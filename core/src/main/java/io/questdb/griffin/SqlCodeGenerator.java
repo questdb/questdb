@@ -235,8 +235,7 @@ import io.questdb.griffin.engine.join.SymbolKeyMappingRecordCopier;
 import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
-import io.questdb.griffin.engine.join.WindowJoinFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.join.WindowJoinLightFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
@@ -3657,7 +3656,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             filter = compileJoinFilter(node, joinMetadata, executionContext);
                                         }
 
-                                        return new WindowJoinFilteredRecordCursorFactory(
+                                        return new WindowJoinRecordCursorFactory(
                                                 configuration,
                                                 outerProjectionMetadata,
                                                 joinMetadata,
@@ -3671,27 +3670,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 filter
                                         );
                                     }
-
-                                    if (!slave.recordCursorSupportsRandomAccess()) {
-                                        throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("right side of window join doesn't support random access");
-                                    }
-
-                                    if (node != null) {
-                                        filter = compileJoinFilter(node, joinMetadata, executionContext);
-                                    }
-                                    master = new WindowJoinLightFilteredRecordCursorFactory(
-                                            configuration,
-                                            outerProjectionMetadata,
-                                            joinMetadata,
-                                            master,
-                                            slave,
-                                            master.getMetadata().getColumnCount(),
-                                            lo,
-                                            hi,
-                                            groupByFunctions,
-                                            valueTypes,
-                                            filter
-                                    );
+                                    throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("right side of window join must be a table, not sub-query");
                                 }
                                 break;
                             default:

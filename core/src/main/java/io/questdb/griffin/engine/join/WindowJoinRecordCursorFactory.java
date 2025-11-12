@@ -52,7 +52,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
 /**
- * Factory for {@link WindowJoinRecordCursor}.
+ * Single-threaded WINDOW JOIN factory.
  * <p>
  * The master cursor drives the iteration. For every master row the slave cursor is traversed only
  * within the timestamp window {@code [masterTs - windowLo, masterTs + windowHi]}, with timestamps
@@ -60,7 +60,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * through an optional post-join filter and accumulated by the supplied {@link GroupByFunction}s
  * into a {@link SimpleMapValue} that is exposed as a synthetic slave record via {@link OuterJoinRecord}.
  */
-public class WindowJoinFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
+public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final WindowJoinRecordCursor cursor;
     private final Function filter;
     private final JoinRecordMetadata joinMetadata;
@@ -69,7 +69,7 @@ public class WindowJoinFilteredRecordCursorFactory extends AbstractRecordCursorF
     private final long windowHi;
     private final long windowLo;
 
-    public WindowJoinFilteredRecordCursorFactory(
+    public WindowJoinRecordCursorFactory(
             CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull JoinRecordMetadata joinMetadata,

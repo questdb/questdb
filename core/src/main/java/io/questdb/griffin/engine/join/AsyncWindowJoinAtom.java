@@ -27,20 +27,92 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.DirectMapValue;
+import io.questdb.griffin.engine.groupby.DirectMapValueFactory;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
+import io.questdb.griffin.engine.groupby.GroupByColumnSink;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
+import io.questdb.griffin.engine.groupby.GroupByLongList;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class AsyncWindowJoinAtom extends AbstractWindowJoinAtom {
-    private final LongList ownSlaveData;
-    private final ObjList<LongList> perWorkerSlaveData;
+import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
+
+public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
+    private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
+    private static final int INITIAL_LIST_CAPACITY = 16;
+    protected final IntList groupByColumnIndexes;
+    protected final TimeFrameHelper ownerSlaveTimeFrameHelper;
+    private final ObjList<Function> bindVarFunctions;
+    private final MemoryCARW bindVarMemory;
+    private final CompiledFilter compiledMasterFilter;
+    private final IntList groupByColumnTypes;
+    private final IntList groupByFunctionToColumnIndex;
+    private final JoinSymbolTableSource joinSymbolTableSource;
+    private final long joinWindowHi;
+    private final long joinWindowLo;
+    private final int masterTimestampIndex;
+    private final long masterTsScale;
+    private final GroupByColumnSink ownerColumnSink;
+    // Used by group by functions. The memory is released only at the end of the query execution.
+    private final GroupByAllocator ownerFunctionAllocator;
+    private final GroupByFunctionsUpdater ownerFunctionUpdater;
+    private final ObjList<GroupByFunction> ownerGroupByFunctions;
+    private final DirectMapValue ownerGroupByValue;
+    private final Function ownerJoinFilter;
+    private final JoinRecord ownerJoinRecord;
+    // Holds either row ids or column sink pointers.
+    private final GroupByLongList ownerLongList;
+    private final Function ownerMasterFilter;
+    private final ConcurrentTimeFrameCursor ownerSlaveTimeFrameCursor;
+    // Used by additional data structures such as row id and timestamp lists or symbol hash tables.
+    // The memory is released between page frame reduce calls.
+    private final GroupByAllocator ownerTemporaryAllocator;
+    private final GroupByLongList ownerTimestampList;
+    private final ObjList<GroupByColumnSink> perWorkerColumnSinks;
+    private final ObjList<GroupByAllocator> perWorkerFunctionAllocators;
+    private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
+    private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
+    private final ObjList<DirectMapValue> perWorkerGroupByValues;
+    private final ObjList<Function> perWorkerJoinFilters;
+    private final ObjList<JoinRecord> perWorkerJoinRecords;
+    private final PerWorkerLocks perWorkerLocks;
+    private final ObjList<GroupByLongList> perWorkerLongLists;
+    private final ObjList<Function> perWorkerMasterFilters;
+    private final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
+    private final ObjList<TimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
+    private final ObjList<GroupByAllocator> perWorkerTemporaryAllocators;
+    private final ObjList<GroupByLongList> perWorkerTimestampLists;
+    private final long slaveTsScale;
+    private final long valueSizeInBytes;
+    private final boolean vectorized;
+    private boolean onlyFiltered = false;
 
     public AsyncWindowJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -64,63 +136,493 @@ public class AsyncWindowJoinAtom extends AbstractWindowJoinAtom {
             long slaveTsScale,
             int workerCount
     ) {
-        super(
-                asm,
-                configuration,
-                slaveFactory,
-                ownerJoinFilter,
-                perWorkerJoinFilters,
-                joinWindowLo,
-                joinWindowHi,
-                columnSplit,
-                masterTimestampIndex,
-                valueTypes,
-                ownerGroupByFunctions,
-                perWorkerGroupByFunctions,
-                compiledMasterFilter,
-                bindVarMemory,
-                bindVarFunctions,
-                ownerMasterFilter,
-                perWorkerMasterFilters,
-                masterTsScale,
-                slaveTsScale,
-                workerCount
-        );
+        assert perWorkerJoinFilters == null || perWorkerJoinFilters.size() == workerCount;
+        assert perWorkerMasterFilters == null || perWorkerMasterFilters.size() == workerCount;
 
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
-        if (isVectorized()) {
-            int slaveDataLen = this.groupByColumnIndexes.size();
-            ownSlaveData = new LongList(slaveDataLen, 0);
-            ownSlaveData.setPos(slaveDataLen);
-            this.perWorkerSlaveData = new ObjList<>(slotCount);
+        try {
+            this.ownerJoinFilter = ownerJoinFilter;
+            this.perWorkerJoinFilters = perWorkerJoinFilters;
+            this.joinWindowLo = joinWindowLo;
+            this.joinWindowHi = joinWindowHi;
+            this.masterTimestampIndex = masterTimestampIndex;
+            this.ownerGroupByFunctions = ownerGroupByFunctions;
+            this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
+            this.compiledMasterFilter = compiledMasterFilter;
+            this.bindVarMemory = bindVarMemory;
+            this.bindVarFunctions = bindVarFunctions;
+            this.ownerMasterFilter = ownerMasterFilter;
+            this.perWorkerMasterFilters = perWorkerMasterFilters;
+            this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
+            this.masterTsScale = masterTsScale;
+            this.slaveTsScale = slaveTsScale;
+            this.vectorized = ownerJoinFilter == null && GroupByUtils.isBatchComputationSupported(ownerGroupByFunctions, columnSplit);
+
+            this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
+            this.ownerSlaveTimeFrameHelper = new TimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
+            this.perWorkerSlaveTimeFrameCursors = new ObjList<>(slotCount);
+            this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                LongList perWorkerSlave = new LongList(slaveDataLen, 0);
-                perWorkerSlave.setPos(slaveDataLen);
-                perWorkerSlaveData.extendAndSet(i, perWorkerSlave);
+                perWorkerSlaveTimeFrameCursors.extendAndSet(i, slaveFactory.newTimeFrameCursor());
+                perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new TimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale));
             }
-        } else {
-            ownSlaveData = null;
-            perWorkerSlaveData = null;
+
+            this.ownerJoinRecord = new JoinRecord(columnSplit);
+            this.perWorkerJoinRecords = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerJoinRecords.extendAndSet(i, new JoinRecord(columnSplit));
+            }
+
+            final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
+            this.ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
+            if (perWorkerGroupByFunctions != null) {
+                this.perWorkerFunctionUpdaters = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
+                    perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerGroupByFunctions.getQuick(i)));
+                }
+            } else {
+                this.perWorkerFunctionUpdaters = null;
+            }
+
+            this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
+
+            this.ownerFunctionAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            // Make sure to set worker-local allocator for the group by functions.
+            GroupByUtils.setAllocator(ownerGroupByFunctions, ownerFunctionAllocator);
+            this.perWorkerFunctionAllocators = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                GroupByAllocator workerFunctionAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                perWorkerFunctionAllocators.extendAndSet(i, workerFunctionAllocator);
+                if (perWorkerGroupByFunctions != null) {
+                    GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), workerFunctionAllocator);
+                }
+            }
+
+            this.ownerTemporaryAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            this.ownerLongList = new GroupByLongList(INITIAL_LIST_CAPACITY);
+            ownerLongList.setAllocator(ownerTemporaryAllocator);
+            this.ownerTimestampList = new GroupByLongList(INITIAL_LIST_CAPACITY);
+            ownerTimestampList.setAllocator(ownerTemporaryAllocator);
+            this.perWorkerTemporaryAllocators = new ObjList<>(slotCount);
+            this.perWorkerLongLists = new ObjList<>(slotCount);
+            this.perWorkerTimestampLists = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                GroupByAllocator workerTemporaryAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                perWorkerTemporaryAllocators.extendAndSet(i, workerTemporaryAllocator);
+
+                final GroupByLongList workerRowIds = new GroupByLongList(INITIAL_LIST_CAPACITY);
+                workerRowIds.setAllocator(workerTemporaryAllocator);
+                perWorkerLongLists.extendAndSet(i, workerRowIds);
+                final GroupByLongList workerTimestamps = new GroupByLongList(INITIAL_LIST_CAPACITY);
+                workerTimestamps.setAllocator(workerTemporaryAllocator);
+                perWorkerTimestampLists.extendAndSet(i, workerTimestamps);
+            }
+
+            ownerGroupByValue = DirectMapValueFactory.createDirectMapValue(valueTypes);
+            valueSizeInBytes = ownerGroupByValue.getSizeInBytes();
+            perWorkerGroupByValues = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerGroupByValues.extendAndSet(i, DirectMapValueFactory.createDirectMapValue(valueTypes));
+            }
+
+            if (vectorized) {
+                final int groupByFunctionSize = ownerGroupByFunctions.size();
+                this.groupByColumnIndexes = new IntList(groupByFunctionSize);
+                this.groupByColumnTypes = new IntList(groupByFunctionSize);
+                this.groupByFunctionToColumnIndex = new IntList(groupByFunctionSize);
+                for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
+                    var func = ownerGroupByFunctions.getQuick(i);
+                    int index = func.getColumnIndex();
+                    int mappedIndex = groupByColumnIndexes.indexOf(index);
+                    if (mappedIndex == -1) {
+                        groupByColumnIndexes.add(func.getColumnIndex());
+                        var unary = (UnaryFunction) func;
+                        groupByColumnTypes.add(unary.getArg().getType());
+                        groupByFunctionToColumnIndex.add(groupByColumnIndexes.size() - 1);
+                    } else {
+                        groupByFunctionToColumnIndex.add(mappedIndex);
+                    }
+                }
+
+                this.ownerColumnSink = new GroupByColumnSink(INITIAL_COLUMN_SINK_CAPACITY);
+                ownerColumnSink.setAllocator(ownerTemporaryAllocator);
+                this.perWorkerColumnSinks = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
+                    final GroupByColumnSink sink = new GroupByColumnSink(INITIAL_COLUMN_SINK_CAPACITY);
+                    sink.setAllocator(perWorkerTemporaryAllocators.getQuick(i));
+                    perWorkerColumnSinks.extendAndSet(i, sink);
+                }
+            } else {
+                this.groupByColumnIndexes = null;
+                this.groupByColumnTypes = null;
+                this.ownerColumnSink = null;
+                this.perWorkerColumnSinks = null;
+                this.groupByFunctionToColumnIndex = null;
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 
     @Override
     public void clear() {
-        super.clear();
-        if (ownSlaveData != null) {
-            ownSlaveData.fillWithDefault();
-        }
-        if (perWorkerSlaveData != null) {
-            for (int i = 0, n = perWorkerSlaveData.size(); i < n; i++) {
-                perWorkerSlaveData.getQuick(i).fillWithDefault();
+        Misc.free(ownerSlaveTimeFrameCursor);
+        Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
+        Misc.free(ownerFunctionAllocator);
+        Misc.freeObjListAndKeepObjects(perWorkerFunctionAllocators);
+        Misc.free(ownerTemporaryAllocator);
+        Misc.freeObjListAndKeepObjects(perWorkerTemporaryAllocators);
+        Misc.clearObjList(ownerGroupByFunctions);
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
     }
 
-    public LongList getGroupByColumnSinkData(int slotId) {
+    public void clearTemporaryData(int slotId) {
         if (slotId == -1) {
-            return ownSlaveData;
+            ownerTemporaryAllocator.close();
+        } else {
+            perWorkerTemporaryAllocators.getQuick(slotId).close();
         }
-        return perWorkerSlaveData.getQuick(slotId);
+    }
+
+    @Override
+    public void close() {
+        Misc.free(ownerJoinFilter);
+        Misc.freeObjList(perWorkerJoinFilters);
+        Misc.free(ownerSlaveTimeFrameCursor);
+        Misc.freeObjList(perWorkerSlaveTimeFrameCursors);
+        Misc.free(compiledMasterFilter);
+        Misc.free(bindVarMemory);
+        Misc.freeObjList(bindVarFunctions);
+        Misc.free(ownerMasterFilter);
+        Misc.freeObjList(perWorkerMasterFilters);
+        Misc.free(ownerFunctionAllocator);
+        Misc.freeObjList(perWorkerFunctionAllocators);
+        Misc.free(ownerTemporaryAllocator);
+        Misc.freeObjListAndKeepObjects(perWorkerTemporaryAllocators);
+        Misc.freeObjList(ownerGroupByFunctions);
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
+            }
+        }
+    }
+
+    public ObjList<Function> getBindVarFunctions() {
+        return bindVarFunctions;
+    }
+
+    public MemoryCARW getBindVarMemory() {
+        return bindVarMemory;
+    }
+
+    public GroupByColumnSink getColumnSink(int slotId) {
+        if (slotId == -1) {
+            return ownerColumnSink;
+        }
+        return perWorkerColumnSinks.getQuick(slotId);
+    }
+
+    public CompiledFilter getCompiledMasterFilter() {
+        return compiledMasterFilter;
+    }
+
+    public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
+        if (slotId == -1 || perWorkerFunctionUpdaters == null) {
+            return ownerFunctionUpdater;
+        }
+        return perWorkerFunctionUpdaters.getQuick(slotId);
+    }
+
+    public IntList getGroupByColumnIndexes() {
+        return groupByColumnIndexes;
+    }
+
+    public IntList getGroupByColumnTypes() {
+        return groupByColumnTypes;
+    }
+
+    public IntList getGroupByFunctionToColumnIndex() {
+        return groupByFunctionToColumnIndex;
+    }
+
+    public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
+        if (slotId == -1 || perWorkerGroupByFunctions == null) {
+            return ownerGroupByFunctions;
+        }
+        return perWorkerGroupByFunctions.getQuick(slotId);
+    }
+
+    public Function getJoinFilter(int slotId) {
+        if (slotId == -1 || perWorkerJoinFilters == null) {
+            return ownerJoinFilter;
+        }
+        return perWorkerJoinFilters.getQuick(slotId);
+    }
+
+    public JoinRecord getJoinRecord(int slotId) {
+        if (slotId == -1) {
+            return ownerJoinRecord;
+        }
+        return perWorkerJoinRecords.getQuick(slotId);
+    }
+
+    public long getJoinWindowHi() {
+        return joinWindowHi;
+    }
+
+    public long getJoinWindowLo() {
+        return joinWindowLo;
+    }
+
+    public GroupByLongList getLongList(int slotId) {
+        if (slotId == -1) {
+            return ownerLongList;
+        }
+        return perWorkerLongLists.getQuick(slotId);
+    }
+
+    public DirectMapValue getMapValue(int slotId) {
+        if (slotId == -1) {
+            return ownerGroupByValue;
+        }
+        return perWorkerGroupByValues.getQuick(slotId);
+    }
+
+    public Function getMasterFilter(int slotId) {
+        if (slotId == -1 || perWorkerMasterFilters == null) {
+            return ownerMasterFilter;
+        }
+        return perWorkerMasterFilters.getQuick(slotId);
+    }
+
+    public int getMasterTimestampIndex() {
+        return masterTimestampIndex;
+    }
+
+    public long getMasterTsScale() {
+        return masterTsScale;
+    }
+
+    // Thread-unsafe, should be used by query owner thread only.
+    public DirectMapValue getOwnerGroupByValue() {
+        return ownerGroupByValue;
+    }
+
+    public TimeFrameHelper getSlaveTimeFrameHelper(int slotId) {
+        if (slotId == -1) {
+            return ownerSlaveTimeFrameHelper;
+        }
+        return perWorkerSlaveTimeFrameHelpers.getQuick(slotId);
+    }
+
+    public long getSlaveTsScale() {
+        return slaveTsScale;
+    }
+
+    public GroupByLongList getTimestampList(int slotId) {
+        if (slotId == -1) {
+            return ownerTimestampList;
+        }
+        return perWorkerTimestampLists.getQuick(slotId);
+    }
+
+    public long getValueSizeBytes() {
+        return valueSizeInBytes;
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        if (ownerMasterFilter != null) {
+            ownerMasterFilter.init(symbolTableSource, executionContext);
+        }
+
+        if (perWorkerMasterFilters != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                Function.init(perWorkerMasterFilters, symbolTableSource, executionContext, ownerMasterFilter);
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
+
+        if (bindVarFunctions != null) {
+            Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
+            prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
+        }
+    }
+
+    public void initTimeFrameCursors(
+            SqlExecutionContext executionContext,
+            SymbolTableSource masterSymbolTableSource,
+            TablePageFrameCursor pageFrameCursor,
+            PageFrameAddressCache frameAddressCache,
+            IntList framePartitionIndexes,
+            LongList frameRowCounts,
+            LongList partitionTimestamps,
+            int frameCount
+    ) throws SqlException {
+        ownerSlaveTimeFrameCursor.of(
+                pageFrameCursor,
+                frameAddressCache,
+                framePartitionIndexes,
+                frameRowCounts,
+                partitionTimestamps,
+                frameCount
+        );
+        ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
+        for (int i = 0, n = perWorkerSlaveTimeFrameHelpers.size(); i < n; i++) {
+            final ConcurrentTimeFrameCursor workerCursor = perWorkerSlaveTimeFrameCursors.getQuick(i);
+            workerCursor.of(
+                    pageFrameCursor,
+                    frameAddressCache,
+                    framePartitionIndexes,
+                    frameRowCounts,
+                    partitionTimestamps,
+                    frameCount
+            );
+            perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
+        }
+
+        // now we can init join filters
+        final SymbolTableSource slaveSymbolTableSource = ownerSlaveTimeFrameHelper.getSymbolTableSource();
+        joinSymbolTableSource.of(masterSymbolTableSource, slaveSymbolTableSource);
+
+        Function.init(ownerGroupByFunctions, masterSymbolTableSource, executionContext, null);
+
+        if (perWorkerGroupByFunctions != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                    Function.init(perWorkerGroupByFunctions.getQuick(i), joinSymbolTableSource, executionContext, null);
+                }
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
+
+        if (ownerJoinFilter != null) {
+            ownerJoinFilter.init(joinSymbolTableSource, executionContext);
+        }
+
+        if (perWorkerJoinFilters != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                Function.init(perWorkerJoinFilters, joinSymbolTableSource, executionContext, ownerJoinFilter);
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
+    }
+
+    public boolean isOnlyFiltered() {
+        return onlyFiltered;
+    }
+
+    public boolean isVectorized() {
+        return vectorized;
+    }
+
+    /**
+     * Attempts to acquire a slot for the given worker thread.
+     * On success, a {@link #release(int)} call must follow.
+     *
+     * @throws io.questdb.cairo.CairoException when circuit breaker has tripped
+     */
+    public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (workerId == -1 && owner) {
+            // Owner thread is free to use the original functions anytime.
+            return -1;
+        }
+        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+    }
+
+    public void release(int slotId) {
+        perWorkerLocks.releaseSlot(slotId);
+    }
+
+    public void setOnlyFiltered(boolean onlyFiltered) {
+        this.onlyFiltered = onlyFiltered;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.attr("window lo");
+        if (joinWindowLo == Long.MAX_VALUE) {
+            sink.val("unbounded preceding");
+        } else if (joinWindowLo == Long.MIN_VALUE) {
+            sink.val("unbounded following");
+        } else if (joinWindowLo == 0) {
+            sink.val("current row");
+        } else if (joinWindowLo < 0) {
+            sink.val(Math.abs(joinWindowLo)).val(" following");
+        } else {
+            sink.val(joinWindowLo).val(" preceding");
+        }
+
+        sink.attr("window hi");
+        if (joinWindowHi == Long.MAX_VALUE) {
+            sink.val("unbounded following");
+        } else if (joinWindowHi == Long.MIN_VALUE) {
+            sink.val("unbounded preceding");
+        } else if (joinWindowHi == 0) {
+            sink.val("current row");
+        } else if (joinWindowHi < 0) {
+            sink.val(Math.abs(joinWindowHi)).val(" preceding");
+        } else {
+            sink.val(joinWindowHi).val(" following");
+        }
+    }
+
+    public void toTop() {
+        ownerSlaveTimeFrameHelper.toTop();
+        for (int i = 0, n = perWorkerSlaveTimeFrameHelpers.size(); i < n; i++) {
+            perWorkerSlaveTimeFrameHelpers.getQuick(i).toTop();
+        }
+
+        GroupByUtils.toTop(ownerGroupByFunctions);
+        if (perWorkerGroupByFunctions != null) {
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
+            }
+        }
+    }
+
+    private static class JoinSymbolTableSource implements SymbolTableSource {
+        private final int columnSplit;
+        private SymbolTableSource masterSource;
+        private SymbolTableSource slaveSource;
+
+        private JoinSymbolTableSource(int columnSplit) {
+            this.columnSplit = columnSplit;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            if (columnIndex < columnSplit) {
+                return masterSource.getSymbolTable(columnIndex);
+            }
+            return slaveSource.getSymbolTable(columnIndex - columnSplit);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            if (columnIndex < columnSplit) {
+                return masterSource.newSymbolTable(columnIndex);
+            }
+            return slaveSource.newSymbolTable(columnIndex - columnSplit);
+        }
+
+        public void of(SymbolTableSource masterSource, SymbolTableSource slaveSource) {
+            this.masterSource = masterSource;
+            this.slaveSource = slaveSource;
+        }
     }
 }
