@@ -31,7 +31,6 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
-import io.questdb.mp.YieldingWaitStrategy;
 
 /**
  * Thread-safe cache for memory-mapped file regions with reference counting.
@@ -53,7 +52,7 @@ public class MmapCache {
     public MmapCache() {
         munmapTaskRingQueue = new RingQueue<>(MunmapTask::new, MUNMAP_QUEUE_CAPACITY);
         munmapProducesSequence = new MPSequence(munmapTaskRingQueue.getCycle());
-        munmapConsumerSequence = new SCSequence(new YieldingWaitStrategy());
+        munmapConsumerSequence = new SCSequence();
         munmapProducesSequence.then(munmapConsumerSequence).then(munmapProducesSequence);
     }
 
