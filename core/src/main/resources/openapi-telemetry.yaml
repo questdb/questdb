@@ -1,0 +1,157 @@
+openapi: 3.0.3
+info:
+  title: QuestDB REST & Line Protocol API
+  version: "1.1.0"
+  description: |
+    QuestDB Legacy HTTP API including:
+    - `/exec`, `/imp`, `/exp` — SQL query, CSV import/export, Parquet export endpoints
+    - `/api/v2/write`, `/write` — InfluxDB line protocol ingestion endpoints
+servers:
+  - url: https://{host}:{port}
+    variables:
+      host:
+        default: localhost
+      port:
+        default: "9000"
+paths:
+  /exec:
+    get:
+      summary: Execute SQL query and return JSON results
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: SQL query text (URL-encoded)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Query executed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Query error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+  /imp:
+    post:
+      summary: Import CSV or tabular data into a QuestDB table
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: string
+                  format: binary
+                  description: File containing CSV/tabular data
+      responses:
+        '200':
+          description: Data imported successfully
+        '400':
+          description: Import error
+
+  /exp:
+    get:
+      summary: Export data in CSV or Parquet format
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Export successful
+          content:
+            text/csv:
+              schema:
+                type: string
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Export error
+
+  /api/v2/write:
+    post:
+      summary: Ingest data using InfluxDB Line Protocol
+      description: |
+        Accepts InfluxDB Line Protocol (ILP) data over HTTP.
+        Same behavior as `/write` endpoint.
+      parameters:
+        - name: precision
+          in: query
+          description: Timestamp precision (`n`, `u`, `ms`, `s`, `m`, `h`)
+          schema:
+            type: string
+            enum: [ n, u, ms, s, m, h ]
+            default: n
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              example: |
+                weather,location=us-midwest temperature=82 1465839830100400200
+      responses:
+        '204':
+          description: Data accepted (no content)
+        '400':
+          description: Bad request (invalid line protocol)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+  /write:
+    post:
+      summary: Alias for `/api/v2/write`
+      description: |
+        This endpoint behaves identically to `/api/v2/write`.
+        Provided for InfluxDB client compatibility.
+      parameters:
+        - name: precision
+          in: query
+          schema:
+            type: string
+            enum: [ n, u, ms, s, m, h ]
+            default: n
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+      responses:
+        '204':
+          description: Data accepted
+        '400':
+          description: Bad request
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: ApiToken
+security:
+  - basicAuth: [ ]
+  - bearerAuth: [ ]

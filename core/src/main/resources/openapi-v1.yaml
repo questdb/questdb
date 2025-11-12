@@ -55,7 +55,7 @@ paths:
                           filename: data.parquet
                           path: data.parquet
                           size: 2048
-                          size_pretty: "2.0 KiB"
+                          sizePretty: "2.0 KiB"
                           lastModified: 1699812345000
                     meta:
                       totalFiles: 1
@@ -320,7 +320,7 @@ paths:
                           filename: results.csv
                           path: results.csv
                           size: 4096
-                          size_pretty: "4.0 KiB"
+                          sizePretty: "4.0 KiB"
                           lastModified: 1699812345000
                     meta:
                       totalFiles: 1
@@ -477,7 +477,7 @@ components:
           type: integer
           format: int64
           description: File size in bytes
-        size_pretty:
+        sizePretty:
           type: string
           description: Human-readable file size (e.g., "1.0 KiB")
         lastModified:
@@ -488,7 +488,7 @@ components:
         - filename
         - path
         - size
-        - size_pretty
+        - sizePretty
         - lastModified
 
     FileListItem:

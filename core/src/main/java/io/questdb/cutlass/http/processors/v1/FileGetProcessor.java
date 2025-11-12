@@ -405,7 +405,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
                     SizePrettyFunctionFactory.toSizePretty(tempSink, fileSize);
 
                     jsonSink.key("size").val(fileSize)
-                            .key("size_pretty").val(tempSink)
+                            .key("sizePretty").val(tempSink)
                             .key("lastModified").valMillis(lastModified)
                             .endObject()
                             .endObject();
