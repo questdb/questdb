@@ -115,6 +115,13 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      * Clears the map of all entries.
      */
     public final void clear() {
+        // The key size estimation may be off, we can give some memory back if we don't even use half of it
+        if ((long) currentOffset << 3 < kvCapacity) {
+            final long oldCapacity = kvCapacity;
+            // We only shrink the capacity by 2 to avoid unnecessary grow-back later
+            kvCapacity >>= 1;
+            kvAddress = Unsafe.realloc(kvAddress, oldCapacity, kvCapacity, MemoryTag.NATIVE_DEFAULT);
+        }
         free = mapCapacity;
         Vect.memset(address, capacity, -1);
         this.currentOffset = 0;
