@@ -37,14 +37,14 @@ public class WindowJoinContext implements Mutable {
     private int hiExprPos;
     private char hiExprTimeUnit;
     private int hiKind = CURRENT;
-    private int hiKindPos = 0;
+    private int hiKindPos;
     private boolean includePrevailing;
     private long lo = Long.MIN_VALUE;
     private ExpressionNode loExpr;
     private int loExprPos;
     private char loExprTimeUnit;
     private int loKind = PRECEDING;
-    private int loKindPos = 0;
+    private int loKindPos;
     private QueryModel parentModel;
 
     @Override

@@ -3184,7 +3184,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 RecordCursorFactory slave = null;
-                boolean closeSlaveOnFail = true;
+                boolean closeSlaveOnFailure = true;
                 try {
                     // compile
                     slave = generateQuery(slaveModel, executionContext, index > 0);
@@ -3197,7 +3197,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // making it faster compared to ordering of join record source that
                         // doesn't allow rowid access.
                         master = slave;
-                        closeSlaveOnFail = false;
+                        closeSlaveOnFailure = false;
                         masterAlias = slaveModel.getName();
                     } else {
                         // not the root, join to "master"
@@ -3274,7 +3274,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         : generateJoinLt(model, slaveModel, master, masterMetadata, masterAlias, slave, slaveMetadata);
                                 masterAlias = null;
                                 // from now on, master owns slave, so we don't have to close it
-                                closeSlaveOnFail = false;
+                                closeSlaveOnFailure = false;
                                 break;
                             case JOIN_SPLICE:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
@@ -3293,7 +3293,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveModel.getJoinContext()
                                     );
                                     // from now on, master owns slave, so we don't have to close it
-                                    closeSlaveOnFail = false;
+                                    closeSlaveOnFailure = false;
                                 } else {
                                     if (!master.recordCursorSupportsRandomAccess()) {
                                         throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("left side of splice join doesn't support random access");
@@ -3331,6 +3331,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             lo *= -1;
                                         }
                                 }
+                                if (lo == Long.MIN_VALUE || lo == Long.MAX_VALUE) {
+                                    throw SqlException.position(context.getLoKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
+                                }
+
                                 switch (context.getHiKind()) {
                                     case WindowJoinContext.PRECEDING:
                                         hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), executionContext);
@@ -3349,9 +3353,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
                                         }
                                 }
+                                if (hi == Long.MIN_VALUE || hi == Long.MAX_VALUE) {
+                                    throw SqlException.position(context.getHiKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
+                                }
+
                                 if (hi < lo * -1) {
-                                    int hiPos = context.getHiExprPos();
-                                    throw SqlException.position(hiPos == 0 ? context.getLoExprPos() : hiPos).put("WINDOW join hi value cannot be less than lo value");
+                                    throw SqlException.position(Math.max(context.getHiExprPos(), context.getLoExprPos())).put("WINDOW join hi value cannot be less than lo value");
                                 }
 
                                 // validate columns in aggregate model
@@ -3714,7 +3721,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } catch (Throwable th) {
                     Misc.free(joinMetadata);
                     master = Misc.free(master);
-                    if (closeSlaveOnFail) {
+                    if (closeSlaveOnFailure) {
                         Misc.free(slave);
                     }
                     throw th;

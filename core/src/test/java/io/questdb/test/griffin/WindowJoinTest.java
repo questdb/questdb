@@ -1020,6 +1020,46 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinFailsWhenUnboundedIsUsed() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+
+            assertExceptionNoLeakCheck(
+                    "select t.*, sum(p.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on t.sym = p.sym " +
+                            " range between unbounded preceding and 1 day following;",
+                    118,
+                    "unbounded preceding/following is not supported in WINDOW joins"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "select t.*, sum(p.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on t.sym = p.sym " +
+                            " range between 1 second preceding and unbounded following;",
+                    141,
+                    "unbounded preceding/following is not supported in WINDOW joins"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "select t.*, sum(p.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on t.sym = p.sym " +
+                            " range between unbounded preceding and unbounded following;",
+                    118,
+                    "unbounded preceding/following is not supported in WINDOW joins"
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinNoOtherCondition() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
