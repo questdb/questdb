@@ -333,8 +333,8 @@ import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.SqlOptimiser.concatFilters;
 import static io.questdb.griffin.SqlOptimiser.evalNonNegativeLongConstantOrDie;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -3175,12 +3175,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (i > 0) {
                     executionContext.pushTimestampRequiredFlag(joinsRequiringTimestamp[slaveModel.getJoinType()]);
+                    executionContext.popHasInterval();
+                    executionContext.pushHasInterval(i + 1 == n ? 2 : 1); // 2 means need clear flag
                 } else { // i == 0
                     // This is first model in the sequence of joins
                     // TS requirement is symmetrical on both right and left sides
                     // check if next join requires a timestamp
                     int nextJointType = joinModels.getQuick(ordered.getQuick(1)).getJoinType();
                     executionContext.pushTimestampRequiredFlag(joinsRequiringTimestamp[nextJointType]);
+                    // For successive JOIN operations, if the left table requires timestamp,
+                    // it must be the timestamp from the first table in the JOIN chain
+                    executionContext.pushHasInterval(0);
+                    executionContext.pushIntervalModel(null);
                 }
 
                 RecordCursorFactory slave = null;
@@ -6615,8 +6621,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // below code block generates index-based filter
             final boolean intervalHitsOnlyOnePartition;
             final int order = model.isForceBackwardScan() ? ORDER_DESC : ORDER_ASC;
-            if (intrinsicModel.hasIntervalFilters()) {
-                RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
+            boolean inJoin = model.getJoinModels().size() > 0 || model.getJoinType() != JOIN_NONE;
+            int hasInterval = -1;
+            RuntimeIntrinsicIntervalModel pushedIntervalModel = null;
+            if (inJoin) {
+                pushedIntervalModel = executionContext.peekIntervalModel();
+                hasInterval = executionContext.hasInterval();
+            }
+
+            RuntimeIntrinsicIntervalModel intervalModel = null;
+            boolean hasIntervalFilter = intrinsicModel.hasIntervalFilters();
+            if (hasIntervalFilter) {
+                intervalModel = intrinsicModel.buildIntervalModel();
+            }
+            if (inJoin) {
+                if (hasInterval == 0) {
+                    if (hasIntervalFilter) {
+                        executionContext.popIntervalModel();
+                        executionContext.pushIntervalModel(intervalModel);
+                    }
+                } else if (pushedIntervalModel != null && intervalModel == null) {
+                    intervalModel = pushedIntervalModel;
+                }
+            }
+
+            if (intervalModel != null) {
                 dfcFactory = new IntervalPartitionFrameCursorFactory(
                         tableToken,
                         model.getMetadataVersion(),

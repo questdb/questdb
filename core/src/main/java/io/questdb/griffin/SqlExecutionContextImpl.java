@@ -41,10 +41,12 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.IntStack;
+import io.questdb.std.ObjStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -62,6 +64,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
     private final Decimal64 decimal64 = new Decimal64();
+    private final IntStack hasIntervalStack = new IntStack();
+    private final ObjStack<RuntimeIntrinsicIntervalModel> intervalModelObjStack = new ObjStack<>();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
     private final int sharedQueryWorkerCount;
@@ -290,6 +294,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public int hasInterval() {
+        return hasIntervalStack.peek();
+    }
+
+    @Override
     public void initNow() {
         this.nowNanos = nanoClock.getTicks();
         this.nowMicros = microClock.getTicks();
@@ -330,8 +339,33 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public RuntimeIntrinsicIntervalModel peekIntervalModel() {
+        return intervalModelObjStack.peek();
+    }
+
+    @Override
+    public void popHasInterval() {
+        hasIntervalStack.pop();
+    }
+
+    @Override
+    public void popIntervalModel() {
+        intervalModelObjStack.pop();
+    }
+
+    @Override
     public void popTimestampRequiredFlag() {
         timestampRequiredStack.pop();
+    }
+
+    @Override
+    public void pushHasInterval(int hasInterval) {
+        hasIntervalStack.push(hasInterval);
+    }
+
+    @Override
+    public void pushIntervalModel(RuntimeIntrinsicIntervalModel intervalModel) {
+        intervalModelObjStack.push(intervalModel);
     }
 
     @Override
@@ -345,6 +379,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
         this.allowNonDeterministicFunction = true;
+        this.timestampRequiredStack.clear();
+        this.hasIntervalStack.clear();
+        this.intervalModelObjStack.clear();
     }
 
     @Override
