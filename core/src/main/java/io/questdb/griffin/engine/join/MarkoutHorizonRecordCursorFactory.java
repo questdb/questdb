@@ -55,7 +55,7 @@ import io.questdb.std.Unsafe;
  *     SELECT 1_000_000 * sec_offs usec_offs
  *     FROM (SELECT x-601 AS sec_offs FROM long_sequence(1201))
  * )
- * SELECT /*+ markout_horizon_join(orders offsets) id, order_ts + usec_offs AS ts
+ * SELECT /*+ markout_horizon(orders offsets) id, order_ts + usec_offs AS ts
  * FROM orders CROSS JOIN offsets
  * ORDER BY order_ts + usec_offs
  * </pre>

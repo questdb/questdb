@@ -149,7 +149,7 @@ public class SqlHintsTest extends AbstractTest {
             QueryModel model = new QueryModel.QueryModelFactory().newInstance();
             Assert.assertFalse(SqlHints.hasMarkoutHorizonHint(model, "tableA", "tableB"));
 
-            model.addHint(SqlHints.MARKOUT_HORIZON_JOIN_HINT, "tableA tableB");
+            model.addHint(SqlHints.MARKOUT_HORIZON_HINT, "tableA tableB");
             Assert.assertTrue(SqlHints.hasMarkoutHorizonHint(model, "tableA", "tableB"));
 
             // case-insensitive

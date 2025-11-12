@@ -75,7 +75,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         FROM long_sequence(3)
                     ),
                     horizon AS (SELECT * FROM (
-                        SELECT /*+ markout_horizon_join(orders offsets) */ sec_offs, sym, order_ts + usec_offs AS horizon_ts
+                        SELECT /*+ markout_horizon(orders offsets) */ sec_offs, sym, order_ts + usec_offs AS horizon_ts
                         FROM orders CROSS JOIN offsets
                         ORDER BY order_ts + usec_offs
                     ) TIMESTAMP(horizon_ts)),
@@ -115,7 +115,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(100)
                     )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -149,7 +149,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) AS usec_offs
                         FROM long_sequence(2)
                     )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -182,7 +182,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     WITH offsets AS (
                         SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
                     )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -205,7 +205,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
 
             String sql = """
                     WITH offsets AS (SELECT x AS usec_offs FROM long_sequence(0))
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -225,7 +225,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             assertHintUsedAndResultSameAsWithoutHint("""
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)) offsets
                     ORDER BY order_ts + usec_offs
                     """);
@@ -233,7 +233,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     WITH offsets AS (
                         SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
                     )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """);
@@ -241,7 +241,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     WITH offsets AS (
                         SELECT x AS offs, 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
                     )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """);
@@ -249,7 +249,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     WITH offsets AS (
                         SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
                     )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY usec_offs + order_ts
                     """);
@@ -272,7 +272,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(2)
                     )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     WHERE id != 2
                     ORDER BY order_ts + usec_offs
@@ -312,7 +312,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(3)
                     )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -355,7 +355,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(5)
                     )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -404,7 +404,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(3)
                     )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -450,7 +450,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-3) usec_offs
                                 FROM long_sequence(5)
                             )
-                            SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                            SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs
                             """,
@@ -504,7 +504,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(3)
                     )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs""";
 
@@ -549,7 +549,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         SELECT (x-1) * 10_000_000 AS usec_offs
                         FROM long_sequence(6)
                     )
-                    SELECT /*+ markout_horizon_join(sensor_readings time_offsets) */ sensor_id, temperature, reading_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(sensor_readings time_offsets) */ sensor_id, temperature, reading_ts + usec_offs AS ts
                     FROM sensor_readings CROSS JOIN time_offsets
                     ORDER BY reading_ts + usec_offs
                     """;
@@ -597,7 +597,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-601) AS usec_offs
                         FROM long_sequence(1201)
                     )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -619,7 +619,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             """,
-                    "SELECT /*+ markout_horizon_join(orders offsets) */ id, ts FROM (" + sql + ") LIMIT 1",
+                    "SELECT /*+ markout_horizon(orders offsets) */ id, ts FROM (" + sql + ") LIMIT 1",
                     EXPECTED_TS,
                     false,
                     true
@@ -630,7 +630,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             """,
-                    "SELECT /*+ markout_horizon_join(orders offsets) */ id, ts FROM (" + sql + ") LIMIT -1",
+                    "SELECT /*+ markout_horizon(orders offsets) */ id, ts FROM (" + sql + ") LIMIT -1",
                     EXPECTED_TS,
                     false,
                     true
@@ -649,7 +649,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) AS usec_offs
                         FROM long_sequence(3)
                     )
-                    SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs""";
 
@@ -693,7 +693,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-1) usec_offs
                                 FROM long_sequence(1)
                             )
-                            SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                            SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
                     EXPECTED_TS,
@@ -730,7 +730,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-1) usec_offs
                                 FROM long_sequence(2)
                             )
-                            SELECT /*+ markout_horizon_join(orders offsets) */ id, order_ts + usec_offs AS ts
+                            SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
                     EXPECTED_TS,
@@ -765,7 +765,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-1) usec_offs
                                 FROM long_sequence(3)
                             )
-                            SELECT /*+ markout_horizon_join(orders offsets) */ id, customer, amount, order_ts + usec_offs AS ts
+                            SELECT /*+ markout_horizon(orders offsets) */ id, customer, amount, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
                     EXPECTED_TS,
@@ -800,7 +800,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                                 SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
                                 FROM long_sequence(3)
                             )
-                            SELECT /*+ markout_horizon_join(orders offsets) */ id, sec_offs, order_ts + usec_offs AS ts
+                            SELECT /*+ markout_horizon(orders offsets) */ id, sec_offs, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs
                             """,
@@ -816,7 +816,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
         final StringSink resultWithHint = new StringSink();
         final StringSink resultWithoutHint = new StringSink();
         printSql(sqlWithHint, resultWithHint);
-        printSql(sqlWithHint.replace("markout_horizon_join", "XXX"), resultWithoutHint);
+        printSql(sqlWithHint.replace("markout_horizon", "XXX"), resultWithoutHint);
         TestUtils.assertEquals(resultWithoutHint, resultWithHint);
     }
 

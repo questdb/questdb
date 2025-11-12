@@ -1606,7 +1606,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * 2. An ORDER BY clause on the sum of the timestamp and the sequence element
      * <p>
      * Detection isn't foolproof and can result in false positives. We do not attempt it unless
-     * the hint {@value SqlHints#MARKOUT_HORIZON_JOIN_HINT} is present in the query.
+     * the hint {@value SqlHints#MARKOUT_HORIZON_HINT} is present in the query.
      *
      * @param masterAlias         alias for the master LHS of the join
      * @param masterModel         QueryModel for the LHS of the join
@@ -1626,7 +1626,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata slaveMetadata,
             RecordCursorFactory slaveCursorFactory
     ) {
-        // Detect the markout_horizon_join hint, and ensure the master cursor supports random access
+        // Detect the markout_horizon hint, and ensure the master cursor supports random access
         if (!SqlHints.hasMarkoutHorizonHint(masterModel, masterAlias, slaveModel.getName()) ||
                 !masterCursorFactory.recordCursorSupportsRandomAccess()
         ) {
