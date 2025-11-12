@@ -6,6 +6,7 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestValidator;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
+import io.questdb.griffin.JsonSink;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
@@ -101,8 +102,16 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
             CharSequence message
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
-        sink.putAscii("{\"errors\":[{\"status\":\"").put(errorCode)
-                .putAscii("\",\"detail\":\"").putAscii(message).putAscii("\"}]}");
+        JsonSink json = Misc.getThreadLocalJsonSink();
+        json.of(sink, false)
+                .startObject()
+                .key("errors").startArray()
+                .startObject()
+                .key("status").val(errorCode)
+                .key("detail").val(message)
+                .endObject()
+                .endArray()
+                .endObject();
         context.simpleResponse().sendStatusJsonContent(errorCode, sink, false);
     }
 
@@ -111,8 +120,12 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
             DirectUtf8Sequence path
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
-        sink.putAscii("{\"message\":\"file(s) deleted successfully\",\"path\":")
-                .putQuote().escapeJsonStr(path).putQuote().put('}');
+        JsonSink json = Misc.getThreadLocalJsonSink();
+        json.of(sink, false)
+                .startObject()
+                .key("message").val("file(s) deleted successfully")
+                .key("path").val(path)
+                .endObject();
         context.simpleResponse().sendStatusJsonContent(HTTP_OK, sink, false);
     }
 }

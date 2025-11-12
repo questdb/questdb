@@ -8,6 +8,7 @@ import io.questdb.cutlass.http.HttpMultipartContentProcessor;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
+import io.questdb.griffin.JsonSink;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
@@ -223,46 +224,72 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
     }
 
     private void encodeSuccessJson(HttpChunkedResponse response, State state) {
-        response.put("{\"data\":[");
-        encodeSuccessfulFilesList(response, state);
-        response.put("],\"meta\":{\"totalFiles\":").put(state.successfulFiles.size()).put("}}");
+        JsonSink json = Misc.getThreadLocalJsonSink();
+        json.of(response, false)
+                .startObject()
+                .key("data").startArray();
+
+        encodeSuccessfulFilesList(json, state);
+
+        json.endArray()
+                .key("meta").startObject()
+                .key("totalFiles").val(state.successfulFiles.size())
+                .endObject()
+                .endObject();
     }
 
-    private void encodeSuccessfulFilesList(HttpChunkedResponse response, State state) {
+    private void encodeSuccessfulFilesList(JsonSink json, State state) {
         for (int i = 0, n = state.successfulFiles.size(); i < n; i++) {
             CharSequence filename = state.successfulFiles.getQuick(i);
-            response.put("{\"type\":\"file\",\"id\":\"")
-                    .escapeJsonStr(filename)
-                    .put("\",\"attributes\":{\"filename\":\"")
-                    .escapeJsonStr(filename)
-                    .put("\",\"status\":\"uploaded\"}}");
-            if (i + 1 < n) {
-                response.put(",");
-            }
+            json.startObject()
+                    .key("type").val("file")
+                    .key("id").val(filename)
+                    .key("attributes").startObject()
+                    .key("filename").val(filename)
+                    .key("status").val("uploaded")
+                    .endObject()
+                    .endObject();
         }
     }
 
     private void sendErrorWithSuccessInfo(HttpConnectionContext context, int errorCode, CharSequence errorMsg) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
         try {
             final HttpChunkedResponse response = context.getChunkedResponse();
+            JsonSink json = Misc.getThreadLocalJsonSink();
+
             if (state.successfulFiles.size() > 0) {
                 response.status(HTTP_MULTI_STATUS, CONTENT_TYPE_JSON);
                 response.sendHeader();
                 response.sendChunk(false);
-                response.put("{\"data\":[");
-                encodeSuccessfulFilesList(response, state);
-                response.put("],\"errors\":[{\"status\":\"").put(errorCode)
-                        .put("\",\"title\":\"File Upload Error\",\"detail\":\"")
-                        .escapeJsonStr(errorMsg);
+
+                json.of(response, false)
+                        .startObject()
+                        .key("data").startArray();
+
+                encodeSuccessfulFilesList(json, state);
+
+                json.endArray()
+                        .key("errors").startArray()
+                        .startObject()
+                        .key("status").val(errorCode)
+                        .key("title").val("File Upload Error")
+                        .key("detail").val(errorMsg);
+
                 if (state.currentFilename != null && !state.currentFilename.isEmpty()) {
-                    response.put("\",\"meta\":{\"filename\":\"")
-                            .escapeJsonStr(state.currentFilename).put("\"}}");
-                } else {
-                    response.put("}}");
+                    json.key("meta").startObject()
+                            .key("filename").val(state.currentFilename)
+                            .endObject();
                 }
-                response.put("],\"meta\":{\"totalFiles\":").put(state.successfulFiles.size() + 1)
-                        .put(",\"successfulFiles\":").put(state.successfulFiles.size())
-                        .put(",\"failedFiles\":1}}");
+
+                json.endObject()
+                        .endArray()
+                        .key("meta").startObject()
+                        .key("totalFiles").val(state.successfulFiles.size() + 1)
+                        .key("successfulFiles").val(state.successfulFiles.size())
+                        .key("failedFiles").val(1)
+                        .endObject()
+                        .endObject();
+
                 response.sendChunk(true);
                 response.done();
             } else {
@@ -270,16 +297,30 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                 response.status(errorCode, CONTENT_TYPE_JSON);
                 response.sendHeader();
                 response.sendChunk(false);
-                response.put("{\"errors\":[{\"status\":\"").put(errorCode)
-                        .put("\",\"title\":\"File Upload Error\",\"detail\":\"")
-                        .escapeJsonStr(errorMsg.toString());
+
+                json.of(response, false)
+                        .startObject()
+                        .key("errors").startArray()
+                        .startObject()
+                        .key("status").val(errorCode)
+                        .key("title").val("File Upload Error")
+                        .key("detail").val(errorMsg);
+
                 if (state.currentFilename != null && !state.currentFilename.isEmpty()) {
-                    response.put("\",\"meta\":{\"filename\":\"")
-                            .escapeJsonStr(state.currentFilename).put("\"}}");
-                } else {
-                    response.put("}}");
+                    json.key("meta").startObject()
+                            .key("filename").val(state.currentFilename)
+                            .endObject();
                 }
-                response.put("],\"meta\":{\"totalFiles\":1,\"successfulFiles\":0,\"failedFiles\":1}}");
+
+                json.endObject()
+                        .endArray()
+                        .key("meta").startObject()
+                        .key("totalFiles").val(1)
+                        .key("successfulFiles").val(0)
+                        .key("failedFiles").val(1)
+                        .endObject()
+                        .endObject();
+
                 response.sendChunk(true);
                 response.shutdownWrite();
                 throw ServerDisconnectException.INSTANCE;
