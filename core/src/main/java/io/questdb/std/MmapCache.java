@@ -349,7 +349,13 @@ public class MmapCache {
 
     private void unmap0(long address, long len, int memoryTag) {
         if (Files.ASYNC_MUNMAP_ENABLED) {
-            long seq = munmapProducesSequence.next();
+            // sequence returning -2 -> we lost a CAS race. we do a cheap retry
+            // sequence returning -1 -> the queue is full. then it's cheaper to do the munmap ourserlves
+            long seq;
+            do {
+                seq = munmapProducesSequence.next();
+            } while (seq == -2);
+
             if (seq > -1) {
                 MunmapTask task = munmapTaskRingQueue.get(seq);
                 task.address = address;
@@ -357,6 +363,8 @@ public class MmapCache {
                 task.memoryTag = memoryTag;
                 munmapProducesSequence.done(seq);
                 return;
+            } else {
+                LOG.info().$("async munmap queue is full").$();
             }
         }
         int result = Files.munmap0(address, len);
