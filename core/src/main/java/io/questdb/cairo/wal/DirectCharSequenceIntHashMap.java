@@ -44,7 +44,7 @@ import java.io.Closeable;
 public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     public static final int NO_ENTRY_VALUE = -1;
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private static final int NO_ENTRY_OFFSET = -1;
+    private static final int NO_ENTRY_OFFSET = 0;
     private final double loadFactor;
     private final int noEntryValue;
     private final DirectString sview = new DirectString();
@@ -132,7 +132,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
             kvAddress = Unsafe.realloc(kvAddress, oldCapacity, kvCapacity, MemoryTag.NATIVE_DEFAULT);
         }
         free = mapCapacity;
-        Vect.memset(address, capacity, -1);
+        Vect.memset(address, capacity, 0);
         this.currentOffset = 0;
     }
 
@@ -219,10 +219,11 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      */
     public int keyIndex(@NotNull CharSequence key, int hashCode) {
         int index = Hash.spread(hashCode) & mask;
-        final int offset = getOffset(index);
+        int offset = getOffset(index);
         if (offset == NO_ENTRY_OFFSET) {
             return index;
         }
+        offset -= 1;
         final int hashCode1 = getHashCode(index);
         if (hashCode == hashCode1 && areKeysEquals(offset, key)) {
             return -offset - 1;
@@ -303,7 +304,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         long oldAddress = address;
         capacity = (long) len << 3;
         address = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
-        Vect.memset(address, capacity, -1);
+        Vect.memset(address, capacity, 0);
 
         for (int i = (int) (oldCapacity >> 3) - 1; i > -1; i--) {
             final long oldPtr = oldAddress + ((long) i << 3);
@@ -385,10 +386,11 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     private int probe(@NotNull CharSequence key, int hashCode, int index) {
         do {
             index = (index + 1) & mask;
-            final int offset = getOffset(index);
+            int offset = getOffset(index);
             if (offset == NO_ENTRY_OFFSET) {
                 return index;
             }
+            offset -= 1;
             final int hashCode1 = getHashCode(index);
             if (hashCode == hashCode1 && areKeysEquals(offset, key)) {
                 return -offset - 1;
@@ -398,7 +400,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
 
     private void putAt0(int index, int offset, int hashCode) {
         final long ptr = address + ((long) index << 3);
-        Unsafe.getUnsafe().putInt(ptr, offset);
+        Unsafe.getUnsafe().putInt(ptr, offset + 1);
         Unsafe.getUnsafe().putInt(ptr + 4L, hashCode);
         if (--free == 0) {
             rehash();
