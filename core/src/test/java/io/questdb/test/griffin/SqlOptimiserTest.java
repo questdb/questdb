@@ -1415,9 +1415,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Sort
                                   keys: [s, ts]
                                     SelectedRecord
-                                        AsOf Join Memoized Scan
+                                        AsOf Join Fast
                                           condition: t2.s=t1.s
-                                          driveByCache: false
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
@@ -1457,9 +1456,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Sort
                                   keys: [ts, s]
                                     SelectedRecord
-                                        AsOf Join Memoized Scan
+                                        AsOf Join Fast
                                           condition: t2.s=t1.s
-                                          driveByCache: false
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
@@ -1499,9 +1497,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Sort
                                   keys: [s, ts1]
                                     SelectedRecord
-                                        AsOf Join Memoized Scan
+                                        AsOf Join Fast
                                           condition: t2.s=t1.s
-                                          driveByCache: false
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
@@ -1542,9 +1539,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Sort
                                   keys: [s1, ts1]
                                     SelectedRecord
-                                        AsOf Join Memoized Scan
+                                        AsOf Join Fast
                                           condition: t2.s=t1.s
-                                          driveByCache: false
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
@@ -1584,9 +1580,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Sort
                                   keys: [s, ts]
                                     SelectedRecord
-                                        AsOf Join Memoized Scan
+                                        AsOf Join Fast
                                           condition: t2.s=t1.s
-                                          driveByCache: false
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
@@ -3266,7 +3261,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             Limit lo: -3 hi: -10 skip-over-rows: 0 limit: 0
                                 SelectedRecord
-                                    AsOf Join Fast Scan
+                                    AsOf Join Fast
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
@@ -3290,7 +3285,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             Limit lo: -3 skip-over-rows: 0 limit: 0
                                 SelectedRecord
-                                    AsOf Join Fast Scan
+                                    AsOf Join Fast
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
@@ -4561,7 +4556,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               keys: [ts]
                               values: [avg(x)]
                                 SelectedRecord
-                                    AsOf Join Fast Scan
+                                    AsOf Join Fast
                                         PageFrame
                                             Row forward scan
                                             Interval forward scan on: fromto

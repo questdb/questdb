@@ -29,6 +29,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Decimals;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -213,6 +214,14 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void putChar(long offset, char value) {
+    }
+
+    @Override
+    public void putDecimal128(long offset, long high, long low) {
+    }
+
+    @Override
+    public void putDecimal256(long offset, long hh, long hl, long lh, long ll) {
     }
 
     @Override

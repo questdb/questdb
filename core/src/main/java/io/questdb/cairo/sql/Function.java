@@ -32,6 +32,8 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
@@ -122,6 +124,24 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     char getChar(Record rec);
 
     long getDate(Record rec);
+
+    /**
+     * Sets the raw value of sink (the scale is caller saved)
+     */
+    void getDecimal128(Record rec, Decimal128 sink);
+
+    short getDecimal16(Record rec);
+
+    /**
+     * Sets the raw value of sink (the scale is caller saved)
+     */
+    void getDecimal256(Record rec, Decimal256 sink);
+
+    int getDecimal32(Record rec);
+
+    long getDecimal64(Record rec);
+
+    byte getDecimal8(Record rec);
 
     double getDouble(Record rec);
 
