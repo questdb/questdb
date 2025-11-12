@@ -115,7 +115,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
                     state.paused = false;
                 }
                 if (state.file == null || state.file.size() == 0) {
-                    context.simpleResponse().sendStatusJsonContent(HTTP_OK, state.sink, false);
+                    context.simpleResponse().sendStatusJsonApiContent(HTTP_OK, state.sink, false);
                 } else {
                     doResumeSend(context, state);
                 }
@@ -479,7 +479,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
                     .key("meta").startObject()
                     .key("totalFiles").val(state.fileCount)
                     .endObject().endObject();
-            context.simpleResponse().sendStatusJsonContent(HTTP_OK, listSink, false);
+            context.simpleResponse().sendStatusJsonApiContent(HTTP_OK, listSink, false);
         } catch (CairoException e) {
             LOG.error().$("failed to list files: ").$(e.getFlyweightMessage()).I$();
             HttpChunkedResponse response = context.getChunkedResponse();
