@@ -281,7 +281,12 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable {
         for (long p = oldPtr, lim = oldPtr + entrySize * oldCapacity; p < lim; p += entrySize) {
             int key = Unsafe.getUnsafe().getInt(p);
             if (key != noKeyValue) {
-                long index = keyIndex(key);
+                long hashCode = Hash.fastHashInt64(key);
+                long index = hashCode & mask;
+                while (keyAt(index) != noKeyValue) {
+                    index = (index + 1) & mask;
+                }
+
                 long entryPtr = ptr + index * entrySize;
                 Unsafe.getUnsafe().putInt(entryPtr, key);
                 // Copy all values

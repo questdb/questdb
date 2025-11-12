@@ -178,7 +178,12 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable {
         for (long p = oldPtr, lim = oldPtr + 8L * oldCapacity; p < lim; p += 8L) {
             int key = Unsafe.getUnsafe().getInt(p);
             if (key != noKeyValue) {
-                long index = keyIndex(key);
+                long hashCode = Hash.fastHashInt64(key);
+                long index = hashCode & mask;
+                while (keyAt(index) != noKeyValue) {
+                    index = (index + 1) & mask;
+                }
+
                 int value = Unsafe.getUnsafe().getInt(p + 4);
                 putAt0(index, key, value);
             }
