@@ -246,7 +246,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                     .key("id").val(filename)
                     .key("attributes").startObject()
                     .key("filename").val(filename)
-                    .key("status").val("uploaded")
+                    .key("status").valQuoted(201)
                     .endObject()
                     .endObject();
         }
@@ -271,7 +271,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                 json.endArray()
                         .key("errors").startArray()
                         .startObject()
-                        .key("status").val(String.valueOf(errorCode))
+                        .key("status").valQuoted(errorCode)
                         .key("title").val("File Upload Error")
                         .key("detail").val(errorMsg);
 
@@ -334,7 +334,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
         try {
             HttpChunkedResponse response = context.getChunkedResponse();
             response.bookmark();
-            response.status(200, CONTENT_TYPE_JSON_API);
+            response.status(201, CONTENT_TYPE_JSON_API);
             response.sendHeader();
             response.sendChunk(false);
             encodeSuccessJson(response, state);

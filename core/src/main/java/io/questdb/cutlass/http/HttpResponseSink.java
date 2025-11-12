@@ -891,6 +891,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(HTTP_INTERNAL_ERROR, new Utf8String("Internal server error"));
         httpStatusMap.put(HTTP_MISDIRECTED_REQUEST, new Utf8String("Misdirected Request"));
         httpStatusMap.put(HTTP_TOO_MANY_REQUESTS, new Utf8String("Too Many Requests"));
+        httpStatusMap.put(HTTP_CREATED, new Utf8String("Created"));
     }
 
     static {

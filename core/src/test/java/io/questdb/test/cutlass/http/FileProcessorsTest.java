@@ -102,7 +102,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFileImportOverWriting() throws Exception {
+    public void testFileImportOverwriting() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select" +
                     " cast(x as int) id," +
@@ -130,7 +130,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Content-Type: application/vnd.api+json\r\n" +
                                                 "\r\n" +
                                                 "7d\r\n" +
-                                                "{\"data\":[{\"type\":\"file\",\"id\":\"x.parquet\",\"attributes\":{\"filename\":\"x.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":1}}\r\n" +
+                                                "{\"data\":[{\"type\":\"file\",\"id\":\"x.parquet\",\"attributes\":{\"filename\":\"x.parquet\",\"status\":\"201\"}}],\"meta\":{\"totalFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -418,7 +418,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Content-Type: application/vnd.api+json\r\n" +
                                                 "\r\n" +
                                                 "83\r\n" +
-                                                "{\"data\":[{\"type\":\"file\",\"id\":\"test.parquet\",\"attributes\":{\"filename\":\"test.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":1}}\r\n" +
+                                                "{\"data\":[{\"type\":\"file\",\"id\":\"test.parquet\",\"attributes\":{\"filename\":\"test.parquet\",\"status\":\"201\"}}],\"meta\":{\"totalFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -463,14 +463,14 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         new SendAndReceiveRequestBuilder()
                                 .execute(
                                         parquetImportRequest,
-                                        "HTTP/1.1 200 OK\r\n" +
+                                        "HTTP/1.1 201 CREATED\r\n" +
                                                 "Server: questDB/1.0\r\n" +
                                                 "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/vnd.api+json\r\n" +
                                                 "\r\n" +
                                                 (Os.isWindows() ? "a5\r\n" : "a1\r\n") +
-                                                (Os.isWindows() ? "{\"data\":[{\"type\":\"file\",\"id\":\"dir\\\\dir1\\\\large_test.parquet\",\"attributes\":{\"filename\":\"dir\\\\dir1\\\\large_test.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":1}}\r\n" : "{\"data\":[{\"type\":\"file\",\"id\":\"dir/dir1/large_test.parquet\",\"attributes\":{\"filename\":\"dir/dir1/large_test.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":1}}\r\n") +
+                                                (Os.isWindows() ? "{\"data\":[{\"type\":\"file\",\"id\":\"dir\\\\dir1\\\\large_test.parquet\",\"attributes\":{\"filename\":\"dir\\\\dir1\\\\large_test.parquet\",\"status\":\"201\"}}],\"meta\":{\"totalFiles\":1}}\r\n" : "{\"data\":[{\"type\":\"file\",\"id\":\"dir/dir1/large_test.parquet\",\"attributes\":{\"filename\":\"dir/dir1/large_test.parquet\",\"status\":\"201\"}}],\"meta\":{\"totalFiles\":1}}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -600,14 +600,14 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         new SendAndReceiveRequestBuilder()
                                 .execute(
                                         parquetImportRequest,
-                                        "HTTP/1.1 200 OK\r\n" +
+                                        "HTTP/1.1 201 Created\r\n" +
                                                 "Server: questDB/1.0\r\n" +
                                                 "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/vnd.api+json\r\n" +
                                                 "\r\n" +
-                                                (Os.isWindows() ? "022d\r\n" : "021d\r\n") +
-                                                (Os.isWindows() ? "{\"data\":[{\"type\":\"file\",\"id\":\"x1.parquet\",\"attributes\":{\"filename\":\"x1.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"x2.parquet\",\"attributes\":{\"filename\":\"x2.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1\\\\x3.parquet\",\"attributes\":{\"filename\":\"dir1\\\\x3.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1\\\\dir2\\\\x4.parquet\",\"attributes\":{\"filename\":\"dir1\\\\dir2\\\\x4.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir3\\\\special.parquet\",\"attributes\":{\"filename\":\"dir3\\\\special.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":5}}\r\n" : "{\"data\":[{\"type\":\"file\",\"id\":\"x1.parquet\",\"attributes\":{\"filename\":\"x1.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"x2.parquet\",\"attributes\":{\"filename\":\"x2.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1/x3.parquet\",\"attributes\":{\"filename\":\"dir1/x3.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir1/dir2/x4.parquet\",\"attributes\":{\"filename\":\"dir1/dir2/x4.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"dir3/abc.parquet\",\"attributes\":{\"filename\":\"dir3/abc.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":5}}\r\n") +
+                                                (Os.isWindows() ? "022d\r\n" : "0204\r\n") +
+                                                (Os.isWindows() ? "{\"data\":[{\"type\":\"file\",\"id\":\"x1.parquet\",\"attributes\":{\"filename\":\"x1.parquet\",\"status\":\"201\"}},{\"type\":\"file\",\"id\":\"x2.parquet\",\"attributes\":{\"filename\":\"x2.parquet\",\"status\":\"201\"}},{\"type\":\"file\",\"id\":\"dir1\\\\x3.parquet\",\"attributes\":{\"filename\":\"dir1\\\\x3.parquet\",\"status\":\"201\"}},{\"type\":\"file\",\"id\":\"dir1\\\\dir2\\\\x4.parquet\",\"attributes\":{\"filename\":\"dir1\\\\dir2\\\\x4.parquet\",\"status\":\"201\"}},{\"type\":\"file\",\"id\":\"dir3\\\\special.parquet\",\"attributes\":{\"filename\":\"dir3\\\\special.parquet\",\"status\":\"201\"}}],\"meta\":{\"totalFiles\":5}}\r\n" : "{\"data\":[{\"type\":\"file\",\"id\":\"x1.parquet\",\"attributes\":{\"filename\":\"x1.parquet\",\"status\":\"201\"}},{\"type\":\"file\",\"id\":\"x2.parquet\",\"attributes\":{\"filename\":\"x2.parquet\",\"status\":\"201\"}},{\"type\":\"file\",\"id\":\"dir1/x3.parquet\",\"attributes\":{\"filename\":\"dir1/x3.parquet\",\"status\":\"201\"}},{\"type\":\"file\",\"id\":\"dir1/dir2/x4.parquet\",\"attributes\":{\"filename\":\"dir1/dir2/x4.parquet\",\"status\":\"201\"}},{\"type\":\"file\",\"id\":\"dir3/abc.parquet\",\"attributes\":{\"filename\":\"dir3/abc.parquet\",\"status\":\"201\"}}],\"meta\":{\"totalFiles\":5}}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -675,7 +675,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Content-Type: application/vnd.api+json\r\n" +
                                                 "\r\n" +
                                                 "dc\r\n" +
-                                                "{\"data\":[{\"type\":\"file\",\"id\":\"xx.parquet\",\"attributes\":{\"filename\":\"xx.parquet\",\"status\":\"uploaded\"}},{\"type\":\"file\",\"id\":\"yy.parquet\",\"attributes\":{\"filename\":\"yy.parquet\",\"status\":\"uploaded\"}}],\"meta\":{\"totalFiles\":2}}\r\n" +
+                                                "{\"data\":[{\"type\":\"file\",\"id\":\"xx.parquet\",\"attributes\":{\"filename\":\"xx.parquet\",\"status\":\"201\"}},{\"type\":\"file\",\"id\":\"yy.parquet\",\"attributes\":{\"filename\":\"yy.parquet\",\"status\":\"201\"}}],\"meta\":{\"totalFiles\":2}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -728,8 +728,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/vnd.api+json\r\n" +
                                                 "\r\n" +
-                                                "0136\r\n" +
-                                                "{\"data\":[{\"type\":\"file\",\"id\":\"xx.parquet\",\"attributes\":{\"filename\":\"xx.parquet\",\"status\":\"uploaded\"}}],\"errors\":[{\"status\":\"409\",\"title\":\"File Upload Error\",\"detail\":\"file already exists and overwriting is disabled\",\"meta\":{\"filename\":\"y.parquet\"}}],\"meta\":{\"totalFiles\":2,\"successfulFiles\":1,\"failedFiles\":1}}\r\n" +
+                                                "0131\r\n" +
+                                                "{\"data\":[{\"type\":\"file\",\"id\":\"xx.parquet\",\"attributes\":{\"filename\":\"xx.parquet\",\"status\":\"201\"}}],\"errors\":[{\"status\":\"409\",\"title\":\"File Upload Error\",\"detail\":\"file already exists and overwriting is disabled\",\"meta\":{\"filename\":\"y.parquet\"}}],\"meta\":{\"totalFiles\":2,\"successfulFiles\":1,\"failedFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
