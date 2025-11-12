@@ -477,7 +477,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
                     .key("meta").startObject()
                     .key("totalFiles").val(state.fileCount)
                     .endObject().endObject();
-            context.simpleResponse().sendStatusJsonApiContent(HTTP_OK, listSink, false);
+            context.simpleResponse().sendStatusJsonContent(HTTP_OK, listSink, false);
         } catch (CairoException e) {
             LOG.error().$("failed to list files: ").$(e.getFlyweightMessage()).I$();
             HttpChunkedResponse response = context.getChunkedResponse();
