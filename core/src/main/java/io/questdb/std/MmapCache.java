@@ -56,6 +56,12 @@ public class MmapCache {
         munmapProducesSequence.then(munmapConsumerSequence).then(munmapProducesSequence);
     }
 
+    /**
+     * Process accumulated unmap requests.
+     * This method is not thread safe! It's meant to be called from a synchronized job - one per Server.
+     *
+     * @return true if at least one mapping was unmapped, false otherwise.
+     */
     public boolean asyncMunmap() {
         return munmapConsumerSequence.consumeAll(munmapTaskRingQueue, MUNMAP_TASK_QUEUE_CONSUMER);
     }

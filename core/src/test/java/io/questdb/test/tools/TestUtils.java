@@ -2565,6 +2565,8 @@ public final class TestUtils {
                 );
             }
 
+            Files.getMmapCache().asyncMunmap();
+
             // Checks that the same tag used for allocation and freeing native memory
             long memAfter = Unsafe.getMemUsed();
             long memNativeSqlCompilerDiff = 0;

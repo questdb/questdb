@@ -64,6 +64,26 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testAsyncMunmap() throws Exception {
+        assertMemoryLeak(() -> {
+            Map<String, String> env = new HashMap<>(System.getenv());
+            env.put(PropertyKey.CAIRO_FILE_ASYNC_MUNMAP_ENABLED.getEnvVarName(), "true");
+            Bootstrap bootstrap = new Bootstrap(
+                    new DefaultBootstrapConfiguration() {
+                        @Override
+                        public Map<String, String> getEnv() {
+                            return env;
+                        }
+                    },
+                    getServerMainArgs()
+            );
+            try (final ServerMain serverMain = new ServerMain(bootstrap)) {
+                serverMain.start();
+            }
+        });
+    }
+
+    @Test
     public void testPgWirePort() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
