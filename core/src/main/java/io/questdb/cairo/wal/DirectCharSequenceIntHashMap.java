@@ -22,8 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cairo.wal;
 
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.std.Chars;
+import io.questdb.std.Hash;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 
@@ -144,6 +153,42 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     }
 
     /**
+     * Copies values and the keys that are greater or equal to the provided {@param value}
+     * to {@param mem}.
+     *
+     * @return the number of values copied.
+     */
+    public int copyTo(MemoryARW mem, int minimumValue) {
+        int copied = 0;
+
+        long ptr = kvAddress;
+        final long hi = kvAddress + ((long) currentOffset << 2);
+        while (ptr < hi) {
+            final int value = Unsafe.getUnsafe().getInt(ptr);
+            final int len = Unsafe.getUnsafe().getInt(ptr + 4);
+            if (value >= minimumValue) {
+                final long storageLen = Vm.getStorageLength(len) + Integer.BYTES;
+                final long addr = mem.appendAddressFor(storageLen);
+                Unsafe.getUnsafe().putInt(addr, value);
+                Unsafe.getUnsafe().putInt(addr + 4L, len);
+                Vect.memcpy(addr + 8L, ptr + 8L, (long) len << 1);
+                copied++;
+            }
+            ptr += ((((long) len << 1) + 11) & ~3);
+        }
+
+        return copied;
+    }
+
+    /**
+     * Returns the value stored at the provided offset (as produced by {@link #nextOffset()}).
+     */
+    public int get(int offset) {
+        final long ptr = kvAddress + ((long) offset << 2);
+        return Unsafe.getUnsafe().getInt(ptr);
+    }
+
+    /**
      * Looks up the value for {@code key}.
      *
      * @param key char sequence to lookup
@@ -154,13 +199,13 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     }
 
     /**
-     * Returns the key stored at the given offset (as produced by {@link #nextOffset()}).
+     * Returns the key stored at the provided offset (as produced by {@link #nextOffset()}).
      */
-    public CharSequence get(int offset) {
-        assert offset >= 0 && offset < currentOffset;
-        final long lo = kvAddress + ((long) offset << 2);
-        final int len = Unsafe.getUnsafe().getInt(lo + 4);
-        return sview.of(lo + 8, len);
+    public CharSequence getKey(int offset) {
+        final long ptr = kvAddress + ((long) offset << 2);
+        final int len = Unsafe.getUnsafe().getInt(ptr + 4);
+        sview.of(ptr + 8, len);
+        return sview;
     }
 
     /**
@@ -209,11 +254,8 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     public int nextOffset(int offset) {
         final long lo = kvAddress + ((long) offset << 2);
         final int len = Unsafe.getUnsafe().getInt(lo + 4);
-        final int off = offset + ((((len << 1) + 11) & ~3) >> 2);
-        if (off == this.currentOffset) {
-            return -1;
-        }
-        return off;
+        final int next = offset + ((((len << 1) + 11) & ~3) >> 2);
+        return next == this.currentOffset ? -1 : next;
     }
 
     /**
@@ -222,10 +264,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      * @return the first offset of the map or -1 if the map is empty
      */
     public int nextOffset() {
-        if (this.currentOffset == 0) {
-            return -1;
-        }
-        return 0;
+        return this.currentOffset == 0 ? -1 : 0;
     }
 
     /**

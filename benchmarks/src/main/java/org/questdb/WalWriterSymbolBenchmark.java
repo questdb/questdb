@@ -25,10 +25,13 @@
 package org.questdb;
 
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.wal.DirectCharSequenceIntHashMap;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
-import io.questdb.std.DirectCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectString;
@@ -82,11 +85,22 @@ public class WalWriterSymbolBenchmark {
             }
         }
 
-        for (int i = 0; i < hmap.size(); i++) {
-            if (hmap.keys().getQuick(i) == null) {
-                throw new AssertionError("null key at index " + i);
+        int symbolCount = 0;
+        long appendOffset = state.mem.getAppendOffset();
+        state.mem.putInt(0);
+
+        for (int j = 0, n = hmap.size(); j < n; j++) {
+            final CharSequence symbol = hmap.keys().getQuick(j);
+            assert symbol != null;
+            final int value = hmap.get(symbol);
+            // Ignore symbols cached from symbolMapReader
+            if (value >= state.minimumValue) {
+                state.mem.putInt(value);
+                state.mem.putStr(symbol);
+                symbolCount++;
             }
         }
+        state.mem.putInt(appendOffset, symbolCount);
 
         hmap.clear();
     }
@@ -102,11 +116,12 @@ public class WalWriterSymbolBenchmark {
             }
         }
 
-        for (int offset = symbolHashMap.nextOffset(); offset >= 0; offset = symbolHashMap.nextOffset(offset)) {
-            if (symbolHashMap.get(offset) == null) {
-                throw new AssertionError("null value at offset " + offset);
-            }
-        }
+        long appendOffset = state.mem.getAppendOffset();
+        state.mem.putInt(0);
+
+        int copied = symbolHashMap.copyTo(state.mem, state.minimumValue);
+
+        state.mem.putInt(appendOffset, copied);
 
         symbolHashMap.clear();
     }
@@ -116,7 +131,8 @@ public class WalWriterSymbolBenchmark {
         public static final int avgReadPerSymbol = 10;
         public static final int nSymbols = 1000;
         public static final int symbolLength = 32;
-
+        public final MemoryARW mem;
+        public final int minimumValue;
         private final Rnd rnd;
         public int[] indices;
         public CharSequence[] symbols;
@@ -126,6 +142,8 @@ public class WalWriterSymbolBenchmark {
             this.rnd = new Rnd();
             this.indices = new int[nSymbols * avgReadPerSymbol];
             this.symbols = new CharSequence[nSymbols];
+            this.mem = new MemoryCARWImpl(Numbers.ceilPow2(4 + nSymbols * ((symbolLength << 1) + 8)), 1, MemoryTag.NATIVE_DEFAULT);
+            this.minimumValue = nSymbols / 2;
         }
 
         @Setup(Level.Trial)
@@ -149,12 +167,18 @@ public class WalWriterSymbolBenchmark {
             }
         }
 
+        @Setup(Level.Invocation)
+        public void setupInvocation() {
+            mem.truncate();
+        }
+
         @TearDown(Level.Trial)
         public void tearDown() {
             if (this.lo != 0) {
                 Unsafe.free(lo, nSymbols * symbolLength * 2, MemoryTag.NATIVE_DEFAULT);
                 this.lo = 0;
             }
+            mem.close();
         }
     }
 }

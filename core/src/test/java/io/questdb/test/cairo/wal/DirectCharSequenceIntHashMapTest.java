@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2025 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,15 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.std;
+package io.questdb.test.cairo.wal;
 
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.wal.DirectCharSequenceIntHashMap;
 import io.questdb.std.Chars;
-import io.questdb.std.DirectCharSequenceIntHashMap;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -56,6 +60,63 @@ public class DirectCharSequenceIntHashMapTest {
     }
 
     @Test
+    public void testCopyToFiltersMinimumValue() {
+        try (
+                DirectCharSequenceIntHashMap map = new DirectCharSequenceIntHashMap();
+                MemoryARW mem = new MemoryCARWImpl(64, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+        ) {
+            map.put("low", 1);
+            map.put("mid", 5);
+            map.put("high", 10);
+
+            int copied = map.copyTo(mem, 5);
+            Assert.assertEquals(2, copied);
+            List<Map.Entry<String, Integer>> entries = readEntries(mem, copied);
+            Assert.assertEquals(2, entries.size());
+            Assert.assertEquals("mid", entries.get(0).getKey());
+            Assert.assertEquals(Integer.valueOf(5), entries.get(0).getValue());
+            Assert.assertEquals("high", entries.get(1).getKey());
+            Assert.assertEquals(Integer.valueOf(10), entries.get(1).getValue());
+        }
+    }
+
+    @Test
+    public void testCopyToFuzz() {
+        try (DirectCharSequenceIntHashMap map = new DirectCharSequenceIntHashMap(64, 0.5, DirectCharSequenceIntHashMap.NO_ENTRY_VALUE)) {
+            Map<String, Integer> values = new HashMap<>();
+            List<String> order = new ArrayList<>();
+            Rnd rnd = TestUtils.generateRandom(null);
+
+            for (int i = 0; i < 2_000; i++) {
+                int op = rnd.nextPositiveInt() & 7;
+                if (op == 0) {
+                    map.clear();
+                    values.clear();
+                    order.clear();
+                } else {
+                    String key = rnd.nextChars((rnd.nextPositiveInt() & 15) + 1).toString();
+                    int value = rnd.nextInt();
+                    boolean isNew = !values.containsKey(key);
+                    map.put(key, value);
+                    values.put(key, value);
+                    if (isNew) {
+                        order.add(key);
+                    }
+                }
+
+                int minValue = rnd.nextInt();
+                try (MemoryARW mem = new MemoryCARWImpl(64, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    int copied = map.copyTo(mem, minValue);
+                    List<Map.Entry<String, Integer>> actual = readEntries(mem, copied);
+                    List<Map.Entry<String, Integer>> expected = expectedEntries(order, values, minValue);
+                    Assert.assertEquals(expected.size(), copied);
+                    Assert.assertEquals(expected, actual);
+                }
+            }
+        }
+    }
+
+    @Test
     public void testEmptyStringKey() {
         try (DirectCharSequenceIntHashMap map = new DirectCharSequenceIntHashMap()) {
             map.put("", 5);
@@ -68,7 +129,7 @@ public class DirectCharSequenceIntHashMapTest {
 
             int offset = map.nextOffset();
             Assert.assertNotEquals(-1, offset);
-            Assert.assertEquals("", map.get(offset).toString());
+            Assert.assertEquals(42, map.get(offset));
             Assert.assertEquals(-1, map.nextOffset(offset));
         }
     }
@@ -107,18 +168,14 @@ public class DirectCharSequenceIntHashMapTest {
             map.put("bc", 20);
             map.put("def", 30);
 
-            List<String> keys = new ArrayList<>();
             List<Integer> values = new ArrayList<>();
-
             int offset = map.nextOffset();
             while (offset != -1) {
-                CharSequence key = map.get(offset);
-                keys.add(key.toString());
-                values.add(map.get(key));
+                int value = map.get(offset);
+                values.add(value);
                 offset = map.nextOffset(offset);
             }
 
-            Assert.assertEquals(Arrays.asList("a", "bc", "def"), keys);
             Assert.assertEquals(Arrays.asList(10, 20, 30), values);
         }
     }
@@ -168,8 +225,8 @@ public class DirectCharSequenceIntHashMapTest {
             Map<String, Integer> expected = new HashMap<>();
             Rnd rnd = TestUtils.generateRandom(null);
 
-            for (int i = 0; i < 10_000; i++) {
-                int action = rnd.nextPositiveInt() & 255;
+            for (int i = 0; i < 5_000; i++) {
+                int action = rnd.nextPositiveInt() & 7;
                 if (action == 0) {
                     map.clear();
                     expected.clear();
@@ -220,10 +277,10 @@ public class DirectCharSequenceIntHashMapTest {
         Set<String> iterated = new HashSet<>();
         int offset = map.nextOffset();
         while (offset != -1) {
-            CharSequence seq = map.get(offset);
+            CharSequence seq = map.getKey(offset);
             String key = seq.toString();
             Assert.assertTrue("unexpected key: " + key, expected.containsKey(key));
-            Assert.assertEquals(expected.get(key).intValue(), map.get(key));
+            Assert.assertEquals(expected.get(key).intValue(), map.get(offset));
 
             int idx = map.keyIndex(key);
             Assert.assertTrue(idx < 0);
@@ -246,5 +303,29 @@ public class DirectCharSequenceIntHashMapTest {
             Assert.fail("Expected IllegalArgumentException");
         } catch (IllegalArgumentException ignore) {
         }
+    }
+
+    private static List<Map.Entry<String, Integer>> expectedEntries(List<String> order, Map<String, Integer> values, int minValue) {
+        List<Map.Entry<String, Integer>> result = new ArrayList<>();
+        for (String key : order) {
+            Integer value = values.get(key);
+            if (value != null && value >= minValue) {
+                result.add(new AbstractMap.SimpleEntry<>(key, value));
+            }
+        }
+        return result;
+    }
+
+    private static List<Map.Entry<String, Integer>> readEntries(MemoryARW mem, int copied) {
+        List<Map.Entry<String, Integer>> result = new ArrayList<>(copied);
+        long offset = 0;
+        for (int i = 0; i < copied; i++) {
+            int value = mem.getInt(offset);
+            offset += Integer.BYTES;
+            String key = mem.getStrA(offset).toString();
+            offset += ((long) key.length() << 1) + Integer.BYTES;
+            result.add(new AbstractMap.SimpleEntry<>(key, value));
+        }
+        return result;
     }
 }

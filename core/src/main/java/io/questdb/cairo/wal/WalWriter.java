@@ -72,7 +72,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal256;
-import io.questdb.std.DirectCharSequenceIntHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -1922,7 +1921,7 @@ public class WalWriter implements TableWriterAPI {
                 return symbolMapReader.valueOf(key);
             } else {
                 int keyOffset = symbols.get(key - symbolCountWatermark);
-                return symbolHashMap.get(keyOffset);
+                return symbolHashMap.getKey(keyOffset);
             }
         }
 
@@ -1937,8 +1936,7 @@ public class WalWriter implements TableWriterAPI {
             if (remapSize > 0) {
                 symbols.setPos(remapSize);
                 for (int offset = symbolHashMap.nextOffset(); offset >= 0; offset = symbolHashMap.nextOffset(offset)) {
-                    CharSequence symbolValue = symbolHashMap.get(offset);
-                    int index = symbolHashMap.get(symbolValue);
+                    int index = symbolHashMap.get(offset);
                     if (index >= symbolCountWatermark) {
                         symbols.extendAndSet(index - symbolCountWatermark, offset);
                     }

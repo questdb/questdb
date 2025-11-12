@@ -38,7 +38,6 @@ import io.questdb.std.AtomicIntList;
 import io.questdb.std.BoolList;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.DirectCharSequenceIntHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -247,18 +246,7 @@ class WalEventWriter implements Closeable {
                     long appendAddress = eventMem.getAppendOffset();
                     eventMem.putInt(size);
 
-                    int symbolCount = 0;
-                    for (int offset = symbolMap.nextOffset(); offset >= 0; offset = symbolMap.nextOffset(offset)) {
-                        final CharSequence symbol = symbolMap.get(offset);
-                        assert symbol != null;
-                        final int value = symbolMap.get(symbol);
-                        // Ignore symbols cached from symbolMapReader
-                        if (value >= initialCount) {
-                            eventMem.putInt(value);
-                            eventMem.putStr(symbol);
-                            symbolCount++;
-                        }
-                    }
+                    int symbolCount = symbolMap.copyTo(eventMem, initialCount);
                     // Update the size with the exact symbolCount
                     // An empty SymbolMapDiff can be created because symbolCount can be 0
                     // in case all cached symbols come from symbolMapReader.
