@@ -64,7 +64,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private TimestampDriver timestampDriver;
 
     public RuntimeIntrinsicIntervalModel build() {
-        return new RuntimeIntervalModel(timestampDriver, partitionBy, new LongList(staticIntervals), new ObjList<>(dynamicRangeList));
+        if (dynamicRangeList.size() != 0) {
+            return new RuntimeDynamicIntervalModel(timestampDriver, partitionBy, new LongList(staticIntervals), new ObjList<>(dynamicRangeList));
+        } else {
+            return new RuntimeStaticIntervalModel(timestampDriver, partitionBy, staticIntervals);
+        }
     }
 
     @Override

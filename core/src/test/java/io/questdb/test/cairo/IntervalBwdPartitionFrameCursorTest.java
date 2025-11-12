@@ -42,7 +42,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
-import io.questdb.griffin.model.RuntimeIntervalModel;
+import io.questdb.griffin.model.RuntimeStaticIntervalModel;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -216,7 +216,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             TableReader reader = newOffPoolReader(configuration, "x");
             IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
-                    new RuntimeIntervalModel(
+                    new RuntimeStaticIntervalModel(
                             ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
                             reader.getPartitionedBy(),
                             intervals
@@ -425,7 +425,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             tableToken,
                             0,
-                            new RuntimeIntervalModel(
+                            new RuntimeStaticIntervalModel(
                                     ColumnType.getTimestampDriver(metadata.getTimestampType()),
                                     partitionBy,
                                     intervals
@@ -707,7 +707,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             try (
                     TableReader reader = newOffPoolReader(configuration, "x");
                     IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
-                            new RuntimeIntervalModel(
+                            new RuntimeStaticIntervalModel(
                                     ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
                                     reader.getPartitionedBy(),
                                     intervals
@@ -766,7 +766,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             tableToken,
                             0,
-                            new RuntimeIntervalModel(
+                            new RuntimeStaticIntervalModel(
                                     ColumnType.getTimestampDriver(metadata.getTimestampType()),
                                     PartitionBy.DAY,
                                     intervals

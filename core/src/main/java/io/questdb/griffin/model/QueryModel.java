@@ -71,6 +71,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_LEFT_OUTER = 2;
     public static final int JOIN_LT = 6;
     public static final int JOIN_MAX = JOIN_CROSS_FULL;
+    public static final int JOIN_NONE = 0;
     public static final int JOIN_RIGHT_OUTER = 9;
     public static final int JOIN_SPLICE = 5;
     public static final int JOIN_WINDOW = 7;
@@ -181,7 +182,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private boolean isUpdateModel;
     private ExpressionNode joinCriteria;
     private int joinKeywordPosition;
-    private int joinType = JOIN_INNER;
+    private int joinType = JOIN_NONE;
     private int latestByType = LATEST_BY_NONE;
     private ExpressionNode limitAdviceHi;
     private ExpressionNode limitAdviceLo;
@@ -434,7 +435,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         latestByType = LATEST_BY_NONE;
         latestBy.clear();
         joinCriteria = null;
-        joinType = JOIN_INNER;
+        joinType = JOIN_NONE;
         joinKeywordPosition = 0;
         orderedJoinModels1.clear();
         orderedJoinModels2.clear();
