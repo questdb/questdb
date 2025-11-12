@@ -33,6 +33,14 @@ steps:
     displayName: "Install JDK and Maven"
     condition: |
       eq(variables['poolName'], 'hetzner-docker-arm')
+  - bash: |
+      JAVA_PATH="/opt/graalvm"
+      echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+      echo "JAVA_HOME will be set to: $JAVA_PATH"
+    displayName: "Install JDK and Maven"
+    condition: |
+      eq(variables['poolName'], 'hetzner-docker-graal')
   - task: Cache@2
     displayName: "Cache non-default Maven"
     continueOnError: true
