@@ -351,9 +351,9 @@ public class MmapCache {
             // sequence returning -2 -> we lost a CAS race. we do a cheap retry
             // sequence returning -1 -> the queue is full. then it's cheaper to do the munmap ourserlves
             long seq;
-            do {
-                seq = munmapProducesSequence.next();
-            } while (seq == -2);
+            while ((seq = munmapProducesSequence.next()) == -2) {
+                Os.pause();
+            }
 
             if (seq > -1) {
                 MunmapTask task = munmapTaskRingQueue.get(seq);
