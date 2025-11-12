@@ -72,6 +72,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal256;
+import io.questdb.std.DirectCharSequenceIntHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -130,7 +131,7 @@ public class WalWriter implements TableWriterAPI {
     private final TableSequencerAPI sequencer;
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
-    private final ObjList<SymbolMap> symbolMaps = new ObjList<>();
+    private final ObjList<DirectCharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
@@ -1117,7 +1118,7 @@ public class WalWriter implements TableWriterAPI {
         initialSymbolCounts.extendAndSet(columnWriterIndex, 0);
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, false);
-        symbolMaps.extendAndSet(columnWriterIndex, new SymbolMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        symbolMaps.extendAndSet(columnWriterIndex, new DirectCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         utf8SymbolMaps.extendAndSet(columnWriterIndex, new Utf8StringIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
     }
 
@@ -1206,7 +1207,7 @@ public class WalWriter implements TableWriterAPI {
         );
 
         symbolMapReaders.extendAndSet(columnWriterIndex, symbolMapReader);
-        symbolMaps.extendAndSet(columnWriterIndex, new SymbolMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        symbolMaps.extendAndSet(columnWriterIndex, new DirectCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         utf8SymbolMaps.extendAndSet(columnWriterIndex, new Utf8StringIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         initialSymbolCounts.extendAndSet(columnWriterIndex, symbolCount);
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
@@ -1594,11 +1595,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void removeSymbolMapReader(int index) {
         Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(index, null));
-        SymbolMap map = symbolMaps.getQuick(index);
-        if (map != null) {
-            map.close();
-            symbolMaps.setQuick(index, null);
-        }
+        Misc.free(symbolMaps.getAndSetQuick(index, null));
         utf8SymbolMaps.setQuick(index, null);
         initialSymbolCounts.set(index, -1);
         localSymbolIds.set(index, 0);
@@ -1642,7 +1639,7 @@ public class WalWriter implements TableWriterAPI {
     private void resetSymbolMaps() {
         final int numOfColumns = symbolMaps.size();
         for (int i = 0; i < numOfColumns; i++) {
-            final SymbolMap symbolMap = symbolMaps.getQuick(i);
+            final var symbolMap = symbolMaps.getQuick(i);
             if (symbolMap != null) {
                 symbolMap.clear();
             }
@@ -1865,7 +1862,7 @@ public class WalWriter implements TableWriterAPI {
     private static class ConversionSymbolMapWriter implements SymbolMapWriterLite {
         private int columnIndex;
         private IntList localSymbolIds;
-        private SymbolMap symbolHashMap;
+        private DirectCharSequenceIntHashMap symbolHashMap;
         private SymbolMapReader symbolMapReader;
 
         @Override
@@ -1876,7 +1873,7 @@ public class WalWriter implements TableWriterAPI {
         private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
             int key;
             if (utf16Value != null) {
-                final SymbolMap utf16Map = symbolHashMap;
+                final var utf16Map = symbolHashMap;
                 final int hashCode = Chars.hashCode(utf16Value);
                 final int index = utf16Map.keyIndex(utf16Value, hashCode);
                 if (index > -1) {
@@ -1908,7 +1905,7 @@ public class WalWriter implements TableWriterAPI {
     private static class ConversionSymbolTable implements SymbolTable {
         private final IntList symbols = new IntList();
         private int symbolCountWatermark;
-        private SymbolMap symbolHashMap;
+        private DirectCharSequenceIntHashMap symbolHashMap;
         private SymbolMapReader symbolMapReader;
 
         @Override
@@ -2372,9 +2369,9 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private class RowImpl implements TableWriter.Row {
+        private final Decimal256 decimal256Sink = new Decimal256();
         private final StringSink tempSink = new StringSink();
         private final Utf8StringSink tempUtf8Sink = new Utf8StringSink();
-        private final Decimal256 decimal256Sink = new Decimal256();
         private long timestamp;
 
         @Override
@@ -2674,7 +2671,7 @@ public class WalWriter implements TableWriterAPI {
         private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
             int key;
             if (utf16Value != null) {
-                final SymbolMap utf16Map = symbolMaps.getQuick(columnIndex);
+                final var utf16Map = symbolMaps.getQuick(columnIndex);
                 final int hashCode = Chars.hashCode(utf16Value);
                 final int index = utf16Map.keyIndex(utf16Value, hashCode);
                 if (index > -1) {

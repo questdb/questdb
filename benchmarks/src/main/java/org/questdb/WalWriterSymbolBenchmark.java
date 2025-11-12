@@ -25,9 +25,9 @@
 package org.questdb;
 
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.wal.SymbolMap;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -58,7 +58,7 @@ import java.util.concurrent.TimeUnit;
 public class WalWriterSymbolBenchmark {
     private static final double loadFactor = 0.7;
     private final CharSequenceIntHashMap hmap = new CharSequenceIntHashMap(State.nSymbols, loadFactor, SymbolTable.VALUE_NOT_FOUND);
-    private final SymbolMap symbolHashMap = new SymbolMap(State.nSymbols, loadFactor, SymbolTable.VALUE_NOT_FOUND);
+    private final DirectCharSequenceIntHashMap symbolHashMap = new DirectCharSequenceIntHashMap(State.nSymbols, loadFactor, SymbolTable.VALUE_NOT_FOUND);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -92,7 +92,7 @@ public class WalWriterSymbolBenchmark {
     }
 
     @Benchmark
-    public void WalWriterSymbolMap(State state) {
+    public void DirectCharSequenceIntHashMap(State state) {
         for (int i = 0; i < state.indices.length; i++) {
             CharSequence key = state.symbols[state.indices[i]];
             final int hashCode = Chars.hashCode(key);
