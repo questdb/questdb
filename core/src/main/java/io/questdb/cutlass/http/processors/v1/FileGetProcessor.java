@@ -27,6 +27,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
@@ -77,9 +78,11 @@ public class FileGetProcessor implements HttpRequestProcessor {
         }
 
         HttpRequestHeader request = context.getRequestHeader();
-        final DirectUtf8Sequence file = request.getUrlParam(URL_PARAM_FILE);
+        final DirectUtf8Sequence file = extractFilePathFromUrl(request);
+        LOG.info().$("FileGetProcessor: extracted file path: ").$(file == null ? "null" : file).$();
         if (file == null || file.size() == 0) {
-            // No file parameter - list all files in root directory
+            // No file in path - list all files in root directory
+            LOG.info().$("FileGetProcessor: listing all files from root: ").$(root).$();
             sendFileList(context, root, state);
             return;
         }
@@ -395,6 +398,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
         listSink.put("{\"data\":[");
         try {
             scanDirectory(root, listSink, state);
+            LOG.info().$("FileGetProcessor: found files: ").$(state.fileCount).$();
             listSink.put("],\"meta\":{\"totalFiles\":").put(state.fileCount).put("}}");
             context.simpleResponse().sendStatusJsonContent(HTTP_OK, listSink, false);
         } catch (CairoException e) {
@@ -410,6 +414,84 @@ public class FileGetProcessor implements HttpRequestProcessor {
             sink.put("failed to list files, error: ").put(e.getMessage());
             sendException(500, response, sink, state);
         }
+    }
+
+    private DirectUtf8Sequence extractFilePathFromUrl(HttpRequestHeader request) {
+        DirectUtf8String url = request.getUrl();
+        if (url == null || url.size() == 0) {
+            return null;
+        }
+
+        // URL format: /api/v1/imports or /api/v1/imports/file1.parquet
+        // We need to extract everything after /imports or /exports segment
+
+        final long urlPtr = url.ptr();
+        final int urlSize = url.size();
+
+        // Look for "/imports" or "/exports" (without trailing slash first)
+        String searchString = filesRoot == FilesRootDir.IMPORTS ? "/imports" : "/exports";
+        int searchLen = searchString.length();
+
+        // Find the route segment
+        int routeEnd = -1;
+        for (int i = 0; i <= urlSize - searchLen; i++) {
+            boolean match = true;
+            for (int j = 0; j < searchLen; j++) {
+                if (url.byteAt(i + j) != searchString.charAt(j)) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                routeEnd = i + searchLen;
+                break;
+            }
+        }
+
+        if (routeEnd == -1) {
+            return null;
+        }
+
+        // Check what comes after the route
+        // If we're at the end of URL or next char is '?', there's no file parameter
+        if (routeEnd >= urlSize) {
+            return null;
+        }
+
+        // Next char must be '/' for a file path, or '?' for query params, or end of string
+        byte nextChar = url.byteAt(routeEnd);
+        if (nextChar == '?') {
+            // Query string, no file in path
+            return null;
+        }
+
+        // Must be a slash to indicate a file path follows
+        if (nextChar != '/') {
+            // Unexpected character, no file path
+            return null;
+        }
+
+        // Skip the '/' and extract the file path
+        int fileStart = routeEnd + 1;
+
+        // Extract the file path from fileStart to the end or query string
+        int endPos = urlSize;
+        for (int i = fileStart; i < urlSize; i++) {
+            if (url.byteAt(i) == '?') {
+                endPos = i;
+                break;
+            }
+        }
+
+        // If nothing after the slash, return null (empty file path)
+        if (endPos <= fileStart) {
+            return null;
+        }
+
+        // Return the extracted file path as a DirectUtf8String with adjusted boundaries
+        DirectUtf8String result = new DirectUtf8String();
+        result.of(urlPtr + fileStart, urlPtr + endPos);
+        return result;
     }
 
     static boolean containsAbsOrRelativePath(DirectUtf8Sequence filename) {

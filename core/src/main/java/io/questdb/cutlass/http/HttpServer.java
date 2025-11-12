@@ -60,6 +60,7 @@ import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -406,6 +407,14 @@ public class HttpServer implements Closeable {
         public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
             final DirectUtf8Sequence normalizedUrl = normalizeUrl(requestHeader.getUrl());
             HttpRequestHandler requestHandler = requestHandlerMap.get(normalizedUrl);
+            if (requestHandler == null && Utf8s.startsWith(normalizedUrl, HttpConstants.URL_PREFIX_API_V1)) {
+                // fallback to find most specific selector
+                DirectUtf8String partialUrl = routingUrl.get().of(normalizedUrl.lo(), normalizedUrl.hi());
+                int hi;
+                while (requestHandler == null && (hi = Utf8s.lastIndexOfAscii(partialUrl, '/')) > 1) {
+                    requestHandler = requestHandlerMap.get(partialUrl.decHi(partialUrl.size() - hi));
+                }
+            }
             return requestHandler != null ? requestHandler.getProcessor(requestHeader) : defaultRequestProcessor;
         }
     }

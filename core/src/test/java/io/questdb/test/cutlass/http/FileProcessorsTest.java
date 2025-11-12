@@ -183,32 +183,32 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         int fileCount = response.split("\\{\"type\":\"file\"").length - 1;
                         Assert.assertEquals("Should have 3 files", 3, fileCount);
                         testHttpClient.assertGetBinary(
-                                "/api/v1/exports?file=file1.csv",
+                                "/api/v1/exports/file1.csv",
                                 "file1 content".getBytes(),
                                 "200"
                         );
                         testHttpClient.assertGetBinary(
-                                "/api/v1/exports?file=" + file2,
+                                "/api/v1/exports/" + file2,
                                 "file2 content".getBytes(),
                                 "200"
                         );
                         testHttpClient.assertGetBinary(
-                                "/api/v1/exports?file=" + dir1,
+                                "/api/v1/exports/" + dir1,
                                 "{\"errors\":[{\"status\":\"400\",\"detail\":\"cannot download directory\"}]}".getBytes(),
                                 "400"
                         );
                         testHttpClient.assertGetBinary(
-                                "/api/v1/exports?file=fileNotExists.txt",
+                                "/api/v1/exports/fileNotExists.txt",
                                 "{\"errors\":[{\"status\":\"404\",\"detail\":\"file not found\"}]}".getBytes(),
                                 "404"
                         );
                         testHttpClient.assertDelete(
                                 "/api/v1/exports",
-                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"missing required parameter: file\"}]}",
+                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"missing required file path\"}]}",
                                 "400"
                         );
                         testHttpClient.assertDelete(
-                                "/api/v1/exports?file=" + file3,
+                                "/api/v1/exports/" + file3,
                                 "{\"message\":\"file(s) deleted successfully\",\"path\":\"" + (Os.isWindows() ? "dir2\\\\dir3\\\\file3" : "dir2/dir3/file3") + "\"}",
                                 "200"
                         );
@@ -222,22 +222,22 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         int fileCountAfterDelete = responseAfterDelete.split("\"path\":").length - 1;
                         Assert.assertEquals("Should have 2 files after deletion", 2, fileCountAfterDelete);
                         testHttpClient.assertDelete(
-                                "/api/v1/exports?file=nonExists",
+                                "/api/v1/exports/nonExists",
                                 "{\"errors\":[{\"status\":\"404\",\"detail\":\"file(s) not found\"}]}",
                                 "404"
                         );
                         testHttpClient.assertDelete(
-                                "/api/v1/exports?file=dir2",
+                                "/api/v1/exports/dir2",
                                 "{\"message\":\"file(s) deleted successfully\",\"path\":\"dir2\"}",
                                 "200"
                         );
                         testHttpClient.assertDelete(
-                                "/api/v1/exports?file=dir2",
+                                "/api/v1/exports/dir2",
                                 "{\"errors\":[{\"status\":\"404\",\"detail\":\"file(s) not found\"}]}",
                                 "404"
                         );
                         testHttpClient.assertDelete(
-                                "/api/v1/exports?file=.." + Files.SEPARATOR,
+                                "/api/v1/exports/.." + Files.SEPARATOR,
                                 "{\"errors\":[{\"status\":\"403\",\"detail\":\"traversal not allowed in file\"}]}",
                                 "403"
                         );
@@ -292,32 +292,32 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         Assert.assertEquals("Should have 3 files", 3, fileCount);
 
                         testHttpClient.assertGetBinary(
-                                "/api/v1/imports?file=file1.csv",
+                                "/api/v1/imports/file1.csv",
                                 "file1 content".getBytes(),
                                 "200"
                         );
                         testHttpClient.assertGetBinary(
-                                "/api/v1/imports?file=" + file2,
+                                "/api/v1/imports/" + file2,
                                 "file2 content".getBytes(),
                                 "200"
                         );
                         testHttpClient.assertGetBinary(
-                                "/api/v1/imports?file=" + dir1,
+                                "/api/v1/imports/" + dir1,
                                 "{\"errors\":[{\"status\":\"400\",\"detail\":\"cannot download directory\"}]}".getBytes(),
                                 "400"
                         );
                         testHttpClient.assertGetBinary(
-                                "/api/v1/imports?file=fileNotExists.txt",
+                                "/api/v1/imports/fileNotExists.txt",
                                 "{\"errors\":[{\"status\":\"404\",\"detail\":\"file not found\"}]}".getBytes(),
                                 "404"
                         );
                         testHttpClient.assertDelete(
                                 "/api/v1/imports",
-                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"missing required parameter: file\"}]}",
+                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"missing required file path\"}]}",
                                 "400"
                         );
                         testHttpClient.assertDelete(
-                                "/api/v1/imports?file=" + file3,
+                                "/api/v1/imports/" + file3,
                                 "{\"message\":\"file(s) deleted successfully\",\"path\":\"" + (Os.isWindows() ? "dir2\\\\dir3\\\\file3" : "dir2/dir3/file3") + "\"}",
                                 "200"
                         );
@@ -332,22 +332,22 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         int fileCountAfterDelete = responseAfterDelete.split("\"path\":").length - 1;
                         Assert.assertEquals("Should have 2 files after deletion", 2, fileCountAfterDelete);
                         testHttpClient.assertDelete(
-                                "/api/v1/imports?file=nonExists",
+                                "/api/v1/imports/nonExists",
                                 "{\"errors\":[{\"status\":\"404\",\"detail\":\"file(s) not found\"}]}",
                                 "404"
                         );
                         testHttpClient.assertDelete(
-                                "/api/v1/imports?file=dir2",
+                                "/api/v1/imports/dir2",
                                 "{\"message\":\"file(s) deleted successfully\",\"path\":\"dir2\"}",
                                 "200"
                         );
                         testHttpClient.assertDelete(
-                                "/api/v1/imports?file=dir2",
+                                "/api/v1/imports/dir2",
                                 "{\"errors\":[{\"status\":\"404\",\"detail\":\"file(s) not found\"}]}",
                                 "404"
                         );
                         testHttpClient.assertDelete(
-                                "/api/v1/imports?file=.." + Files.SEPARATOR,
+                                "/api/v1/imports/.." + Files.SEPARATOR,
                                 "{\"errors\":[{\"status\":\"403\",\"detail\":\"traversal not allowed in file\"}]}",
                                 "403"
                         );
@@ -492,17 +492,17 @@ public class FileProcessorsTest extends AbstractCairoTest {
 
                         // testFileGet
                         testHttpClient.assertGetBinary(
-                                "/api/v1/imports?file=" + fileName,
+                                "/api/v1/imports/" + fileName,
                                 parquetData,
                                 "200"
                         );
                         testHttpClient.assertGetBinary(
-                                "/api/v1/imports?file=dir111",
+                                "/api/v1/imports/dir111",
                                 "{\"errors\":[{\"status\":\"404\",\"detail\":\"file not found\"}]}".getBytes(),
                                 "404"
                         );
                         testHttpClient.assertGetBinary(
-                                "/api/v1/imports?file=dir",
+                                "/api/v1/imports/dir",
                                 "{\"errors\":[{\"status\":\"400\",\"detail\":\"cannot download directory\"}]}".getBytes(),
                                 "400"
                         );
