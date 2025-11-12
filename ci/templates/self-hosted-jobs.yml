@@ -50,7 +50,7 @@ jobs:
   - job: linux_x64_graal
     workspace:
       clean: all
-    displayName: "on linux-arm64-graal"
+    displayName: "on linux-x86-graal"
     pool:
       name: "hetzner-docker-graal"
     timeoutInMinutes: 60
