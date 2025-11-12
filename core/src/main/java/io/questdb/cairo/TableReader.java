@@ -611,29 +611,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             return false;
         }
         try {
-            long beforeReloadTicks = clock.getTicks();
-            long i = reloadSlow(true);
-            long afterReloadTicks = clock.getTicks();
-            long reloadTicks = afterReloadTicks - beforeReloadTicks;
-            if (reloadTicks > 50) {
-                LOG.info().$("slow reader reload [table=").$(tableToken)
-                        .$(", txn=").$(txn)
-                        .$(", millis=").$(reloadTicks)
-                        .$(", iterations=").$(i)
-                        .I$();
-            }
+            reloadSlow(true);
             // partition reload will apply truncate if necessary
             // applyTruncate for non-partitioned tables only
-            boolean fastPath = reconcileOpenPartitions(txPartitionVersion, txColumnVersion, txTruncateVersion);
-            long afterReconcileTicks = clock.getTicks();
-            long reconcileTicks = afterReconcileTicks - afterReloadTicks;
-            if (reconcileTicks > 50) {
-                LOG.info().$("slow reader reconcile [table=").$(tableToken)
-                        .$(", txn=").$(txn)
-                        .$(", millis=").$(reconcileTicks)
-                        .$(", fastPath=").$(fastPath)
-                        .I$();
-            }
+            reconcileOpenPartitions(txPartitionVersion, txColumnVersion, txTruncateVersion);
 
             // Save transaction details which impact the reloading.
             // Do not rely on txReader, it can be reloaded outside this method.
@@ -754,7 +735,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTimestamp = openPartitionInfo.getQuick(offset);
         long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-        long before = clock.getTicks();
         closePartitionResources(partitionIndex, offset);
         if (partitionSize > -1) {
             openPartitionCount--;
@@ -775,8 +755,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         LOG.info().$("closed deleted partition [table=").$(tableToken)
                 .$(", ts=").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp)
                 .$(", partitionIndex=").$(partitionIndex)
-                .$(", thread=").$(Thread.currentThread().getName())
-                .$(", millis=").$(clock.getTicks() - before)
                 .I$();
         partitionCount--;
     }
@@ -799,13 +777,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTimestamp = openPartitionInfo.getQuick(offset);
         long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-        long before = clock.getTicks();
         closePartitionResources(partitionIndex, offset);
-        long delta = clock.getTicks() - before;
         LOG.info().$("closed partition [path=").$substr(dbRootSize, path)
                 .$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp)
-                .$(", thread=").$(Thread.currentThread().getName())
-                .$(", millis=").$(delta)
                 .I$();
         if (partitionSize > -1) {
             openPartitionCount--;
@@ -814,25 +788,9 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void closePartitionColumn(int base, int columnIndex) {
         int index = getPrimaryColumnIndex(base, columnIndex);
-        long before = clock.getTicks();
         Misc.free(columns.get(index));
         Misc.free(columns.get(index + 1));
-        long afterColumnClose = clock.getTicks();
         closeIndexReader(base, columnIndex);
-        long afterIndexClose = clock.getTicks();
-
-        long totalMillis = afterIndexClose - before;
-        if (totalMillis > 50) {
-            long indexCloseMillis = afterIndexClose - afterColumnClose;
-            long columnCloseMillis = afterColumnClose - before;
-            LOG.info().$("slow column partition close [table=").$(tableToken)
-                    .$(", index=").$(index)
-                    .$(", thread=").$(Thread.currentThread().getName())
-                    .$(", millis=").$(totalMillis)
-                    .$(", indexMillis=").$(indexCloseMillis)
-                    .$(", columnMillis=").$(columnCloseMillis)
-                    .I$();
-        }
     }
 
     private void closePartitionColumns(int columnBase) {
@@ -1349,7 +1307,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private boolean reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
+    private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
         // Reconcile partition full or partial will only update row count of last partition and append new partitions
         boolean truncateHappened = txFile.getTruncateVersion() != prevTruncateVersion;
         if (txFile.getPartitionTableVersion() == prevPartitionVersion && txFile.getColumnVersion() == prevColumnVersion && !truncateHappened) {
@@ -1399,10 +1357,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
                 reloadSymbolMapCounts();
             }
-            return true;
+            return;
         }
         reconcileOpenPartitions0(truncateHappened);
-        return false;
     }
 
     private void reconcileOpenPartitions0(boolean forceTruncate) {
@@ -1724,11 +1681,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         return ((MemoryCMRDetachedImpl) parquetMem).tryChangeSize(parquetSize);
     }
 
-    private long reloadSlow(boolean reshuffle) {
+    private void reloadSlow(boolean reshuffle) {
         final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
-        long i = 0;
         do {
-            i++;
             // Reload txn
             readTxnSlow(deadline);
             // Reload _meta if the structure version updated, reload _cv if column version updated
@@ -1738,7 +1693,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                         // Start again if _meta with the matching structure version cannot be loaded
                         || !reloadMetadata(txFile.getMetadataVersion(), deadline, reshuffle)
         );
-        return i;
     }
 
     private void reloadSymbolMapCounts() {
