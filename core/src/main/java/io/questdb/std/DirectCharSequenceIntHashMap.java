@@ -132,9 +132,9 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      */
     public void close() {
         if (this.address != 0) {
-            Unsafe.free(address, (long) this.mapCapacity << 3, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, this.capacity, MemoryTag.NATIVE_DEFAULT);
             this.address = 0;
-            this.mapCapacity = 0;
+            this.capacity = 0;
         }
         if (this.kvAddress != 0) {
             Unsafe.free(kvAddress, kvCapacity, MemoryTag.NATIVE_DEFAULT);
