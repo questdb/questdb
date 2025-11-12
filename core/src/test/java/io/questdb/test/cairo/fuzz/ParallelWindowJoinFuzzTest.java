@@ -118,7 +118,7 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                         "  FROM trades t " +
                         "  WINDOW JOIN prices p ON t.sym = p.sym " +
                         "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
-                        "))", // TODO(puzpuzpuz): remove redundant bracket
+                        ")",
                 """
                         avg_price\tmax_bid\tmin_bid
                         19.958398885587915\t14.982510448352535\t5.010953919128168

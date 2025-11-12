@@ -2979,6 +2979,8 @@ public class SqlParser {
                 } else {
                     lexer.unparseLast();
                 }
+            } else {
+                lexer.unparseLast();
             }
             return joinModel;
         }
