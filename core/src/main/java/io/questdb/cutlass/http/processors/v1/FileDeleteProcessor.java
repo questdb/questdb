@@ -181,16 +181,12 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
         JsonSink json = Misc.getThreadLocalJsonSink();
-        json.of(sink, false)
-                .startObject()
-                .key("errors").startArray()
-                .startObject()
-                .key("status").val(String.valueOf(errorCode))
+        json.of(sink).startObject()
+                .key("errors").startArray().startObject()
+                .key("status").valQuoted(errorCode)
                 .key("detail").val(message)
-                .endObject()
-                .endArray()
-                .endObject();
-        context.simpleResponse().sendStatusJsonContent(errorCode, sink, false);
+                .endObject().endArray().endObject();
+        context.simpleResponse().sendStatusJsonApiContent(errorCode, sink, false);
     }
 
     private void sendSuccess(
@@ -204,6 +200,6 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
                 .key("message").val("file(s) deleted successfully")
                 .key("path").val(path)
                 .endObject();
-        context.simpleResponse().sendStatusJsonContent(HTTP_OK, sink, false);
+        context.simpleResponse().sendStatusJsonApiContent(HTTP_OK, sink, false);
     }
 }

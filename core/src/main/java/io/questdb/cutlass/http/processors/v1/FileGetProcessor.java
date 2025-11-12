@@ -306,6 +306,8 @@ public class FileGetProcessor implements HttpRequestProcessor {
         state.state = FILE_SEND_CHUNK;
     }
 
+    // todo: probably replace this with the griffin factories that handle files/globs, so we can support glob filters
+    // they are TBA in read_parquet upgrades
     private void scanDirectory(
             CharSequence rootPath,
             JsonSink jsonSink,
