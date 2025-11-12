@@ -39,7 +39,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PlainSocketFactory;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
@@ -106,11 +106,15 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test x=1.0\n")
                 .replyWithStatus(204)
-                .withExpectedContent("test x=2.0\n" +
-                        "test x=3.0\n")
+                .withExpectedContent("""
+                        test x=2.0
+                        test x=3.0
+                        """)
                 .replyWithStatus(204)
-                .withExpectedContent("test x=4.0\n" +
-                        "test x=5.0\n")
+                .withExpectedContent("""
+                        test x=4.0
+                        test x=5.0
+                        """)
                 .replyWithStatus(204)
                 .withExpectedContent("test x=6.0\n")
                 .replyWithStatus(204);
@@ -143,6 +147,48 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .replyWithContent(400, badJsonResponse, HttpConstants.CONTENT_TYPE_JSON);
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: " + badJsonResponse + " [http-status=400]"));
+    }
+
+    @Test
+    public void testBadSettings() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
+        String error = "bad thing happened";
+        MockErrorSettingsProcessor settingsProcessor = new MockErrorSettingsProcessor(error);
+        try {
+            testWithMock(mockHttpProcessor, settingsProcessor, sender -> sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";"));
+            Assert.fail("Exception expected");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), error);
+        }
+    }
+
+    @Test
+    public void testBadSettingsManyServers() throws Exception {
+        Assume.assumeTrue(Os.type != Os.DARWIN); // MacOs does not treat 127.0.0.2, 127.0.0.3, etc ... as 127.0.0.1
+
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
+        String error = "bad thing happened";
+        MockErrorSettingsProcessor settingsProcessor = new MockErrorSettingsProcessor(error);
+        try {
+            testWithMock(mockHttpProcessor, settingsProcessor, sender -> sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow(), port -> {
+                LineSenderBuilder builder = builder(Transport.HTTP);
+                for (int i = 0; i < 65; i++) {
+                    String ip = "127.0.0." + (i + 1); // fool duplicated address detection
+                    builder.address(ip + ':' + port);
+                }
+                builder.maxBackoffMillis(0);
+                return builder;
+            });
+            Assert.fail("Exception expected");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), error);
+        }
     }
 
     @Test
@@ -217,48 +263,6 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
-    public void testBadSettings() throws Exception {
-        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
-        String error = "bad thing happened";
-        MockErrorSettingsProcessor settingsProcessor = new MockErrorSettingsProcessor(error);
-        try {
-            testWithMock(mockHttpProcessor, settingsProcessor, sender -> sender.table("test")
-                    .symbol("sym", "bol")
-                    .doubleColumn("x", 1.0)
-                    .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";"));
-            Assert.fail("Exception expected");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), error);
-        }
-    }
-
-    @Test
-    public void testBadSettingsManyServers() throws Exception {
-        Assume.assumeTrue(Os.type != Os.DARWIN); // MacOs does not treat 127.0.0.2, 127.0.0.3, etc ... as 127.0.0.1
-
-        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
-        String error = "bad thing happened";
-        MockErrorSettingsProcessor settingsProcessor = new MockErrorSettingsProcessor(error);
-        try {
-            testWithMock(mockHttpProcessor, settingsProcessor, sender -> sender.table("test")
-                    .symbol("sym", "bol")
-                    .doubleColumn("x", 1.0)
-                    .atNow(), port -> {
-                LineSenderBuilder builder = builder(Transport.HTTP);
-                for (int i = 0; i < 65; i++) {
-                    String ip = "127.0.0." + (i + 1); // fool duplicated address detection
-                    builder.address(ip + ':' + port);
-                }
-                builder.maxBackoffMillis(0);
-                return builder;
-            });
-            Assert.fail("Exception expected");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), error);
-        }
-    }
-
-    @Test
     public void testDisableAutoFlush() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
         testWithMock(mockHttpProcessor, sender -> {
@@ -323,10 +327,11 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
     @Test
     public void testJsonError() throws Exception {
-        String jsonResponse = "{\"code\": \"invalid\",\n" +
-                "                    \"message\": \"failed to parse line protocol: invalid field format\",\n" +
-                "                    \"errorId\": \"ABC-2\",\n" +
-                "                    \"line\": 2}";
+        String jsonResponse = """
+                {"code": "invalid",
+                                    "message": "failed to parse line protocol: invalid field format",
+                                    "errorId": "ABC-2",
+                                    "line": 2}""";
 
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
@@ -597,8 +602,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testTwoLines() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol x=1.0\n" +
-                        "test,sym=bol x=2.0\n")
+                .withExpectedContent("""
+                        test,sym=bol x=1.0
+                        test,sym=bol x=2.0
+                        """)
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .replyWithStatus(204);
 
@@ -685,8 +692,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
                 httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
-                    public ObjList<String> getUrls() {
-                        return new ObjList<>("/write");
+                    public ObjHashSet<String> getUrls() {
+                        return new ObjHashSet<>() {{
+                            add("/write");
+                        }};
                     }
 
                     @Override
@@ -696,8 +705,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 });
                 httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
-                    public ObjList<String> getUrls() {
-                        return new ObjList<>("/settings");
+                    public ObjHashSet<String> getUrls() {
+                        return new ObjHashSet<>() {{
+                            add("/settings");
+                        }};
                     }
 
                     @Override

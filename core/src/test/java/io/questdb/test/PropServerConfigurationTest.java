@@ -52,6 +52,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -1687,31 +1688,30 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("http.context.web.console", "/new-path");
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        // duplicates are ok
         Assert.assertEquals(
-                "[/new-path/warnings,/new-path/warnings]",
+                "[/new-path/warnings]",
                 configuration.getHttpServerConfiguration().getContextPathWarnings().toString()
         );
         Assert.assertEquals(
-                "[/new-path/exec,/new-path/exec]",
+                "[/new-path/exec,/new-path/api/v1/sql/execute]",
                 configuration.getHttpServerConfiguration().getContextPathExec().toString()
         );
         Assert.assertEquals(
-                "[/new-path/exp,/new-path/exp]",
+                "[/new-path/exp]",
                 configuration.getHttpServerConfiguration().getContextPathExport().toString()
         );
         Assert.assertEquals(
-                "[/new-path/imp,/new-path/imp]",
+                "[/new-path/imp]",
                 configuration.getHttpServerConfiguration().getContextPathImport().toString()
         );
 
         Assert.assertEquals(
-                "[/new-path/chk,/new-path/chk]",
+                "[/new-path/chk]",
                 configuration.getHttpServerConfiguration().getContextPathTableStatus().toString()
         );
 
         Assert.assertEquals(
-                "[/new-path/settings,/new-path/settings]",
+                "[/new-path/settings]",
                 configuration.getHttpServerConfiguration().getContextPathSettings().toString()
         );
 
@@ -2049,7 +2049,10 @@ public class PropServerConfigurationTest {
         return new PropServerConfiguration(root, properties, null, PropServerConfigurationTest.LOG, new BuildInformationHolder());
     }
 
-    private record FuzzItem(String key, String value,
-                            Function<HttpFullFatServerConfiguration, ObjList<String>> getter) {
+    private record FuzzItem(
+            String key,
+            String value,
+            Function<HttpFullFatServerConfiguration, ObjHashSet<String>> getter
+    ) {
     }
 }

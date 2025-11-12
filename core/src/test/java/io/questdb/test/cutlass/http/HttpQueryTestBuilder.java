@@ -57,6 +57,7 @@ import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
@@ -206,8 +207,10 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
-                    return new ObjList<>("/upload");
+                public ObjHashSet<String> getUrls() {
+                    return new ObjHashSet<>() {{
+                        add("/upload");
+                    }};
                 }
 
                 @Override
@@ -220,8 +223,10 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
-                    return new ObjList<>("/query");
+                public ObjHashSet<String> getUrls() {
+                    return new ObjHashSet<>() {{
+                        add("/query");
+                    }};
                 }
 
                 @Override
@@ -245,7 +250,7 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return httpConfiguration.getContextPathSqlValidation();
                 }
 
@@ -258,7 +263,7 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return httpConfiguration.getContextPathExport();
                 }
 
@@ -274,7 +279,7 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return httpConfiguration.getContextPathTableStatus();
                 }
 
@@ -286,7 +291,7 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return httpConfiguration.getContextPathExec();
                 }
 
@@ -298,8 +303,10 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
-                    return new ObjList<>("/status");
+                public ObjHashSet<String> getUrls() {
+                    return new ObjHashSet<>() {{
+                        add("/status");
+                    }};
                 }
 
                 @Override

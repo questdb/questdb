@@ -51,6 +51,7 @@ import io.questdb.std.AssociativeCache;
 import io.questdb.std.ConcurrentAssociativeCache;
 import io.questdb.std.Misc;
 import io.questdb.std.NoOpAssociativeCache;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
@@ -141,7 +142,7 @@ public class HttpServer implements Closeable {
 
             server.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return httpServerConfiguration.getContextPathILP();
                 }
 
@@ -156,7 +157,7 @@ public class HttpServer implements Closeable {
             );
             server.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return httpServerConfiguration.getContextPathILPPing();
                 }
 
@@ -170,7 +171,7 @@ public class HttpServer implements Closeable {
         final SettingsProcessor settingsProcessor = new SettingsProcessor(cairoEngine, serverConfiguration);
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return httpServerConfiguration.getContextPathSettings();
             }
 
@@ -183,7 +184,7 @@ public class HttpServer implements Closeable {
         final WarningsProcessor warningsProcessor = new WarningsProcessor(serverConfiguration.getCairoConfiguration());
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return httpServerConfiguration.getContextPathWarnings();
             }
 
@@ -195,7 +196,7 @@ public class HttpServer implements Closeable {
 
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return httpServerConfiguration.getContextPathExec();
             }
 
@@ -207,7 +208,7 @@ public class HttpServer implements Closeable {
 
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return httpServerConfiguration.getContextPathImport();
             }
 
@@ -219,7 +220,7 @@ public class HttpServer implements Closeable {
 
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return httpServerConfiguration.getContextPathSqlValidation();
             }
 
@@ -231,7 +232,7 @@ public class HttpServer implements Closeable {
 
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return httpServerConfiguration.getContextPathExport();
             }
 
@@ -247,7 +248,7 @@ public class HttpServer implements Closeable {
 
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return httpServerConfiguration.getContextPathTableStatus();
             }
 
@@ -289,10 +290,10 @@ public class HttpServer implements Closeable {
     }
 
     public void bind(HttpRequestHandlerFactory factory, boolean useAsDefault) {
-        final ObjList<String> urls = factory.getUrls();
+        final ObjHashSet<String> urls = factory.getUrls();
         assert urls != null;
         for (int j = 0, n = urls.size(); j < n; j++) {
-            final String url = urls.getQuick(j);
+            final String url = urls.get(j);
             for (int i = 0; i < workerCount; i++) {
                 HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
                 if (HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
