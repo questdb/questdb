@@ -3,7 +3,6 @@ package io.questdb.cutlass.http.processors.v1;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.MillsTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -11,6 +10,7 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
+import io.questdb.griffin.JsonSink;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -298,26 +298,38 @@ public class FileGetProcessor implements HttpRequestProcessor {
                     }
                     Utf8s.utf8ZCopyEscaped(pUtf8NameZ, tempSink);
 
-                    sink.put("{\"type\":\"file\",\"id\":\"");
-                    sink.put(tempSink);
-                    sink.put("\",\"attributes\":{\"filename\":\"");
-                    Utf8s.utf8ZCopyEscaped(pUtf8NameZ, sink);
-                    sink.put("\",\"path\":\"");
-                    sink.put(tempSink);
-                    sink.put("\",");
+                    JsonSink jsonSink = Misc.getThreadLocalJsonSink();
+                    jsonSink.of(sink);
+
+                    jsonSink
+                            .startObject()
+                            .key("type").val("file")
+                            .key("id").val(tempSink)
+                            .key("attributes")
+                            .startObject();
+
+                    int lastSlash = Utf8s.lastIndexOfAscii(tempSink, '/');
+                    jsonSink.key("filename").val(tempSink);
 
                     int oldLen = path.size();
+                    path.trimTo(rootLen);
                     path.concat(tempSink);
+
+                    jsonSink.key("path").val(path);
+
+
                     long fileSize = state.ff.length(path.$());
                     long lastModified = state.ff.getLastModified(path.$());
                     path.trimTo(oldLen);
 
-                    sink.putAsciiQuoted("size").put(':').putQuote();
-                    SizePrettyFunctionFactory.toSizePretty(sink, fileSize);
-                    sink.putQuote().put(',');
-                    sink.putAsciiQuoted("lastModified").put(':').putQuote();
-                    MillsTimestampDriver.INSTANCE.append(sink, lastModified);
-                    sink.putQuote().put("}}");
+                    tempSink.clear();
+                    SizePrettyFunctionFactory.toSizePretty(tempSink, fileSize);
+
+                    jsonSink.key("size").val(fileSize)
+                            .key("size_pretty").val(tempSink)
+                            .key("last_modified").valMillis(lastModified)
+                            .endObject()
+                            .endObject();
                 }
 
                 if (state.ff.findNext(pFind) <= 0) {

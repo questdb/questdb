@@ -35,6 +35,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.Nullable;
@@ -51,6 +52,17 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
 
     public static void toSizePretty(StringSink sink, long size) {
         sink.clear();
+        int z = Numbers.msb(size) / 10;
+        long scale = 1L << z * 10; // 1024 times z (z is index in SCALE)
+        float value = (float) size / scale;
+        Numbers.append(sink, value, 1);
+        sink.put(' ').put(SCALE[z]);
+        if (z > 0) {
+            sink.put("iB");
+        }
+    }
+
+    public static void toSizePretty(CharSink<?> sink, long size) {
         int z = Numbers.msb(size) / 10;
         long scale = 1L << z * 10; // 1024 times z (z is index in SCALE)
         float value = (float) size / scale;
