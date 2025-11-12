@@ -120,6 +120,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                     .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                     .withTelemetry(false)
                     .run((engine, sqlExecutionContext) -> {
+                        // First upload - file already exists in inputRoot (created by createParquetFile), so it's an overwrite, should return 200
                         new SendAndReceiveRequestBuilder()
                                 .execute(
                                         parquetImportRequest,
@@ -129,8 +130,23 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/vnd.api+json\r\n" +
                                                 "\r\n" +
-                                                "7d\r\n" +
-                                                "{\"data\":[{\"type\":\"file\",\"id\":\"x.parquet\",\"attributes\":{\"filename\":\"x.parquet\",\"status\":\"201\"}}],\"meta\":{\"totalFiles\":1}}\r\n" +
+                                                "78\r\n" +
+                                                "{\"data\":[{\"type\":\"file\",\"id\":\"x.parquet\",\"attributes\":{\"filename\":\"x.parquet\",\"status\":\"200\"}}],\"meta\":{\"totalFiles\":1}}\r\n" +
+                                                "00\r\n" +
+                                                "\r\n"
+                                );
+                        // Second upload with overwrite=true - file still exists, should return 200
+                        new SendAndReceiveRequestBuilder()
+                                .execute(
+                                        parquetImportRequest,
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: application/vnd.api+json\r\n" +
+                                                "\r\n" +
+                                                "78\r\n" +
+                                                "{\"data\":[{\"type\":\"file\",\"id\":\"x.parquet\",\"attributes\":{\"filename\":\"x.parquet\",\"status\":\"200\"}}],\"meta\":{\"totalFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -411,13 +427,13 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         new SendAndReceiveRequestBuilder()
                                 .execute(
                                         parquetImportRequest,
-                                        "HTTP/1.1 200 OK\r\n" +
+                                        "HTTP/1.1 201 Created\r\n" +
                                                 "Server: questDB/1.0\r\n" +
                                                 "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/vnd.api+json\r\n" +
                                                 "\r\n" +
-                                                "83\r\n" +
+                                                "7e\r\n" +
                                                 "{\"data\":[{\"type\":\"file\",\"id\":\"test.parquet\",\"attributes\":{\"filename\":\"test.parquet\",\"status\":\"201\"}}],\"meta\":{\"totalFiles\":1}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
@@ -463,13 +479,13 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         new SendAndReceiveRequestBuilder()
                                 .execute(
                                         parquetImportRequest,
-                                        "HTTP/1.1 201 CREATED\r\n" +
+                                        "HTTP/1.1 201 Created\r\n" +
                                                 "Server: questDB/1.0\r\n" +
                                                 "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/vnd.api+json\r\n" +
                                                 "\r\n" +
-                                                (Os.isWindows() ? "a5\r\n" : "a1\r\n") +
+                                                (Os.isWindows() ? "a0\r\n" : "9c\r\n") +
                                                 (Os.isWindows() ? "{\"data\":[{\"type\":\"file\",\"id\":\"dir\\\\dir1\\\\large_test.parquet\",\"attributes\":{\"filename\":\"dir\\\\dir1\\\\large_test.parquet\",\"status\":\"201\"}}],\"meta\":{\"totalFiles\":1}}\r\n" : "{\"data\":[{\"type\":\"file\",\"id\":\"dir/dir1/large_test.parquet\",\"attributes\":{\"filename\":\"dir/dir1/large_test.parquet\",\"status\":\"201\"}}],\"meta\":{\"totalFiles\":1}}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
@@ -668,13 +684,13 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         new SendAndReceiveRequestBuilder()
                                 .execute(
                                         parquetImportRequest,
-                                        "HTTP/1.1 200 OK\r\n" +
+                                        "HTTP/1.1 201 Created\r\n" +
                                                 "Server: questDB/1.0\r\n" +
                                                 "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/vnd.api+json\r\n" +
                                                 "\r\n" +
-                                                "dc\r\n" +
+                                                "d2\r\n" +
                                                 "{\"data\":[{\"type\":\"file\",\"id\":\"xx.parquet\",\"attributes\":{\"filename\":\"xx.parquet\",\"status\":\"201\"}},{\"type\":\"file\",\"id\":\"yy.parquet\",\"attributes\":{\"filename\":\"yy.parquet\",\"status\":\"201\"}}],\"meta\":{\"totalFiles\":2}}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"

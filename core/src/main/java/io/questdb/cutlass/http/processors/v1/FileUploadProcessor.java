@@ -144,7 +144,8 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
             state.fd = -1;
         }
 
-        if (state.ff.exists(state.realPath.$())) {
+        boolean fileExisted = state.ff.exists(state.realPath.$());
+        if (fileExisted) {
             if (!state.overwrite) {
                 state.ff.removeQuiet(state.tempPath.$());
                 StringSink sink = Misc.getThreadLocalSink();
@@ -178,6 +179,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
         }
 
         state.successfulFiles.add(state.currentFilename);
+        state.wasFileOverwritten.add(fileExisted);
         LOG.info().$("finished import [dest=").$(state.realPath).$(", size=").$(state.written).I$();
     }
 
@@ -241,12 +243,13 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
     private void encodeSuccessfulFilesList(JsonSink json, State state) {
         for (int i = 0, n = state.successfulFiles.size(); i < n; i++) {
             CharSequence filename = state.successfulFiles.getQuick(i);
+            int statusCode = state.wasFileOverwritten.getQuick(i) ? 200 : 201;
             json.startObject()
                     .key("type").val("file")
                     .key("id").val(filename)
                     .key("attributes").startObject()
                     .key("filename").val(filename)
-                    .key("status").valQuoted(201)
+                    .key("status").valQuoted(statusCode)
                     .endObject()
                     .endObject();
         }
@@ -334,7 +337,15 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
         try {
             HttpChunkedResponse response = context.getChunkedResponse();
             response.bookmark();
-            response.status(201, CONTENT_TYPE_JSON_API);
+            // Determine status code: 200 if all files were overwritten, 201 if any file was new
+            int statusCode = 200; // Default to 200 (all overwrites)
+            for (int i = 0; i < state.wasFileOverwritten.size(); i++) {
+                if (!state.wasFileOverwritten.getQuick(i)) {
+                    statusCode = 201; // At least one file was new
+                    break;
+                }
+            }
+            response.status(statusCode, CONTENT_TYPE_JSON_API);
             response.sendHeader();
             response.sendChunk(false);
             encodeSuccessJson(response, state);
@@ -359,6 +370,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
         long lo;
         boolean overwrite;
         ObjList<CharSequence> successfulFiles;
+        ObjList<Boolean> wasFileOverwritten;
         int tempPathBaseLen;
         long written;
 
@@ -368,6 +380,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
             tempPath = new Path();
             realPath = new Path();
             successfulFiles = new ObjList<>();
+            wasFileOverwritten = new ObjList<>();
             errorMsg = new Utf8StringSink();
         }
 
@@ -376,6 +389,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
             errorCode = -1;
             errorMsg.clear();
             successfulFiles.clear();
+            wasFileOverwritten.clear();
             currentFilename = null;
             if (fd != -1) {
                 ff.close(fd);
