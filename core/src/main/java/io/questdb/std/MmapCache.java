@@ -336,9 +336,11 @@ public class MmapCache {
         if (result != -1) {
             Unsafe.recordMemAlloc(-task.size, task.memoryTag);
         } else {
+            int errno = Os.errno();
             LOG.critical().$("munmap failed [address=").$(task.address)
                     .$(", size=").$(task.size)
                     .$(", tag=").$(MemoryTag.nameOf(task.memoryTag))
+                    .$(", errno=").$(errno)
                     .I$();
         }
     }
