@@ -299,7 +299,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
                     Utf8s.utf8ZCopyEscaped(pUtf8NameZ, tempSink);
 
                     JsonSink jsonSink = Misc.getThreadLocalJsonSink();
-                    jsonSink.of(sink);
+                    jsonSink.of(sink, false);
 
                     jsonSink
                             .startObject()
@@ -309,7 +309,11 @@ public class FileGetProcessor implements HttpRequestProcessor {
                             .startObject();
 
                     int lastSlash = Utf8s.lastIndexOfAscii(tempSink, '/');
-                    jsonSink.key("filename").val(tempSink);
+                    if (lastSlash >= 0) {
+                        jsonSink.key("filename").val(tempSink, lastSlash + 1, tempSink.size());
+                    } else {
+                        jsonSink.key("filename").val(tempSink);
+                    }
 
                     int oldLen = path.size();
                     path.trimTo(rootLen);

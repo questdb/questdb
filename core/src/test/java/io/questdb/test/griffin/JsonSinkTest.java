@@ -244,4 +244,19 @@ public class JsonSinkTest {
                 "}";
         Assert.assertEquals(expected, customSink.toString());
     }
+
+    @Test
+    public void testSubstringValue() {
+        JsonSink json = new JsonSink();
+        StringSink sink = new StringSink();
+        json.of(sink, true)  // formatted
+                .startObject()
+                .key("filename").val("path/to/data.parquet", 8, 20)  // "data.parquet"
+                .endObject();
+
+        String expected = "{\n" +
+                "  \"filename\": \"data.parquet\"\n" +
+                "}";
+        Assert.assertEquals(expected, sink.toString());
+    }
 }

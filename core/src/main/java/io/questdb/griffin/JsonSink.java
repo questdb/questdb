@@ -282,6 +282,25 @@ public class JsonSink {
     }
 
     /**
+     * Adds a substring of a CharSequence as a string value.
+     * @param value the CharSequence to extract from
+     * @param start the starting index (inclusive)
+     * @param end the ending index (exclusive)
+     */
+    public JsonSink val(CharSequence value, int start, int end) {
+        if (value == null) {
+            appendValue();
+            sink.put("null");
+        } else {
+            appendValue();
+            sink.put('"');
+            escapeStringRange(value, start, end);
+            sink.put('"');
+        }
+        return this;
+    }
+
+    /**
      * Adds a string value.
      */
     public JsonSink val(String value) {
@@ -299,6 +318,25 @@ public class JsonSink {
             appendValue();
             sink.put('"');
             escapeUtf8String(utf8);
+            sink.put('"');
+        }
+        return this;
+    }
+
+    /**
+     * Adds a substring of a Utf8Sequence as a string value.
+     * @param utf8 the Utf8Sequence to extract from
+     * @param start the starting byte index (inclusive)
+     * @param end the ending byte index (exclusive)
+     */
+    public JsonSink val(Utf8Sequence utf8, int start, int end) {
+        if (utf8 == null) {
+            appendValue();
+            sink.put("null");
+        } else {
+            appendValue();
+            sink.put('"');
+            escapeUtf8StringRange(utf8, start, end);
             sink.put('"');
         }
         return this;
@@ -558,9 +596,27 @@ public class JsonSink {
         }
     }
 
+    private void escapeStringRange(CharSequence cs, int start, int end) {
+        if (cs != null) {
+            for (int i = start; i < end && i < cs.length(); i++) {
+                escape(cs.charAt(i));
+            }
+        }
+    }
+
     private void escapeUtf8String(Utf8Sequence utf8) {
         final int size = utf8.size();
         for (int i = 0; i < size; i++) {
+            byte b = utf8.byteAt(i);
+            // For UTF-8, we need to handle multi-byte sequences properly
+            // For now, treat each byte as a character and escape as needed
+            escape((char) (0xFF & b));
+        }
+    }
+
+    private void escapeUtf8StringRange(Utf8Sequence utf8, int start, int end) {
+        final int size = utf8.size();
+        for (int i = start; i < end && i < size; i++) {
             byte b = utf8.byteAt(i);
             // For UTF-8, we need to handle multi-byte sequences properly
             // For now, treat each byte as a character and escape as needed
