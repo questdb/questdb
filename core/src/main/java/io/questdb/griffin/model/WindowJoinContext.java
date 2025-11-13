@@ -63,6 +63,8 @@ public class WindowJoinContext implements Mutable {
         hiKindPos = 0;
         includePrevailing = false;
         parentModel = null;
+        lo = 0;
+        hi = 0;
     }
 
     @Override

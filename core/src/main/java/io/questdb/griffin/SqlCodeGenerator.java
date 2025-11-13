@@ -293,6 +293,7 @@ import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WindowJoinContext;
@@ -331,7 +332,6 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.SqlOptimiser.concatFilters;
-import static io.questdb.griffin.SqlOptimiser.evalNonNegativeLongConstantOrDie;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
@@ -3176,7 +3176,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (i > 0) {
                     executionContext.pushTimestampRequiredFlag(joinsRequiringTimestamp[slaveModel.getJoinType()]);
                     executionContext.popHasInterval();
-                    executionContext.pushHasInterval(i + 1 == n ? 2 : 1); // 2 means need clear flag
+                    executionContext.pushHasInterval(1);
                 } else { // i == 0
                     // This is first model in the sequence of joins
                     // TS requirement is symmetrical on both right and left sides
@@ -3318,49 +3318,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     throw SqlException.position(0).put("including prevailing is not supported in WINDOW joins");
                                 }
                                 TimestampDriver timestampDriver = getTimestampDriver(masterMetadata.getTimestampType());
-                                long lo = 0, hi = 0;
-                                switch (context.getLoKind()) {
-                                    case WindowJoinContext.PRECEDING:
-                                        lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), executionContext);
-                                        if (context.getLoExprTimeUnit() != 0) {
-                                            lo = timestampDriver.from(lo, context.getLoExprTimeUnit());
-                                        }
-                                        break;
-                                    case WindowJoinContext.FOLLOWING:
-                                        lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), executionContext);
-                                        if (context.getLoExprTimeUnit() != 0) {
-                                            lo = timestampDriver.from(lo, context.getLoExprTimeUnit());
-                                        }
-                                        if (lo == Long.MAX_VALUE) {
-                                            lo = Long.MIN_VALUE;
-                                        } else {
-                                            lo *= -1;
-                                        }
+                                long hi = context.getHi();
+                                long lo = context.getLo();
+                                if (context.getHiExprTimeUnit() != 0) {
+                                    hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
                                 }
-                                if (lo == Long.MIN_VALUE || lo == Long.MAX_VALUE) {
-                                    throw SqlException.position(context.getLoKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
-                                }
-
-                                switch (context.getHiKind()) {
-                                    case WindowJoinContext.PRECEDING:
-                                        hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), executionContext);
-                                        if (context.getHiExprTimeUnit() != 0) {
-                                            hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
-                                        }
-                                        if (hi == Long.MAX_VALUE) {
-                                            hi = Long.MIN_VALUE;
-                                        } else {
-                                            hi *= -1;
-                                        }
-                                        break;
-                                    case WindowJoinContext.FOLLOWING:
-                                        hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), executionContext);
-                                        if (context.getHiExprTimeUnit() != 0) {
-                                            hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
-                                        }
-                                }
-                                if (hi == Long.MIN_VALUE || hi == Long.MAX_VALUE) {
-                                    throw SqlException.position(context.getHiKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
+                                if (context.getLoExprTimeUnit() != 0) {
+                                    lo = timestampDriver.from(lo, context.getHiExprTimeUnit());
                                 }
 
                                 if (hi < lo * -1) {
@@ -3826,6 +3790,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return master;
         } catch (Throwable e) {
             Misc.free(master);
+            executionContext.popIntervalModel();
+            executionContext.popHasInterval();
             throw e;
         }
     }
@@ -3897,14 +3863,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int timestampIndex,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts,
-            @NotNull LongList prefixes
+            @NotNull LongList prefixes,
+            int hasInterval
     ) throws SqlException {
         final PartitionFrameCursorFactory partitionFrameCursorFactory;
         if (intrinsicModel.hasIntervalFilters()) {
+            RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
+            if (hasInterval == 0) {
+                executionContext.popIntervalModel();
+                executionContext.pushIntervalModel(intervalModel);
+            }
             partitionFrameCursorFactory = new IntervalPartitionFrameCursorFactory(
                     tableToken,
                     model.getMetadataVersion(),
-                    intrinsicModel.buildIntervalModel(),
+                    intervalModel,
                     timestampIndex,
                     GenericRecordMetadata.deepCopyOf(reader.getMetadata()),
                     ORDER_DESC
@@ -6547,9 +6519,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
+        int hasInterval = -1;
+        RuntimeIntrinsicIntervalModel pushedIntervalModel = null;
+        boolean inJoin = model.getJoinModels().size() > 0 || model.getJoinType() != JOIN_NONE;
+        if (inJoin) {
+            pushedIntervalModel = executionContext.peekIntervalModel();
+            hasInterval = executionContext.hasInterval();
+        }
         ExpressionNode whereClause = model.getWhereClause();
 
-        if (whereClause != null || executionContext.isOverriddenIntrinsics(reader.getTableToken())) {
+        if (whereClause != null || executionContext.isOverriddenIntrinsics(reader.getTableToken()) || pushedIntervalModel != null) {
             final IntrinsicModel intrinsicModel;
             if (whereClause != null) {
                 CharSequence preferredKeyColumn = null;
@@ -6582,6 +6561,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // When we run materialized view refresh we want to restrict queries to the base table
             // to the timestamp range that is updated by the previous transactions.
             executionContext.overrideWhereIntrinsics(reader.getTableToken(), intrinsicModel, reader.getMetadata().getTimestampType());
+
+            // TODO: In theory, we can apply similar optimizations for ASOF, SPLICE and LT joins
+            if (model.getJoinType() == JOIN_WINDOW && pushedIntervalModel != null) {
+                WindowJoinContext windowJoinContext = model.getWindowJoinContext();
+                TimestampDriver driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
+                long hi = windowJoinContext.getHi();
+                long lo = windowJoinContext.getLo();
+                if (windowJoinContext.getHiExprTimeUnit() != 0) {
+                    hi = driver.from(hi, windowJoinContext.getHiExprTimeUnit());
+                }
+                if (windowJoinContext.getLoExprTimeUnit() != 0) {
+                    lo = driver.from(lo, windowJoinContext.getHiExprTimeUnit());
+                }
+                intrinsicModel.mergeIntervalModel((RuntimeIntervalModel) pushedIntervalModel, lo, hi);
+            }
 
             // intrinsic parser can collapse where clause when removing parts it can replace
             // need to make sure that filter is updated on the model in case it is processed up the call stack
@@ -6621,38 +6615,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         metadata.getTimestampIndex(),
                         columnIndexes,
                         columnSizeShifts,
-                        prefixes
+                        prefixes,
+                        hasInterval
                 );
             }
 
             // below code block generates index-based filter
             final boolean intervalHitsOnlyOnePartition;
             final int order = model.isForceBackwardScan() ? ORDER_DESC : ORDER_ASC;
-            boolean inJoin = model.getJoinModels().size() > 0 || model.getJoinType() != JOIN_NONE;
-            int hasInterval = -1;
-            RuntimeIntrinsicIntervalModel pushedIntervalModel = null;
-            if (inJoin) {
-                pushedIntervalModel = executionContext.peekIntervalModel();
-                hasInterval = executionContext.hasInterval();
-            }
 
-            RuntimeIntrinsicIntervalModel intervalModel = null;
-            boolean hasIntervalFilter = intrinsicModel.hasIntervalFilters();
-            if (hasIntervalFilter) {
-                intervalModel = intrinsicModel.buildIntervalModel();
-            }
-            if (inJoin) {
+            if (intrinsicModel.hasIntervalFilters()) {
+                RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
                 if (hasInterval == 0) {
-                    if (hasIntervalFilter) {
-                        executionContext.popIntervalModel();
-                        executionContext.pushIntervalModel(intervalModel);
-                    }
-                } else if (pushedIntervalModel != null && intervalModel == null) {
-                    intervalModel = pushedIntervalModel;
+                    executionContext.popIntervalModel();
+                    executionContext.pushIntervalModel(intervalModel);
                 }
-            }
-
-            if (intervalModel != null) {
                 dfcFactory = new IntervalPartitionFrameCursorFactory(
                         tableToken,
                         model.getMetadataVersion(),

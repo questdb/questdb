@@ -58,6 +58,7 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.std.BoolList;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
@@ -7216,6 +7217,72 @@ public class SqlOptimiser implements Mutable {
         validateWindowFunctions(model.getUnionModel(), sqlExecutionContext, recursionLevel + 1);
     }
 
+    private void validateWindowJoins(
+            QueryModel model, SqlExecutionContext sqlExecutionContext, int recursionLevel
+    ) throws SqlException {
+        if (model == null) {
+            return;
+        }
+
+        if (recursionLevel > maxRecursion) {
+            throw SqlException.$(0, "SQL model is too complex to evaluate");
+        }
+
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_WINDOW_JOIN) {
+            QueryModel child = model.getNestedModel();
+            assert child != null;
+            ObjList<QueryModel> joinModels = child.getJoinModels();
+            QueryModel slaveModel = joinModels.getQuick(joinModels.size() - 1);
+            WindowJoinContext context = slaveModel.getWindowJoinContext();
+            if (context.isIncludePrevailing()) {
+                throw SqlException.position(0).put("including prevailing is not supported in WINDOW joins");
+            }
+            long lo = 0, hi = 0;
+            switch (context.getLoKind()) {
+                case WindowJoinContext.PRECEDING:
+                    lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), sqlExecutionContext);
+                    break;
+                case WindowJoinContext.FOLLOWING:
+                    lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), sqlExecutionContext);
+                    if (lo == Long.MAX_VALUE) {
+                        lo = Long.MIN_VALUE;
+                    } else {
+                        lo *= -1;
+                    }
+            }
+            if (lo == Long.MIN_VALUE || lo == Long.MAX_VALUE) {
+                throw SqlException.position(context.getLoKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
+            }
+
+            switch (context.getHiKind()) {
+                case WindowJoinContext.PRECEDING:
+                    hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), sqlExecutionContext);
+                    if (hi == Long.MAX_VALUE) {
+                        hi = Long.MIN_VALUE;
+                    } else {
+                        hi *= -1;
+                    }
+                    break;
+                case WindowJoinContext.FOLLOWING:
+                    hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), sqlExecutionContext);
+            }
+            if (hi == Long.MIN_VALUE || hi == Long.MAX_VALUE) {
+                throw SqlException.position(context.getHiKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
+            }
+            context.setHi(hi);
+            context.setLo(lo);
+        }
+
+        validateWindowJoins(model.getNestedModel(), sqlExecutionContext, recursionLevel + 1);
+
+        // join models
+        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+            validateWindowJoins(model.getJoinModels().getQuick(i), sqlExecutionContext, recursionLevel + 1);
+        }
+
+        validateWindowJoins(model.getUnionModel(), sqlExecutionContext, recursionLevel + 1);
+    }
+
     @NotNull
     private QueryModel wrapWithSelectModel(QueryModel model, int columnCount) {
         final QueryModel outerModel = createWrapperModel(model);
@@ -7328,6 +7395,7 @@ public class SqlOptimiser implements Mutable {
             rewriteMultipleTermLimitedOrderByPart1(rewrittenModel);
             pushLimitFromChooseToNone(rewrittenModel, sqlExecutionContext);
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
+            validateWindowJoins(rewrittenModel, sqlExecutionContext, 0);
             rewriteOrderByPosition(rewrittenModel);
             rewriteOrderByPositionForUnionModels(rewrittenModel);
             rewrittenModel = rewriteOrderBy(rewrittenModel);

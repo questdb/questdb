@@ -44,24 +44,42 @@ import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
 
-public class RuntimeDynamicIntervalModel extends RuntimeStaticIntervalModel {
-    private static final Log LOG = LogFactory.getLog(RuntimeDynamicIntervalModel.class);
+public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
+    private static final Log LOG = LogFactory.getLog(RuntimeIntervalModel.class);
     private final ObjList<Function> dynamicRangeList;
+    // These 2 are incoming model
+    private final LongList intervals;
+    private final int partitionBy;
+    private final TimestampDriver timestampDriver;
+    // This used to assemble the result
     private LongList outIntervals;
 
-    public RuntimeDynamicIntervalModel(TimestampDriver timestampDriver, int partitionBy, LongList staticIntervals, ObjList<Function> dynamicRangeList) {
-        super(timestampDriver, partitionBy, staticIntervals);
-        assert dynamicRangeList != null && dynamicRangeList.size() > 0;
+    public RuntimeIntervalModel(TimestampDriver timestampDriver, int partitionBy, LongList intervals) {
+        this(timestampDriver, partitionBy, intervals, null);
+    }
+
+    public RuntimeIntervalModel(TimestampDriver timestampDriver, int partitionBy, LongList staticIntervals, ObjList<Function> dynamicRangeList) {
+        this(timestampDriver, partitionBy, staticIntervals, dynamicRangeList, true);
+    }
+
+    public RuntimeIntervalModel(TimestampDriver timestampDriver, int partitionBy, LongList staticIntervals, ObjList<Function> dynamicRangeList, boolean dynamicRangeListOwner) {
+        this.intervals = staticIntervals;
         this.dynamicRangeList = dynamicRangeList;
+        this.timestampDriver = timestampDriver;
+        this.partitionBy = partitionBy;
     }
 
     @Override
     public boolean allIntervalsHitOnePartition() {
-        return !PartitionBy.isPartitioned(partitionBy);
+        return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(timestampDriver.getPartitionFloorMethod(partitionBy));
     }
 
     @Override
     public LongList calculateIntervals(SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (isStatic()) {
+            return intervals;
+        }
+
         if (outIntervals == null) {
             outIntervals = new LongList();
         } else {
@@ -89,9 +107,22 @@ public class RuntimeDynamicIntervalModel extends RuntimeStaticIntervalModel {
         Misc.freeObjList(dynamicRangeList);
     }
 
+    public ObjList<Function> getDynamicRangeList() {
+        return dynamicRangeList;
+    }
+
+    public LongList getStaticIntervals() {
+        return intervals;
+    }
+
+    @Override
+    public TimestampDriver getTimestampDriver() {
+        return timestampDriver;
+    }
+
     @Override
     public boolean isStatic() {
-        return false;
+        return dynamicRangeList == null || dynamicRangeList.size() == 0;
     }
 
     @Override
@@ -114,6 +145,16 @@ public class RuntimeDynamicIntervalModel extends RuntimeStaticIntervalModel {
                 LOG.error().$("Can't calculate intervals: ").$safe(e.getFlyweightMessage()).$();
             }
             sink.val(']');
+        }
+    }
+
+    private static void valTs(PlanSink sink, TimestampDriver driver, long l) {
+        if (l == Numbers.LONG_NULL) {
+            sink.val("MIN");
+        } else if (l == Long.MAX_VALUE) {
+            sink.val("MAX");
+        } else {
+            sink.valISODate(driver, l);
         }
     }
 
@@ -238,6 +279,23 @@ public class RuntimeDynamicIntervalModel extends RuntimeStaticIntervalModel {
             }
             firstFuncApplied = true;
         }
+    }
+
+    private boolean allIntervalsHitOnePartition(TimestampDriver.TimestampFloorMethod floorMethod) {
+        if (!isStatic()) {
+            return false;
+        }
+        if (intervals.size() == 0) {
+            return true;
+        }
+
+        long floor = floorMethod.floor(intervals.getQuick(0));
+        for (int i = 1, n = intervals.size(); i < n; i++) {
+            if (floor != floorMethod.floor(intervals.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void applyInterval(LongList outIntervals, Interval interval) {

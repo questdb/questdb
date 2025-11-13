@@ -64,11 +64,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private TimestampDriver timestampDriver;
 
     public RuntimeIntrinsicIntervalModel build() {
-        if (dynamicRangeList.size() != 0) {
-            return new RuntimeDynamicIntervalModel(timestampDriver, partitionBy, new LongList(staticIntervals), new ObjList<>(dynamicRangeList));
-        } else {
-            return new RuntimeStaticIntervalModel(timestampDriver, partitionBy, staticIntervals);
-        }
+        return new RuntimeIntervalModel(timestampDriver, partitionBy, new LongList(staticIntervals), new ObjList<>(dynamicRangeList));
     }
 
     @Override
@@ -207,6 +203,42 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public boolean isEmptySet() {
         return intervalApplied && staticIntervals.size() == 0;
+    }
+
+    /**
+     * Merges intervals from another RuntimeIntervalModel into this builder.
+     * Currently only support static intervals.
+     *
+     * @param model the RuntimeIntervalModel to merge from
+     */
+    public void merge(RuntimeIntervalModel model, long loOffset, long hiOffset) {
+        if (model == null || isEmptySet()) {
+            return;
+        }
+        ObjList<Function> dynamicRangeList = model.getDynamicRangeList();
+        LongList modelIntervals = model.getStaticIntervals();
+        if (modelIntervals != null && modelIntervals.size() > 0) {
+            int dynamicStart = modelIntervals.size() - (dynamicRangeList != null ? dynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL : 0);
+            TimestampDriver driver = model.getTimestampDriver();
+
+            for (int i = 0; i < dynamicStart; i += 2) {
+                long lo = modelIntervals.getQuick(i);
+                if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
+                    lo = timestampDriver.from(lo, driver.getTimestampType());
+                    lo -= loOffset;
+                }
+                long hi = modelIntervals.getQuick(i + 1);
+                if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
+                    hi = timestampDriver.from(hi, driver.getTimestampType());
+                    hi += hiOffset;
+                }
+                intersect(lo, hi);
+            }
+
+            // TODO: Add support for dynamic intervals in merge() method
+            // When merging RuntimeIntervalModel with dynamic intervals, need to:
+            // Extend STATIC_LONGS_PER_DYNAMIC_INTERVAL to include offset metadata
+        }
     }
 
     public void of(int timestampType, int partitionBy) {
