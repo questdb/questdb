@@ -11734,7 +11734,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = rnd_long() ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=rnd_long() [pre-touch]\n" +
+                        "  filter: l=rnd_long()\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
