@@ -295,19 +295,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo, slaveTimestampHi;
 
-            if (joinWindowLo == Long.MAX_VALUE) {
-                slaveTimestampLo = Long.MIN_VALUE;
-            } else {
-                slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-            }
-
-            if (joinWindowHi == Long.MAX_VALUE) {
-                slaveTimestampHi = Long.MAX_VALUE;
-            } else {
-                slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
-            }
+            long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+            long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
 
             long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
             if (slaveRowId != Long.MIN_VALUE) {
@@ -351,17 +341,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 functionUpdater.updateEmpty(value);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                if (joinWindowLo == Long.MAX_VALUE) {
-                    slaveTimestampLo = Long.MIN_VALUE;
-                } else {
-                    slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                }
-
-                if (joinWindowHi == Long.MAX_VALUE) {
-                    slaveTimestampHi = Long.MAX_VALUE;
-                } else {
-                    slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
-                }
+                slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
+                slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = Math.max(masterKey + 1, 0);
@@ -459,19 +440,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo, slaveTimestampHi;
 
-            if (joinWindowLo == Long.MAX_VALUE) {
-                slaveTimestampLo = Long.MIN_VALUE;
-            } else {
-                slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-            }
-
-            if (joinWindowHi == Long.MAX_VALUE) {
-                slaveTimestampHi = Long.MAX_VALUE;
-            } else {
-                slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
-            }
+            long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+            long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
 
             long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
             if (slaveRowId != Long.MIN_VALUE) {
@@ -517,17 +488,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 }
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                if (joinWindowLo == Long.MAX_VALUE) {
-                    slaveTimestampLo = Long.MIN_VALUE;
-                } else {
-                    slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                }
-
-                if (joinWindowHi == Long.MAX_VALUE) {
-                    slaveTimestampHi = Long.MAX_VALUE;
-                } else {
-                    slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
-                }
+                slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
+                slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = Math.max(masterKey + 1, 0);
@@ -618,19 +580,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
-                long slaveTimestampLo, slaveTimestampHi;
 
-                if (joinWindowLo == Long.MAX_VALUE) {
-                    slaveTimestampLo = Long.MIN_VALUE;
-                } else {
-                    slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-                }
-
-                if (joinWindowHi == Long.MAX_VALUE) {
-                    slaveTimestampHi = Long.MAX_VALUE;
-                } else {
-                    slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
-                }
+                long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+                long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
 
                 long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
                 if (slaveRowId != Long.MIN_VALUE) {
@@ -675,17 +627,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     functionUpdater.updateEmpty(value);
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    if (joinWindowLo == Long.MAX_VALUE) {
-                        slaveTimestampLo = Long.MIN_VALUE;
-                    } else {
-                        slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                    }
-
-                    if (joinWindowHi == Long.MAX_VALUE) {
-                        slaveTimestampHi = Long.MAX_VALUE;
-                    } else {
-                        slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
-                    }
+                    slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
+                    slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
 
                     final int masterKey = record.getInt(masterSymbolIndex);
                     final int idx = Math.max(masterKey + 1, 0);
@@ -792,19 +735,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
-                long slaveTimestampLo, slaveTimestampHi;
 
-                if (joinWindowLo == Long.MAX_VALUE) {
-                    slaveTimestampLo = Long.MIN_VALUE;
-                } else {
-                    slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-                }
-
-                if (joinWindowHi == Long.MAX_VALUE) {
-                    slaveTimestampHi = Long.MAX_VALUE;
-                } else {
-                    slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
-                }
+                long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+                long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
 
                 long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
                 if (slaveRowId != Long.MIN_VALUE) {
@@ -850,17 +783,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     }
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    if (joinWindowLo == Long.MAX_VALUE) {
-                        slaveTimestampLo = Long.MIN_VALUE;
-                    } else {
-                        slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
-                    }
-
-                    if (joinWindowHi == Long.MAX_VALUE) {
-                        slaveTimestampHi = Long.MAX_VALUE;
-                    } else {
-                        slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
-                    }
+                    slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
+                    slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
 
                     final int masterKey = record.getInt(masterSymbolIndex);
                     final int idx = Math.max(masterKey + 1, 0);
