@@ -20,12 +20,10 @@ stages:
               imageName: 'ubuntu-latest'
               poolName: "Azure Pipelines"
               os: Linux
-              jdk: "1.17"
             windows:
               imageName: "windows-latest"
               poolName: "Azure Pipelines"
               os: Windows
-              jdk: "1.17"
         pool:
           vmImage: $(imageName)
           name: $(poolName)
@@ -35,14 +33,52 @@ stages:
             fetchDepth: 1
             lfs: false
             submodules: true
+
+          # --- GraalVM CE 17.0.9 install (Linux) ---
+          - bash: |
+              set -eux
+              GRAAL_VERSION=17.0.9
+              curl -L -o graalvm-ce.tar.gz \
+                "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${GRAAL_VERSION}/graalvm-community-jdk-${GRAAL_VERSION}_linux-x64_bin.tar.gz"
+              
+              mkdir -p "$HOME/graalvm-ce-17"
+              tar -xzf graalvm-ce.tar.gz -C "$HOME/graalvm-ce-17" --strip-components=1
+              
+              echo "##vso[task.setvariable variable=GRAALVM_HOME]$HOME/graalvm-ce-17"
+            displayName: "Install GraalVM Community 17.0.9 (Linux)"
+            condition: eq( variables['os'], 'Linux')
+
+          # --- GraalVM CE 17.0.9 install (Windows) ---
+          - powershell: |
+              $ErrorActionPreference = "Stop"
+              $GRAAL_VERSION = "17.0.9"
+              $zip = "$env:USERPROFILE\graalvm-ce.zip"
+
+              $url = "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-$GRAAL_VERSION/graalvm-community-jdk-$GRAAL_VERSION`_windows-x64_bin.zip"
+              Write-Host "Downloading $url"
+              Invoke-WebRequest $url -OutFile $zip
+
+              $dest = "$env:USERPROFILE\graalvm-ce-17"
+              if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+              Expand-Archive $zip -DestinationPath $dest
+
+              # The zip contains a top-level directory, grab it
+              $dir = Get-ChildItem $dest | Where-Object { $_.PSIsContainer } | Select-Object -First 1
+              $graalHome = $dir.FullName
+
+              Write-Host "GRAALVM_HOME = $graalHome"
+              Write-Host "##vso[task.setvariable variable=GRAALVM_HOME]$graalHome"
+            displayName: "Install GraalVM Community 17.0.9 (Windows)"
+            condition: eq( variables['os'], 'Windows')
+
           - task: Maven@3
             displayName: "Building QuestDB"
             inputs:
               mavenPomFile: "core/pom.xml"
               goals: "package"
-              options:
-                "-DskipTests -Dhttp.keepAlive=false -P build-web-console,build-binaries"
-              jdkVersionOption: $(jdk)
+              options: "-DskipTests -Dhttp.keepAlive=false -P build-web-console,build-binaries"
+              javaHomeOption: 'Path'
+              jdkDirectory: '$(GRAALVM_HOME)'
           - task: CopyFiles@2
             inputs:
               SourceFolder: '$(build.sourcesDirectory)/core/target'

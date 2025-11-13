@@ -1,19 +1,27 @@
 FROM debian:bookworm AS builder
 ARG tag_name
+ARG GRAAL_JDK_VERSION=17.0.9
 
 ENV GOSU_VERSION=1.19
-ENV JDK_VERSION=17.0.16.8-1
 
+# Base tools + maven (no Corretto repo anymore)
 RUN apt-get update \
-    && apt-get install --no-install-recommends git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip -y
+    && apt-get install --no-install-recommends -y \
+       git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip maven \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN wget -O - https://apt.corretto.aws/corretto.key | gpg --dearmor -o /usr/share/keyrings/corretto-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/corretto-keyring.gpg] https://apt.corretto.aws stable main" | tee /etc/apt/sources.list.d/corretto.list && \
-    apt-get update && \
-    apt-get install --no-install-recommends -y java-17-amazon-corretto-jdk=1:${JDK_VERSION} && \
-    apt-get -y install maven
+# Install GraalVM Community JDK 17
+RUN curl -L -o /tmp/graalvm-ce.tar.gz \
+      "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${GRAAL_JDK_VERSION}/graalvm-community-jdk-${GRAAL_JDK_VERSION}_linux-x64_bin.tar.gz" \
+    && mkdir -p /usr/lib/jvm/graalvm-community-jdk-${GRAAL_JDK_VERSION} \
+    && tar -xzf /tmp/graalvm-ce.tar.gz \
+         -C /usr/lib/jvm/graalvm-community-jdk-${GRAAL_JDK_VERSION} \
+         --strip-components=1 \
+    && rm /tmp/graalvm-ce.tar.gz
 
-ENV JAVA_HOME=/usr/lib/jvm/java-17-amazon-corretto
+ENV JAVA_HOME=/usr/lib/jvm/graalvm-community-jdk-${GRAAL_JDK_VERSION}
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
 WORKDIR /build
 
 RUN echo tag_name ${tag_name:-master}
