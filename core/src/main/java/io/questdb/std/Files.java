@@ -72,10 +72,14 @@ public final class Files {
     private static final MmapCache mmapCache = new MmapCache();
     public static boolean FS_CACHE_ENABLED = true;
 
-    // Db max directory depth is 5, the expected structure is:
-    // db/tableDir/partitionDir
-    // db/tableDir/wal/segmentDir
-    // db/.download/tableDir/wal/segmentDir
+    // Maximum recursion depth when deleting the database directory.
+    // Recursion starts at depth 0 for the root directory (e.g., "db").
+    // A value of 5 allows recursing through 5 subdirectory levels beneath the root
+    // (i.e., depths 0-4 are allowed, depth 5 triggers the limit).
+    // Example structures within the allowed depth:
+    //   db/tableDir/partitionDir
+    //   db/tableDir/wal/segmentDir
+    //   db/.download/tableDir/wal/segmentDir
     public static int RMDIR_MAX_DEPTH = 5;
 
     // To be set in tests to check every call for using OPEN file descriptor
