@@ -2362,7 +2362,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected int getQueueCapacity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int defaultValue) throws ServerConfigurationException {
         final int value = getInt(properties, env, key, defaultValue);
         if (!Numbers.isPow2(value) && value != 0) {
-            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Value must be power of 2, e.g. 0,1,2,4,8,16,32,64...");
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Value must be 0 or a power of 2, e.g. 0,1,2,4,8,16,32,64...");
         }
         return value;
     }
