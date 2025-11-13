@@ -767,7 +767,7 @@ public final class Files {
      * @param path       path to the directory, must include trailing slash (/)
      * @param haltOnFail when true removing directory will halt on first failed attempt to remove directory contents. When
      *                   false, the function will remove as many files and subdirectories as possible. That might be useful
-     *                   when the intent is too free up as much disk space as possible.
+     *                   when the intent is to free up as much disk space as possible.
      * @param log        log instance to report critical errors to, can be null
      * @return >=0 depth of the removed directory on success, negative number indicates failure
      */
