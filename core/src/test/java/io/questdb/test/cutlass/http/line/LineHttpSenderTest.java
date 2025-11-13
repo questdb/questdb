@@ -2022,6 +2022,15 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     flushAndAssertError(
                             sender,
                             "12345 is out bounds of column type: DECIMAL(76,73)");
+
+                    sender.reset();
+                    // Decimal mustn't lose precision when scaled.
+                    sender.table(tableName)
+                            .decimalColumn("x", Decimal256.fromLong(123456, 4))
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "converting 12.3456 to DECIMAL(6,3) will result in loss of precision");
                 }
             }
         });
