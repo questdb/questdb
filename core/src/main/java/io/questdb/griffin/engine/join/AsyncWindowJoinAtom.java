@@ -555,11 +555,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     @Override
     public void toPlan(PlanSink sink) {
         sink.attr("window lo");
-        if (joinWindowLo == Long.MAX_VALUE) {
-            sink.val("unbounded preceding");
-        } else if (joinWindowLo == Long.MIN_VALUE) {
-            sink.val("unbounded following");
-        } else if (joinWindowLo == 0) {
+        if (joinWindowLo == 0) {
             sink.val("current row");
         } else if (joinWindowLo < 0) {
             sink.val(Math.abs(joinWindowLo)).val(" following");
@@ -568,11 +564,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
 
         sink.attr("window hi");
-        if (joinWindowHi == Long.MAX_VALUE) {
-            sink.val("unbounded following");
-        } else if (joinWindowHi == Long.MIN_VALUE) {
-            sink.val("unbounded preceding");
-        } else if (joinWindowHi == 0) {
+        if (joinWindowHi == 0) {
             sink.val("current row");
         } else if (joinWindowHi < 0) {
             sink.val(Math.abs(joinWindowHi)).val(" preceding");

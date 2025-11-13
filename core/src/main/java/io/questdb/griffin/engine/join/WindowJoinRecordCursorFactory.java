@@ -72,7 +72,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  */
 public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final WindowJoinRecordCursor cursor;
-    private final Function filter;
+    private final Function joinFilter;
     private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
@@ -91,14 +91,14 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             long windowHi,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ArrayColumnTypes columnTypes,
-            @Nullable Function filter
+            @Nullable Function joinFilter
     ) {
         super(metadata);
         assert slaveFactory.supportsTimeFrameCursor();
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         this.joinMetadata = joinMetadata;
-        this.filter = filter;
+        this.joinFilter = joinFilter;
         this.windowLo = windowLo;
         this.windowHi = windowHi;
         final int columnSplit = masterFactory.getMetadata().getColumnCount();
@@ -154,11 +154,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.type("Window Join");
 
         sink.attr("window lo");
-        if (windowLo == Long.MAX_VALUE) {
-            sink.val("unbounded preceding");
-        } else if (windowLo == Long.MIN_VALUE) {
-            sink.val("unbounded following");
-        } else if (windowLo == 0) {
+        if (windowLo == 0) {
             sink.val("current row");
         } else if (windowLo < 0) {
             sink.val(Math.abs(windowLo)).val(" following");
@@ -167,11 +163,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         sink.attr("window hi");
-        if (windowHi == Long.MAX_VALUE) {
-            sink.val("unbounded following");
-        } else if (windowHi == Long.MIN_VALUE) {
-            sink.val("unbounded preceding");
-        } else if (windowHi == 0) {
+        if (windowHi == 0) {
             sink.val("current row");
         } else if (windowHi < 0) {
             sink.val(Math.abs(windowHi)).val(" preceding");
@@ -179,9 +171,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             sink.val(windowHi).val(" following");
         }
 
-        if (filter != null) {
+        if (joinFilter != null) {
             sink.setMetadata(joinMetadata);
-            sink.attr("join filter").val(filter);
+            sink.attr("join filter").val(joinFilter);
             sink.setMetadata(null);
         }
         sink.child(masterFactory);
@@ -194,7 +186,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(cursor);
-        Misc.free(filter);
+        Misc.free(joinFilter);
         Misc.free(joinMetadata);
     }
 
@@ -305,17 +297,8 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
             // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo, slaveTimestampHi;
-            if (windowLo == Long.MAX_VALUE) {
-                slaveTimestampLo = Long.MIN_VALUE;
-            } else {
-                slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            }
-            if (windowHi == Long.MAX_VALUE) {
-                slaveTimestampHi = Long.MAX_VALUE;
-            } else {
-                slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
-            }
+            long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             groupByFunctionsUpdater.updateEmpty(simpleMapValue);
 
@@ -335,7 +318,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                     break;
                 }
 
-                if (filter == null || filter.getBool(internalJoinRecord)) {
+                if (joinFilter == null || joinFilter.getBool(internalJoinRecord)) {
                     if (first) {
                         groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowId);
                         first = false;
@@ -397,8 +380,8 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             slaveTimeFrameHelper.of(slaveCursor);
             internalJoinRecord.of(masterRecord, slaveTimeFrameHelper.getRecord());
             joinSymbolTableSource.of(masterCursor, slaveTimeFrameHelper.getSymbolTableSource());
-            if (filter != null) {
-                filter.init(joinSymbolTableSource, sqlExecutionContext);
+            if (joinFilter != null) {
+                joinFilter.init(joinSymbolTableSource, sqlExecutionContext);
             }
             Function.init(groupByFunctions, joinSymbolTableSource, sqlExecutionContext, null);
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
