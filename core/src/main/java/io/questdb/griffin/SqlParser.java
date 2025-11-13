@@ -3877,7 +3877,7 @@ public class SqlParser {
      */
     private void rewriteJsonExtractCast(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && isCastKeyword(node.token)) {
-            if (node.lhs != null && node.lhs.paramCount == 2 && isJsonExtract(node.lhs.token)) {
+            if (node.lhs != null && node.lhs.paramCount == 2 && node.lhs.token != null && isJsonExtract(node.lhs.token)) {
                 // rewrite cast such as
                 // json_extract(json,path)::type -> json_extract(json,path,type)
                 // the ::type is already rewritten as
