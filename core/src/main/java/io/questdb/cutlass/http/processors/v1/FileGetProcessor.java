@@ -30,6 +30,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
@@ -44,6 +45,8 @@ public class FileGetProcessor implements HttpRequestProcessor {
     static final int FILE_SEND_COMPLETED = FILE_SEND_CHUNK + 1;
     private static final Log LOG = LogFactory.getLog(FileGetProcessor.class);
     private static final LocalValue<State> LV = new LocalValue<>();
+    private static final Utf8String URL_PARAM_CURSOR = new Utf8String("page[cursor]");
+    private static final Utf8String URL_PARAM_LIMIT = new Utf8String("page[limit]");
     private final CairoEngine engine;
     private final FilesRootDir filesRoot;
     private final byte requiredAuthType;
@@ -323,6 +326,9 @@ public class FileGetProcessor implements HttpRequestProcessor {
             return;
         }
 
+        int returnedCount = 0; // count of items returned in this page
+        boolean foundCursor = state.cursor == null; // start returning if no cursor or cursor found
+
         try {
             while (true) {
                 while (pFind <= 0 && state.findStack.notEmpty()) {
@@ -366,7 +372,6 @@ public class FileGetProcessor implements HttpRequestProcessor {
                     pFind = state.ff.findFirst(path.$());
                     continue;
                 } else if (type == Files.DT_FILE) {
-                    state.firstFile = false;
                     state.fileCount++;
 
                     tempSink.clear();
@@ -374,6 +379,28 @@ public class FileGetProcessor implements HttpRequestProcessor {
                         Utf8s.utf8ZCopyEscaped(path.ptr() + rootLen + 1, path.end(), tempSink);
                     }
                     Utf8s.utf8ZCopyEscaped(pUtf8NameZ, tempSink);
+
+                    // Check if we've reached the cursor position
+                    if (!foundCursor) {
+                        String currentId = tempSink.toString();
+                        if (currentId.equals(state.cursor)) {
+                            foundCursor = true; // next item will be the start of our page
+                        }
+                        if (state.ff.findNext(pFind) <= 0) {
+                            state.ff.findClose(pFind);
+                            pFind = 0;
+                        }
+                        continue; // skip this item and continue looking for cursor
+                    }
+
+                    // We have found the cursor or there was no cursor, check if we've reached limit
+                    if (returnedCount >= state.limit) {
+                        // Stop scanning, we've reached our limit
+                        break;
+                    }
+
+                    state.firstFile = false;
+                    returnedCount++;
 
                     jsonSink
                             .startObject()
@@ -394,7 +421,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
                     path.concat(tempSink);
 
                     // Store the relative path before tempSink is cleared
-                    CharSequence relativePath = tempSink.toString();
+                    String relativePath = tempSink.toString();
                     jsonSink.key("path").val(relativePath);
 
                     long fileSize = state.ff.length(path.$());
@@ -409,6 +436,9 @@ public class FileGetProcessor implements HttpRequestProcessor {
                             .key("lastModified").valMillis(lastModified)
                             .endObject()
                             .endObject();
+
+                    // Store the last returned id as the cursor for the next page
+                    state.lastId = relativePath;
                 }
 
                 if (state.ff.findNext(pFind) <= 0) {
@@ -470,6 +500,28 @@ public class FileGetProcessor implements HttpRequestProcessor {
             CharSequence root,
             State state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // Extract pagination parameters
+        HttpRequestHeader request = context.getRequestHeader();
+        DirectUtf8Sequence cursorParam = request.getUrlParam(URL_PARAM_CURSOR);
+        DirectUtf8Sequence limitParam = request.getUrlParam(URL_PARAM_LIMIT);
+
+        if (cursorParam != null && cursorParam.size() > 0) {
+            state.cursor = cursorParam.toString();
+        }
+        if (limitParam != null && limitParam.size() > 0) {
+            try {
+                state.limit = Integer.parseInt(limitParam.toString());
+                // Enforce reasonable limits to prevent abuse
+                if (state.limit <= 0) {
+                    state.limit = 10;
+                } else if (state.limit > 1000) {
+                    state.limit = 1000;
+                }
+            } catch (NumberFormatException e) {
+                state.limit = 10;
+            }
+        }
+
         Utf8StringSink listSink = state.sink;
         JsonSink jsonSink = Misc.getThreadLocalJsonSink();
         jsonSink.of(listSink).startObject().key("data").startArray();
@@ -478,6 +530,12 @@ public class FileGetProcessor implements HttpRequestProcessor {
             jsonSink.endArray()
                     .key("meta").startObject()
                     .key("totalFiles").val(state.fileCount)
+                    .key("page").startObject()
+                    .key("limit").val(state.limit);
+            if (state.lastId != null) {
+                jsonSink.key("cursor").val(state.lastId);
+            }
+            jsonSink.endObject()
                     .endObject().endObject();
             context.simpleResponse().sendStatusJsonApiContent(HTTP_OK, listSink, false);
         } catch (CairoException e) {
@@ -523,6 +581,10 @@ public class FileGetProcessor implements HttpRequestProcessor {
         boolean paused;
         Utf8StringSink sink = new Utf8StringSink();
         int state;
+        // Pagination fields
+        String cursor;
+        int limit = 10; // default limit
+        CharSequence lastId; // last returned id for cursor-based pagination
 
         State(FilesFacade ff) {
             this.ff = ff;
@@ -561,6 +623,9 @@ public class FileGetProcessor implements HttpRequestProcessor {
             firstFile = true;
             fileCount = 0;
             sink.clear();
+            cursor = null;
+            limit = 10;
+            lastId = null;
         }
 
         @Override

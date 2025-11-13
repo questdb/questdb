@@ -36,8 +36,26 @@ paths:
       description: |
         Lists all files and directories in the imports root directory.
 
+        Supports cursor-based pagination following JSON:API specification.
+
         Requires: sql.copy.input.root must be configured
       operationId: getImportsList
+      parameters:
+        - name: page[cursor]
+          in: query
+          description: Cursor value from a previous response to fetch the next page. Use the cursor value from meta.page.cursor
+          schema:
+            type: string
+          example: data.parquet
+        - name: page[limit]
+          in: query
+          description: Number of files to return per page (default 10, max 1000)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 10
+          example: 20
       responses:
         '200':
           description: Successful retrieval of import files list
@@ -59,6 +77,9 @@ paths:
                           lastModified: 1699812345000
                     meta:
                       totalFiles: 1
+                      page:
+                        limit: 10
+                        cursor: data.parquet
         '400':
           description: Bad request - imports path not configured
           content:
@@ -105,8 +126,25 @@ paths:
               file:
                 contentType: application/octet-stream
       responses:
-        '200':
+        '201':
           description: All files uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUploadResponse'
+              examples:
+                success:
+                  value:
+                    data:
+                      - type: file
+                        id: data.parquet
+                        attributes:
+                          filename: data.parquet
+                          status: uploaded
+                    meta:
+                      totalFiles: 1
+        '200':
+          description: Files were uploaded successfully and overwrote existing files.
           content:
             application/json:
               schema:
@@ -301,8 +339,26 @@ paths:
       description: |
         Lists all files and directories in the exports root directory.
 
+        Supports cursor-based pagination following JSON:API specification.
+
         Requires: sql.copy.export.root must be configured
       operationId: getExportsList
+      parameters:
+        - name: page[cursor]
+          in: query
+          description: Cursor value from a previous response to fetch the next page. Use the cursor value from meta.page.cursor
+          schema:
+            type: string
+          example: results.csv
+        - name: page[limit]
+          in: query
+          description: Number of files to return per page (default 10, max 1000)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 10
+          example: 20
       responses:
         '200':
           description: Successful retrieval of export files list
@@ -324,6 +380,9 @@ paths:
                           lastModified: 1699812345000
                     meta:
                       totalFiles: 1
+                      page:
+                        limit: 10
+                        cursor: results.csv
         '400':
           description: Bad request - exports path not configured
           content:
@@ -511,6 +570,19 @@ components:
         - id
         - attributes
 
+    PaginationInfo:
+      type: object
+      description: Pagination information for cursor-based pagination
+      properties:
+        limit:
+          type: integer
+          description: The number of files returned in this page
+        cursor:
+          type: string
+          description: Cursor value to use for fetching the next page. Only present if there are more results available.
+      required:
+        - limit
+
     FileListMeta:
       type: object
       description: Metadata about the file list response
@@ -518,8 +590,12 @@ components:
         totalFiles:
           type: integer
           description: Total number of files and directories in the listing
+        page:
+          $ref: '#/components/schemas/PaginationInfo'
+          description: Pagination information
       required:
         - totalFiles
+        - page
 
     FileListResponse:
       type: object
