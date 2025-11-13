@@ -57,7 +57,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
-    private long frameSequenceId;
+    private long frameSequenceId = -1;
     private boolean isCancelled;
     private boolean isOutOfMemory;
     private byte taskType;
@@ -168,11 +168,13 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
+        final boolean sameQueryExecution = frameSequenceId == frameSequence.getId();
         this.frameSequenceId = frameSequence.getId();
         this.taskType = frameSequence.getTaskType();
         this.frameIndex = frameIndex;
-        // Top K uses its own frame memory pool.
-        if (taskType != TYPE_TOP_K) {
+        // Initialize the memory pool if the task wasn't previously initialized for the same query,
+        // or it belongs to top K. Top K uses its own frame memory pool.
+        if (!sameQueryExecution && taskType != TYPE_TOP_K) {
             frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         }
         frameMemory = null;
@@ -221,14 +223,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     public void releaseFrameMemory() {
-        Misc.free(frameMemoryPool);
+        frameMemoryPool.releaseParquetBuffers();
         frameMemory = null;
-    }
-
-    // same as clear(), but also releases frame pool memory
-    public void reset() {
-        clear();
-        releaseFrameMemory();
     }
 
     public void setErrorMsg(Throwable th) {
@@ -239,8 +235,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             errorMsg.put(msg != null ? msg : exceptionMessage);
         }
 
-        if (th instanceof CairoException) {
-            final CairoException ce = (CairoException) th;
+        if (th instanceof CairoException ce) {
             isCancelled = ce.isCancellation();
             isOutOfMemory = ce.isOutOfMemory();
             errorMessagePosition = ce.getPosition();
@@ -276,7 +271,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         // is 32 items. If our particular producer resizes queue items to 10x of the initial size
         // we let these sizes stick until produce starts to wind down.
         if (forceCollect || frameIndex >= frameCount - frameQueueCapacity) {
-            reset();
+            clear();
+        } else {
+            // Never keep parquet buffers around to avoid OOM even if there is an ongoing query.
+            releaseFrameMemory();
         }
     }
 }

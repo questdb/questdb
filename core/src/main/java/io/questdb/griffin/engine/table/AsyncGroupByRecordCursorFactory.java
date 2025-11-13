@@ -216,31 +216,27 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         record.init(frameMemory);
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+        final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
+        final RecordSink mapSink = atom.getMapSink(slotId);
         try {
-            final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-            final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
-            final RecordSink mapSink = atom.getMapSink(slotId);
-            try {
-                if (atom.isSharded()) {
-                    fragment.shard();
-                }
-
-                record.setRowIndex(0);
-                long baseRowId = record.getRowId();
-
-                if (fragment.isNotSharded()) {
-                    aggregateNonSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
-                } else {
-                    aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
-                }
-
-                atom.requestSharding(fragment);
-            } finally {
-                atom.release(slotId);
+            if (atom.isSharded()) {
+                fragment.shard();
             }
+
+            record.setRowIndex(0);
+            long baseRowId = record.getRowId();
+
+            if (fragment.isNotSharded()) {
+                aggregateNonSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+            } else {
+                aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+            }
+
+            atom.requestSharding(fragment);
         } finally {
-            task.releaseFrameMemory();
+            atom.release(slotId);
         }
     }
 
@@ -384,40 +380,36 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final AsyncGroupByAtom atom = frameSequence.getAtom();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+        final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
+        final CompiledFilter compiledFilter = atom.getCompiledFilter();
+        final Function filter = atom.getFilter(slotId);
+        final RecordSink mapSink = atom.getMapSink(slotId);
         try {
-            final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-            final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
-            final CompiledFilter compiledFilter = atom.getCompiledFilter();
-            final Function filter = atom.getFilter(slotId);
-            final RecordSink mapSink = atom.getMapSink(slotId);
-            try {
-                if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                    // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                    applyFilter(filter, rows, record, frameRowCount);
-                } else {
-                    applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-                }
-
-                if (atom.isSharded()) {
-                    fragment.shard();
-                }
-
-                record.setRowIndex(0);
-                long baseRowId = record.getRowId();
-
-                if (fragment.isNotSharded()) {
-                    aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
-                } else {
-                    aggregateFilteredSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
-                }
-
-                atom.requestSharding(fragment);
-            } finally {
-                atom.release(slotId);
+            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+                // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
+                applyFilter(filter, rows, record, frameRowCount);
+            } else {
+                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
+
+            if (atom.isSharded()) {
+                fragment.shard();
+            }
+
+            record.setRowIndex(0);
+            long baseRowId = record.getRowId();
+
+            if (fragment.isNotSharded()) {
+                aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+            } else {
+                aggregateFilteredSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+            }
+
+            atom.requestSharding(fragment);
         } finally {
-            task.releaseFrameMemory();
+            atom.release(slotId);
         }
     }
 

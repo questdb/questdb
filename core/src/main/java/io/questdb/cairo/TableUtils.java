@@ -699,18 +699,24 @@ public final class TableUtils {
         Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_TABLE_READER);
     }
 
-    public static int getColumnCount(MemoryMR metaMem, long offset) {
+    public static int getColumnCount(Utf8Sequence metaPath, MemoryMR metaMem, long offset) {
         final int columnCount = metaMem.getInt(offset);
         if (columnCount < 0) {
-            throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
+            throw validationException().put("incorrect columnCount [path=")
+                    .put(metaPath)
+                    .put(", columnCount=").put(columnCount)
+                    .put(']');
         }
         return columnCount;
     }
 
-    public static CharSequence getColumnName(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+    public static CharSequence getColumnName(Utf8Sequence metaPath, MemoryMR metaMem, long memSize, long offset, int columnIndex) {
         final int strLength = getInt(metaMem, memSize, offset);
         if (strLength == TableUtils.NULL_LEN) {
-            throw validationException(metaMem).put("NULL column name at [").put(columnIndex).put(']');
+            throw validationException()
+                    .put("NULL column name [path=").put(metaPath)
+                    .put(", columnIndex=").put(columnIndex)
+                    .put(']');
         }
         return getCharSequence(metaMem, memSize, offset, strLength);
     }
@@ -723,12 +729,16 @@ public final class TableUtils {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
-    public static int getColumnType(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
-        final int type = getInt(metaMem, memSize, offset);
-        if (type >= 0 && ColumnType.sizeOf(type) == -1) {
-            throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(columnIndex).put(']');
+    public static int getColumnType(Utf8Sequence metaPath, MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+        final int columnType = getInt(metaMem, memSize, offset);
+        if (columnType >= 0 && ColumnType.sizeOf(columnType) == -1) {
+            throw validationException()
+                    .put("invalid column type [path=").put(metaPath)
+                    .put(", columnType=").put(columnType)
+                    .put(", columnIndex=").put(columnIndex)
+                    .put(']');
         }
-        return type;
+        return columnType;
     }
 
     public static int getInt(MemoryR metaMem, long memSize, long offset) {
@@ -856,10 +866,14 @@ public final class TableUtils {
         return Chars.toString(privateName).substring(0, suffixIndex);
     }
 
-    public static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
+    public static int getTimestampIndex(Utf8Sequence metaPath, MemoryMR metaMem, long offset, int columnCount) {
         final int timestampIndex = metaMem.getInt(offset);
         if (timestampIndex < -1 || timestampIndex >= columnCount) {
-            throw validationException(metaMem).put("Timestamp index is outside of range, timestampIndex=").put(timestampIndex);
+            throw validationException()
+                    .put("timestamp index is outside of range, [path=").put(metaPath)
+                    .put(", timestampIndex=").put(timestampIndex)
+                    .put(", columnCount=").put(columnCount)
+                    .put(']');
         }
         return timestampIndex;
     }
@@ -1742,26 +1756,34 @@ public final class TableUtils {
     }
 
     public static void validateMeta(
+            Utf8Sequence metaPath,
             MemoryMR metaMem,
             LowerCaseCharSequenceIntHashMap nameIndex,
             int expectedVersion
     ) {
         try {
             final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
-            validateMetaVersion(metaMem, META_OFFSET_VERSION, expectedVersion);
-            final int columnCount = getColumnCount(metaMem, META_OFFSET_COUNT);
+            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion);
+            final int columnCount = getColumnCount(metaPath, metaMem, META_OFFSET_COUNT);
 
             long offset = getColumnNameOffset(columnCount);
             if (memSize < offset) {
-                throw validationException(metaMem).put("File is too small, column types are missing ").put(memSize);
+                throw validationException()
+                        .put("file is too small, column types are missing [path=").put(metaPath)
+                        .put(", memSize=").put(memSize)
+                        .put(']');
             }
 
             // validate designated timestamp column
-            final int timestampIndex = getTimestampIndex(metaMem, META_OFFSET_TIMESTAMP_INDEX, columnCount);
+            final int timestampIndex = getTimestampIndex(metaPath, metaMem, META_OFFSET_TIMESTAMP_INDEX, columnCount);
             if (timestampIndex != -1) {
                 final int timestampType = getColumnType(metaMem, timestampIndex);
                 if (!ColumnType.isTimestamp(timestampType)) {
-                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
+                    throw validationException()
+                            .put("timestamp column must be TIMESTAMP [path=").put(metaPath)
+                            .put(", columnType=").put(ColumnType.nameOf(timestampType))
+                            .put(", columnIndex=").put(timestampIndex)
+                            .put(']');
                 }
             }
 
@@ -1769,16 +1791,28 @@ public final class TableUtils {
             for (int i = 0; i < columnCount; i++) {
                 final int type = Math.abs(getColumnType(metaMem, i));
                 if (ColumnType.sizeOf(type) == -1) {
-                    throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
+                    throw validationException()
+                            .put("invalid column type [path=").put(metaPath)
+                            .put(", columnType=").put(type)
+                            .put(", columnIndex=").put(i)
+                            .put(']');
                 }
 
                 if (isColumnIndexed(metaMem, i)) {
                     if (!ColumnType.isSymbol(type)) {
-                        throw validationException(metaMem).put("Index flag is only supported for SYMBOL").put(" at [").put(i).put(']');
+                        throw validationException()
+                                .put("index flag is only supported for SYMBOL column type [path=").put(metaPath)
+                                .put(", columnType=").put(ColumnType.nameOf(type))
+                                .put(", columnIndex=").put(i)
+                                .put(']');
                     }
 
                     if (getIndexBlockCapacity(metaMem, i) < 2) {
-                        throw validationException(metaMem).put("Invalid index value block capacity ").put(getIndexBlockCapacity(metaMem, i)).put(" at [").put(i).put(']');
+                        throw validationException()
+                                .put("invalid index value block capacity [path=").put(metaPath)
+                                .put(", indexBlockCapacity=").put(getIndexBlockCapacity(metaMem, i))
+                                .put(", columnIndex=").put(i)
+                                .put(']');
                     }
                 }
             }
@@ -1787,11 +1821,15 @@ public final class TableUtils {
             int denseCount = 0;
             if (nameIndex != null) {
                 for (int i = 0; i < columnCount; i++) {
-                    final CharSequence name = getColumnName(metaMem, memSize, offset, i);
-                    if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
-                        offset += Vm.getStorageLength(name);
+                    final CharSequence columnName = getColumnName(metaPath, metaMem, memSize, offset, i);
+                    if (getColumnType(metaMem, i) < 0 || nameIndex.put(columnName, denseCount++)) {
+                        offset += Vm.getStorageLength(columnName);
                     } else {
-                        throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
+                        throw validationException()
+                                .put("duplicate column [path=").put(metaPath)
+                                .put(", columnName=").put(columnName)
+                                .put(", columnIndex=").put(i)
+                                .put(']');
                     }
                 }
             }
@@ -1803,12 +1841,13 @@ public final class TableUtils {
         }
     }
 
-    public static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
+    public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
         if (expectedVersion != metaVersion) {
-            throw validationException(metaMem)
-                    .put("Metadata version does not match runtime version [expected=").put(expectedVersion)
-                    .put(", actual=").put(metaVersion)
+            throw validationException()
+                    .put("metadata version does not match runtime version [path=").put(metaPath)
+                    .put(", expectedVersion=").put(expectedVersion)
+                    .put(", actualVersion=").put(metaVersion)
                     .put(']');
         }
     }
@@ -1828,8 +1867,8 @@ public final class TableUtils {
         }
     }
 
-    public static CairoException validationException(MemoryMR mem) {
-        return CairoException.critical(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
+    public static CairoException validationException() {
+        return CairoException.critical(CairoException.METADATA_VALIDATION);
     }
 
     public static CairoException validationException(MemoryR mem) {
@@ -1926,7 +1965,7 @@ public final class TableUtils {
     private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {
         if (strLength < 1 || strLength > 255) {
             // EXT4 and many others do not allow file name length > 255 bytes
-            throw validationException(metaMem).put("String length of ").put(strLength).put(" is invalid at offset ").put(offset);
+            throw validationException().put("String length of ").put(strLength).put(" is invalid at offset ").put(offset);
         }
         final long storageLength = Vm.getStorageLength(strLength);
         if (offset + storageLength > memSize) {
