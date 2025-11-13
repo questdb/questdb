@@ -90,6 +90,25 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelWindowJoinOnSymbolFiltered2() throws Exception {
+        // tests thread-unsafe filter
+        testParallelWindowJoin(
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p ON t.sym = p.sym AND concat(p.sym, '_00') = 'sym11_00' " +
+                        "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
+                        "  WHERE concat(t.side, '_00') = 'sell_00' " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.98409342766\t6.024435283632629\t6.024435283632629
+                        """
+        );
+    }
+
+    @Test
     public void testParallelWindowJoinOnSymbolFilteredVectorized() throws Exception {
         testParallelWindowJoin(
                 "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
