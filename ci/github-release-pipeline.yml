@@ -47,8 +47,9 @@ stages:
               curl -L -o "${FILENAME}" "${BASE_URL}/${FILENAME}"
               curl -L -o "${FILENAME}.sha256" "${BASE_URL}/${FILENAME}.sha256"
 
-              # Verify checksum
-              sha256sum -c "${FILENAME}.sha256"
+              # .sha256 only contains the hash → wrap with filename for sha256sum -c
+              HASH="$(cut -d ' ' -f1 "${FILENAME}.sha256")"
+              echo "${HASH}  ${FILENAME}" | sha256sum -c -
 
               # Install to /usr/lib/jvm/graalvm-community-jdk-${GRAAL_VERSION}
               INSTALL_DIR="/usr/lib/jvm/graalvm-community-jdk-${GRAAL_VERSION}"
@@ -77,7 +78,7 @@ stages:
               Write-Host "Downloading $baseUrl/$fileName.sha256"
               Invoke-WebRequest "$baseUrl/$fileName.sha256" -OutFile $shaPath
 
-              # Verify checksum
+              # Verify checksum (file contains only the hash)
               $expected = (Get-Content $shaPath).Split(" ")[0].ToLower()
               $actual = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
 
@@ -109,11 +110,13 @@ stages:
               options: "-DskipTests -Dhttp.keepAlive=false -P build-web-console,build-binaries"
               javaHomeOption: 'Path'
               jdkDirectory: '$(GRAALVM_HOME)'
+
           - task: CopyFiles@2
             inputs:
               SourceFolder: '$(build.sourcesDirectory)/core/target'
               Contents: '$(build.sourcesDirectory)/core/target/questdb-*.gz'
               TargetFolder: '$(build.artifactstagingdirectory)'
+
           - task: PublishBuildArtifacts@1
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'

@@ -1,23 +1,38 @@
 FROM debian:bookworm AS builder
+
 ARG tag_name
 ARG GRAAL_JDK_VERSION=17.0.9
 
 ENV GOSU_VERSION=1.19
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Base tools + maven (no Corretto repo anymore)
+# 1) Base tools + Maven
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
        git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip maven \
     && rm -rf /var/lib/apt/lists/*
 
-# Install GraalVM Community JDK 17
-RUN curl -L -o /tmp/graalvm-ce.tar.gz \
-      "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${GRAAL_JDK_VERSION}/graalvm-community-jdk-${GRAAL_JDK_VERSION}_linux-x64_bin.tar.gz" \
-    && mkdir -p /usr/lib/jvm/graalvm-community-jdk-${GRAAL_JDK_VERSION} \
-    && tar -xzf /tmp/graalvm-ce.tar.gz \
-         -C /usr/lib/jvm/graalvm-community-jdk-${GRAAL_JDK_VERSION} \
-         --strip-components=1 \
-    && rm /tmp/graalvm-ce.tar.gz
+# 2) Download GraalVM CE archive + SHA256
+RUN set -eux; \
+    TAG="jdk-${GRAAL_JDK_VERSION}"; \
+    FILENAME="graalvm-community-jdk-${GRAAL_JDK_VERSION}_linux-x64_bin.tar.gz"; \
+    BASE_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${TAG}"; \
+    mkdir -p /tmp/graalvm; \
+    cd /tmp/graalvm; \
+    curl -L -o "${FILENAME}" "${BASE_URL}/${FILENAME}"; \
+    curl -L -o "${FILENAME}.sha256" "${BASE_URL}/${FILENAME}.sha256"
+
+# 3) Verify SHA256 and install GraalVM CE
+RUN set -eux; \
+    cd /tmp/graalvm; \
+    FILENAME="graalvm-community-jdk-${GRAAL_JDK_VERSION}_linux-x64_bin.tar.gz"; \
+    # .sha256 contains only the hash, so wrap it with filename for sha256sum -c
+    HASH="$(cut -d ' ' -f1 "${FILENAME}.sha256")"; \
+    echo "${HASH}  ${FILENAME}" | sha256sum -c -; \
+    INSTALL_DIR="/usr/lib/jvm/graalvm-community-jdk-${GRAAL_JDK_VERSION}"; \
+    mkdir -p "${INSTALL_DIR}"; \
+    tar -xzf "${FILENAME}" -C "${INSTALL_DIR}" --strip-components=1; \
+    rm -rf /tmp/graalvm
 
 ENV JAVA_HOME=/usr/lib/jvm/graalvm-community-jdk-${GRAAL_JDK_VERSION}
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
