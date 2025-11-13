@@ -3635,6 +3635,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
 
                                     return new WindowJoinRecordCursorFactory(
+                                            asm,
                                             configuration,
                                             outerProjectionMetadata,
                                             joinMetadata,

@@ -28,7 +28,6 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -42,10 +41,17 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -70,6 +76,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final long windowLo;
 
     public WindowJoinRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
             CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull JoinRecordMetadata joinMetadata,
@@ -92,6 +99,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         this.windowHi = windowHi;
         var masterMetadata = masterFactory.getMetadata();
         var slaveMetadata = slaveFactory.getMetadata();
+        final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
         this.cursor = new WindowJoinRecordCursor(
                 configuration,
                 columnSplit,
@@ -101,6 +109,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 masterMetadata.getTimestampType(),
                 slaveMetadata.getTimestampType(),
                 groupByFunctions,
+                groupByFunctionsUpdater,
                 columnTypes
         );
     }
@@ -185,14 +194,16 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private class WindowJoinRecordCursor implements NoRandomAccessRecordCursor {
+        private final GroupByAllocator allocator;
         private final int columnSplit;
         private final int groupByCount;
-        private final @NotNull ObjList<GroupByFunction> groupByFunctions;
+        private final ObjList<GroupByFunction> groupByFunctions;
+        private final GroupByFunctionsUpdater groupByFunctionsUpdater;
         private final JoinRecord joinRecord;
-        private final MapValue mapValue;
         private final int masterTimestampIndex;
         private final long masterTimestampScale;
         private final OuterJoinRecord record;
+        private final SimpleMapValue simpleMapValue;
         private final TimeFrameHelper slaveHelper;
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
@@ -211,11 +222,15 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 int masterTimestampType,
                 int slaveTimestampType,
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
+                @NotNull GroupByFunctionsUpdater groupByFunctionsUpdater,
                 @NotNull ArrayColumnTypes columnTypes
         ) {
             this.columnSplit = columnSplit;
             this.groupByFunctions = groupByFunctions;
-            this.mapValue = new SimpleMapValue(columnTypes.getColumnCount());
+            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+            GroupByUtils.setAllocator(groupByFunctions, allocator);
+            this.groupByFunctionsUpdater = groupByFunctionsUpdater;
+            this.simpleMapValue = new SimpleMapValue(columnTypes.getColumnCount());
             record = new OuterJoinRecord(columnSplit, nullRecord);
             joinRecord = new JoinRecord(columnSplit);
             this.masterTimestampIndex = masterTimestampIndex;
@@ -240,6 +255,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         public void close() {
             if (isOpen) {
                 isOpen = false;
+                Misc.free(allocator);
                 Misc.clearObjList(groupByFunctions);
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
@@ -256,6 +272,8 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             if (columnIndex < columnSplit) {
                 return masterCursor.getSymbolTable(columnIndex);
             }
+            // TODO(puzpuzpuz): this should be
+            // return (SymbolTable) groupByFunctions.getQuick(columnIndex - columnSplit);
             return slaveCursor.getSymbolTable(columnIndex - columnSplit);
         }
 
@@ -294,16 +312,13 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                     break;
                 }
 
+                // TODO(puzpuzpuz): we never call groupByFunctionsUpdater.updateEmpty() which seems wrong
                 if (filter == null || filter.getBool(joinRecord)) {
                     if (first) {
-                        for (int i = 0; i < groupByCount; i++) {
-                            groupByFunctions.getQuick(i).computeFirst(mapValue, joinRecord, slaveRowId);
-                        }
+                        groupByFunctionsUpdater.updateNew(simpleMapValue, joinRecord, slaveRowId);
                         first = false;
                     } else {
-                        for (int i = 0; i < groupByCount; i++) {
-                            groupByFunctions.getQuick(i).computeNext(mapValue, joinRecord, slaveRowId);
-                        }
+                        groupByFunctionsUpdater.updateExisting(simpleMapValue, joinRecord, slaveRowId);
                     }
                 }
 
@@ -319,7 +334,6 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             record.hasSlave(!first);
-
             return true;
         }
 
@@ -356,7 +370,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.slaveCursor = slaveCursor;
             slaveHelper.of(slaveCursor);
             joinRecord.of(masterRecord, slaveHelper.getRecord());
-            record.of(masterRecord, mapValue);
+            record.of(masterRecord, simpleMapValue);
             if (filter != null) {
                 filter.init(this, sqlExecutionContext);
             }
