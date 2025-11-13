@@ -505,7 +505,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                     for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                        int mapIndex = mapIndexes.getQuick(i);
+                        final int mapIndex = mapIndexes.getQuick(i);
                         final long ptr = slaveData.get(idx, 2 + mapIndex);
                         final long typeSize = ColumnType.sizeOfTag(ColumnType.tagOf(columnTags.getQuick(mapIndex)));
                         groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
@@ -800,7 +800,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                            int mapIndex = mapIndexes.getQuick(i);
+                            final int mapIndex = mapIndexes.getQuick(i);
                             final long ptr = slaveData.get(idx, 2 + mapIndex);
                             final long typeSize = ColumnType.sizeOfTag(ColumnType.tagOf(columnTags.getQuick(mapIndex)));
                             groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));

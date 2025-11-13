@@ -129,7 +129,7 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                         ")",
                 """
                         avg_price\tmax_bid\tmin_bid
-                        19.98409342766\t14.942292378343328\t5.010953919128168
+                        19.98409342766\t14.982510448352535\t5.010953919128168
                         """
         );
     }

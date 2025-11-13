@@ -223,6 +223,23 @@ public class DirectLongListTest {
     }
 
     @Test
+    public void testSearch2() {
+        final int N = 100;
+        try (DirectLongList list = new DirectLongList(N, MemoryTag.NATIVE_LONG_LIST)) {
+            for (int i = 0; i < N; i++) {
+                list.add(2 * i);
+            }
+
+            for (int i = 0; i < N; i++) {
+                Assert.assertEquals(i, list.binarySearch(2 * i, Vect.BIN_SEARCH_SCAN_UP));
+                Assert.assertEquals(i, list.binarySearch(2 * i, Vect.BIN_SEARCH_SCAN_DOWN));
+                Assert.assertEquals(-i - 2, list.binarySearch(2 * i + 1, Vect.BIN_SEARCH_SCAN_UP));
+                Assert.assertEquals(-i - 2, list.binarySearch(2 * i + 1, Vect.BIN_SEARCH_SCAN_DOWN));
+            }
+        }
+    }
+
+    @Test
     public void testSearchWithDups() {
         try (DirectLongList list = new DirectLongList(256, MemoryTag.NATIVE_LONG_LIST)) {
             final int N = 100;

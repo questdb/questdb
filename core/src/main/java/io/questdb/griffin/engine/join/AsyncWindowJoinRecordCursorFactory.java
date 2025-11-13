@@ -453,7 +453,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
                     for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                        int mapIndex = mapIndexes.getQuick(i);
+                        final int mapIndex = mapIndexes.getQuick(i);
                         final long ptr = groupByColumnSinkPtrs.get(mapIndex);
                         if (ptr != 0) {
                             columnSink.of(ptr);
@@ -736,7 +736,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                         IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
                         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                            int mapIndex = mapIndexes.getQuick(i);
+                            final int mapIndex = mapIndexes.getQuick(i);
                             final long ptr = groupByColumnSinkPtrs.get(mapIndex);
                             if (ptr != 0) {
                                 columnSink.of(ptr);

@@ -83,7 +83,6 @@ public class DoubleListTest {
             a.add((i / 10));
         }
 
-
         Assert.assertEquals(-1, a.binarySearch(-1d, Vect.BIN_SEARCH_SCAN_UP));
 
         for (int i = 0; i < 10; i++) {

@@ -258,6 +258,7 @@ public class TimeFrameHelper {
     private long linearScan(long timestampLo, long timestampHi, long rowLo) {
         final long scanHi = Math.min(rowLo + lookahead, timeFrame.getRowHi());
         for (long r = rowLo; ; ) {
+            recordAtRowIndex(r);
             final long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
             if (timestamp >= timestampLo) {
                 if (timestamp <= timestampHi) {
@@ -269,7 +270,6 @@ public class TimeFrameHelper {
             if (++r >= scanHi) {
                 break;
             }
-            recordAtRowIndex(r);
         }
         return -rowLo - lookahead - 1;
     }
