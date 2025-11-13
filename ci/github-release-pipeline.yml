@@ -20,12 +20,10 @@ stages:
               imageName: 'ubuntu-latest'
               poolName: "Azure Pipelines"
               os: Linux
-              jdk: "1.17"
             windows:
               imageName: "windows-latest"
               poolName: "Azure Pipelines"
               os: Windows
-              jdk: "1.17"
         pool:
           vmImage: $(imageName)
           name: $(poolName)
@@ -35,19 +33,90 @@ stages:
             fetchDepth: 1
             lfs: false
             submodules: true
+
+          # --- GraalVM CE 17.0.9 install + SHA256 verify (Linux) ---
+          - bash: |
+              set -eux
+
+              GRAAL_VERSION=17.0.9
+              TAG="jdk-${GRAAL_VERSION}"
+              FILENAME="graalvm-community-jdk-${GRAAL_VERSION}_linux-x64_bin.tar.gz"
+              BASE_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${TAG}"
+
+              # Download archive and checksum
+              curl -L -o "${FILENAME}" "${BASE_URL}/${FILENAME}"
+              curl -L -o "${FILENAME}.sha256" "${BASE_URL}/${FILENAME}.sha256"
+
+              # .sha256 only contains the hash → wrap with filename for sha256sum -c
+              HASH="$(cut -d ' ' -f1 "${FILENAME}.sha256")"
+              echo "${HASH}  ${FILENAME}" | sha256sum -c -
+
+              # Install to /usr/lib/jvm/graalvm-community-jdk-${GRAAL_VERSION}
+              INSTALL_DIR="/usr/lib/jvm/graalvm-community-jdk-${GRAAL_VERSION}"
+              mkdir -p "${INSTALL_DIR}"
+              tar -xzf "${FILENAME}" -C "${INSTALL_DIR}" --strip-components=1
+
+              echo "##vso[task.setvariable variable=GRAALVM_HOME]${INSTALL_DIR}"
+            displayName: "Install GraalVM Community 17.0.9 (Linux, SHA256 verified)"
+            condition: eq( variables['os'], 'Linux')
+
+          # --- GraalVM CE 17.0.9 install + SHA256 verify (Windows) ---
+          - powershell: |
+              $ErrorActionPreference = "Stop"
+
+              $GRAAL_VERSION = "17.0.9"
+              $tag = "jdk-$GRAAL_VERSION"
+              $fileName = "graalvm-community-jdk-$GRAAL_VERSION`_windows-x64_bin.zip"
+              $baseUrl = "https://github.com/graalvm/graalvm-ce-builds/releases/download/$tag"
+              $zipPath = Join-Path $env:USERPROFILE $fileName
+              $shaPath = "$zipPath.sha256"
+
+              # Download archive and checksum
+              Write-Host "Downloading $baseUrl/$fileName"
+              Invoke-WebRequest "$baseUrl/$fileName" -OutFile $zipPath
+
+              Write-Host "Downloading $baseUrl/$fileName.sha256"
+              Invoke-WebRequest "$baseUrl/$fileName.sha256" -OutFile $shaPath
+
+              # Verify checksum (file contains only the hash)
+              $expected = (Get-Content $shaPath).Split(" ")[0].ToLower()
+              $actual = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
+
+              if ($expected -ne $actual) {
+                throw "SHA256 mismatch for $fileName. Expected $expected but got $actual"
+              } else {
+                Write-Host "SHA256 checksum OK for $fileName"
+              }
+
+              # Extract
+              $dest = Join-Path $env:USERPROFILE "graalvm-ce-17"
+              if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+              Expand-Archive $zipPath -DestinationPath $dest
+
+              # The zip contains a top-level directory; grab it as GRAALVM_HOME
+              $dir = Get-ChildItem $dest | Where-Object { $_.PSIsContainer } | Select-Object -First 1
+              $graalHome = $dir.FullName
+
+              Write-Host "GRAALVM_HOME = $graalHome"
+              Write-Host "##vso[task.setvariable variable=GRAALVM_HOME]$graalHome"
+            displayName: "Install GraalVM Community 17.0.9 (Windows, SHA256 verified)"
+            condition: eq( variables['os'], 'Windows')
+
           - task: Maven@3
             displayName: "Building QuestDB"
             inputs:
               mavenPomFile: "core/pom.xml"
               goals: "package"
-              options:
-                "-DskipTests -Dhttp.keepAlive=false -P build-web-console,build-binaries"
-              jdkVersionOption: $(jdk)
+              options: "-DskipTests -Dhttp.keepAlive=false -P build-web-console,build-binaries"
+              javaHomeOption: 'Path'
+              jdkDirectory: '$(GRAALVM_HOME)'
+
           - task: CopyFiles@2
             inputs:
               SourceFolder: '$(build.sourcesDirectory)/core/target'
               Contents: '$(build.sourcesDirectory)/core/target/questdb-*.gz'
               TargetFolder: '$(build.artifactstagingdirectory)'
+
           - task: PublishBuildArtifacts@1
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
