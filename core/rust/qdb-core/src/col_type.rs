@@ -213,7 +213,7 @@ pub struct ColumnType {
 }
 
 impl ColumnType {
-    pub fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
+    pub const fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
         let shifted_extra_type_info = extra_type_info << 8;
         let code = NonZeroI32::new(tag as i32 | shifted_extra_type_info)
             .expect("column type code should never be zero");
@@ -287,7 +287,7 @@ impl ColumnType {
     }
 
     pub fn has_flag(&self, flag: i32) -> bool {
-        let flag_shifted:i32 = flag << 8;
+        let flag_shifted: i32 = flag << 8;
         self.code.get() & flag_shifted == flag_shifted
     }
 }
