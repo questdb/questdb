@@ -3641,7 +3641,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             joinMetadata,
                                             master,
                                             slave,
-                                            master.getMetadata().getColumnCount(),
+                                            columnIndex,
                                             lo,
                                             hi,
                                             groupByFunctions,

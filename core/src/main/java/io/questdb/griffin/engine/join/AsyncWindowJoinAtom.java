@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
@@ -75,7 +74,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final CompiledFilter compiledMasterFilter;
     private final IntList groupByColumnTags;
     private final IntList groupByFunctionToColumnIndex;
-    private final JoinSymbolTableSource joinSymbolTableSource;
+    private final WindowJoinSymbolTableSource joinSymbolTableSource;
     private final long joinWindowHi;
     private final long joinWindowLo;
     private final int masterTimestampIndex;
@@ -154,7 +153,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             this.bindVarFunctions = bindVarFunctions;
             this.ownerMasterFilter = ownerMasterFilter;
             this.perWorkerMasterFilters = perWorkerMasterFilters;
-            this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
+            this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
             this.masterTsScale = masterTsScale;
             this.slaveTsScale = slaveTsScale;
             this.vectorized = ownerJoinFilter == null && GroupByUtils.isBatchComputationSupported(ownerGroupByFunctions, columnSplit);
@@ -593,37 +592,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
             }
-        }
-    }
-
-    private static class JoinSymbolTableSource implements SymbolTableSource {
-        private final int columnSplit;
-        private SymbolTableSource masterSource;
-        private SymbolTableSource slaveSource;
-
-        private JoinSymbolTableSource(int columnSplit) {
-            this.columnSplit = columnSplit;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex < columnSplit) {
-                return masterSource.getSymbolTable(columnIndex);
-            }
-            return slaveSource.getSymbolTable(columnIndex - columnSplit);
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            if (columnIndex < columnSplit) {
-                return masterSource.newSymbolTable(columnIndex);
-            }
-            return slaveSource.newSymbolTable(columnIndex - columnSplit);
-        }
-
-        public void of(SymbolTableSource masterSource, SymbolTableSource slaveSource) {
-            this.masterSource = masterSource;
-            this.slaveSource = slaveSource;
         }
     }
 }

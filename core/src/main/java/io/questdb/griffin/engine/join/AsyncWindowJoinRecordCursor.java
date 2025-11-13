@@ -103,7 +103,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         this.crossIndex = columnIndex;
         masterRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         groupByRecord = new VirtualRecord(groupByFunctions);
-        JoinRecord jr = new JoinRecord(columnSplit);
+        final JoinRecord jr = new JoinRecord(columnSplit);
         jr.of(masterRecord, groupByRecord);
         if (columnIndex != null) {
             SelectedRecord sr = new SelectedRecord(columnIndex);
