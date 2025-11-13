@@ -339,7 +339,13 @@ public class HttpServer implements Closeable {
         closeables.add(closeable);
     }
 
-    private boolean handleClientOperation(HttpConnectionContext context, int operation, HttpRequestProcessorSelector selector, WaitProcessor rescheduleContext, IODispatcher<HttpConnectionContext> dispatcher) {
+    private boolean handleClientOperation(
+            HttpConnectionContext context,
+            int operation,
+            HttpRequestProcessorSelector selector,
+            WaitProcessor rescheduleContext,
+            IODispatcher<HttpConnectionContext> dispatcher
+    ) {
         try {
             return context.handleClientOperation(operation, selector, rescheduleContext);
         } catch (HeartBeatException e) {

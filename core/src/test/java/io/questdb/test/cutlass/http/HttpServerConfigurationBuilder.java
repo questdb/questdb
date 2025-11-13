@@ -51,8 +51,8 @@ public class HttpServerConfigurationBuilder {
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
     private boolean dumpTraffic;
     private FactoryProvider factoryProvider;
-    private int forceRecvFragmentationChunkSize;
-    private int forceSendFragmentationChunkSize;
+    private int forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+    private int forceSendFragmentationChunkSize = Integer.MAX_VALUE;
     private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
     private String httpProtocolVersion = "HTTP/1.1 ";
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
@@ -193,8 +193,6 @@ public class HttpServerConfigurationBuilder {
                     public boolean getServerKeepAlive() {
                         return serverKeepAlive;
                     }
-
-
                 };
             }
 

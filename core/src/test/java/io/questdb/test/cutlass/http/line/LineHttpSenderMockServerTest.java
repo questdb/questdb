@@ -146,7 +146,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .replyWithContent(400, badJsonResponse, HttpConstants.CONTENT_TYPE_JSON);
 
-        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: " + badJsonResponse + " [http-status=400]"));
+        testWithMock(
+                mockHttpProcessor,
+                errorVerifier("Could not flush buffer: " + badJsonResponse + " [http-status=400]")
+        );
     }
 
     @Test
@@ -676,20 +679,37 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mockHttpProcessor, senderConsumer, DEFAULT_FACTORY);
     }
 
-    private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory) throws Exception {
+    private void testWithMock(
+            MockHttpProcessor mockHttpProcessor,
+            Consumer<Sender> senderConsumer,
+            Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory
+    ) throws Exception {
         MockSettingsProcessor settingProcessor = new MockSettingsProcessor();
         testWithMock(mockHttpProcessor, settingProcessor, senderConsumer, senderBuilderFactory, false);
     }
 
-    private void testWithMock(MockHttpProcessor mockHttpProcessor, HttpRequestHandler settingsProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory) throws Exception {
+    private void testWithMock(
+            MockHttpProcessor mockHttpProcessor,
+            HttpRequestHandler settingsProcessor,
+            Consumer<Sender> senderConsumer,
+            Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory
+    ) throws Exception {
         testWithMock(mockHttpProcessor, settingsProcessor, senderConsumer, senderBuilderFactory, false);
     }
 
-    private void testWithMock(MockHttpProcessor mockHttpProcessor, HttpRequestHandler settingsProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory, boolean verifyBeforeClose) throws Exception {
+    private void testWithMock(
+            MockHttpProcessor mockHttpProcessor,
+            HttpRequestHandler settingsProcessor,
+            Consumer<Sender> senderConsumer,
+            Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory,
+            boolean verifyBeforeClose
+    ) throws Exception {
         assertMemoryLeak(() -> {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(new DefaultCairoConfiguration(root));
-            try (WorkerPool workerPool = new TestWorkerPool(1);
-                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+            try (
+                    WorkerPool workerPool = new TestWorkerPool(1);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
+            ) {
                 httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjHashSet<String> getUrls() {
@@ -703,6 +723,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                         return mockHttpProcessor;
                     }
                 });
+
                 httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjHashSet<String> getUrls() {
