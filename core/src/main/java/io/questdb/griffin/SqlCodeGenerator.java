@@ -3324,7 +3324,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
                                 }
                                 if (context.getLoExprTimeUnit() != 0) {
-                                    lo = timestampDriver.from(lo, context.getHiExprTimeUnit());
+                                    lo = timestampDriver.from(lo, context.getLoExprTimeUnit());
                                 }
 
                                 if (hi < lo * -1) {
@@ -6572,7 +6572,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     hi = driver.from(hi, windowJoinContext.getHiExprTimeUnit());
                 }
                 if (windowJoinContext.getLoExprTimeUnit() != 0) {
-                    lo = driver.from(lo, windowJoinContext.getHiExprTimeUnit());
+                    lo = driver.from(lo, windowJoinContext.getLoExprTimeUnit());
                 }
                 intrinsicModel.mergeIntervalModel((RuntimeIntervalModel) pushedIntervalModel, lo, hi);
             }
