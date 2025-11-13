@@ -443,6 +443,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
         final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+        final IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
         atom.clearTemporaryData(workerId);
         final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
@@ -534,14 +535,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 long rowLo = slaveData.get(idx, 1);
                 timestamps.of(timestampsPtr);
 
-                if (timestamps != null && timestamps.size() > 0) {
+                if (timestamps.size() > 0) {
                     long newRowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     newRowLo = newRowLo < 0 ? -newRowLo - 1 : newRowLo;
                     slaveData.put(idx, 1, newRowLo);
                     rowLo = newRowLo;
                     long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
-                    IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
                     for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                         int mapIndex = mapIndexes.getQuick(i);
                         final long ptr = slaveData.get(idx, 2 + mapIndex);
@@ -779,6 +779,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
                 final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+                final IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
                 atom.clearTemporaryData(workerId);
                 final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
@@ -874,7 +875,6 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         rowLo = newRowLo;
                         long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
-                        IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
                         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                             int mapIndex = mapIndexes.getQuick(i);
                             final long ptr = slaveData.get(idx, 2 + mapIndex);
