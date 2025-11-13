@@ -36,7 +36,9 @@ import io.questdb.mp.SCSequence;
  * Thread-safe cache for memory-mapped file regions with reference counting.
  * Reuses existing mappings for the same file when possible to reduce system calls.
  */
-public class MmapCache {
+public final class MmapCache {
+    public static final MmapCache INSTANCE = new MmapCache();
+
     private static final Log LOG = LogFactory.getLog(MmapCache.class);
     private static final int MAX_RECORD_POOL_CAPACITY = 16 * 1024;
     private static final int MUNMAP_QUEUE_CAPACITY = 8 * 1024;
@@ -49,7 +51,7 @@ public class MmapCache {
     private final ObjStack<MmapCacheRecord> recordPool = new ObjStack<>();
     private long mmapReuseCount = 0;
 
-    public MmapCache() {
+    private MmapCache() {
         munmapTaskRingQueue = new RingQueue<>(MunmapTask::new, MUNMAP_QUEUE_CAPACITY);
         munmapProducesSequence = new MPSequence(munmapTaskRingQueue.getCycle());
         munmapConsumerSequence = new SCSequence();

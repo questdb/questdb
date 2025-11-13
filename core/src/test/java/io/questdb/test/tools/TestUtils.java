@@ -2526,6 +2526,7 @@ public final class TestUtils {
         private boolean skipChecksOnClose;
 
         public LeakCheck() {
+            Files.getMmapCache().asyncMunmap();
             Path.clearThreadLocals();
             CLOSEABLE.forEach(Misc::free);
             mem = Unsafe.getMemUsed();
