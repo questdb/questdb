@@ -456,11 +456,11 @@ public class FilesFacadeImpl implements FilesFacade {
             if (depth > 0 || (resDepth < 0 && Files.isSecurityError(Os.errno()))) {
                 if (resDepth > -1) {
                     LOG.info().$("completed rmdir with subdirectories [path=").$(pathSecureCopy)
-                            .$(", subDirDepth=").$(depth + 1)
+                            .$(", subDirDepth=").$(depth)
                             .I$();
                 } else {
                     LOG.error().$("error in rmdir with subdirectories [path=").$(pathSecureCopy)
-                            .$(", subDirDepth=").$(depth + 1)
+                            .$(", subDirDepth=").$(depth)
                             .$(", errno=").$(Os.errno())
                             .I$();
                 }
