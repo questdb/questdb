@@ -712,10 +712,11 @@ public final class Files {
                     }
                     maxDepth = Math.max(maxDepth, -res - 1);
                 } else {
-                    maxDepth = Math.max(maxDepth, res);
+                    return Math.max(maxDepth, res);
                 }
+            } else {
+                return rmdir(path.ptr()) ? maxDepth : -maxDepth - 1;
             }
-            return rmdir(path.ptr()) ? maxDepth : -maxDepth - 1;
         }
         return -maxDepth - 1;
     }
