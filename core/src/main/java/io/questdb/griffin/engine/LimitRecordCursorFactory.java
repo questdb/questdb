@@ -246,6 +246,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             limit = countedLimit;
             skipToRows = -1;
             skipRows(skippedRows);
+            skipToRows = -1;
         }
 
         private void countLimit() {
