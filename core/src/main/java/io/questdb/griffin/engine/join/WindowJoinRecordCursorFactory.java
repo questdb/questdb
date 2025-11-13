@@ -212,7 +212,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private final long masterTimestampScale;
         private final Record record;
         private final SimpleMapValue simpleMapValue;
-        private final TimeFrameHelper slaveHelper;
+        private final TimeFrameHelper slaveTimeFrameHelper;
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -249,7 +249,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 masterTimestampScale = ColumnType.getTimestampDriver(masterTimestampType).toNanosScale();
                 slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
             }
-            this.slaveHelper = new TimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
+            this.slaveTimeFrameHelper = new TimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
             this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
 
             this.internalJoinRecord = new JoinRecord(columnSplit);
@@ -319,15 +319,17 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
             groupByFunctionsUpdater.updateEmpty(simpleMapValue);
 
-            long slaveRowId = slaveHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
+            long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
             if (slaveRowId == Long.MIN_VALUE) {
                 return true;
             }
 
+            final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             boolean first = true;
-            final Record slaveRecord = slaveHelper.getRecord();
+            long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
             for (; ; ) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
+                slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
                 final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 if (slaveTimestamp > slaveTimestampHi) {
                     break;
@@ -335,21 +337,21 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
                 if (filter == null || filter.getBool(internalJoinRecord)) {
                     if (first) {
-                        groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, slaveRowId);
+                        groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowId);
                         first = false;
                     } else {
-                        groupByFunctionsUpdater.updateExisting(simpleMapValue, internalJoinRecord, slaveRowId);
+                        groupByFunctionsUpdater.updateExisting(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowId);
                     }
                 }
 
-                if (++slaveRowId >= slaveHelper.getTimeFrameRowHi()) {
-                    if (!slaveHelper.nextFrame(slaveTimestampHi)) {
+                if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
+                    if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
                         break;
                     }
-                    slaveRowId = slaveHelper.getTimeFrameRowLo();
-                    slaveHelper.recordAt(Rows.toRowID(slaveHelper.getTimeFrameIndex(), slaveRowId));
-                } else {
-                    slaveHelper.recordAtRowIndex(slaveRowId);
+                    slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                    baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    // don't forget to switch the record to the new frame
+                    slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                 }
             }
 
@@ -380,7 +382,8 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void toTop() {
             masterCursor.toTop();
-            slaveHelper.toTop();
+            slaveTimeFrameHelper.toTop();
+            GroupByUtils.toTop(groupByFunctions);
         }
 
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -391,9 +394,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
             joinRecord.of(masterRecord, groupByRecord);
-            slaveHelper.of(slaveCursor);
-            internalJoinRecord.of(masterRecord, slaveHelper.getRecord());
-            joinSymbolTableSource.of(masterCursor, slaveHelper.getSymbolTableSource());
+            slaveTimeFrameHelper.of(slaveCursor);
+            internalJoinRecord.of(masterRecord, slaveTimeFrameHelper.getRecord());
+            joinSymbolTableSource.of(masterCursor, slaveTimeFrameHelper.getSymbolTableSource());
             if (filter != null) {
                 filter.init(joinSymbolTableSource, sqlExecutionContext);
             }
