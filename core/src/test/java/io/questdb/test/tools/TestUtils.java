@@ -1984,7 +1984,7 @@ public final class TestUtils {
             if (ff.exists(path.$()) && !Files.rmdir(path, true)) {
                 StringSink dir = new StringSink();
                 dir.put(path.$());
-                Assert.fail("Test dir " + dir + " cleanup error: " + ff.errno());
+                Assert.fail("Test dir " + dir + " cleanup error: " + Os.errno());
             }
 
             path.parent().concat(RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
