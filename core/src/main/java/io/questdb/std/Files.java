@@ -24,8 +24,8 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
@@ -71,6 +71,13 @@ public final class Files {
     private final static FdCache fdCache = new FdCache();
     private static final MmapCache mmapCache = new MmapCache();
     public static boolean FS_CACHE_ENABLED = true;
+
+    // Db max directory depth is 5, the expected structure is:
+    // db/tableDir/partitionDir
+    // db/tableDir/wal/segmentDir
+    // db/.download/tableDir/wal/segmentDir
+    public static int RMDIR_MAX_DEPTH = 5;
+
     // To be set in tests to check every call for using OPEN file descriptor
     public static boolean VIRTIO_FS_DETECTED = false;
 
@@ -478,78 +485,9 @@ public final class Files {
         return fdCache.rename(oldName, newName);
     }
 
-    /**
-     * Removes directory recursively. When function fails the caller has to check Os.errno() for the diagnostics.
-     * The function can operate in two modes, eager and haltOnFail. In haltOnFail mode function fails fast, providing precise
-     * error number. In eager mode function will free most of the disk space but likely to fail on deleting non-empty
-     * directory, should some files remain. Thus, not providing correct diagnostics.
-     * <p>
-     * rmdir() will fail if directory does not exist
-     *
-     * @param path       path to the directory, must include trailing slash (/)
-     * @param haltOnFail when true removing directory will halt on first failed attempt to remove directory contents. When
-     *                   false, the function will remove as many files and subdirectories as possible. That might be useful
-     *                   when the intent is too free up as much disk space as possible.
-     * @return true on success
-     */
+    @TestOnly
     public static boolean rmdir(Path path, boolean haltOnFail) {
-        return rmdir(path, haltOnFail, 0, 1);
-    }
-
-    public static boolean rmdir(Path path, boolean haltOnFail, int recursiveDepth, int maxRecursiveDepth) {
-        if (recursiveDepth >= maxRecursiveDepth) {
-            throw new CairoError("maximum recursive depth of " + maxRecursiveDepth + " exceeded when deleting " + path.toString());
-        }
-        path.$();
-        long pFind = findFirst(path.ptr());
-        if (pFind > 0L) {
-            int len = path.size();
-            boolean res;
-            int type;
-            long nameUtf8Ptr;
-            try {
-                do {
-                    nameUtf8Ptr = findName(pFind);
-                    path.trimTo(len).concat(nameUtf8Ptr).$();
-                    type = findType(pFind);
-                    if (type == Files.DT_FILE) {
-                        if (!remove(path.ptr())) {
-                            if (haltOnFail || Files.isSecurityError(Os.errno())) {
-                                return false;
-                            }
-                        }
-                    } else if (notDots(nameUtf8Ptr)) {
-                        res = type == Files.DT_LNK ? unlink(path.ptr()) == 0 : rmdir(path, haltOnFail, recursiveDepth + 1, maxRecursiveDepth);
-                        if (!res) {
-                            if (haltOnFail || Files.isSecurityError(Os.errno())) {
-                                return false;
-                            }
-                        }
-                    }
-                }
-                while (findNext(pFind) > 0);
-            } finally {
-                findClose(pFind);
-                path.trimTo(len).$();
-            }
-
-            if (isSoftLink(path.ptr())) {
-                return unlink(path.ptr()) == 0;
-            }
-            return rmdir(path.ptr());
-        }
-        return false;
-    }
-
-    private static boolean isSecurityError(int errno) {
-        if (Os.isLinux()) {
-            return errno == CairoException.ERRNO_EACCES_LINUX || errno == CairoException.ERRNO_EPERM_LINUX;
-        } else if (Os.isWindows()) {
-            return errno == CairoException.ERRNO_ACCESS_DENIED_WIN;
-        } else if (Os.isOSX()) {
-            return errno == CairoException.ERRNO_EACCES_MACOS || errno == CairoException.ERRNO_EPERM_MACOS;
-        }
-        return true;
+        return rmdir(path, haltOnFail, 0, 10, null) > -1;
     }
 
     @TestOnly
@@ -718,13 +656,93 @@ public final class Files {
 
     private native static boolean rmdir(long lpsz);
 
+    private static int rmdir(Path path, boolean haltOnFail, int recursiveDepth, int maxRecursiveDepth, Log log) {
+        if (recursiveDepth >= maxRecursiveDepth) {
+            if (log != null) {
+                log.critical().$("maximum recursive depth of ").$(maxRecursiveDepth).$(" exceeded when deleting ").$(path).$();
+            }
+            return -recursiveDepth - 1;
+        }
+        int maxDepth = recursiveDepth;
+        path.$();
+        long pFind = findFirst(path.ptr());
+        if (pFind > 0L) {
+            int len = path.size();
+            int res;
+            int type;
+            long nameUtf8Ptr;
+            try {
+                do {
+                    nameUtf8Ptr = findName(pFind);
+                    path.trimTo(len).concat(nameUtf8Ptr).$();
+                    type = findType(pFind);
+                    if (type == Files.DT_FILE) {
+                        if (!remove(path.ptr())) {
+                            if (haltOnFail || Files.isSecurityError(Os.errno())) {
+                                return -maxDepth - 1;
+                            }
+                        }
+                    } else if (notDots(nameUtf8Ptr)) {
+                        res = type == Files.DT_LNK ? unlink0(path, recursiveDepth) : rmdir(path, haltOnFail, recursiveDepth + 1, maxRecursiveDepth, log);
+                        if (res < 0) {
+                            if (haltOnFail || Files.isSecurityError(Os.errno())) {
+                                return Math.min(-maxDepth - 1, res);
+                            }
+                            maxDepth = Math.max(maxDepth, -res - 1);
+                        } else {
+                            maxDepth = Math.max(maxDepth, res);
+                        }
+                    }
+                }
+                while (findNext(pFind) > 0);
+            } finally {
+                findClose(pFind);
+                path.trimTo(len).$();
+            }
+
+            if (isSoftLink(path.ptr())) {
+                res = unlink0(path, recursiveDepth);
+                if (res < 0) {
+                    if (haltOnFail || Files.isSecurityError(Os.errno())) {
+                        return Math.min(-maxDepth - 1, res);
+                    }
+                    maxDepth = Math.max(maxDepth, -res - 1);
+                } else {
+                    maxDepth = Math.max(maxDepth, res);
+                }
+            }
+            return rmdir(path.ptr()) ? maxDepth : -maxDepth - 1;
+        }
+        return -maxDepth - 1;
+    }
+
     private native static boolean setLastModified(long lpszName, long millis);
 
     private native static boolean truncate(int fd, long size);
 
+    private static int unlink0(Path path, int recursiveDepth) {
+        int unlinkRes = unlink(path.ptr());
+        if (unlinkRes != 0) {
+            return -recursiveDepth - 1;
+        } else {
+            return recursiveDepth;
+        }
+    }
+
     private native static long write(int fd, long address, long len, long offset);
 
     native static int close0(int fd);
+
+    static boolean isSecurityError(int errno) {
+        if (Os.isLinux()) {
+            return errno == CairoException.ERRNO_EACCES_LINUX || errno == CairoException.ERRNO_EPERM_LINUX;
+        } else if (Os.isWindows()) {
+            return errno == CairoException.ERRNO_ACCESS_DENIED_WIN;
+        } else if (Os.isOSX()) {
+            return errno == CairoException.ERRNO_EACCES_MACOS || errno == CairoException.ERRNO_EPERM_MACOS;
+        }
+        return false;
+    }
 
     static native long mmap0(int fd, long len, long offset, int flags, long baseAddress);
 
@@ -737,6 +755,25 @@ public final class Files {
     native static boolean remove(long lpsz);
 
     static native int rename(long lpszOld, long lpszNew);
+
+    /**
+     * Removes directory recursively. When function fails the caller has to check Os.errno() for the diagnostics.
+     * The function can operate in two modes, eager and haltOnFail. In haltOnFail mode function fails fast, providing precise
+     * error number. In eager mode function will free most of the disk space but likely to fail on deleting non-empty
+     * directory, should some files remain. Thus, not providing correct diagnostics.
+     * <p>
+     * rmdir() will fail if directory does not exist
+     *
+     * @param path       path to the directory, must include trailing slash (/)
+     * @param haltOnFail when true removing directory will halt on first failed attempt to remove directory contents. When
+     *                   false, the function will remove as many files and subdirectories as possible. That might be useful
+     *                   when the intent is too free up as much disk space as possible.
+     * @param log        log instance to report critical errors to, can be null
+     * @return >=0 depth of the removed directory on success, negative number indicates failure
+     */
+    static int rmdir(Path path, boolean haltOnFail, Log log) {
+        return rmdir(path, haltOnFail, 0, RMDIR_MAX_DEPTH, log);
+    }
 
     static {
         Os.init();

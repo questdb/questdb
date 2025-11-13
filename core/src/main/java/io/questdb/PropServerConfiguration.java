@@ -388,6 +388,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double rerunExponentialWaitMultiplier;
     private final int rerunInitialWaitQueueSize;
     private final int rerunMaxProcessingQueueSize;
+    private final int rmdirMaxDepth;
     private final int rndFunctionMemoryMaxPages;
     private final int rndFunctionMemoryPageSize;
     private final int rollBufferLimit;
@@ -1526,6 +1527,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.dbRoot));
             this.fileDescriptorCacheEnabled = getBoolean(properties, env, PropertyKey.CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED, true);
+            this.rmdirMaxDepth = getInt(properties, env, PropertyKey.CAIRO_RMDIR_MAX_DEPTH, 5);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     DateFormatFactory.INSTANCE,
@@ -2359,8 +2361,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     protected int getQueueCapacity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int defaultValue) throws ServerConfigurationException {
         final int value = getInt(properties, env, key, defaultValue);
-        if (!Numbers.isPow2(value)) {
-            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Value must be power of 2, e.g. 1,2,4,8,16,32,64...");
+        if (!Numbers.isPow2(value) && value != 0) {
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Value must be power of 2, e.g. 0,1,2,4,8,16,32,64...");
         }
         return value;
     }
@@ -3613,6 +3615,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRepeatMigrationsFromVersion() {
             return repeatMigrationFromVersion;
+        }
+
+        @Override
+        public int getRmdirMaxDepth() {
+            return rmdirMaxDepth;
         }
 
         @Override

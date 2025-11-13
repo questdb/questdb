@@ -26,6 +26,11 @@ package io.questdb.std;
 
 import io.questdb.std.str.Path;
 
+/**
+ * Provides a thread-local Path instance for security-sensitive file operations.
+ * Used to create isolated copies of paths to prevent modification during
+ * potentially dangerous operations like recursive directory removal.
+ */
 public class SecurePath {
     static final io.questdb.std.ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
 

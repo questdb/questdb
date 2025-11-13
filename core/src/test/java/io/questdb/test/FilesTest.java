@@ -25,7 +25,6 @@
 package io.questdb.test;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
@@ -265,7 +264,7 @@ public class FilesTest {
                         dst.concat("subdir").concat("file2");
                         TestUtils.assertFileContentsEquals(src, dst);
                     } finally {
-                        Files.rmdir(p2, true, 0, 10);
+                        Files.rmdir(p2, true);
                     }
                 }
             }
@@ -307,7 +306,7 @@ public class FilesTest {
                 Assert.assertEquals(0, Files.softLink(targetPath.$(), linkPath.$()));
                 Assert.assertTrue(Files.isSoftLink(linkPath.$()));
 
-                Assert.assertTrue(Files.rmdir(linkPath, true, 0, 10));
+                Assert.assertTrue(Files.rmdir(linkPath, true));
                 Assert.assertFalse(new File(linkPath.toString()).exists());
                 Assert.assertTrue(r.exists());
                 Assert.assertEquals(0L, Files.getDirSize(targetPath));
@@ -561,7 +560,7 @@ public class FilesTest {
                         dst.concat("subdir").concat("file2");
                         TestUtils.assertFileContentsEquals(src, dst);
                     } finally {
-                        Files.rmdir(p2, true, 0, 10);
+                        Files.rmdir(p2, true);
                     }
                 }
             }
@@ -1091,11 +1090,7 @@ public class FilesTest {
             Assert.assertTrue(ff.rmdir(path));
 
             temporaryFolder.newFolder("a", ".download", "table", "wal", "segment", "extra");
-            try {
-                ff.rmdir(path);
-                Assert.fail();
-            } catch (CairoError e) {
-            }
+            Assert.assertFalse(ff.rmdir(path));
         }
     }
 
