@@ -26,11 +26,15 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.engine.join.JoinRecord;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Unsafe;
 
 public class GroupByColumnSink {
     private static final long HEADER_SIZE = 2 * Integer.BYTES;
     private static final long SIZE_OFFSET = Integer.BYTES;
+    private static final Decimal128 decimal128 = new Decimal128();
+    private static final Decimal256 decimal256 = new Decimal256();
     private final int initialCapacity;
     private GroupByAllocator allocator;
     private long ptr;
@@ -80,7 +84,7 @@ public class GroupByColumnSink {
     }
 
     public void put(JoinRecord record, int colIndex, int colTag) {
-        switch (ColumnType.tagOf(colTag)) {
+        switch (colTag) {
             case ColumnType.BYTE:
                 putByte(record.getByte(colIndex));
                 break;
@@ -129,6 +133,26 @@ public class GroupByColumnSink {
             case ColumnType.CHAR:
                 putChar(record.getChar(colIndex));
                 break;
+            case ColumnType.DECIMAL8:
+                putByte(record.getDecimal8(colIndex));
+                break;
+            case ColumnType.DECIMAL16:
+                putShort(record.getDecimal16(colIndex));
+                break;
+            case ColumnType.DECIMAL32:
+                putInt(record.getDecimal32(colIndex));
+                break;
+            case ColumnType.DECIMAL64:
+                putLong(record.getDecimal64(colIndex));
+                break;
+            case ColumnType.DECIMAL128:
+                record.getDecimal128(colIndex, decimal128);
+                putDecimal128();
+                break;
+            case ColumnType.DECIMAL256:
+                record.getDecimal256(colIndex, decimal256);
+                putDecimal256();
+                break;
         }
     }
 
@@ -161,6 +185,20 @@ public class GroupByColumnSink {
     private void putChar(char value) {
         long ptr = reserve(Character.BYTES);
         Unsafe.getUnsafe().putChar(ptr, value);
+    }
+
+    private void putDecimal128() {
+        long ptr = reserve(16);
+        Unsafe.getUnsafe().putLong(ptr, decimal128.getHigh());
+        Unsafe.getUnsafe().putLong(ptr + 8L, decimal128.getLow());
+    }
+
+    private void putDecimal256() {
+        long ptr = reserve(32);
+        Unsafe.getUnsafe().putLong(ptr, decimal256.getHh());
+        Unsafe.getUnsafe().putLong(ptr + 8L, decimal256.getHl());
+        Unsafe.getUnsafe().putLong(ptr + 16L, decimal256.getLh());
+        Unsafe.getUnsafe().putLong(ptr + 24L, decimal256.getLl());
     }
 
     private void putFloat(float value) {

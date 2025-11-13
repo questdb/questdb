@@ -399,7 +399,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
         final IntList columnIndexes = atom.getGroupByColumnIndexes();
         final int columnCount = columnIndexes.size();
-        final var columnTags = atom.getGroupByColumnTypes();
+        final var columnTags = atom.getGroupByColumnTags();
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
@@ -717,7 +717,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 final IntList columnIndexes = atom.getGroupByColumnIndexes();
                 final int columnCount = columnIndexes.size();
-                final var columnTags = atom.getGroupByColumnTypes();
+                final var columnTags = atom.getGroupByColumnTags();
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
 

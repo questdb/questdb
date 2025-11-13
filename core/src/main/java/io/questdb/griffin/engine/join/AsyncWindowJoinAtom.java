@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -72,7 +73,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledMasterFilter;
-    private final IntList groupByColumnTypes;
+    private final IntList groupByColumnTags;
     private final IntList groupByFunctionToColumnIndex;
     private final JoinSymbolTableSource joinSymbolTableSource;
     private final long joinWindowHi;
@@ -228,7 +229,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             if (vectorized) {
                 final int groupByFunctionSize = ownerGroupByFunctions.size();
                 this.groupByColumnIndexes = new IntList(groupByFunctionSize);
-                this.groupByColumnTypes = new IntList(groupByFunctionSize);
+                this.groupByColumnTags = new IntList(groupByFunctionSize);
                 this.groupByFunctionToColumnIndex = new IntList(groupByFunctionSize);
                 for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
                     var func = ownerGroupByFunctions.getQuick(i);
@@ -237,7 +238,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                     if (mappedIndex == -1) {
                         groupByColumnIndexes.add(func.getColumnIndex());
                         var unary = (UnaryFunction) func;
-                        groupByColumnTypes.add(unary.getArg().getType());
+                        groupByColumnTags.add(ColumnType.tagOf(unary.getArg().getType()));
                         groupByFunctionToColumnIndex.add(groupByColumnIndexes.size() - 1);
                     } else {
                         groupByFunctionToColumnIndex.add(mappedIndex);
@@ -254,7 +255,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 }
             } else {
                 this.groupByColumnIndexes = null;
-                this.groupByColumnTypes = null;
+                this.groupByColumnTags = null;
                 this.ownerColumnSink = null;
                 this.perWorkerColumnSinks = null;
                 this.groupByFunctionToColumnIndex = null;
@@ -342,8 +343,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return groupByColumnIndexes;
     }
 
-    public IntList getGroupByColumnTypes() {
-        return groupByColumnTypes;
+    public IntList getGroupByColumnTags() {
+        return groupByColumnTags;
     }
 
     public IntList getGroupByFunctionToColumnIndex() {

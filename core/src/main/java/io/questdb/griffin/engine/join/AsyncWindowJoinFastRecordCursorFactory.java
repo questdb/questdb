@@ -437,7 +437,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
         final IntList columnIndexes = atom.getGroupByColumnIndexes();
         final int columnCount = columnIndexes.size();
-        final var columnTags = atom.getGroupByColumnTypes();
+        final var columnTags = atom.getGroupByColumnTags();
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
         final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
@@ -771,7 +771,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 columnSink.resetPtr();
                 final IntList columnIndexes = atom.getGroupByColumnIndexes();
                 final int columnCount = columnIndexes.size();
-                final var columnTags = atom.getGroupByColumnTypes();
+                final var columnTags = atom.getGroupByColumnTags();
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
                 final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
