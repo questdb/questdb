@@ -116,7 +116,7 @@ public class FilesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("path", ColumnType.VARCHAR));
         metadata.add(new TableColumnMetadata("diskSize", ColumnType.LONG));
         metadata.add(new TableColumnMetadata("diskSizeHuman", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("lastModified", ColumnType.DATE));
+        metadata.add(new TableColumnMetadata("modifiedTime", ColumnType.DATE));
         METADATA = metadata;
     }
 }

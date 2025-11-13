@@ -45,7 +45,7 @@ import io.questdb.std.str.Utf8s;
  * Used by both ImportFilesFunctionFactory and ExportFilesFunctionFactory.
  */
 public class FilesRecordCursor implements NoRandomAccessRecordCursor {
-    private static final int LAST_MODIFIED_COLUMN = 3;
+    private static final int MODIFIED_TIME_COLUMN = 3;
     private static final int PATH_COLUMN = 0;
     private static final int SIZE_COLUMN = 1;
     private static final int SIZE_HUMAN_COLUMN = 2;
@@ -221,13 +221,13 @@ public class FilesRecordCursor implements NoRandomAccessRecordCursor {
         private final Utf8StringSink sinkB = new Utf8StringSink();
         private final StringSink sizeSink = new StringSink();
         protected Utf8StringSink fileName;
-        protected long lastModified;
+        protected long modifiedTime;
         protected long size;
 
         @Override
         public long getDate(int col) {
-            if (col == LAST_MODIFIED_COLUMN) {
-                return lastModified;
+            if (col == MODIFIED_TIME_COLUMN) {
+                return modifiedTime;
             }
             return 0;
         }
@@ -278,10 +278,10 @@ public class FilesRecordCursor implements NoRandomAccessRecordCursor {
             return null;
         }
 
-        public void of(Utf8StringSink fileName, long size, long lastModified) {
+        public void of(Utf8StringSink fileName, long size, long modifiedTime) {
             this.fileName = fileName;
             this.size = size;
-            this.lastModified = lastModified;
+            this.modifiedTime = modifiedTime;
             this.sizeSink.clear();
             SizePrettyFunctionFactory.toSizePretty(sizeSink, size);
         }

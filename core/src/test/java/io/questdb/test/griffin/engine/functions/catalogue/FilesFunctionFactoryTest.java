@@ -61,7 +61,7 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
 
     /**
      * Test that files() function returns all required columns.
-     * Verifies the column structure: path, diskSize, diskSizeHuman, lastModified
+     * Verifies the column structure: path, diskSize, diskSizeHuman, modifiedTime
      */
     @Test
     public void testFilesColumnsExist() throws Exception {
@@ -82,8 +82,8 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
     public void testFilesEmptyResult() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tlastModified\n",
-                    "select path, diskSize, diskSizeHuman, lastModified from files('" + testRoot + "') where path like '%.nonexistent'"
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
+                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + testRoot + "') where path like '%.nonexistent'"
             );
         });
     }
@@ -223,8 +223,8 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
     public void testFilesNonexistentPath() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tlastModified\n",
-                    "select path, diskSize, diskSizeHuman, lastModified from files('" + testRoot + "/nonexistent')"
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
+                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + testRoot + "/nonexistent')"
             );
         });
     }
@@ -246,7 +246,7 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
     }
 
     /**
-     * Test that lastModified column contains valid timestamp values.
+     * Test that modifiedTime column contains valid timestamp values.
      * Verifies that dates can be selected and are non-null.
      */
     @Test
@@ -257,7 +257,7 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
                             "large.bin\n" +
                             "subdir" + File.separator + "nested.txt\n" +
                             "test.txt\n",
-                    "select path from files('" + testRoot + "') where lastModified is not null order by path"
+                    "select path from files('" + testRoot + "') where modifiedTime is not null order by path"
             );
         });
     }

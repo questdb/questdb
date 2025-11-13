@@ -65,27 +65,27 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testFilesOrderByDiskSizeDescLimit() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tlastModified\n" +
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                             "reports" + File.separator + "2023_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
                             "reports" + File.separator + "monthly_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
                             "test.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n",
-                    "select path, diskSize, diskSizeHuman, lastModified from files('" + inputRoot + "') order by diskSize desc, path limit 3"
+                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') order by diskSize desc, path limit 3"
             );
         });
     }
 
     /**
-     * Test files() with ORDER BY lastModified and LIMIT.
-     * SELECT * FROM files('/root') ORDER BY lastModified LIMIT 2
+     * Test files() with ORDER BY modifiedTime and LIMIT.
+     * SELECT * FROM files('/root') ORDER BY modifiedTime LIMIT 2
      */
     @Test
     public void testFilesOrderByModifiedTimeLimit() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tlastModified\n" +
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                             "temp" + File.separator + "backup.sql\t45\t45.0 B\t1970-04-26T17:46:40.045Z\n" +
                             "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n",
-                    "select path, diskSize, diskSizeHuman, lastModified from files('" + inputRoot + "') order by lastModified, path limit 2"
+                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') order by modifiedTime, path limit 2"
             );
         });
     }
@@ -98,12 +98,12 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testFilesOrderByMultipleColumnsLimit() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tlastModified\n" +
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                             "temp" + File.separator + "backup.sql\t45\t45.0 B\t1970-04-26T17:46:40.045Z\n" +
                             "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                             "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                             "data" + File.separator + "nested" + File.separator + "deep_file.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n",
-                    "select path, diskSize, diskSizeHuman, lastModified from files('" + inputRoot + "') order by diskSize, path limit 4"
+                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') order by diskSize, path limit 4"
             );
         });
     }
@@ -116,10 +116,10 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testFilesWithLimit() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tlastModified\n" +
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                             "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                             "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n",
-                    "select path, diskSize, diskSizeHuman, lastModified from files('" + inputRoot + "') order by path limit 2"
+                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') order by path limit 2"
             );
         });
     }
@@ -132,8 +132,8 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testGlobFilterCaseSensitive() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tlastModified\n",
-                    "select path, diskSize, diskSizeHuman, lastModified from files('" + inputRoot + "') where glob(path, '*.PARQUET') order by path"
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
+                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.PARQUET') order by path"
             );
         });
     }
@@ -147,10 +147,10 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testGlobFilterOrderByPathDescLimit() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tlastModified\n" +
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                             "test.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
                             "reports" + File.separator + "monthly_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n",
-                    "select path, diskSize, diskSizeHuman, lastModified from files('" + inputRoot + "') where glob(path, '*.csv') order by path desc limit 2"
+                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.csv') order by path desc limit 2"
             );
         });
     }
@@ -163,12 +163,12 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testGlobFilterParquetOnly() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tlastModified\n" +
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                             "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                             "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                             "data" + File.separator + "nested" + File.separator + "deep_file.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                             "reports" + File.separator + "2024_report.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n",
-                    "select path, diskSize, diskSizeHuman, lastModified from files('" + inputRoot + "') where glob(path, '*.parquet') order by path"
+                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.parquet') order by path"
             );
         });
     }
@@ -181,9 +181,9 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testGlobFilterSqlOnly() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tlastModified\n" +
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                             "temp" + File.separator + "backup.sql\t45\t45.0 B\t1970-04-26T17:46:40.045Z\n",
-                    "select path, diskSize, diskSizeHuman, lastModified from files('" + inputRoot + "') where glob(path, '*.sql') order by path"
+                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.sql') order by path"
             );
         });
     }
@@ -196,10 +196,10 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testGlobFilterWithLimit() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tlastModified\n" +
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                             "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                             "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n",
-                    "select path, diskSize, diskSizeHuman, lastModified from files('" + inputRoot + "') where glob(path, '*.parquet') order by path limit 2"
+                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.parquet') order by path limit 2"
             );
         });
     }
@@ -212,11 +212,11 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testGlobInFilterClause() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tlastModified\n" +
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                             "reports" + File.separator + "2023_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
                             "reports" + File.separator + "monthly_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
                             "test.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n",
-                    "select path, diskSize, diskSizeHuman, lastModified from files('" + inputRoot + "') where glob(path, '*.csv') order by path"
+                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.csv') order by path"
             );
         });
     }
@@ -229,11 +229,11 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testGlobNestedPathWithLimit() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tlastModified\n" +
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                             "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                             "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                             "data" + File.separator + "nested" + File.separator + "deep_file.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n",
-                    "select path, diskSize, diskSizeHuman, lastModified from files('" + inputRoot + "') where glob(path, 'data/*') order by path limit 3"
+                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, 'data/*') order by path limit 3"
             );
         });
     }
