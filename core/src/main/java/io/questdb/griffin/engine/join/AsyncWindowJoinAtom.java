@@ -493,7 +493,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         final SymbolTableSource slaveSymbolTableSource = ownerSlaveTimeFrameHelper.getSymbolTableSource();
         joinSymbolTableSource.of(masterSymbolTableSource, slaveSymbolTableSource);
 
-        Function.init(ownerGroupByFunctions, masterSymbolTableSource, executionContext, null);
+        Function.init(ownerGroupByFunctions, joinSymbolTableSource, executionContext, null);
 
         if (perWorkerGroupByFunctions != null) {
             final boolean current = executionContext.getCloneSymbolTables();
