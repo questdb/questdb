@@ -92,6 +92,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelGroupByEnabled;
     private boolean parallelReadParquetEnabled;
     private boolean parallelTopKEnabled;
+    private boolean parallelWindowJoinEnabled;
     private Rnd random;
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
@@ -109,6 +110,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled() && sharedQueryWorkerCount > 0;
         parallelGroupByEnabled = cairoConfiguration.isSqlParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
         parallelTopKEnabled = cairoConfiguration.isSqlParallelTopKEnabled() && sharedQueryWorkerCount > 0;
+        parallelWindowJoinEnabled = cairoConfiguration.isSqlParallelWindowJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled() && sharedQueryWorkerCount > 0;
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
@@ -329,6 +331,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelWindowJoinEnabled() {
+        return parallelWindowJoinEnabled;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
     }
@@ -442,6 +449,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
         this.parallelTopKEnabled = parallelTopKEnabled;
+    }
+
+    @Override
+    public void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled) {
+        this.parallelWindowJoinEnabled = parallelWindowJoinEnabled;
     }
 
     @Override

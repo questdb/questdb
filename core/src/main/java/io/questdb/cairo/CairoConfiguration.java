@@ -784,6 +784,8 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelTopKEnabled();
 
+    boolean isSqlParallelWindowJoinEnabled();
+
     boolean isTableTypeConversionEnabled();
 
     /**

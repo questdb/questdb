@@ -40,6 +40,12 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
+    private final boolean enableParallelWindowJoin;
+
+    public ParallelWindowJoinFuzzTest() {
+        this.enableParallelWindowJoin = TestUtils.generateRandom(LOG).nextBoolean();
+        LOG.info().$("parallel window join enabled: ").$(enableParallelWindowJoin).$();
+    }
 
     @Override
     @Before
@@ -50,6 +56,7 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
         // queue capacity to exhibit various edge cases.
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, String.valueOf(enableParallelWindowJoin));
         super.setUp();
     }
 
@@ -67,6 +74,25 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                 """
                         avg_price\tmax_sym
                         19.98409342766\tsym9
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelWindowJoinFiltered2() throws Exception {
+        // tests thread-unsafe filter
+        testParallelWindowJoin(
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p ON concat(p.sym, '_00') = 'sym11_00' " +
+                        "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
+                        "  WHERE concat(t.side, '_00') = 'sell_00' " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.98409342766\t14.982510448352535\t5.010953919128168
                         """
         );
     }

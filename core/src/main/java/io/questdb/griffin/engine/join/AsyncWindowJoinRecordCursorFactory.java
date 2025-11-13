@@ -308,6 +308,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             break;
                         }
                         slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                        baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     }
                 }
             }
@@ -606,6 +607,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                                 break;
                             }
                             slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         }
                     }
                 }

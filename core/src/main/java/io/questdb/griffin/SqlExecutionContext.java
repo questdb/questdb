@@ -212,6 +212,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelTopKEnabled();
 
+    boolean isParallelWindowJoinEnabled();
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
@@ -263,6 +265,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
 
     void setParallelTopKEnabled(boolean parallelTopKEnabled);
+
+    void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled);
 
     void setRandom(Rnd rnd);
 

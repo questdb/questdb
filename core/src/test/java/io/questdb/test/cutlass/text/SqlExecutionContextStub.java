@@ -218,6 +218,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelWindowJoinEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return false;
     }
@@ -234,12 +239,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void popHasInterval() {
-
     }
 
     @Override
     public void popIntervalModel() {
-
     }
 
     @Override
@@ -248,12 +251,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void pushHasInterval(int hasInterval) {
-
     }
 
     @Override
     public void pushIntervalModel(RuntimeIntrinsicIntervalModel intervalModel) {
-
     }
 
     @Override
@@ -306,6 +307,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
+    }
+
+    @Override
+    public void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled) {
     }
 
     @Override

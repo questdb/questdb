@@ -333,8 +333,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.SqlOptimiser.concatFilters;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -3446,8 +3446,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
 
                                 // is parallel windowJoin?
-                                if (slave.supportsTimeFrameCursor() && (master.supportsPageFrameCursor() ||
-                                        (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor()))) {
+                                final boolean parallelWindowJoinEnabled = executionContext.isParallelWindowJoinEnabled();
+                                final boolean masterSupportsPageFrames = master.supportsPageFrameCursor()
+                                        || (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor());
+                                if (parallelWindowJoinEnabled && masterSupportsPageFrames && slave.supportsTimeFrameCursor()) {
                                     // steal master filter
                                     CompiledFilter compiledFilter = null;
                                     MemoryCARW bindVarMemory = null;
@@ -3627,26 +3629,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 executionContext.getSharedQueryWorkerCount()
                                         );
                                     }
-                                } else {
-                                    if (slave.supportsTimeFrameCursor()) {
-                                        if (node != null) {
-                                            filter = compileJoinFilter(node, joinMetadata, executionContext);
-                                        }
-
-                                        return new WindowJoinRecordCursorFactory(
-                                                configuration,
-                                                outerProjectionMetadata,
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                master.getMetadata().getColumnCount(),
-                                                lo,
-                                                hi,
-                                                groupByFunctions,
-                                                valueTypes,
-                                                filter
-                                        );
+                                } else if (slave.supportsTimeFrameCursor()) {
+                                    if (node != null) {
+                                        filter = compileJoinFilter(node, joinMetadata, executionContext);
                                     }
+
+                                    return new WindowJoinRecordCursorFactory(
+                                            configuration,
+                                            outerProjectionMetadata,
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            master.getMetadata().getColumnCount(),
+                                            lo,
+                                            hi,
+                                            groupByFunctions,
+                                            valueTypes,
+                                            filter
+                                    );
+                                } else {
                                     throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("right side of window join must be a table, not sub-query");
                                 }
                                 break;

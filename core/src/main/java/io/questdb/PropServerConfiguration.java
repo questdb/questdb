@@ -455,6 +455,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelGroupByEnabled;
     private final boolean sqlParallelReadParquetEnabled;
     private final boolean sqlParallelTopKEnabled;
+    private final boolean sqlParallelWindowJoinEnabled;
     private final int sqlParallelWorkStealingThreshold;
     private final int sqlParquetFrameCacheCapacity;
     private final int sqlQueryRegistryPoolSize;
@@ -1839,9 +1840,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             final boolean defaultParallelSqlEnabled = queryWorkers > 0;
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelTopKEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelWindowJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
-            if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled) {
+            if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelReadParquetEnabled && !sqlParallelTopKEnabled && !sqlParallelWindowJoinEnabled) {
                 // All type of parallel queries are disabled. Don't start the query thread pool
                 sharedWorkerPoolQueryConfiguration.sharedWorkerCount = 0;
             }
@@ -4302,6 +4304,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelTopKEnabled() {
             return sqlParallelTopKEnabled;
+        }
+
+        @Override
+        public boolean isSqlParallelWindowJoinEnabled() {
+            return sqlParallelWindowJoinEnabled;
         }
 
         @Override
