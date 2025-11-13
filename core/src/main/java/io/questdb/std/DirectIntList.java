@@ -35,7 +35,6 @@ import java.io.Closeable;
 import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
 
 public class DirectIntList implements Mutable, Closeable, Reopenable {
-
     private static final Log LOG = LogFactory.getLog(DirectIntList.class);
     private final long initialCapacity;
     private final int memoryTag;
@@ -45,13 +44,20 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     private long pos;
 
     public DirectIntList(long capacity, int memoryTag) {
+        this(capacity, memoryTag, false);
+    }
+
+    public DirectIntList(long capacity, int memoryTag, boolean keepClosed) {
         assert capacity >= 0;
         this.memoryTag = memoryTag;
-        this.capacity = (capacity * Integer.BYTES);
-        this.address = capacity == 0 ? 0 : Unsafe.malloc(this.capacity, memoryTag);
-        this.pos = address;
-        this.limit = pos + this.capacity;
-        this.initialCapacity = this.capacity;
+        final long capacityBytes = capacity * Integer.BYTES;
+        if (!keepClosed) {
+            this.capacity = capacityBytes;
+            this.address = capacityBytes > 0 ? Unsafe.malloc(capacityBytes, memoryTag) : 0;
+            this.pos = address;
+            this.limit = pos + capacityBytes;
+        }
+        this.initialCapacity = capacityBytes;
     }
 
     public void add(int x) {
