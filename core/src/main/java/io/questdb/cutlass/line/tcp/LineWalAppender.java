@@ -519,7 +519,11 @@ public class LineWalAppender {
                                 try {
                                     decimal.rescale(scale);
                                 } catch (NumericException ignored) {
-                                    throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(), ent.getName().asAsciiCharSequence());
+                                    if (decimal.getScale() > scale) {
+                                        throw precisionLossError(tud.getTableNameUtf16(), ent.getName(), ent.getDecimalValue(), colType);
+                                    } else {
+                                        throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(), ent.getName().asAsciiCharSequence());
+                                    }
                                 }
                             }
                             if (!decimal.comparePrecision(ColumnType.getDecimalPrecision(colType))) {

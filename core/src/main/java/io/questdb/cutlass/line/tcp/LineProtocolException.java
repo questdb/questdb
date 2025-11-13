@@ -30,6 +30,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
@@ -111,6 +112,28 @@ public class LineProtocolException extends CairoException {
     }
 
     public static LineProtocolException precisionLossError(String tableNameUtf16, DirectUtf8Sequence columnName, Utf8Sequence ilpValue, int colType) {
+        LineProtocolException instance = instance();
+        instance
+                .put("table: ").put(tableNameUtf16)
+                .put(", column: ").put(columnName)
+                .put("; value error: converting ").put(ilpValue)
+                .put(" to ").put(ColumnType.nameOf(colType))
+                .put(" will result in loss of precision");
+        return instance;
+    }
+
+    public static LineProtocolException precisionLossError(String tableNameUtf16, DirectUtf8Sequence columnName, Sinkable ilpValue, int colType) {
+        LineProtocolException instance = instance();
+        instance
+                .put("table: ").put(tableNameUtf16)
+                .put(", column: ").put(columnName)
+                .put("; value error: converting ").put(ilpValue)
+                .put(" to ").put(ColumnType.nameOf(colType))
+                .put(" will result in loss of precision");
+        return instance;
+    }
+
+    public static LineProtocolException precisionLossError(String tableNameUtf16, DirectUtf8Sequence columnName, CharSequence ilpValue, int colType) {
         LineProtocolException instance = instance();
         instance
                 .put("table: ").put(tableNameUtf16)

@@ -1134,6 +1134,12 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .decimalColumn("y", Decimal256.fromLong(12345, 0))
                         .at(100000000007L, ChronoUnit.MICROS);
                 sender.flush();
+
+                // Decimal loosing precision
+                sender.table(tableName)
+                        .decimalColumn("x", Decimal256.fromLong(123456, 4))
+                        .at(100000000007L, ChronoUnit.MICROS);
+                sender.flush();
             }
             waitTableWriterFinish(released);
 
