@@ -92,7 +92,7 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                         ")",
                 """
                         avg_price\tmax_bid\tmin_bid
-                        19.98409342766\t14.982510448352535\t5.010953919128168
+                        19.98409342766\t6.190214242777591\t5.600641833789625
                         """
         );
     }
@@ -123,13 +123,13 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                         "FROM (" +
                         "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
                         "  FROM trades t " +
-                        "  WINDOW JOIN prices p ON t.sym = p.sym AND concat(p.sym, '_00') = 'sym11_00' " +
+                        "  WINDOW JOIN prices p ON t.sym = p.sym AND concat(p.sym, '_00') = 'sym0_00' " +
                         "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
                         "  WHERE concat(t.side, '_00') = 'sell_00' " +
                         ")",
                 """
                         avg_price\tmax_bid\tmin_bid
-                        19.98409342766\t6.024435283632629\t6.024435283632629
+                        19.98409342766\t14.942292378343328\t5.010953919128168
                         """
         );
     }

@@ -259,7 +259,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
         joinRecord.of(record, slaveRecord);
-        Function joinFilter = atom.getJoinFilter(slotId);
+        final Function joinFilter = atom.getJoinFilter(slotId);
         final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final long slaveTsScale = atom.getSlaveTsScale();
@@ -560,7 +560,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
                 final JoinRecord joinRecord = atom.getJoinRecord(slotId);
                 joinRecord.of(record, slaveRecord);
-                Function joinFilter = atom.getMasterFilter(slotId);
+                final Function joinFilter = atom.getJoinFilter(slotId);
                 final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
 
                 final long slaveTsScale = atom.getSlaveTsScale();
