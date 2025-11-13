@@ -74,6 +74,7 @@ import java.util.function.Consumer;
 import static io.questdb.client.Sender.*;
 import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createDoubleArray;
 import static io.questdb.test.tools.TestUtils.assertContains;
+import static io.questdb.test.tools.TestUtils.assertEventually;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.*;
 
@@ -1579,15 +1580,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     Sender sender1 = Sender.fromConfig(confString);
                     Sender sender2 = Sender.fromConfig(confString)
             ) {
-                SOCountDownLatch writerIsBack = new SOCountDownLatch(1);
-                engine.setPoolListener(
-                        (factoryType, thread, tableToken, event, segment, position) -> {
-                            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                                writerIsBack.countDown();
-                            }
-                        }
-                );
-
                 AtomicBoolean walRunning = new AtomicBoolean(true);
                 SOCountDownLatch doneAll = new SOCountDownLatch(3);
                 SOCountDownLatch doneILP = new SOCountDownLatch(2);
@@ -1661,17 +1653,18 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
                 Assert.assertEquals(0, errorCount.get());
 
-                // make sure to assert before closing the Sender
-                // since the Sender will always flush on close
-                writerIsBack.await();
-                TestUtils.assertSql(
-                        engine,
-                        sqlExecutionContext,
-                        "select count() from mytable",
-                        sink,
-                        "count\n" +
-                                N * 2 + "\n"
-                );
+
+                assertEventually(() -> {
+                    drainWalQueue();
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count() from mytable",
+                            sink,
+                            "count\n" +
+                                    N * 2 + "\n"
+                    );
+                });
             }
         });
     }
