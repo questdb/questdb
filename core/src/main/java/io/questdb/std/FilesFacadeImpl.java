@@ -457,7 +457,6 @@ public class FilesFacadeImpl implements FilesFacade {
                 if (resDepth > -1) {
                     LOG.info().$("completed rmdir with subdirectories [path=").$(pathSecureCopy)
                             .$(", subDirDepth=").$(depth + 1)
-                            .$(", errno=").$(Os.errno())
                             .I$();
                 } else {
                     LOG.error().$("error in rmdir with subdirectories [path=").$(pathSecureCopy)
