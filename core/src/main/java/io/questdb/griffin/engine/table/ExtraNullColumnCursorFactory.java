@@ -321,6 +321,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long getRemainingRowsInInterval() {
+            return baseCursor.getRemainingRowsInInterval();
+        }
+
+        @Override
         public StaticSymbolTable getSymbolTable(int columnIndex) {
             return columnIndex < columnSplit ? baseCursor.getSymbolTable(columnIndex) : EmptySymbolMapReader.INSTANCE;
         }
