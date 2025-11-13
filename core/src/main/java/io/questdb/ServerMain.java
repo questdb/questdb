@@ -296,11 +296,7 @@ public class ServerMain implements Closeable {
                     if (engineMaintenanceJob != null) {
                         sharedPoolWrite.assign(engineMaintenanceJob);
                     }
-                    if (cairoConfig.getAsyncMunmapEnabled()) {
-                        AsyncMunmapJob asyncMunmapJob = new AsyncMunmapJob();
-                        sharedPoolQuery.assign(asyncMunmapJob);
-                    }
-
+                    WorkerPoolUtils.setupAsyncMunmapJob(sharedPoolQuery, engine);
                     WorkerPoolUtils.setupQueryJobs(sharedPoolQuery, engine);
 
                     if (!config.getCairoConfiguration().isReadOnlyInstance()) {

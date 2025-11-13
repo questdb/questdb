@@ -25,6 +25,7 @@
 package io.questdb.mp;
 
 import io.questdb.MessageBus;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
@@ -39,10 +40,22 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
+import io.questdb.std.Files;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
 
 public class WorkerPoolUtils {
+
+    public static void setupAsyncMunmapJob(WorkerPool pool, CairoEngine engine) {
+        CairoConfiguration config = engine.getConfiguration();
+        if (config.getAsyncMunmapEnabled()) {
+            Files.ASYNC_MUNMAP_ENABLED = true;
+            ServerMain.AsyncMunmapJob asyncMunmapJob = new ServerMain.AsyncMunmapJob();
+            pool.assign(asyncMunmapJob);
+        } else {
+            Files.ASYNC_MUNMAP_ENABLED = false;
+        }
+    }
 
     public static void setupQueryJobs(
             WorkerPool sharedPoolQuery,
