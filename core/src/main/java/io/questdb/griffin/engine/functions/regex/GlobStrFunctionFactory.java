@@ -99,7 +99,6 @@ public class GlobStrFunctionFactory implements FunctionFactory {
         StrConstant regex = StrConstant.newInstance(sink);
         final ObjList<Function> newArgList = args.copy();
         newArgList.set(1, regex);
-        // Use cached factory instance instead of creating new MatchStrFunctionFactory()
         return matchStrFactory.newInstance(position, newArgList, argPositions, configuration, sqlExecutionContext);
     }
 }

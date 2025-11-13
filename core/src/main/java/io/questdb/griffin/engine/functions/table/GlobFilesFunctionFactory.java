@@ -120,7 +120,9 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
 
         newArgs.set(0, new VarcharColumn(0));
         newArgs.add(new StrConstant(glob));
+        argPositions.add(0);
 
+        assert newArgs.size() == argPositions.size();
         Function globFunc = globStrFactory.newInstance(position, newArgs, argPositions, configuration, sqlExecutionContext);
 
         return new CursorFunction(new FilteredRecordCursorFactory(filesCursor, globFunc));
