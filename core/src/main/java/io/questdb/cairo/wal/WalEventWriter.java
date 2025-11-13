@@ -36,7 +36,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.AtomicIntList;
 import io.questdb.std.BoolList;
-import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
@@ -69,7 +68,7 @@ class WalEventWriter implements Closeable {
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
     private int txn = 0;
-    private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
+    private ObjList<DirectCharSequenceIntHashMap> txnSymbolMaps;
 
     WalEventWriter(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -235,7 +234,7 @@ class WalEventWriter implements Closeable {
     private void writeSymbolMapDiffs() {
         final int columns = txnSymbolMaps.size();
         for (int columnIndex = 0; columnIndex < columns; columnIndex++) {
-            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(columnIndex);
+            final var symbolMap = txnSymbolMaps.getQuick(columnIndex);
             if (symbolMap != null) {
                 final int initialCount = initialSymbolCounts.get(columnIndex);
                 if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
@@ -247,18 +246,7 @@ class WalEventWriter implements Closeable {
                     long appendAddress = eventMem.getAppendOffset();
                     eventMem.putInt(size);
 
-                    int symbolCount = 0;
-                    for (int j = 0; j < size; j++) {
-                        final CharSequence symbol = symbolMap.keys().getQuick(j);
-                        assert symbol != null;
-                        final int value = symbolMap.get(symbol);
-                        // Ignore symbols cached from symbolMapReader
-                        if (value >= initialCount) {
-                            eventMem.putInt(value);
-                            eventMem.putStr(symbol);
-                            symbolCount++;
-                        }
-                    }
+                    int symbolCount = symbolMap.copyTo(eventMem, initialCount);
                     // Update the size with the exact symbolCount
                     // An empty SymbolMapDiff can be created because symbolCount can be 0
                     // in case all cached symbols come from symbolMapReader.
@@ -413,7 +401,7 @@ class WalEventWriter implements Closeable {
         return txn++;
     }
 
-    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags) {
+    void of(ObjList<DirectCharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags) {
         this.txnSymbolMaps = txnSymbolMaps;
         this.initialSymbolCounts = initialSymbolCounts;
         this.symbolMapNullFlags = symbolMapNullFlags;
