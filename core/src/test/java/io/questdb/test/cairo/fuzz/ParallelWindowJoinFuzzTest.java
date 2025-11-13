@@ -32,7 +32,6 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 // This is not a fuzz test in traditional sense, but it's multithreaded, and we want to run it
@@ -54,7 +53,6 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
         super.setUp();
     }
 
-    @Ignore // TODO(puzpuzpuz): this test fails at SymbolColumn init
     @Test
     public void testParallelWindowJoinFiltered() throws Exception {
         testParallelWindowJoin(
@@ -67,8 +65,8 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                         "  WHERE t.side = 'sell' " +
                         ")",
                 """
-                        avg_price\tmax_bid_str
-                        19.98409342766\t9.996687893222216
+                        avg_price\tmax_sym
+                        19.98409342766\tsym9
                         """
         );
     }
@@ -135,7 +133,7 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                         "  FROM trades t " +
                         "  WINDOW JOIN prices p " +
                         "  RANGE BETWEEN 100 milliseconds PRECEDING AND 100 milliseconds FOLLOWING " +
-                        "))", // TODO(puzpuzpuz): remove redundant bracket
+                        ")",
                 """
                         avg_price\tmax_bid\tmin_bid
                         19.958398885587915\t14.982510448352535\t5.010953919128168
