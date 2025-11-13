@@ -37,7 +37,6 @@ import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.http.processors.LineHttpProcessorState;
 import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.cutlass.line.http.LineHttpSenderV2;
-import io.questdb.cutlass.line.tcp.TableUpdateDetails;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.test.AbstractBootstrapTest;
@@ -54,15 +53,12 @@ import static org.junit.Assert.fail;
 public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
     private static final LogCapture capture = new LogCapture();
     private static final Class<?>[] guaranteedLoggers = new Class[]{
-            LineHttpProcessorState.class,
-            TableUpdateDetails.class,
+            LineHttpProcessorState.class
     };
-
 
     @Before
     @Override
     public void setUp() {
-        LogFactory.enableGuaranteedLogging();
         LogFactory.enableGuaranteedLogging(guaranteedLoggers);
         super.setUp();
         capture.start();
@@ -76,7 +72,6 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
         capture.stop();
         super.tearDown();
         LogFactory.disableGuaranteedLogging(guaranteedLoggers);
-        LogFactory.disableGuaranteedLogging();
     }
 
     @Test
@@ -112,8 +107,7 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
     }
 
     private static void assertLogLevel(char errorLevel) {
-        capture.waitFor("http-server disconnected");
-        capture.assertLoggedRE(errorLevel + " i.q.c.h.p.LineHttpProcessorState \\[[0-9]*\\] could not commit");
+        capture.waitForRegex(errorLevel + " i.q.c.h.p.LineHttpProcessorState \\[[0-9]*\\] could not commit");
     }
 
     private static @NotNull Bootstrap createBootstrap(TestSecurityContext testSecurityContext) {

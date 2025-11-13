@@ -28,6 +28,7 @@ import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
@@ -218,8 +219,11 @@ public class LineHttpTudCache implements QuietCloseable {
                 if (!TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
                     throw parseException.of("invalid column name", columnName);
                 }
-                if (tsa.getColumnType(i) == LineTcpParser.ENTITY_TYPE_NULL) {
+                final int columnType = tsa.getColumnType(i);
+                if (columnType == LineTcpParser.ENTITY_TYPE_NULL) {
                     throw parseException.of("invalid column type", columnName);
+                } else if (columnType == ColumnType.DECIMAL) {
+                    throw parseException.of("decimal columns must be created manually", columnName);
                 }
             }
             tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);

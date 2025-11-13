@@ -687,7 +687,12 @@ public class TxReader implements Closeable, Mutable {
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {
-        if (ff.exists(path)) {
+        long len = ff.length(path);
+        // we check for length rather than file existence to account for possible delay
+        // in FS updating its catalog under pressure. Logically, the size of TXN file
+        // can never be less than the header. But async nature of FS updates have to be
+        // accounted for.
+        if (len >= TableUtils.TX_BASE_HEADER_SIZE) {
             // This method is called from constructor, and it's possible that
             // the code will run concurrently with table truncation. For that reason,
             // we must not rely on the file size but only assume that header is present.
@@ -700,7 +705,11 @@ public class TxReader implements Closeable, Mutable {
             }
             return;
         }
-        throw CairoException.fileNotFound().put("Cannot open. File does not exist: ").put(path);
+        throw CairoException.fileNotFound()
+                .put("could not open txn file [path=").put(path)
+                .put(", len=").put(len)
+                .put(", errno=").put(ff.errno())
+                .put(']');
     }
 
     private void unsafeLoadPartitions(long prevPartitionTableVersion, long prevColumnVersion, int partitionTableSize) {

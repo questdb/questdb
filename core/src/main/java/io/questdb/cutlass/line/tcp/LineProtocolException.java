@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.Decimal256;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -39,6 +40,22 @@ public class LineProtocolException extends CairoException {
         return instance()
                 .put("table: ").put(tableNameUtf16)
                 .put(", column: ").put(columnName)
+                .put("; line protocol value: ").put(entityValue)
+                .put(" is out bounds of column type: ").put(ColumnType.nameOf(colType));
+    }
+
+    public static LineProtocolException boundsError(Decimal256 entityValue, int colType, CharSequence tableNameUtf16, CharSequence columnName) {
+        return instance()
+                .put("table: ").put(tableNameUtf16)
+                .put(", column: ").put(columnName)
+                .put("; line protocol value: ").put(entityValue)
+                .put(" is out bounds of column type: ").put(ColumnType.nameOf(colType));
+    }
+
+    public static LineProtocolException boundsError(Decimal256 entityValue, int colType, CharSequence tableNameUtf16, int columnIndex) {
+        return instance()
+                .put("table: ").put(tableNameUtf16)
+                .put(", column: ").put(columnIndex)
                 .put("; line protocol value: ").put(entityValue)
                 .put(" is out bounds of column type: ").put(ColumnType.nameOf(colType));
     }
@@ -93,9 +110,33 @@ public class LineProtocolException extends CairoException {
                 .put(" does not exist, creating new columns is disabled");
     }
 
+    public static LineProtocolException precisionLossError(String tableNameUtf16, DirectUtf8Sequence columnName, Utf8Sequence ilpValue, int colType) {
+        LineProtocolException instance = instance();
+        instance
+                .put("table: ").put(tableNameUtf16)
+                .put(", column: ").put(columnName)
+                .put("; value error: converting ").put(ilpValue)
+                .put(" to ").put(ColumnType.nameOf(colType))
+                .put(" will result in loss of precision");
+        return instance;
+    }
+
     public static LineProtocolException timestampValueOverflow(long timestamp) {
         return instance()
                 .put("long overflow, timestamp: ").put(timestamp);
+    }
+
+    public static LineProtocolException valueError(String tableNameUtf16, int colType, Utf8Sequence ilpValue, DirectUtf8Sequence columnName) {
+        LineProtocolException instance = instance();
+        instance
+                .put("table: ").put(tableNameUtf16)
+                .put(", column: ").put(columnName)
+                .put("; value error: ").put(ilpValue)
+                .put(" cannot be converted to column type: ").put(ColumnType.nameOf(colType));
+        if (colType <= 0) {
+            instance.put('(').put(colType).put(')');
+        }
+        return instance;
     }
 
     public LineProtocolException put(@Nullable Utf8Sequence us) {
@@ -109,6 +150,11 @@ public class LineProtocolException extends CairoException {
     }
 
     public LineProtocolException put(long value) {
+        message.put(value);
+        return this;
+    }
+
+    public LineProtocolException put(Decimal256 value) {
         message.put(value);
         return this;
     }

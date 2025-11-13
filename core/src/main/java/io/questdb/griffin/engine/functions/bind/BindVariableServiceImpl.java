@@ -38,10 +38,12 @@ import io.questdb.griffin.engine.functions.UndefinedFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
@@ -51,6 +53,7 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+@SuppressWarnings("resource")
 public class BindVariableServiceImpl implements BindVariableService {
     private final ObjectPool<IPv4BindVariable> IPv4VarPool;
     private final ObjectPool<ArrayBindVariable> arrayVarPool;
@@ -58,6 +61,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     private final ObjectPool<ByteBindVariable> byteVarPool;
     private final ObjectPool<CharBindVariable> charVarPool;
     private final ObjectPool<DateBindVariable> dateVarPool;
+    private final ObjectPool<DecimalBindVariable> decimalVarPool;
     private final ObjectPool<DoubleBindVariable> doubleVarPool;
     private final ObjectPool<FloatBindVariable> floatVarPool;
     private final ObjectPool<GeoHashBindVariable> geoHashVarPool;
@@ -91,6 +95,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         this.uuidVarPool = new ObjectPool<>(UuidBindVariable::new, 8);
         this.varcharVarPool = new ObjectPool<>(VarcharBindVariable::new, poolSize);
         this.arrayVarPool = new ObjectPool<>(ArrayBindVariable::new, poolSize); // todo: this might be excessive, smaller pool size might be enough
+        this.decimalVarPool = new ObjectPool<>(DecimalBindVariable::new, poolSize);
     }
 
     @Override
@@ -114,6 +119,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         uuidVarPool.clear();
         varcharVarPool.clear();
         arrayVarPool.clear();
+        decimalVarPool.clear();
     }
 
     @Override
@@ -191,6 +197,19 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.ARRAY:
                 setArrayType(index, type);
                 return type;
+            case ColumnType.DECIMAL:
+                // We need a concrete type to store this binding variable.
+                // By default, we use one large enough to store most decimals.
+                type = ColumnType.getDecimalType(76, 38);
+                // fall through
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                setDecimal(index, type);
+                return type;
             default:
                 throw SqlException.$(position, "bind variable cannot be used [contextType=").put(ColumnType.nameOf(type)).put(", index=").put(index).put(']');
         }
@@ -228,7 +247,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setArray0(function, value, index, null);
+            setArray0(function, value, index);
         } else {
             indexedVariables.setQuick(index, function = arrayVarPool.next());
             ((ArrayBindVariable) function).setView(value);
@@ -386,6 +405,36 @@ public class BindVariableServiceImpl implements BindVariableService {
             indexedVariables.setQuick(index, function = dateVarPool.next());
             ((DateBindVariable) function).value = value;
         }
+    }
+
+    @Override
+    public void setDecimal(CharSequence name, long hh, long hl, long lh, long ll, int type) throws SqlException {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            final DecimalBindVariable function;
+            namedVariables.putAt(index, name, function = decimalVarPool.next());
+            function.value.of(hh, hl, lh, ll, ColumnType.getDecimalScale(type));
+            function.setType(type);
+        } else {
+            setDecimal(namedVariables.valueAtQuick(index), hh, hl, lh, ll, type, -1, name);
+        }
+    }
+
+    @Override
+    public void setDecimal(int index, long hh, long hl, long lh, long ll, int type) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            setDecimal(function, hh, hl, lh, ll, type, index, null);
+        } else {
+            indexedVariables.setQuick(index, function = decimalVarPool.next());
+            ((DecimalBindVariable) function).value.of(hh, hl, lh, ll, ColumnType.getDecimalScale(type));
+            ((DecimalBindVariable) function).setType(type);
+        }
+    }
+
+    public void setDecimal(int index, int type) throws SqlException {
+        setDecimal(index, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, type);
     }
 
     @Override
@@ -549,7 +598,7 @@ public class BindVariableServiceImpl implements BindVariableService {
             namedVariables.putAt(index, name, function = longVarPool.next());
             function.value = value;
         } else {
-            setLong0(namedVariables.valueAtQuick(index), value, -1, name, ColumnType.LONG);
+            setLong0(namedVariables.valueAtQuick(index), value, -1, name);
         }
     }
 
@@ -564,7 +613,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setLong0(function, value, index, null, ColumnType.LONG);
+            setLong0(function, value, index, null);
         } else {
             indexedVariables.setQuick(index, function = longVarPool.next());
             ((LongBindVariable) function).value = value;
@@ -806,7 +855,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         throw SqlException.$(0, "bind variable '").put(name).put("' is defined as ").put(ColumnType.nameOf(function.getType())).put(" and cannot accept ").put(ColumnType.nameOf(srcType));
     }
 
-    private static void setArray0(Function function, ArrayView value, int index, @Nullable CharSequence name) throws SqlException {
+    private static void setArray0(Function function, ArrayView value, int index) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.ARRAY:
@@ -816,7 +865,7 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.VARCHAR:
                 throw new UnsupportedOperationException("implement me");
             default:
-                reportError(function, ColumnType.ARRAY, index, name);
+                reportError(function, ColumnType.ARRAY, index, null);
                 break;
         }
     }
@@ -969,6 +1018,33 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
+    private static void setDecimal(Function function, long hh, long hl, long lh, long ll, int type, int index, @Nullable CharSequence name) throws SqlException {
+        final int functionType = function.getType();
+        final int functionTag = ColumnType.tagOf(function.getType());
+        if (functionTag < ColumnType.DECIMAL8 || functionTag > ColumnType.DECIMAL256) {
+            reportError(function, type, index, name);
+        }
+
+        final DecimalBindVariable binder = (DecimalBindVariable) function;
+
+        // We may need to rescale the bind variable to match the function scale
+        int fromScale = ColumnType.getDecimalScale(type);
+        int fromPrecision = ColumnType.getDecimalPrecision(type);
+        int toScale = ColumnType.getDecimalScale(functionType);
+        int toPrecision = ColumnType.getDecimalPrecision(functionType);
+        binder.value.of(hh, hl, lh, ll, fromScale);
+        if (fromScale != toScale) {
+            try {
+                binder.value.rescale(toScale);
+            } catch (NumericException ignored) {
+                throwDecimalOverflow(index, type, functionType, name);
+            }
+        }
+        if (fromPrecision + (toScale - fromScale) > toPrecision && !binder.value.comparePrecision(toPrecision)) {
+            throwDecimalOverflow(index, type, functionType, name);
+        }
+    }
+
     private static void setDouble0(Function function, double value, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
@@ -1092,7 +1168,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setLong0(Function function, long value, int index, @Nullable CharSequence name, int srcType) throws SqlException {
+    private static void setLong0(Function function, long value, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BYTE:
@@ -1129,7 +1205,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((CharBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsChar(value, ColumnType.LONG) : 0;
                 break;
             default:
-                reportError(function, srcType, index, name);
+                reportError(function, (int) ColumnType.LONG, index, name);
                 break;
         }
     }
@@ -1203,58 +1279,34 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setStr0(Function function, CharSequence value, int index, @Nullable CharSequence name) throws SqlException {
-        switch (ColumnType.tagOf(function.getType())) {
-            case ColumnType.BOOLEAN:
-                ((BooleanBindVariable) function).value = value != null && SqlKeywords.isTrueKeyword(value);
-                break;
-            case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = SqlUtil.implicitCastStrAsByte(value);
-                break;
-            case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = SqlUtil.implicitCastStrAsShort(value);
-                break;
-            case ColumnType.CHAR:
-                ((CharBindVariable) function).value = SqlUtil.implicitCastStrAsChar(value);
-                break;
-            case ColumnType.IPv4:
-                ((IPv4BindVariable) function).value = SqlUtil.implicitCastStrAsIPv4(value);
-                break;
-            case ColumnType.INT:
-                ((IntBindVariable) function).value = SqlUtil.implicitCastStrAsInt(value);
-                break;
-            case ColumnType.LONG:
-                ((LongBindVariable) function).value = SqlUtil.implicitCastStrAsLong(value);
-                break;
-            case ColumnType.TIMESTAMP:
-                ((TimestampBindVariable) function).value = ColumnType.getTimestampDriver(function.getType()).implicitCast(value);
-                break;
-            case ColumnType.DATE:
-                ((DateBindVariable) function).value = MillsTimestampDriver.INSTANCE.implicitCast(value);
-                break;
-            case ColumnType.FLOAT:
-                ((FloatBindVariable) function).value = SqlUtil.implicitCastStrAsFloat(value);
-                break;
-            case ColumnType.DOUBLE:
-                ((DoubleBindVariable) function).value = SqlUtil.implicitCastStrAsDouble(value);
-                break;
-            case ColumnType.STRING:
-                ((StrBindVariable) function).setValue(value);
-                break;
-            case ColumnType.VARCHAR:
-                ((VarcharBindVariable) function).setValue(value);
-                break;
-            case ColumnType.LONG256:
-                SqlUtil.implicitCastStrAsLong256(value, ((Long256BindVariable) function).value);
-                break;
-            case ColumnType.UUID:
-                SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
-                break;
-            case ColumnType.ARRAY:
-                ((ArrayBindVariable) function).parseArray(value);
-                break;
-            default:
-                reportError(function, ColumnType.STRING, index, name);
-                break;
+        final int type = function.getType();
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.BOOLEAN ->
+                    ((BooleanBindVariable) function).value = value != null && SqlKeywords.isTrueKeyword(value);
+            case ColumnType.BYTE -> ((ByteBindVariable) function).value = SqlUtil.implicitCastStrAsByte(value);
+            case ColumnType.SHORT -> ((ShortBindVariable) function).value = SqlUtil.implicitCastStrAsShort(value);
+            case ColumnType.CHAR -> ((CharBindVariable) function).value = SqlUtil.implicitCastStrAsChar(value);
+            case ColumnType.IPv4 -> ((IPv4BindVariable) function).value = SqlUtil.implicitCastStrAsIPv4(value);
+            case ColumnType.INT -> ((IntBindVariable) function).value = SqlUtil.implicitCastStrAsInt(value);
+            case ColumnType.LONG -> ((LongBindVariable) function).value = SqlUtil.implicitCastStrAsLong(value);
+            case ColumnType.TIMESTAMP ->
+                    ((TimestampBindVariable) function).value = ColumnType.getTimestampDriver(type).implicitCast(value);
+            case ColumnType.DATE ->
+                    ((DateBindVariable) function).value = MillsTimestampDriver.INSTANCE.implicitCast(value);
+            case ColumnType.FLOAT -> ((FloatBindVariable) function).value = SqlUtil.implicitCastStrAsFloat(value);
+            case ColumnType.DOUBLE -> ((DoubleBindVariable) function).value = SqlUtil.implicitCastStrAsDouble(value);
+            case ColumnType.STRING -> ((StrBindVariable) function).setValue(value);
+            case ColumnType.VARCHAR -> ((VarcharBindVariable) function).setValue(value);
+            case ColumnType.LONG256 -> SqlUtil.implicitCastStrAsLong256(value, ((Long256BindVariable) function).value);
+            case ColumnType.UUID -> SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
+            case ColumnType.ARRAY -> ((ArrayBindVariable) function).parseArray(value);
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> ((DecimalBindVariable) function).value.ofString(
+                    value,
+                    ColumnType.getDecimalPrecision(type),
+                    ColumnType.getDecimalScale(type)
+            );
+            default -> reportError(function, ColumnType.STRING, index, name);
         }
     }
 
@@ -1389,8 +1441,15 @@ public class BindVariableServiceImpl implements BindVariableService {
         return charSeq;
     }
 
-    private void setArray(int index) throws SqlException {
-        setArray(index, null);
+    private static void throwDecimalOverflow(int index, int fromType, int toType, @Nullable CharSequence name) throws SqlException {
+        SqlException ex = SqlException.$(0, "inconvertible types: ")
+                .put(ColumnType.nameOf(fromType)).put(" -> ").put(ColumnType.nameOf(toType));
+        if (name != null) {
+            ex = ex.put(" [varName=").put(name).put(']');
+        } else {
+            ex = ex.put(" [varIndex=").put(index).put(']');
+        }
+        throw ex;
     }
 
     private void setArrayType(int index, int colType) throws SqlException {

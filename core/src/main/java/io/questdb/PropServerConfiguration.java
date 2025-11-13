@@ -136,7 +136,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String DB_DIRECTORY = "db";
     public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
     public static final String TMP_DIRECTORY = "tmp";
-    private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2]";
+    private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2,3]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
     private static final String RELEASE_TYPE = "release.type";
@@ -202,6 +202,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String dbLogName;
     private final String dbRoot;
     private final boolean debugWalApplyBlockFailureNoRetry;
+    private final int decimalAdapterPoolCapacity;
     private final int defaultSeqPartTxnCount;
     private final boolean defaultSymbolCacheFlag;
     private final int defaultSymbolCapacity;
@@ -917,8 +918,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         // this is when their version moves. This new version is stored in a NEW slot, in column version file.
         // This slot WILL NOT be read by older versions, hence rolling back QuestDB version will be problematic, but not
         // impossible. Old version will not find new files, the new files will have to be renamed manually. To avoid
-        // possible rollback havoc, we have auto-scaling as opt-in. It will be opt-out in the release after 9.1.0
-        this.cairoAutoScaleSymbolCapacity = getBoolean(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, false);
+        // possible rollback havoc, we have auto-scaling as opt-in. It will be opt-out in the release after 9.1.1
+        this.cairoAutoScaleSymbolCapacity = getBoolean(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, true);
         this.cairoAutoScaleSymbolCapacityThreshold = getDouble(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD, "0.8");
         if (cairoAutoScaleSymbolCapacityThreshold <= 0 || !Double.isFinite(cairoAutoScaleSymbolCapacityThreshold)) {
             throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD.getPropertyPath() + " has to be a positive non-zero real number.");
@@ -1254,6 +1255,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.textAnalysisMaxLines = getInt(properties, env, PropertyKey.HTTP_TEXT_ANALYSIS_MAX_LINES, 1000);
             this.textLexerStringPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_LEXER_STRING_POOL_CAPACITY, 64);
             this.timestampAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_TIMESTAMP_ADAPTER_POOL_CAPACITY, 64);
+            this.decimalAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_DECIMAL_ADAPTER_POOL_CAPACITY, 64);
             this.utf8SinkSize = getIntSize(properties, env, PropertyKey.HTTP_TEXT_UTF8_SINK_SIZE, 4096);
 
             this.httpPessimisticHealthCheckEnabled = getBoolean(properties, env, PropertyKey.HTTP_PESSIMISTIC_HEALTH_CHECK, false);
@@ -2937,14 +2939,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    public static class ValidationResult {
-        public final boolean isError;
-        public final String message;
-
-        private ValidationResult(boolean isError, String message) {
-            this.isError = isError;
-            this.message = message;
-        }
+    public record ValidationResult(boolean isError, String message) {
     }
 
     class PropCairoConfiguration implements CairoConfiguration {
@@ -6053,6 +6048,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getDateAdapterPoolCapacity() {
             return dateAdapterPoolCapacity;
+        }
+
+        @Override
+        public int getDecimalAdapterPoolCapacity() {
+            return decimalAdapterPoolCapacity;
         }
 
         @Override

@@ -513,6 +513,12 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     sqlExecutionContext.getBindVariableService().setGeoHash(15, rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
                     sqlExecutionContext.getBindVariableService().setGeoHash(16, rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
                     sqlExecutionContext.getBindVariableService().setVarchar(17, varChar);
+                    sqlExecutionContext.getBindVariableService().setDecimal(18, 0, 0, 0, 9, ColumnType.getDecimalType(2, 0));
+                    sqlExecutionContext.getBindVariableService().setDecimal(19, 0, 0, 0, 1234, ColumnType.getDecimalType(4, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal(20, 0, 0, 0, 123456, ColumnType.getDecimalType(9, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal(21, 0, 0, 0, 12345678, ColumnType.getDecimalType(18, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal(22, 0, 0, 0, 1234567890, ColumnType.getDecimalType(38, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal(23, 0, 0, 0, 123456789012L, ColumnType.getDecimalType(76, 1));
 
                     update(
                             "UPDATE " + tableName + " SET " +
@@ -533,7 +539,13 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                                     "GEOSHORT=$15, " +
                                     "GEOINT=$16, " +
                                     "GEOLONG=$17, " +
-                                    "VARCHAR=$18 " +
+                                    "VARCHAR=$18, " +
+                                    "DECIMAL8=$19, " +
+                                    "DECIMAL16=$20, " +
+                                    "DECIMAL32=$21, " +
+                                    "DECIMAL64=$22, " +
+                                    "DECIMAL128=$23, " +
+                                    "DECIMAL256=$24 " +
                                     "WHERE INT > 5"
                     );
 
@@ -558,7 +570,13 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                                     "GEOSHORT=$15, " +
                                     "GEOINT=$16, " +
                                     "GEOLONG=$17, " +
-                                    "VARCHAR=$18 " +
+                                    "VARCHAR=$18, " +
+                                    "DECIMAL8=$19, " +
+                                    "DECIMAL16=$20, " +
+                                    "DECIMAL32=$21, " +
+                                    "DECIMAL64=$22, " +
+                                    "DECIMAL128=$23, " +
+                                    "DECIMAL256=$24 " +
                                     "WHERE INT > 5"
                     );
 
@@ -646,6 +664,12 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     sqlExecutionContext.getBindVariableService().setGeoHash("GEOLONGVAL", rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
                     sqlExecutionContext.getBindVariableService().setUuid("UUIDVAL", rnd.nextLong(), rnd.nextLong());
                     sqlExecutionContext.getBindVariableService().setVarchar("VARCHARVAL", varChar);
+                    sqlExecutionContext.getBindVariableService().setDecimal("DECIMAL8VAL", 0, 0, 0, 12, ColumnType.getDecimalType(2, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal("DECIMAL16VAL", 0, 0, 0, 1234, ColumnType.getDecimalType(4, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal("DECIMAL32VAL", 0, 0, 0, 123456, ColumnType.getDecimalType(9, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal("DECIMAL64VAL", 0, 0, 0, 12345678, ColumnType.getDecimalType(18, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal("DECIMAL128VAL", 0, 0, 0, 1234567890, ColumnType.getDecimalType(38, 1));
+                    sqlExecutionContext.getBindVariableService().setDecimal("DECIMAL256VAL", 0, 0, 0, 123456789012L, ColumnType.getDecimalType(76, 1));
 
                     update(
                             "UPDATE " + tableName + " SET " +
@@ -667,7 +691,13 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                                     "GEOINT=:GEOINTVAL, " +
                                     "GEOLONG=:GEOLONGVAL, " +
                                     "UUID=:UUIDVAL," +
-                                    "VARCHAR=:VARCHARVAL " +
+                                    "VARCHAR=:VARCHARVAL, " +
+                                    "DECIMAL8=:DECIMAL8VAL, " +
+                                    "DECIMAL16=:DECIMAL16VAL, " +
+                                    "DECIMAL32=:DECIMAL32VAL, " +
+                                    "DECIMAL64=:DECIMAL64VAL, " +
+                                    "DECIMAL128=:DECIMAL128VAL, " +
+                                    "DECIMAL256=:DECIMAL256VAL " +
                                     "WHERE INT > 5"
                     );
                     drainWalQueue();
@@ -692,7 +722,13 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                                     "GEOINT=:GEOINTVAL, " +
                                     "GEOLONG=:GEOLONGVAL, " +
                                     "UUID=:UUIDVAL, " +
-                                    "VARCHAR=:VARCHARVAL " +
+                                    "VARCHAR=:VARCHARVAL, " +
+                                    "DECIMAL8=:DECIMAL8VAL, " +
+                                    "DECIMAL16=:DECIMAL16VAL, " +
+                                    "DECIMAL32=:DECIMAL32VAL, " +
+                                    "DECIMAL64=:DECIMAL64VAL, " +
+                                    "DECIMAL128=:DECIMAL128VAL, " +
+                                    "DECIMAL256=:DECIMAL256VAL " +
                                     "WHERE INT > 5"
                     );
                     TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -965,7 +1001,14 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         row.putSym(col++, symbol);
         row.putLong128(col++, Hash.hashLong64(i), Hash.hashLong64(i + 1)); // UUID
         col++; // binary ('bin') column is not set
-        row.putVarchar(col, rndVarchar);
+        row.putVarchar(col++, rndVarchar);
+        row.putByte(col++, (byte) (i % 100)); // decimal8
+        row.putShort(col++, (short) (i % 10000)); // decimal16
+        row.putInt(col++, i); // decimal32
+        row.putLong(col++, i); // decimal64
+        row.putDecimal128(col++, 0, i); // decimal128
+        row.putDecimal256(col, 0, 0, 0, i); // decimal256
+
         row.append();
     }
 
@@ -1081,6 +1124,12 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 .col("uuid", ColumnType.UUID)
                 .col("bin", ColumnType.BINARY)
                 .col("varchar", ColumnType.VARCHAR)
+                .col("decimal8", ColumnType.getDecimalType(2, 1))
+                .col("decimal16", ColumnType.getDecimalType(4, 1))
+                .col("decimal32", ColumnType.getDecimalType(9, 1))
+                .col("decimal64", ColumnType.getDecimalType(18, 1))
+                .col("decimal128", ColumnType.getDecimalType(38, 1))
+                .col("decimal256", ColumnType.getDecimalType(76, 1))
                 .timestamp("ts");
     }
 

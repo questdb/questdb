@@ -76,6 +76,71 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeDecimalToDecimal() throws Exception {
+        // DECIMAL8 conversions
+        assertChangeDecimal("12", "12.0", "decimal(2, 0)", "decimal(4, 1)");
+        assertChangeDecimal("12", "12.00", "decimal(2, 0)", "decimal(8, 2)");
+        assertChangeDecimal("12", "12.000", "decimal(2, 0)", "decimal(18, 3)");
+        assertChangeDecimal("12", "12.0000", "decimal(2, 0)", "decimal(38, 4)");
+        assertChangeDecimal("12", "12", "decimal(2, 0)", "decimal(64, 0)");
+        assertChangeDecimal("12", "12.000000000000", "decimal(2, 0)", "decimal(64, 12)");
+
+        assertChangeDecimal("1.2m", "1.2", "decimal(2, 1)", "decimal(4, 1)");
+        assertChangeDecimal("1.2m", "1.20", "decimal(2, 1)", "decimal(8, 2)");
+        assertChangeDecimal("1.2m", "1.200", "decimal(2, 1)", "decimal(18, 3)");
+        assertChangeDecimal("1.2m", "1.2000", "decimal(2, 1)", "decimal(38, 4)");
+        assertChangeDecimalFails("1.2m", "1.2", "decimal(2, 1)", ColumnType.getDecimalType(64, 0));
+        assertChangeDecimal("1.2m", "1.200000000000", "decimal(2, 1)", "decimal(64, 12)");
+
+        // DECIMAL16 conversions
+        assertChangeDecimal("1234", "1234.0", "decimal(4, 0)", "decimal(5, 1)");
+        assertChangeDecimal("1234", "1234.00", "decimal(4, 0)", "decimal(8, 2)");
+        assertChangeDecimal("1234", "1234.000", "decimal(4, 0)", "decimal(18, 3)");
+        assertChangeDecimal("1234", "1234.0000", "decimal(4, 0)", "decimal(38, 4)");
+        assertChangeDecimal("1234", "1234", "decimal(4, 0)", "decimal(64, 0)");
+        assertChangeDecimal("1234", "1234.000000000000", "decimal(4, 0)", "decimal(64, 12)");
+
+        assertChangeDecimal("12.34m", "12.340", "decimal(4, 2)", "decimal(8, 3)");
+        assertChangeDecimal("12.34m", "12.3400", "decimal(4, 2)", "decimal(18, 4)");
+        assertChangeDecimal("12.34m", "12.34000", "decimal(4, 2)", "decimal(38, 5)");
+        assertChangeDecimal("12.34m", "12.340000000000", "decimal(4, 2)", "decimal(64, 12)");
+
+        // DECIMAL32 conversions
+        assertChangeDecimal("123456789", "123456789.0", "decimal(9, 0)", "decimal(10, 1)");
+        assertChangeDecimal("123456789", "123456789.00", "decimal(9, 0)", "decimal(18, 2)");
+        assertChangeDecimal("123456789", "123456789.000", "decimal(9, 0)", "decimal(38, 3)");
+        assertChangeDecimal("123456789", "123456789.0000", "decimal(9, 0)", "decimal(64, 4)");
+
+        assertChangeDecimal("123456.789m", "123456.7890", "decimal(9, 3)", "decimal(18, 4)");
+        assertChangeDecimal("123456.789m", "123456.78900", "decimal(9, 3)", "decimal(38, 5)");
+        assertChangeDecimal("123456.789m", "123456.789000000000", "decimal(9, 3)", "decimal(64, 12)");
+
+        // DECIMAL64 conversions
+        assertChangeDecimal("123456789012345678m", "123456789012345678.0", "decimal(18, 0)", "decimal(19, 1)");
+        assertChangeDecimal("123456789012345678m", "123456789012345678.00", "decimal(18, 0)", "decimal(38, 2)");
+        assertChangeDecimal("123456789012345678m", "123456789012345678.000", "decimal(18, 0)", "decimal(64, 3)");
+
+        assertChangeDecimal("12345678901234.5678m", "12345678901234.56780", "decimal(18, 4)", "decimal(38, 5)");
+        assertChangeDecimal("12345678901234.5678m", "12345678901234.567800000000", "decimal(18, 4)", "decimal(64, 12)");
+
+        // DECIMAL128 conversions
+        assertChangeDecimal("12345678901234567890123456789012345678m", "12345678901234567890123456789012345678.0", "decimal(38, 0)", "decimal(64, 1)");
+        assertChangeDecimal("1234567890123456789012345678901234.5678m", "1234567890123456789012345678901234.56780", "decimal(38, 4)", "decimal(64, 5)");
+
+        // DECIMAL256 conversions (converting between different scales)
+        assertChangeDecimal("12345678901234567890123456789012345678901234567890123456789012345678901234.5m",
+                "12345678901234567890123456789012345678901234567890123456789012345678901234.50",
+                "decimal(76, 1)", "decimal(76, 2)");
+        assertChangeDecimal("9999999999999999999999999999999999999999999999999999999999999999999999.9999m",
+                "9999999999999999999999999999999999999999999999999999999999999999999999.999900",
+                "decimal(76, 4)", "decimal(76, 6)");
+
+        // Test precision reduction scenarios (should fail)
+        assertChangeDecimalFails("12345", "12345", "decimal(5, 0)", ColumnType.getDecimalType(4, 0));
+        assertChangeDecimalFails("123.45m", "123.45", "decimal(5, 2)", ColumnType.getDecimalType(4, 2));
+    }
+
+    @Test
     public void testChangeDoubleToFloat() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, col double) timestamp(ts) partition by day wal", sqlExecutionContext);
@@ -189,6 +254,42 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             );
         });
+    }
+
+    @Test
+    public void testChangeIntegerToDecimal() throws Exception {
+        // BYTE to DECIMAL conversions
+        assertChangeIntToDecimal("127", "127", "BYTE", "decimal(3, 0)");
+        assertChangeIntToDecimal("127", "127.0", "BYTE", "decimal(4, 1)");
+        assertChangeIntToDecimal("127", "127.00", "BYTE", "decimal(8, 2)");
+        assertChangeIntToDecimal("-128", "-128.000", "BYTE", "decimal(18, 3)");
+        assertChangeIntToDecimal("100", "100.0000", "BYTE", "decimal(38, 4)");
+        assertChangeIntToDecimal("50", "50.00000", "BYTE", "decimal(64, 5)");
+
+        // SHORT to DECIMAL conversions
+        assertChangeIntToDecimal("32767", "32767", "SHORT", "decimal(5, 0)");
+        assertChangeIntToDecimal("32767", "32767.0", "SHORT", "decimal(6, 1)");
+        assertChangeIntToDecimal("-32768", "-32768.00", "SHORT", "decimal(8, 2)");
+        assertChangeIntToDecimal("1000", "1000.000", "SHORT", "decimal(18, 3)");
+        assertChangeIntToDecimal("5000", "5000.0000", "SHORT", "decimal(38, 4)");
+        assertChangeIntToDecimal("10000", "10000.00000", "SHORT", "decimal(64, 5)");
+
+        // INT to DECIMAL conversions
+        assertChangeIntToDecimal("2147483647", "2147483647", "INT", "decimal(10, 0)");
+        assertChangeIntToDecimal("2147483647", "2147483647.0", "INT", "decimal(11, 1)");
+        assertChangeIntToDecimal("-2147483647", "-2147483647.00", "INT", "decimal(18, 2)");
+        assertChangeIntToDecimal("-2147483648", "", "INT", "decimal(18, 2)");
+        assertChangeIntToDecimal("1000000", "1000000.000", "INT", "decimal(18, 3)");
+        assertChangeIntToDecimal("5000000", "5000000.0000", "INT", "decimal(38, 4)");
+        assertChangeIntToDecimal("10000000", "10000000.00000", "INT", "decimal(64, 5)");
+
+        // LONG to DECIMAL conversions
+        assertChangeIntToDecimal("9223372036854775807L", "9223372036854775807", "LONG", "decimal(19, 0)");
+        assertChangeIntToDecimal("9223372036854775807L", "9223372036854775807.0", "LONG", "decimal(20, 1)");
+        assertChangeIntToDecimal("-9223372036854775807L", "-9223372036854775807.00", "LONG", "decimal(38, 2)");
+        assertChangeIntToDecimal("1000000000000L", "1000000000000.000", "LONG", "decimal(38, 3)");
+        assertChangeIntToDecimal("5000000000000L", "5000000000000.0000", "LONG", "decimal(38, 4)");
+        assertChangeIntToDecimal("10000000000000L", "10000000000000.00000", "LONG", "decimal(64, 5)");
     }
 
     @Test
@@ -1157,6 +1258,58 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 "select * from x",
                 "select * from y"
         );
+    }
+
+    private void assertChangeDecimal(CharSequence initial, CharSequence expected, CharSequence fromType, CharSequence toType) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(String.format("create table x (ts timestamp, col %s) timestamp(ts) partition by day wal", fromType), sqlExecutionContext);
+            execute(String.format("insert into x values('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
+            drainWalQueue();
+
+            execute(String.format("alter table x alter column col type %s", toType), sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("ts\tcol\n" +
+                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n", "x");
+
+            execute("drop table x");
+        });
+    }
+
+    private void assertChangeDecimalFails(CharSequence initial, CharSequence expected, CharSequence fromType, int toType) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(String.format("create table x (ts timestamp, col %s) timestamp(ts) partition by day wal", fromType), sqlExecutionContext);
+            execute(String.format("insert into x values('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
+            drainWalQueue();
+
+            try (TableWriter writer = getWriter("x")) {
+                writer.changeColumnType("col", toType, 0, false, false, 0, false, null);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "column conversion failed, see logs for details");
+            }
+
+            assertSql("ts\tcol\n" +
+                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n", "x");
+
+            execute("drop table x");
+        });
+    }
+
+    private void assertChangeIntToDecimal(CharSequence initial, CharSequence expected, CharSequence fromType, CharSequence toType) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(String.format("create table x (ts timestamp, col %s) timestamp(ts) partition by day wal", fromType), sqlExecutionContext);
+            execute(String.format("insert into x values('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
+            drainWalQueue();
+
+            execute(String.format("alter table x alter column col type %s", toType), sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("ts\tcol\n" +
+                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n", "x");
+
+            execute("drop table x");
+        });
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {

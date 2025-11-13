@@ -215,7 +215,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             LOG.debug().$("removed [seq=").$(collectSubSeq).I$();
         }
         if (localTask != null) {
-            localTask.reset();
+            localTask.clear();
         }
     }
 

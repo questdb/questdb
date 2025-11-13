@@ -85,6 +85,10 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
         private final long tempMem;
         private int columnCount;
         private int columnIndex = 0;
+        // pointer to a struct containing file info,
+        // special values:
+        //  0: cursor opened, but hasNext() has not been called yet
+        // -1: cursor reached the end, hasNext() returns false, call toTop() to reset the cursor
         private long findFileStruct = 0;
         private boolean foundMetadataFile = false;
         private boolean hasNextFile = true;
@@ -101,7 +105,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            findFileStruct = ff.findClose(findFileStruct);
+            findFileStruct = findFileStruct > 0 ? ff.findClose(findFileStruct) : -1;
         }
 
         @Override
@@ -117,10 +121,11 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
                     return next0();
                 }
 
-                findFileStruct = 0;
+                findFileStruct = -1;
+                return false;
+            } else if (findFileStruct == -1) {
                 return false;
             }
-
             return next0();
         }
 
@@ -136,7 +141,15 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
-            findFileStruct = ff.findClose(findFileStruct);
+            if (findFileStruct > 0) {
+                ff.findClose(findFileStruct);
+            }
+            findFileStruct = 0;
+            columnIndex = 0;
+            readNextFileFromDisk = true;
+            hasNextFile = true;
+            foundMetadataFile = false;
+            tableId = -1;
         }
 
         private boolean next0() {
@@ -187,10 +200,11 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
                 }
             } while (hasNextFile);
 
-            findFileStruct = ff.findClose(findFileStruct);
+            ff.findClose(findFileStruct);
             hasNextFile = true;
             foundMetadataFile = false;
             tableId = -1;
+            findFileStruct = -1;
             return false;
         }
 

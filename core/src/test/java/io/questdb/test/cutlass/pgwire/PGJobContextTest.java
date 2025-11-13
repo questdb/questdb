@@ -3398,6 +3398,84 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testDecimalType_insertIntoDecimalColumns() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            if (!binary) {
+                return;
+            }
+            try (final PreparedStatement statement = connection.prepareStatement("create table x (d8 decimal(2, 0), d16 decimal(4, 1), d32 decimal(9, 0), d64 decimal(18, 6), d128 decimal(38, 6), d256 decimal(76, 0))")) {
+                statement.execute();
+                try (PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?)")) {
+                    insert.setString(1, "12");
+                    insert.setString(2, "123.4");
+                    insert.setString(3, "12345678");
+                    insert.setString(4, "1234567890.123456");
+                    insert.setString(5, "1234567890123455678901234.56789");
+                    insert.setString(6, "123456789012345567890123456789012345678901234567890");
+                    insert.executeUpdate();
+                }
+                try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
+                    sink.clear();
+                    String expected = "d8[NUMERIC],d16[NUMERIC],d32[NUMERIC],d64[NUMERIC],d128[NUMERIC],d256[NUMERIC]\n" +
+                            "12,123.4,12345678,1234567890.123456,1234567890123455678901234.567890,123456789012345567890123456789012345678901234567890\n";
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalType_update_nonPartitionedTable() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (final PreparedStatement statement = connection.prepareStatement("create table x (d1 decimal(16, 5))")) {
+                statement.execute();
+                try (PreparedStatement insert = connection.prepareStatement("insert into x values (?)")) {
+                    insert.setString(1, "123456.78901");
+                    insert.executeUpdate();
+                }
+                try (PreparedStatement update = connection.prepareStatement("update x set d1 = ?")) {
+                    update.setString(1, "9876543.21098");
+                    update.executeUpdate();
+                }
+                try (ResultSet resultSet = connection.prepareStatement("select *  from x").executeQuery()) {
+                    sink.clear();
+                    String expected = "d1[NUMERIC]\n" +
+                            "9876543.21098\n";
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalType_update_partitionedTable() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (final PreparedStatement statement = connection.prepareStatement("create table x (ts timestamp, d1 decimal(16, 5)) timestamp(ts) partition by DAY")) {
+                statement.execute();
+                try (PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?)")) {
+                    insert.setTimestamp(1, new Timestamp(0));
+                    insert.setString(2, "123456.78901");
+                    insert.executeUpdate();
+                }
+                try (PreparedStatement update = connection.prepareStatement("update x set d1 = ?")) {
+                    update.setString(1, "9876543.21098");
+                    update.executeUpdate();
+                }
+                if (walEnabled) {
+                    drainWalQueue();
+                }
+                try (ResultSet resultSet = connection.prepareStatement("select d1 from x").executeQuery()) {
+                    sink.clear();
+                    String expected = "d1[NUMERIC]\n" +
+                            "9876543.21098\n";
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDiscardClearsTransactionFlag() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {

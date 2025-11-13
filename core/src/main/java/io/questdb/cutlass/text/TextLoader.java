@@ -35,6 +35,7 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Decimal256;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -88,7 +89,7 @@ public class TextLoader implements Closeable, Mutable {
             int utf8SinkSize = textConfiguration.getUtf8SinkSize();
             this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
             this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
-            this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
+            this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink, new Decimal256());
             jsonLexer = new JsonLexer(textConfiguration.getJsonCacheSize(), textConfiguration.getJsonCacheLimit());
 
             textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
