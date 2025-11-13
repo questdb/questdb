@@ -1639,7 +1639,18 @@ public class Decimal256 implements Sinkable, Decimal {
         }
 
         // TODO: optimize the rounding logic by replacing the division by a multiply + shift
-        divide(divider, hh, hl, lh, ll, scale, 0L, 0L, 0L, 1L, 0, this, targetScale, roundingMode);
+        final long hh = this.hh;
+        final long hl = this.hl;
+        final long lh = this.lh;
+        final long ll = this.ll;
+        final int scale = this.scale;
+        try {
+            divide(divider, hh, hl, lh, ll, scale, 0L, 0L, 0L, 1L, 0, this, targetScale, roundingMode);
+        } catch (NumericException e) {
+            // restore dividend value
+            of(hh, hl, lh, ll, scale);
+            throw e;
+        }
     }
 
     /**
