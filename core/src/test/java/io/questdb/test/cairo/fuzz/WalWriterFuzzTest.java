@@ -633,7 +633,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     private void setTestParams(Rnd rnd) throws Exception {
         int newScoreboardVersion = rnd.nextBoolean() ? 1 : 2;
-        boolean newAsyncMunmapEnabled = rnd.nextBoolean();
+        boolean newAsyncMunmapEnabled = Os.isPosix() && rnd.nextBoolean(); // windows does not support async munmap
         LOG.info().$("switching to [scoreboard-format=").$(newScoreboardVersion)
                 .$(", asyncMunmapEnabled = ").$(newAsyncMunmapEnabled)
                 .I$();
