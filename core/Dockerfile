@@ -2,6 +2,7 @@ FROM debian:bookworm AS builder
 
 ARG tag_name
 ARG GRAAL_JDK_VERSION=17.0.9
+ARG TARGETARCH
 
 ENV GOSU_VERSION=1.19
 ENV DEBIAN_FRONTEND=noninteractive
@@ -12,10 +13,17 @@ RUN apt-get update \
        git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip maven \
     && rm -rf /var/lib/apt/lists/*
 
-# 2) Download GraalVM CE archive + SHA256
+# 2) Download GraalVM CE archive + SHA256, arch-aware
 RUN set -eux; \
+    : "${TARGETARCH:=amd64}"; \
+    case "$TARGETARCH" in \
+      amd64) ARCH_SUFFIX="linux-x64" ;; \
+      arm64) ARCH_SUFFIX="linux-aarch64" ;; \
+      *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    echo "Building for TARGETARCH=${TARGETARCH}, using GraalVM suffix ${ARCH_SUFFIX}"; \
     TAG="jdk-${GRAAL_JDK_VERSION}"; \
-    FILENAME="graalvm-community-jdk-${GRAAL_JDK_VERSION}_linux-x64_bin.tar.gz"; \
+    FILENAME="graalvm-community-jdk-${GRAAL_JDK_VERSION}_${ARCH_SUFFIX}_bin.tar.gz"; \
     BASE_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${TAG}"; \
     mkdir -p /tmp/graalvm; \
     cd /tmp/graalvm; \
@@ -24,8 +32,14 @@ RUN set -eux; \
 
 # 3) Verify SHA256 and install GraalVM CE
 RUN set -eux; \
+    : "${TARGETARCH:=amd64}"; \
+    case "$TARGETARCH" in \
+      amd64) ARCH_SUFFIX="linux-x64" ;; \
+      arm64) ARCH_SUFFIX="linux-aarch64" ;; \
+      *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
     cd /tmp/graalvm; \
-    FILENAME="graalvm-community-jdk-${GRAAL_JDK_VERSION}_linux-x64_bin.tar.gz"; \
+    FILENAME="graalvm-community-jdk-${GRAAL_JDK_VERSION}_${ARCH_SUFFIX}_bin.tar.gz"; \
     # .sha256 contains only the hash, so wrap it with filename for sha256sum -c
     HASH="$(cut -d ' ' -f1 "${FILENAME}.sha256")"; \
     echo "${HASH}  ${FILENAME}" | sha256sum -c -; \
