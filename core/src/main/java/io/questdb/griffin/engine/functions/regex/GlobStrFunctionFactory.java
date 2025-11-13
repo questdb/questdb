@@ -35,6 +35,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
 public class GlobStrFunctionFactory implements FunctionFactory {
+    private final MatchStrFunctionFactory matchStrFactory = new MatchStrFunctionFactory();
     StringSink sink = new StringSink();
 
     public static void convertGlobPatternToRegex(CharSequence globPattern, StringSink sink) {
@@ -98,6 +99,7 @@ public class GlobStrFunctionFactory implements FunctionFactory {
         StrConstant regex = StrConstant.newInstance(sink);
         final ObjList<Function> newArgList = args.copy();
         newArgList.set(1, regex);
-        return new MatchStrFunctionFactory().newInstance(position, newArgList, argPositions, configuration, sqlExecutionContext);
+        // Use cached factory instance instead of creating new MatchStrFunctionFactory()
+        return matchStrFactory.newInstance(position, newArgList, argPositions, configuration, sqlExecutionContext);
     }
 }

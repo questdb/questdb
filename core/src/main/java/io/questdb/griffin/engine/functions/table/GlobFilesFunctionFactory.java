@@ -41,14 +41,13 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 
-// SELECT * FROM glob('./import/table/file_*.parquet');
-// files('/import') WHERE glob(filename, 'table/file_*.parquet');
-// SelectedRecordCursor <-- GlobStrFunctionFactory <-- FilesRecordCursor
-
 /**
  * Provides a pseudo table returning file data based on a glob pattern.
  */
 public class GlobFilesFunctionFactory implements FunctionFactory {
+    private final FilesFunctionFactory filesFunctionFactory = new FilesFunctionFactory();
+    private final GlobStrFunctionFactory globStrFactory = new GlobStrFunctionFactory();
+
     /**
      * Extracts the non-glob prefix from a glob pattern.
      * <p>
@@ -117,12 +116,12 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         ObjList<Function> newArgs = new ObjList<>();
         newArgs.add(new StrConstant(root));
 
-        RecordCursorFactory filesCursor = new FilesFunctionFactory().newInstance(position, newArgs, argPositions, configuration, sqlExecutionContext).getRecordCursorFactory();
+        RecordCursorFactory filesCursor = filesFunctionFactory.newInstance(position, newArgs, argPositions, configuration, sqlExecutionContext).getRecordCursorFactory();
 
         newArgs.set(0, new VarcharColumn(0));
         newArgs.add(new StrConstant(glob));
 
-        Function globFunc = new GlobStrFunctionFactory().newInstance(position, newArgs, argPositions, configuration, sqlExecutionContext);
+        Function globFunc = globStrFactory.newInstance(position, newArgs, argPositions, configuration, sqlExecutionContext);
 
         return new CursorFunction(new FilteredRecordCursorFactory(filesCursor, globFunc));
     }
