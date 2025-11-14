@@ -2277,6 +2277,21 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void expandWindowJoins(
+            QueryModel model, SqlExecutionContext sqlExecutionContext, int recursionLevel
+    ) throws SqlException {
+        QueryModel nestedModel = model.getNestedModel();
+        if (QueryModel.isWindowJoin(nestedModel)) {
+            ObjList<QueryModel> joinModels = nestedModel.getJoinModels();
+            QueryModel formerModel = joinModels.getQuick(0);
+            ObjList<QueryColumn> columns = model.getColumns();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+
+            }
+
+        }
+    }
+
     private CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAliases, ExpressionNode node) {
         for (int i = 0, max = groupByNodes.size(); i < max; i++) {
             ExpressionNode n = groupByNodes.getQuick(i);
@@ -7223,63 +7238,58 @@ public class SqlOptimiser implements Mutable {
         if (model == null) {
             return;
         }
-
         if (recursionLevel > maxRecursion) {
             throw SqlException.$(0, "SQL model is too complex to evaluate");
         }
 
-        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_WINDOW_JOIN) {
-            QueryModel child = model.getNestedModel();
-            assert child != null;
-            ObjList<QueryModel> joinModels = child.getJoinModels();
-            QueryModel slaveModel = joinModels.getQuick(joinModels.size() - 1);
-            WindowJoinContext context = slaveModel.getWindowJoinContext();
-            if (context.isIncludePrevailing()) {
-                throw SqlException.position(0).put("including prevailing is not supported in WINDOW joins");
-            }
-            long lo = 0, hi = 0;
-            switch (context.getLoKind()) {
-                case WindowJoinContext.PRECEDING:
-                    lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), sqlExecutionContext);
-                    break;
-                case WindowJoinContext.FOLLOWING:
-                    lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), sqlExecutionContext);
-                    if (lo == Long.MAX_VALUE) {
-                        lo = Long.MIN_VALUE;
-                    } else {
-                        lo *= -1;
-                    }
-            }
-            if (lo == Long.MIN_VALUE || lo == Long.MAX_VALUE) {
-                throw SqlException.position(context.getLoKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
-            }
+        if (QueryModel.isWindowJoin(model)) {
+            for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+                QueryModel windowJoinModel = model.getJoinModels().get(i);
+                if (windowJoinModel.getJoinType() != QueryModel.JOIN_WINDOW) {
+                    continue;
+                }
+                WindowJoinContext context = windowJoinModel.getWindowJoinContext();
+                if (context.isIncludePrevailing()) {
+                    throw SqlException.position(0).put("including prevailing is not supported in WINDOW joins");
+                }
+                long lo = 0, hi = 0;
+                switch (context.getLoKind()) {
+                    case WindowJoinContext.PRECEDING:
+                        lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), sqlExecutionContext);
+                        break;
+                    case WindowJoinContext.FOLLOWING:
+                        lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), sqlExecutionContext);
+                        if (lo == Long.MAX_VALUE) {
+                            lo = Long.MIN_VALUE;
+                        } else {
+                            lo *= -1;
+                        }
+                }
+                if (lo == Long.MIN_VALUE || lo == Long.MAX_VALUE) {
+                    throw SqlException.position(context.getLoKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
+                }
 
-            switch (context.getHiKind()) {
-                case WindowJoinContext.PRECEDING:
-                    hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), sqlExecutionContext);
-                    if (hi == Long.MAX_VALUE) {
-                        hi = Long.MIN_VALUE;
-                    } else {
-                        hi *= -1;
-                    }
-                    break;
-                case WindowJoinContext.FOLLOWING:
-                    hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), sqlExecutionContext);
+                switch (context.getHiKind()) {
+                    case WindowJoinContext.PRECEDING:
+                        hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), sqlExecutionContext);
+                        if (hi == Long.MAX_VALUE) {
+                            hi = Long.MIN_VALUE;
+                        } else {
+                            hi *= -1;
+                        }
+                        break;
+                    case WindowJoinContext.FOLLOWING:
+                        hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), sqlExecutionContext);
+                }
+                if (hi == Long.MIN_VALUE || hi == Long.MAX_VALUE) {
+                    throw SqlException.position(context.getHiKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
+                }
+                context.setHi(hi);
+                context.setLo(lo);
             }
-            if (hi == Long.MIN_VALUE || hi == Long.MAX_VALUE) {
-                throw SqlException.position(context.getHiKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
-            }
-            context.setHi(hi);
-            context.setLo(lo);
         }
 
         validateWindowJoins(model.getNestedModel(), sqlExecutionContext, recursionLevel + 1);
-
-        // join models
-        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
-            validateWindowJoins(model.getJoinModels().getQuick(i), sqlExecutionContext, recursionLevel + 1);
-        }
-
         validateWindowJoins(model.getUnionModel(), sqlExecutionContext, recursionLevel + 1);
     }
 

@@ -105,7 +105,8 @@ public class GroupByUtils {
             ArrayColumnTypes outKeyTypes,
             ListColumnFilter outColumnFilter,
             @Nullable ObjList<ExpressionNode> sampleByFill, // fill mode for sample by functions, for validation
-            boolean validateFill
+            boolean validateFill,
+            ObjList<QueryColumn> columns
     ) throws SqlException {
         try {
             outGroupByFunctionPositions.clear();
@@ -114,7 +115,6 @@ public class GroupByUtils {
 
             int columnKeyCount = 0;
             int lastIndex = -1;
-            final ObjList<QueryColumn> columns = model.getColumns();
 
             // compile functions upfront and assemble the metadata for group-by
             for (int i = 0, n = columns.size(); i < n; i++) {

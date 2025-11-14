@@ -1299,6 +1299,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         dependencies.remove(index);
     }
 
+    public void replaceColumn(int columnIndex, QueryColumn newColumn) {
+        bottomUpColumns.setQuick(columnIndex, newColumn);
+    }
+
     public void replaceJoinModel(int pos, QueryModel model) {
         joinModels.setQuick(pos, model);
     }

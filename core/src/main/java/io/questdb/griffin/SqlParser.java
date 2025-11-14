@@ -2378,8 +2378,8 @@ public class SqlParser {
         int joinType;
         boolean hasWindowJoin = false;
         while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
-            if (hasWindowJoin) {
-                throw SqlException.$((lexer.lastTokenPosition()), "window join must be the last join in the query");
+            if (hasWindowJoin && joinType != QueryModel.JOIN_WINDOW) {
+                throw SqlException.$((lexer.lastTokenPosition()), "no other join types allowed after window join");
             }
             hasWindowJoin = joinType == QueryModel.JOIN_WINDOW;
             model.addJoinModel(parseJoin(lexer, model, tok, joinType, masterModel.getWithClauses(), sqlParserCallback, model.getDecls()));
@@ -4583,6 +4583,7 @@ public class SqlParser {
         tableAliasStop.add("right");
         tableAliasStop.add("full");
         tableAliasStop.add("range");
+        tableAliasStop.add("window");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");
