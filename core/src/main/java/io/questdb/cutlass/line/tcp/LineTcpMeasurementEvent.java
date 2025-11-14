@@ -487,23 +487,27 @@ public class LineTcpMeasurementEvent implements Closeable {
                         case ColumnType.DECIMAL256:
                             final int precision = ColumnType.getDecimalPrecision(colType);
                             final int scale = ColumnType.getDecimalScale(colType);
-                            try {
-                                if (entity.isBinaryFormat()) {
-                                    double d = entity.getFloatValue();
-                                    if (Numbers.isNull(d)) {
-                                        decimal256.ofNull();
-                                    } else {
-                                        stringSink.clear();
-                                        Numbers.append(stringSink, entity.getFloatValue());
-                                        decimal256.ofString(stringSink, precision, scale);
-                                    }
+                            if (entity.isBinaryFormat()) {
+                                double d = entity.getFloatValue();
+                                if (Numbers.isNull(d)) {
+                                    decimal256.ofNull();
                                 } else {
-                                    decimal256.ofString(entity.getValue().asAsciiCharSequence(), precision, scale);
+                                    stringSink.clear();
+                                    Numbers.append(stringSink, entity.getFloatValue());
+                                    try {
+                                        decimal256.ofString(stringSink, precision, scale);
+                                    } catch (NumericException ignored) {
+                                        throw precisionLossError(tud.getTableNameUtf16(), entity.getName(), stringSink, colType);
+                                    }
                                 }
-                                offset = buffer.addDecimal(offset, decimal256, colType);
-                            } catch (NumericException ignored) {
-                                throw castError(tud.getTableNameUtf16(), "float", colType, entity.getName());
+                            } else {
+                                try {
+                                    decimal256.ofString(entity.getValue().asAsciiCharSequence(), precision, scale);
+                                } catch (NumericException ignored) {
+                                    throw precisionLossError(tud.getTableNameUtf16(), entity.getName(), entity.getValue(), colType);
+                                }
                             }
+                            offset = buffer.addDecimal(offset, decimal256, colType);
                             break;
                         default:
                             throw castError(tud.getTableNameUtf16(), "float", colType, entity.getName());
@@ -567,7 +571,7 @@ public class LineTcpMeasurementEvent implements Closeable {
                                 try {
                                     decimal256.ofString(entityValue.asAsciiCharSequence(), precision, scale);
                                 } catch (NumericException ignored) {
-                                    throw castError(tud.getTableNameUtf16(), "string", colType, entity.getName());
+                                    throw valueError(tud.getTableNameUtf16(), colType, entityValue, entity.getName());
                                 }
                                 offset = buffer.addDecimal(offset, decimal256, colType);
                                 break;
@@ -703,7 +707,11 @@ public class LineTcpMeasurementEvent implements Closeable {
                         try {
                             decimal256.rescale(scale);
                         } catch (NumericException ignored) {
-                            throw castError(tud.getTableNameUtf16(), "decimal", colType, entity.getName());
+                            if (decimal256.getScale() > scale) {
+                                throw precisionLossError(tud.getTableNameUtf16(), entity.getName(), entity.getDecimalValue(), colType);
+                            } else {
+                                throw boundsError(entity.getDecimalValue(), colType, tud.getTableNameUtf16(), entity.getName().asAsciiCharSequence());
+                            }
                         }
                     }
                     if (!decimal256.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
