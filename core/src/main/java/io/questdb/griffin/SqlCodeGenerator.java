@@ -3346,6 +3346,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 QueryModel aggModel = context.getParentModel();
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, masterMetadata.getTimestampIndex());
+                                masterAlias = null;
                                 ObjList<QueryColumn> cols = aggModel.getColumns();
                                 ObjList<QueryColumn> aggregateCols;
                                 int splitIndex = masterMetadata.getColumnCount();
@@ -3374,11 +3375,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 throw SqlException.position(ast.position).put("WINDOW join aggregate function cannot reference columns from multiple models");
                                             }
                                         }
-                                    }
-                                    if (aggregateCols.size() == 0) {
-                                        Misc.free(slave);
-                                        Misc.free(joinMetadata);
-                                        break;
                                     }
                                 } else {
                                     aggregateCols = cols;

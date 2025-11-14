@@ -1300,7 +1300,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void replaceColumn(int columnIndex, QueryColumn newColumn) {
-        bottomUpColumns.setQuick(columnIndex, newColumn);
+        if (topDownColumns.size() > 0) {
+            topDownColumns.setQuick(columnIndex, newColumn);
+        } else {
+            bottomUpColumns.setQuick(columnIndex, newColumn);
+        }
     }
 
     public void replaceJoinModel(int pos, QueryModel model) {

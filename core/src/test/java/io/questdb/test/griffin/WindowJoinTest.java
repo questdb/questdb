@@ -1050,6 +1050,132 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinChain() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareTable();
+            String expect = replaceTimestampSuffix("ts\tsym\twindow_price1\twindow_price2\n" +
+                    "2023-01-01T09:00:00.000000Z\tAAPL\t301.5\t301.5\n" +
+                    "2023-01-01T09:01:00.000000Z\tAAPL\t202.0\t301.5\n" +
+                    "2023-01-01T09:02:00.000000Z\tAAPL\t101.5\t202.0\n" +
+                    "2023-01-01T09:03:00.000000Z\tMSFT\t400.0\t400.0\n" +
+                    "2023-01-01T09:04:00.000000Z\tMSFT\t200.5\t400.0\n" +
+                    "2023-01-01T09:05:00.000000Z\tGOOGL\t600.0\t600.0\n" +
+                    "2023-01-01T09:06:00.000000Z\tGOOGL\t300.5\t901.5\n" +
+                    "2023-01-01T09:07:00.000000Z\tAAPL\t102.5\t102.5\n" +
+                    "2023-01-01T09:08:00.000000Z\tMSFT\t201.5\t201.5\n" +
+                    "2023-01-01T09:09:00.000000Z\tGOOGL\t301.5\t301.5\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Window Join\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
+                            "      join filter: t.sym=p1.sym\n" +
+                            "        Async Window Fast Join workers: 1\n" +
+                            "          symbol: sym=sym\n" +
+                            "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "          window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: prices\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.ts, t.sym, sum(p.price) as window_price1, sum(p1.price) as window_price2 " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "window join prices p1 " +
+                            "on (t.sym = p1.sym) " +
+                            " range between 2 minute preceding and 2 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            expect = replaceTimestampSuffix("ts\tsym\twindow_price2\n" +
+                    "2023-01-01T09:00:00.000000Z\tAAPL\t301.5\n" +
+                    "2023-01-01T09:01:00.000000Z\tAAPL\t301.5\n" +
+                    "2023-01-01T09:02:00.000000Z\tAAPL\t202.0\n" +
+                    "2023-01-01T09:03:00.000000Z\tMSFT\t400.0\n" +
+                    "2023-01-01T09:04:00.000000Z\tMSFT\t400.0\n" +
+                    "2023-01-01T09:05:00.000000Z\tGOOGL\t600.0\n" +
+                    "2023-01-01T09:06:00.000000Z\tGOOGL\t901.5\n" +
+                    "2023-01-01T09:07:00.000000Z\tAAPL\t102.5\n" +
+                    "2023-01-01T09:08:00.000000Z\tMSFT\t201.5\n" +
+                    "2023-01-01T09:09:00.000000Z\tGOOGL\t301.5\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Window Join\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
+                            "      join filter: t.sym=p1.sym\n" +
+                            "        Async Window Fast Join workers: 1\n" +
+                            "          symbol: sym=sym\n" +
+                            "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "          window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: prices\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.ts, t.sym,  sum(p1.price) as window_price2 " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "window join prices p1 " +
+                            "on (t.sym = p1.sym) " +
+                            " range between 2 minute preceding and 2 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertExceptionNoLeakCheck(
+                    "select t.ts, t.sym,  sum(p1.price), p.price as window_price2 " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "window join prices p1 " +
+                            "on (t.sym = p1.sym) " +
+                            " range between 2 minute preceding and 2 minute following " +
+                            "order by t.ts, t.sym;",
+                    36,
+                    "WINDOW join cannot reference right table non-aggregate column: p.price"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "select t.ts, t.sym,  sum(p1.price + p.price) as window_price2 " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "window join prices p1 " +
+                            "on (t.sym = p1.sym) " +
+                            " range between 2 minute preceding and 2 minute following " +
+                            "order by t.ts, t.sym;",
+                    21,
+                    "WINDOW join aggregate function cannot reference columns from multiple models"
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinFailsWhenSlaveDoesNotSupportTimeFrames() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
