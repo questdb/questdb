@@ -1,7 +1,7 @@
 # Contributing to QuestDB
 
 Hi, glad to know that you're interested in contributing to QuestDB. Here are
-some topics that can help you to get started:
+some topics that can help you get started:
 
 - 💡 [Bugs and features](#bugs-and-features)
 - 🧭 [Navigation](#navigation)
@@ -19,12 +19,11 @@ If you're not sure whether you should raise an issue, you can also join our
 community **[Slack channel](https://slack.questdb.io/)** and post your questions
 there.
 
-If you find any **security bug**, kindly refer to [SECURITY.md](https://github.com/questdb/questdb/blob/master/SECURITY.md) file for more info.
+If you find any **security bug**, kindly refer to [SECURITY.md](https://github.com/questdb/questdb/blob/master/SECURITY.md) for more info.
 
-We aim to respond to your issues and questions soonest. If you wish to receive a
-faster response, we recommend you always describe your steps and provide
-information about your environment in the bug reports. And if you're proposing a
-new feature, it'll help us to evaluate the priority if you explain why you need
+We aim to respond to your issues and questions as soon as possible. To help us respond faster, please always describe your steps and provide
+information about your environment in bug reports. If you're proposing a
+new feature, it helps us evaluate priority if you explain why you need
 it.
 
 # Navigation
@@ -45,13 +44,13 @@ it.
   [`benchmarks/`](https://github.com/questdb/questdb/tree/master/benchmarks/)
 
 Compiled binaries (for C libraries and Windows service wrapper) are committed to
-git to make build of development process Java-centric and simplified.
+git to make the development process Java‑centric and simpler.
 
 ## Finding suitable issues
 
 Our maintainers label issues with relevant categories so you can use that to
-search for certain type of issues you'd like to work on. If you don't know where
-to start, try search for issues labeled with
+search for certain types of issues you'd like to work on. If you don't know where
+to start, try searching for issues labeled with
 [`good first issue`](https://github.com/questdb/questdb/labels/Good%20first%20issue)
 or [`help wanted`](https://github.com/questdb/questdb/labels/Help%20wanted). If
 you wish to understand how our maintainers work together, you can refer to
@@ -61,12 +60,12 @@ you wish to understand how our maintainers work together, you can refer to
 
 ## Requirements
 
-- Operating system - **x86-64**: Windows, Linux, FreeBSD and OS X
+- Operating system - **x86-64**: Windows, Linux, FreeBSD, and macOS
 - Java 11 64-bit or later
-- Maven 3 (from your package manager on Linux / OSX
+- Maven 3 (from your package manager on Linux/macOS
   ([Homebrew](https://github.com/Homebrew/brew)) or
   [from the jar](https://maven.apache.org/install.html) for any OS)
-- C-compiler, CMake - to contribute to C libraries - _OPTIONAL_
+- C compiler, CMake — to contribute to C libraries — _OPTIONAL_
 
 ## Local environment
 
@@ -75,10 +74,10 @@ you wish to understand how our maintainers work together, you can refer to
 `JAVA_HOME` is required by Maven. It is possible to have multiple versions of
 Java on the same platform. Please set up `JAVA_HOME` to point to Java 11 or
 later. Other versions of Java may not work. If you are new to Java please check
-that `JAVA_HOME` is pointing to the root of Java directory:
+that `JAVA_HOME` is pointing to the root of the Java directory:
 `C:\Users\me\dev\jdk-11.0.8` and **not** `C:\Users\me\dev\jdk-11.0.8\bin\java`.
 
-Linux/OS X
+Linux/macOS
 
 ```bash
 export JAVA_HOME="/path/to/java/"
@@ -109,25 +108,23 @@ The web console will be available at [localhost:9000](http://localhost:9000).
 
 ### Code formatting
 
-Code is formatted using configuration files in `.idea` directory .
-To minimize conflicts when merging and problems in CI all contributed code should be formatted
-before submitting PR.
+Code is formatted using configuration files in the `.idea` directory.
+To minimize conflicts when merging and problems in CI, all contributed code should be formatted
+before submitting a PR.
 
-In IntelliJ IDEA you can : 
-- automate formatting (preferrable):
-  - open File | Settings
-  - choose Tools | Actions On Save 
-  - select  Reformat & Rearrange Code
-  - click Apply
+In IntelliJ IDEA you can:
+- Automate formatting (preferable):
+  - Open File | Settings
+  - Choose Tools | Actions on Save
+  - Select Reformat and Rearrange Code
+  - Click Apply
+- Or format files manually by selecting them and choosing Code | Reformat File.
 
-  or
-- format files manually by selecting them and choosing Code | Reformat File .
+### Compiling C libraries
 
-### Compiling C-libraries
-
-C-libraries will have to be compiled for each platform separately. Cmake will
+C libraries will have to be compiled for each platform separately. CMake will
 also need `JAVA_HOME` to be set. The following commands will compile on
-Linux/OSX.
+Linux/macOS.
 
 ```text
 cd core
@@ -137,7 +134,7 @@ cmake --build build/release --config Release
 
 For more details, see [CMake build instructions](core/CMAKE_README.md).
 
-For C/С++ development we use CLion. This IDE "understands" cmake files and makes
+For C/C++ development we use CLion. This IDE understands CMake files and makes
 compilation easier.
 
 The build will copy artifacts as follows:
@@ -149,44 +146,80 @@ core/src/main/c -> core/src/main/resources/io/questdb/bin
 ## Local setup for frontend development
 
 The frontend code (i.e. web console) is located in a [separate repository](https://github.com/questdb/ui/tree/main/packages/web-console).
-To set it up you should follow instructions provided in that repository.
+To set it up you should follow the instructions provided in that repository.
 
-The development environment for frontend can run on it's own, but will require QuestDB instance running in the background. You can achieve this in multiple ways:
+The development environment for the frontend can run on its own, but it requires a QuestDB instance running in the background. You can achieve this in multiple ways:
 
-1. Run development version of QuestDB from this repository. Consult
-   [environment setup](#environment-setup) section of this document
-2. Run published QuestDB version, for example, with docker. More details
-   can be found in the [readme of this repository](./README.md)
+1. Run a development version of QuestDB from this repository. Consult the
+   [environment setup](#environment-setup) section of this document.
+2. Run a published QuestDB version, for example with Docker. More details
+   can be found in the [README of this repository](./README.md).
 
 # Before you submit
 
 ## Testing
 
-We have a lot of tests, most of which are of "integration" type, e.g. test
-starts a server, interacts with it and asserts the outcome. We expect all
+We have a lot of tests, most of which are of the "integration" type (e.g., a test
+starts a server, interacts with it, and asserts the outcome). We expect all
 contributors to submit PRs with tests. Please reach out to us via Slack if
-you're uncertain on how to test, or you think an existing test can be improved.
+you're uncertain how to test, or you think an existing test can be improved.
+
+Typical Maven commands:
+- Run full test suite:
+
+```bash
+mvn test
+```
+
+- Run a specific test class:
+
+```bash
+mvn -Dtest=ClassNameTest test
+```
+
+- Run a specific test method:
+
+```bash
+mvn -Dtest=ClassNameTest#methodName test
+```
 
 ## Dependencies
 
-QuestDB does not have Java dependencies. This may sound unorthodox but in
-reality we try not to reinvent the wheel but rather than using libraries we
-implement algorithms on first principles to ensure perfect fit with existing
-code. With that in mind we expect contributions that do not add third-party
+QuestDB does not have third-party Java dependencies. This may sound unorthodox; in
+reality we try not to reinvent the wheel, but rather than using libraries we
+implement algorithms on first principles to ensure a perfect fit with existing
+code. With that in mind, we expect contributions not to add third-party
 dependencies.
 
 ## Allocations, "new" operator and garbage collection
 
 QuestDB is zero-GC along data pipelines. We expect contributions not to allocate
-if possible. That said we would like to help you to contribute zero-GC code, do
+if possible. That said, we would like to help you contribute zero-GC code—do
 not hesitate to reach out!
 
 ## Committing
 
-We use [Conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) to
-auto-generate release notes. We require all commit comments to conform. To that
+We use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) to
+auto-generate release notes. We require all commit messages to conform. To that
 end, commits have to be granular enough to be successfully described using this
 method.
+
+Example:
+
+```
+feat(sql): add support for X in Y
+fix(core): avoid NPE when Z
+test(ilp): add regression test for issue #1234
+```
+
+## Pull request checklist
+
+Before opening a PR, please ensure:
+- Code is formatted as per the repo’s settings (see Code formatting).
+- Tests pass locally; add/adjust tests for your changes.
+- No new third-party dependencies are introduced.
+- Commit messages follow Conventional Commits.
+- The PR description links the relevant issue and explains the change and rationale.
 
 ## FAQ
 
@@ -205,7 +238,7 @@ mvn clean package -DskipTests -P build-web-console
 Some antivirus software may cause tests to fail. Typical indicators that
 antivirus is interfering with tests are that tests
 [pass on CI](https://github.com/questdb/questdb/blob/master/ci/new-pull-request.yml)
-but are failing in the following cases:
+but fail in the following cases:
 
 - HTTP chunk size assertion (missing initial zeroes in e.g. `IODispatcherTest`)
 - Test timeout
@@ -213,8 +246,8 @@ but are failing in the following cases:
 
 In case of ESET products, the following steps may resolve the issue:
 
-- Disable "application protocol content filtering" explicitly **or**
-- Add `127.0.0.1` to "Excluded IP addresses" list in the **advanced settings**
+- Disable "application protocol content filtering" explicitly, or
+- Add `127.0.0.1` to the "Excluded IP addresses" list in the advanced settings
   menu because disabling all top-level mechanisms doesn't turn protocol
   filtering off.
 
@@ -223,12 +256,12 @@ In case of ESET products, the following steps may resolve the issue:
 We have an
 [engineering project board](https://github.com/orgs/questdb/projects/2/views/8)
 to help us organize pending GitHub issues among engineers across different
-timezones. And there are configured views for bug reports and feature requests
+timezones. There are configured views for bug reports and feature requests
 respectively.
 
 This is what you can do to organize open issues:
 
-- Add new issues to project board
+- Add new issues to the project board
 - Always assign yourself when you pick up an issue
 - Label the issues correctly after you assess them
 - Close the issue when no further action is required
@@ -237,10 +270,10 @@ Stages of our project board:
 
 | Stage            | Description                                                                                   |
 | ---------------- | --------------------------------------------------------------------------------------------- |
-| New              | When users reported a bug, await for someone to reproduce or follow up                        |
+| New              | When users report a bug; wait for someone to reproduce or follow up                           |
 | More info needed | When more communication with OP is required before we can begin triage                        |
-| To do            | Once issues are confirmed and engineers can pick up. Order of items should imply the priority |
-| In progress      | If an engineer picks up an issue, self-assign and move the issue to `In progress` stage       |
+| To do            | Once issues are confirmed and engineers can pick them up. Order of items should imply priority |
+| In progress      | If an engineer picks up an issue, self-assign and move the issue to `In progress`             |
 | Done             | Once the linked pull request is merged, the issue is closed and moved to `Done` automatically |
 
 We also use labels to organize GitHub issues to have better overview. The
