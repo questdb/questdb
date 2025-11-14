@@ -3376,6 +3376,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             }
                                         }
                                     }
+                                    // TODO: If aggregateCols size is empty, we can theoretically skip this intermedian join
                                 } else {
                                     aggregateCols = cols;
                                     columnIndex = new IntList(cols.size());
