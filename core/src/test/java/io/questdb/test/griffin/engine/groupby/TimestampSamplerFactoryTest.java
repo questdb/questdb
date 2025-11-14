@@ -164,21 +164,34 @@ public class TimestampSamplerFactoryTest {
 
     @Test
     public void testParseInterval() throws SqlException {
-        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0, "sample", Numbers.INT_NULL, ' '));
+        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0, "sample", Numbers.LONG_NULL, ' '));
 
         try {
-            TimestampSamplerFactory.parseInterval("0m", 1, 0, "sample", Numbers.INT_NULL, ' ');
+            TimestampSamplerFactory.parseInterval("0m", 1, 0, "sample", Numbers.LONG_NULL, ' ');
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "zero is not a valid sample value");
         }
 
         try {
-            TimestampSamplerFactory.parseInterval("fm", 1, 0, "sample", Numbers.INT_NULL, ' ');
+            TimestampSamplerFactory.parseInterval("fm", 1, 0, "sample", Numbers.LONG_NULL, ' ');
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "invalid sample value");
         }
+    }
+
+    @Test
+    public void testParseLargeNanoInterval() throws SqlException {
+        final String token = "3000000000n";
+        final int intervalEnd = token.length() - 1;
+        long value = TimestampSamplerFactory.parseInterval(token, intervalEnd, 0, "sample", Numbers.LONG_NULL, 'n');
+        Assert.assertEquals(3_000_000_000L, value);
+
+        final TimestampDriver driver = timestampType.getDriver();
+        TimestampSampler sampler = TimestampSamplerFactory.getInstance(driver, value, 'n', 0);
+        long ts = driver.parseFloorLiteral("2022-01-01T00:00:00.500000000Z");
+        Assert.assertEquals(driver.parseFloorLiteral("2022-01-01T00:00:00.000000000Z"), sampler.round(ts));
     }
 
     @Test
