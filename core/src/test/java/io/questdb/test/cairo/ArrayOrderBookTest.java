@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
 import org.junit.Test;
@@ -34,6 +35,7 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
     public void setUpThisTest() throws Exception {
         execute("CREATE TABLE order_book (ts TIMESTAMP, asks DOUBLE[][], bids DOUBLE[][])" +
                 "TIMESTAMP(ts) PARTITION BY HOUR");
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
     }
 
     @Test
@@ -69,14 +71,23 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "(0, ARRAY[ [0.0,0,0,0], [10.0, 15, 13, 12] ], ARRAY[ [0.0,0,0,0], [20.0, 25, 23, 22] ]), " +
                     "(1, ARRAY[ [0.0,0,0,0], [15.0,  2, 20, 23] ], ARRAY[ [0.0,0,0,0], [14.0, 45, 22,  5] ])"
             );
+            String sql = "SELECT " +
+                    "array_sum(asks[2, 1:4]) ask_vol, " +
+                    "array_sum(bids[2, 1:4]) bid_vol, " +
+                    "bid_vol / ask_vol ratio " +
+                    "FROM order_book";
+            assertPlanNoLeakCheck(
+                    sql,
+                    "VirtualRecord\n" +
+                            "  functions: [memoize(array_sum(asks[2,1:4])),memoize(array_sum(bids[2,1:4])),bid_vol/ask_vol]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: order_book\n"
+            );
             assertSql("ask_vol\tbid_vol\tratio\n" +
                             "38.0\t68.0\t1.7894736842105263\n" +
                             "37.0\t81.0\t2.189189189189189\n",
-                    "SELECT " +
-                            "array_sum(asks[2, 1:4]) ask_vol, " +
-                            "array_sum(bids[2, 1:4]) bid_vol, " +
-                            "bid_vol / ask_vol ratio " +
-                            "FROM order_book"
+                    sql
             );
         });
     }
@@ -106,14 +117,23 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "(0, ARRAY[ [6.0, 6.1], [15.0, 25] ], ARRAY[ [5.0, 5.1], [10.0, 20] ]), " +
                     "(1, ARRAY[ [6.2, 6.4], [20.0,  9] ], ARRAY[ [5.1, 5.2], [20.0, 25] ])"
             );
+            String sql = "SELECT " +
+                    "round((asks[1][1] + bids[1][1]) / 2, 2) mid_price, " +
+                    "(asks[1] - mid_price) * asks[2] weighted_ask_pressure, " +
+                    "(mid_price - bids[1]) * bids[2] weighted_bid_pressure " +
+                    "FROM order_book";
+            assertPlanNoLeakCheck(
+                    sql,
+                    "VirtualRecord\n" +
+                            "  functions: [memoize(round(asks[1,1]+bids[1,1]/2,-2)),asks[1]-mid_price*asks[2],mid_price-bids[1]*bids[2]]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: order_book\n"
+            );
             assertSql("mid_price\tweighted_ask_pressure\tweighted_bid_pressure\n" +
                             "5.5\t[7.5,14.999999999999991]\t[5.0,8.000000000000007]\n" +
                             "5.65\t[10.999999999999996,6.75]\t[11.000000000000014,11.250000000000004]\n",
-                    "SELECT " +
-                            "round((asks[1][1] + bids[1][1]) / 2, 2) mid_price, " +
-                            "(asks[1] - mid_price) * asks[2] weighted_ask_pressure, " +
-                            "(mid_price - bids[1]) * bids[2] weighted_bid_pressure " +
-                            "FROM order_book");
+                    sql);
         });
     }
 
@@ -182,12 +202,21 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "(0, ARRAY[ [0.0,0,0,0,0,0], [20.0, 15, 13, 12, 18, 20] ], NULL), " +
                     "(1, ARRAY[ [0.0,0,0,0,0,0], [20.0, 25,  3,  7,  5,  2] ], NULL)"
             );
-            assertSql("top\tdeep\n22.5\t5.0\n",
-                    "SELECT * FROM (SELECT " +
-                            "array_avg(asks[2, 1:3]) top, " +
-                            "array_avg(asks[2, 3:6]) deep " +
-                            "FROM order_book) " +
-                            "WHERE top > 3 * deep");
+            String sql = "SELECT * FROM (SELECT " +
+                    "array_avg(asks[2, 1:3]) top, " +
+                    "array_avg(asks[2, 3:6]) deep " +
+                    "FROM order_book) " +
+                    "WHERE top > 3 * deep";
+            assertPlanNoLeakCheck(
+                    sql,
+                    "Filter filter: 3*deep<top\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [memoize(array_avg(asks[2,1:3])),memoize(array_avg(asks[2,3:6]))]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: order_book\n"
+            );
+            assertSql("top\tdeep\n22.5\t5.0\n", sql);
         });
     }
 }
