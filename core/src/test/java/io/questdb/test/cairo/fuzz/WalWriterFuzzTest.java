@@ -25,12 +25,14 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -58,8 +60,8 @@ import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE
  * timestamps for the record where the comparison fails.
  */
 public class WalWriterFuzzTest extends AbstractFuzzTest {
-    private static int SCOREBOARD_FORMAT = 1;
     private static boolean ASYNC_MUNMAP = false;
+    private static int SCOREBOARD_FORMAT = 1;
     private boolean existingFilesParanoia;
     private boolean fsAllowsMixedIO;
 
@@ -68,6 +70,12 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
         setProperty(PropertyKey.CAIRO_FILE_ASYNC_MUNMAP_ENABLED, String.valueOf(ASYNC_MUNMAP));
         AbstractCairoTest.setUpStatic();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        AbstractFuzzTest.tearDownStatic();
+        Files.ASYNC_MUNMAP_ENABLED = false;
     }
 
     @Before
