@@ -545,7 +545,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e,
     char fileSystemName[MAX_PATH];
     char volumeName[MAX_PATH];
     DWORD VolumeSerialNo;
-    unsigned long MaxComponentLength, FileSystemFlags;
+    unsigned long MaxComponentLength;
 
     if (GetVolumePathName((LPCSTR) lpszName, drive, MAX_PATH)) {
         if (GetVolumeInformation(
