@@ -50,6 +50,18 @@ public class PGOids {
     public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
     public static final int BINARY_TYPE_UUID = (1 << 31) | ColumnType.UUID;
     public static final int BINARY_TYPE_VARCHAR = (1 << 31) | ColumnType.VARCHAR;
+    public static final int BINARY_TYPE_DECIMAL8 = (1 << 31) | ColumnType.DECIMAL8;
+    public static final int BINARY_TYPE_DECIMAL16 = (1 << 31) | ColumnType.DECIMAL16;
+    public static final int BINARY_TYPE_DECIMAL32 = (1 << 31) | ColumnType.DECIMAL32;
+    public static final int BINARY_TYPE_DECIMAL64 = (1 << 31) | ColumnType.DECIMAL64;
+    public static final int BINARY_TYPE_DECIMAL128 = (1 << 31) | ColumnType.DECIMAL128;
+    public static final int BINARY_TYPE_DECIMAL256 = (1 << 31) | ColumnType.DECIMAL256;
+    /**
+     * We cannot know in advance the actual type of the decimal, so we make a default one that
+     * should be large enough to hold decimals.
+     * Users should prefer using the text format when possible.
+     */
+    public static final int DECIMAL_BIND_TYPE = ColumnType.getDecimalType(76, 38);
     public static final int PG_ARR_BOOL = 1000;
     public static final int PG_ARR_BYTEA = 1001;
     public static final int PG_ARR_DATE = 1182;
@@ -92,12 +104,12 @@ public class PGOids {
     public static final int PG_TIMESTAMP_TZ = 1184;
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_PROC_OIDS = new IntList();
-    public static final char[] PG_TYPE_TO_CATEGORY = new char[15];
-    public static final CharSequence[] PG_TYPE_TO_DEFAULT = new CharSequence[15];
-    public static final short[] PG_TYPE_TO_LENGTH = new short[15];
-    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[15];
-    public static final CharSequence[] PG_TYPE_TO_PROC_NAME = new CharSequence[15];
-    public static final CharSequence[] PG_TYPE_TO_PROC_SRC = new CharSequence[15];
+    public static final char[] PG_TYPE_TO_CATEGORY = new char[16];
+    public static final CharSequence[] PG_TYPE_TO_DEFAULT = new CharSequence[16];
+    public static final short[] PG_TYPE_TO_LENGTH = new short[16];
+    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[16];
+    public static final CharSequence[] PG_TYPE_TO_PROC_NAME = new CharSequence[16];
+    public static final CharSequence[] PG_TYPE_TO_PROC_SRC = new CharSequence[16];
     public static final IntShortHashMap PG_TYPE_TO_SIZE_MAP = new IntShortHashMap();
     public static final int PG_UNSPECIFIED = 0;
     public static final int PG_UUID = 2950;
@@ -140,29 +152,20 @@ public class PGOids {
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_ARR_VARCHAR = ((PG_ARR_VARCHAR >> 24) & 0xff) | ((PG_ARR_VARCHAR << 8) & 0xff0000) | ((PG_ARR_VARCHAR >> 8) & 0xff00) | ((PG_ARR_VARCHAR << 24) & 0xff000000);
     public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
-    public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
     public static final int X_PG_BYTEA = ((PG_BYTEA >> 24) & 0xff) | ((PG_BYTEA << 8) & 0xff0000) | ((PG_BYTEA >> 8) & 0xff00) | ((PG_BYTEA << 24) & 0xff000000);
-    public static final int X_B_PG_BYTEA = 1 | X_PG_BYTEA;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_CHAR = ((PG_CHAR >> 24) & 0xff) | ((PG_CHAR << 8) & 0xff0000) | ((PG_CHAR >> 8) & 0xff00) | ((PG_CHAR << 24) & 0xff000000);
-    public static final int X_B_PG_CHAR = 1 | X_PG_CHAR;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_DATE = ((PG_DATE >> 24) & 0xff) | ((PG_DATE << 8) & 0xff0000) | ((PG_DATE >> 8) & 0xff00) | ((PG_DATE << 24) & 0xff000000);
-    public static final int X_B_PG_DATE = 1 | X_PG_DATE;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_FLOAT4 = ((PG_FLOAT4 >> 24) & 0xff) | ((PG_FLOAT4 << 8) & 0xff0000) | ((PG_FLOAT4 >> 8) & 0xff00) | ((PG_FLOAT4 << 24) & 0xff000000);
-    public static final int X_B_PG_FLOAT4 = 1 | X_PG_FLOAT4;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_FLOAT8 = ((PG_FLOAT8 >> 24) & 0xff) | ((PG_FLOAT8 << 8) & 0xff0000) | ((PG_FLOAT8 >> 8) & 0xff00) | ((PG_FLOAT8 << 24) & 0xff000000);
-    public static final int X_B_PG_FLOAT8 = 1 | X_PG_FLOAT8;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_INET = ((PG_INET >> 24) & 0xff) | ((PG_INET << 8) & 0xff0000) | ((PG_INET >> 8) & 0xff00) | ((PG_INET << 24) & 0xff000000);
     public static final int X_PG_INT2 = ((PG_INT2 >> 24) & 0xff) | ((PG_INT2 << 8) & 0xff0000) | ((PG_INT2 >> 8) & 0xff00) | ((PG_INT2 << 24) & 0xff000000);
-    public static final int X_B_PG_INT2 = 1 | X_PG_INT2;
     public static final int X_PG_INT4 = ((PG_INT4 >> 24) & 0xff) | ((PG_INT4 << 8) & 0xff0000) | ((PG_INT4 >> 8) & 0xff00) | ((PG_INT4 << 24) & 0xff000000);
-    public static final int X_B_PG_INT4 = 1 | X_PG_INT4;
     public static final int X_PG_INT8 = ((PG_INT8 >> 24) & 0xff) | ((PG_INT8 << 8) & 0xff0000) | ((PG_INT8 >> 8) & 0xff00) | ((PG_INT8 << 24) & 0xff000000);
-    public static final int X_B_PG_INT8 = 1 | X_PG_INT8;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_INTERVAL = ((PG_INTERVAL >> 24) & 0xff) | ((PG_INTERVAL << 8) & 0xff0000) | ((PG_INTERVAL >> 8) & 0xff00) | ((PG_INTERVAL << 24) & 0xff000000);
     @SuppressWarnings("NumericOverflow")
@@ -173,13 +176,11 @@ public class PGOids {
     public static final int X_PG_TIME = ((PG_TIME >> 24) & 0xff) | ((PG_TIME << 8) & 0xff0000) | ((PG_TIME >> 8) & 0xff00) | ((PG_TIME << 24) & 0xff000000);
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_TIMESTAMP = ((PG_TIMESTAMP >> 24) & 0xff) | ((PG_TIMESTAMP << 8) & 0xff0000) | ((PG_TIMESTAMP >> 8) & 0xff00) | ((PG_TIMESTAMP << 24) & 0xff000000);
-    public static final int X_B_PG_TIMESTAMP = 1 | X_PG_TIMESTAMP;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_TIMESTAMP_TZ = ((PG_TIMESTAMP_TZ >> 24) & 0xff) | ((PG_TIMESTAMP_TZ << 8) & 0xff0000) | ((PG_TIMESTAMP_TZ >> 8) & 0xff00) | ((PG_TIMESTAMP_TZ << 24) & 0xff000000);
     public static final IntShortHashMap X_PG_TYPE_TO_SIZE_MAP = new IntShortHashMap();
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_UUID = ((PG_UUID >> 24) & 0xff) | ((PG_UUID << 8) & 0xff0000) | ((PG_UUID >> 8) & 0xff00) | ((PG_UUID << 24) & 0xff000000);
-    public static final int X_B_PG_UUID = 1 | X_PG_UUID;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_VOID = ((PG_VOID >> 24) & 0xff) | ((PG_VOID << 8) & 0xff0000) | ((PG_VOID >> 8) & 0xff00) | ((PG_VOID << 24) & 0xff000000);
     private static final int CHAR_ATT_TYP_MOD = 5; // CHAR(n) in PostgreSQL has n+4 as type modifier
@@ -198,10 +199,6 @@ public class PGOids {
             return CHAR_ATT_TYP_MOD;
         }
         return -1;
-    }
-
-    public static short getColumnBinaryFlag(int type) {
-        return (short) ((type >>> 31) & 0xff);
     }
 
     public static int getTypeOid(int type) {
@@ -229,14 +226,11 @@ public class PGOids {
      * @return PostgreSQL element type OID
      */
     public static int pgArrayToElementType(int pgOid) {
-        switch (pgOid) {
-            case PG_ARR_FLOAT8:
-                return PG_FLOAT8;
-            case PG_ARR_INT8:
-                return PG_INT8;
-            default:
-                return 0;
-        }
+        return switch (pgOid) {
+            case PG_ARR_FLOAT8 -> PG_FLOAT8;
+            case PG_ARR_INT8 -> PG_INT8;
+            default -> 0;
+        };
     }
 
     /**
@@ -248,28 +242,18 @@ public class PGOids {
      * @return PostgreSQL array type OID
      */
     public static int pgToArrayOid(int pgOid) {
-        switch (pgOid) {
-            case PG_BOOL:
-                return PG_ARR_BOOL;
-            case PG_INT2:
-                return PG_ARR_INT2;
-            case PG_INT4:
-                return PG_ARR_INT4;
-            case PG_INT8:
-                return PG_ARR_INT8;
-            case PG_FLOAT4:
-                return PG_ARR_FLOAT4;
-            case PG_FLOAT8:
-                return PG_ARR_FLOAT8;
-            case PG_TIMESTAMP:
-                return PG_ARR_TIMESTAMP;
-            case PG_TIMESTAMP_TZ:
-                return PG_ARR_TIMESTAMP_TZ;
-            case PG_VARCHAR:
-                return PG_ARR_VARCHAR;
-            default:
-                return 0;
-        }
+        return switch (pgOid) {
+            case PG_BOOL -> PG_ARR_BOOL;
+            case PG_INT2 -> PG_ARR_INT2;
+            case PG_INT4 -> PG_ARR_INT4;
+            case PG_INT8 -> PG_ARR_INT8;
+            case PG_FLOAT4 -> PG_ARR_FLOAT4;
+            case PG_FLOAT8 -> PG_ARR_FLOAT8;
+            case PG_TIMESTAMP -> PG_ARR_TIMESTAMP;
+            case PG_TIMESTAMP_TZ -> PG_ARR_TIMESTAMP_TZ;
+            case PG_VARCHAR -> PG_ARR_VARCHAR;
+            default -> 0;
+        };
     }
 
     public static int toColumnBinaryType(short code, int type) {
@@ -279,15 +263,6 @@ public class PGOids {
     public static int toColumnType(int type) {
         // clear format flag
         return type & (~(1 << 31));
-    }
-
-    public static int toParamBinaryType(short code, int type) {
-        return code | type;
-    }
-
-    public static int toParamType(int type) {
-        // clear format flag
-        return type & (~1);
     }
 
     static {
@@ -317,6 +292,12 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.VARCHAR, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.INTERVAL, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.ARRAY_STRING, PG_VARCHAR); // ARRAY_STRING is a hack, we send results as VARCHAR
+        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL8, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL16, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL32, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL64, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL128, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL256, PG_NUMERIC); // NUMERIC
 
         TYPE_ARR_OIDS.extendAndSet(ColumnType.DOUBLE, PG_ARR_FLOAT8); // FLOAT8[]
         TYPE_ARR_OIDS.extendAndSet(ColumnType.LONG, PG_ARR_INT8); // INT8[]
@@ -336,6 +317,7 @@ public class PGOids {
         PG_TYPE_OIDS.add(PG_INTERNAL);
         PG_TYPE_OIDS.add(PG_OID);
         PG_TYPE_OIDS.add(PG_ARR_FLOAT8);
+        PG_TYPE_OIDS.add(PG_NUMERIC);
 
         // these values are taken from PostgreSQL pg_proc view
         PG_TYPE_PROC_OIDS.add(2432);
@@ -352,7 +334,8 @@ public class PGOids {
         PG_TYPE_PROC_OIDS.add(2961);
         PG_TYPE_PROC_OIDS.add(0); // INTERNAL
         PG_TYPE_PROC_OIDS.add(2418); // OID
-        PG_TYPE_PROC_OIDS.add(2400); // // ARRAY
+        PG_TYPE_PROC_OIDS.add(2400); // ARRAY
+        PG_TYPE_PROC_OIDS.add(3823); // NUMERIC
 
         // Fixed-size types only since variable size types have size -1 in PostgreSQL and -1 this happens
         // to be a marker for 'no value' in this map.
@@ -400,6 +383,7 @@ public class PGOids {
         PG_TYPE_TO_NAME[12] = "internal";
         PG_TYPE_TO_NAME[13] = "oid";
         PG_TYPE_TO_NAME[14] = "_float8";
+        PG_TYPE_TO_NAME[15] = "numeric";
 
         // array are excluded since all arrays are handled by the same function
         for (int i = 0, n = PG_TYPE_TO_NAME.length; i < n; i++) {
@@ -430,6 +414,7 @@ public class PGOids {
         PG_TYPE_TO_CATEGORY[12] = 'P';
         PG_TYPE_TO_CATEGORY[13] = 'N';
         PG_TYPE_TO_CATEGORY[14] = 'A';
+        PG_TYPE_TO_CATEGORY[15] = 'N';
 
         PG_TYPE_TO_LENGTH[0] = -1;
         PG_TYPE_TO_LENGTH[1] = 8;
@@ -446,6 +431,7 @@ public class PGOids {
         PG_TYPE_TO_LENGTH[12] = 8;
         PG_TYPE_TO_LENGTH[13] = 4;
         PG_TYPE_TO_LENGTH[14] = -1;
+        PG_TYPE_TO_LENGTH[15] = -1;
 
         PG_TYPE_TO_DEFAULT[0] = null;
         PG_TYPE_TO_DEFAULT[1] = null;
@@ -462,5 +448,6 @@ public class PGOids {
         PG_TYPE_TO_DEFAULT[12] = null;
         PG_TYPE_TO_DEFAULT[13] = null;
         PG_TYPE_TO_DEFAULT[14] = null;
+        PG_TYPE_TO_DEFAULT[15] = null;
     }
 }

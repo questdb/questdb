@@ -2168,6 +2168,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                             .I$();
 
+                                    timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+
+                                    // Remove empty partition dir
+                                    Path path = Path.getThreadLocal(pathToTable);
+                                    setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
+                                    tableWriter.getConfiguration().getFilesFacade().rmdir(path);
+
                                     // nothing to do, skip the partition
                                     updatePartition(
                                             tableWriter.getFilesFacade(),
@@ -2182,12 +2189,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             srcDataOldPartitionSize,
                                             0
                                     );
-                                    timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-
-                                    // Remove empty partition dir
-                                    Path path = Path.getThreadLocal(pathToTable);
-                                    setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
-                                    tableWriter.getConfiguration().getFilesFacade().rmdir(path, false);
 
                                     return;
                                 } else {
@@ -2280,7 +2281,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             } catch (Throwable e) {
                 tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                LOG.error().$("open column error [table=").$(tableWriter.getTableToken())
+                LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
+                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                         .$(", e=").$(e)
                         .I$();
 
@@ -2461,6 +2463,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
                     LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                             .$(", e=").$(e)
                             .I$();
                     columnsInFlight = i + 1;

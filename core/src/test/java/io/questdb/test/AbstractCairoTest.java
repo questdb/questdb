@@ -256,6 +256,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
             count++;
         }
 
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        int skip = count > 0 && rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
+        int k = 0;
+        while (k < skip && cursor.hasNext()) {
+            k++;
+        }
+        sink.clear();
+        cursor.toTop();
+        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+
         if (!sizeCanBeVariable) {
             if (sizeExpected) {
                 Assert.assertTrue("Concrete cursor size expected but was -1", cursorSize != -1);
@@ -267,6 +277,20 @@ public abstract class AbstractCairoTest extends AbstractTest {
             Assert.assertEquals("Actual cursor records vs cursor.size()", count, cursorSize);
             if (cursorSizeBeforeFetch != -1) {
                 Assert.assertEquals("Cursor size before fetch and after", cursorSizeBeforeFetch, cursorSize);
+            }
+        } else {
+            if (count > 0) {
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+                cursor.toTop();
+                skip = rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
+                while (counter.get() < skip && cursor.hasNext()) {
+                    counter.inc();
+                }
+                cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                Assert.assertEquals("Actual cursor records vs cursor.calculateSize()", count, counter.get());
+            } else {
+                cursor.toTop();
+                Assert.assertFalse(cursor.hasNext());
             }
         }
 
@@ -333,7 +357,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 boolean cursorExhausted = false;
                 for (int i = 0, n = target; i < n; i++) {
                     cursor.recordAt(factRec, rows.getQuick(i));
-                    // intentionally calling hasNext() twice: we want to adcanced the cursor position,
+                    // intentionally calling hasNext() twice: we want to advance the cursor position,
                     // but we do *NOT* want to call it in step-lock with recordAt()
                     if (!cursorExhausted) {
                         cursorExhausted = !cursor.hasNext();

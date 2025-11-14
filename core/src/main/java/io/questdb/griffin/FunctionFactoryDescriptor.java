@@ -92,94 +92,37 @@ public class FunctionFactoryDescriptor {
     }
 
     public static short getArgTypeTag(char c) {
-        short sigArgType;
-        switch (c | 32) {
-            case 'a':
-                sigArgType = ColumnType.CHAR;
-                break;
-            case 'b':
-                sigArgType = ColumnType.BYTE;
-                break;
-            case 'c':
-                sigArgType = ColumnType.CURSOR;
-                break;
-            case 'd':
-                sigArgType = ColumnType.DOUBLE;
-                break;
-            case 'e':
-                sigArgType = ColumnType.SHORT;
-                break;
-            case 'f':
-                sigArgType = ColumnType.FLOAT;
-                break;
-            case 'g':
-                sigArgType = ColumnType.GEOHASH;
-                break;
-            case 'h':
-                sigArgType = ColumnType.LONG256;
-                break;
-            case 'i':
-                sigArgType = ColumnType.INT;
-                break;
-            case 'j':
-                sigArgType = ColumnType.LONG128;
-                break;
-            case 'k':
-                sigArgType = ColumnType.SYMBOL;
-                break;
-            case 'l':
-                sigArgType = ColumnType.LONG;
-                break;
-            case 'm':
-                sigArgType = ColumnType.DATE;
-                break;
-            case 'n':
-                sigArgType = ColumnType.TIMESTAMP;
-                break;
-            case 'o':
-                sigArgType = ColumnType.NULL;
-                break;
-            case 'p':
-                sigArgType = ColumnType.REGCLASS;
-                break;
-            case 'q':
-                sigArgType = ColumnType.REGPROCEDURE;
-                break;
-            case 'r':
-                sigArgType = ColumnType.RECORD;
-                break;
-            case 's':
-                sigArgType = ColumnType.STRING;
-                break;
-            case 't':
-                sigArgType = ColumnType.BOOLEAN;
-                break;
-            case 'u':
-                sigArgType = ColumnType.BINARY;
-                break;
-            case 'v':
-                sigArgType = ColumnType.VAR_ARG;
-                break;
-            case 'w':
-                sigArgType = ColumnType.ARRAY_STRING;
-                break;
-            case 'x':
-                sigArgType = ColumnType.IPv4;
-                break;
-            case 'z':
-                sigArgType = ColumnType.UUID;
-                break;
-            case 'ø':
-                sigArgType = ColumnType.VARCHAR;
-                break;
-            case 'δ':
-                sigArgType = ColumnType.INTERVAL;
-                break;
-            default:
-                sigArgType = -1;
-                break;
-        }
-        return sigArgType;
+        return switch (c | 32) {
+            case 'a' -> ColumnType.CHAR;
+            case 'b' -> ColumnType.BYTE;
+            case 'c' -> ColumnType.CURSOR;
+            case 'd' -> ColumnType.DOUBLE;
+            case 'e' -> ColumnType.SHORT;
+            case 'f' -> ColumnType.FLOAT;
+            case 'g' -> ColumnType.GEOHASH;
+            case 'h' -> ColumnType.LONG256;
+            case 'i' -> ColumnType.INT;
+            case 'j' -> ColumnType.LONG128;
+            case 'k' -> ColumnType.SYMBOL;
+            case 'l' -> ColumnType.LONG;
+            case 'm' -> ColumnType.DATE;
+            case 'n' -> ColumnType.TIMESTAMP;
+            case 'o' -> ColumnType.NULL;
+            case 'p' -> ColumnType.REGCLASS;
+            case 'q' -> ColumnType.REGPROCEDURE;
+            case 'r' -> ColumnType.RECORD;
+            case 's' -> ColumnType.STRING;
+            case 't' -> ColumnType.BOOLEAN;
+            case 'u' -> ColumnType.BINARY;
+            case 'v' -> ColumnType.VAR_ARG;
+            case 'w' -> ColumnType.ARRAY_STRING;
+            case 'x' -> ColumnType.IPv4;
+            case 'z' -> ColumnType.UUID;
+            case 'ø' -> ColumnType.VARCHAR;
+            case 'δ' -> ColumnType.INTERVAL;
+            case 'ξ' -> ColumnType.DECIMAL;
+            default -> -1;
+        };
     }
 
     public static boolean isArray(int mask) {
@@ -351,6 +294,7 @@ public class FunctionFactoryDescriptor {
         typeNameMap.put('z', "uuid");
         typeNameMap.put('ø', "varchar");
         typeNameMap.put('δ', "interval");
+        typeNameMap.put('ξ', "decimal");
         typeNameMap.put('[' | 32, "[]");
     }
 }

@@ -35,21 +35,21 @@ import io.questdb.std.ObjList;
 
 public interface MultiArgFunction extends Function {
 
+    ObjList<Function> args();
+
     @Override
     default void close() {
-        Misc.freeObjList(getArgs());
+        Misc.freeObjList(args());
     }
-
-    ObjList<Function> getArgs();
 
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        Function.init(getArgs(), symbolTableSource, executionContext, null);
+        Function.init(args(), symbolTableSource, executionContext, null);
     }
 
     @Override
     default boolean isConstant() {
-        ObjList<Function> args = getArgs();
+        ObjList<Function> args = args();
         for (int i = 0, n = args.size(); i < n; i++) {
             if (!args.getQuick(i).isConstant()) {
                 return false;
@@ -60,7 +60,7 @@ public interface MultiArgFunction extends Function {
 
     @Override
     default boolean isNonDeterministic() {
-        final ObjList<Function> args = getArgs();
+        final ObjList<Function> args = args();
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
             if (function.isNonDeterministic()) {
@@ -72,7 +72,7 @@ public interface MultiArgFunction extends Function {
 
     @Override
     default boolean isRandom() {
-        final ObjList<Function> args = getArgs();
+        final ObjList<Function> args = args();
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
             if (function.isRandom()) {
@@ -84,7 +84,7 @@ public interface MultiArgFunction extends Function {
 
     @Override
     default boolean isRuntimeConstant() {
-        final ObjList<Function> args = getArgs();
+        final ObjList<Function> args = args();
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
             if (!function.isRuntimeConstant() && !function.isConstant()) {
@@ -96,7 +96,7 @@ public interface MultiArgFunction extends Function {
 
     @Override
     default boolean isThreadSafe() {
-        final ObjList<Function> args = getArgs();
+        final ObjList<Function> args = args();
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
             if (!function.isThreadSafe()) {
@@ -109,8 +109,8 @@ public interface MultiArgFunction extends Function {
     @Override
     default void offerStateTo(Function that) {
         if (that instanceof MultiArgFunction) {
-            ObjList<Function> thatArgs = ((MultiArgFunction) that).getArgs();
-            ObjList<Function> thisArgs = getArgs();
+            ObjList<Function> thatArgs = ((MultiArgFunction) that).args();
+            ObjList<Function> thisArgs = args();
             if (thatArgs.size() == thisArgs.size()) {
                 for (int i = 0; i < thisArgs.size(); i++) {
                     thisArgs.getQuick(i).offerStateTo(thatArgs.getQuick(i));
@@ -121,7 +121,7 @@ public interface MultiArgFunction extends Function {
 
     @Override
     default boolean shouldMemoize() {
-        final ObjList<Function> args = getArgs();
+        final ObjList<Function> args = args();
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
             if (function.shouldMemoize()) {
@@ -133,7 +133,7 @@ public interface MultiArgFunction extends Function {
 
     @Override
     default boolean supportsParallelism() {
-        final ObjList<Function> args = getArgs();
+        final ObjList<Function> args = args();
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
             if (!function.supportsParallelism()) {
@@ -145,11 +145,11 @@ public interface MultiArgFunction extends Function {
 
     @Override
     default void toPlan(PlanSink sink) {
-        sink.val(getName()).val('(').val(getArgs()).val(')');
+        sink.val(getName()).val('(').val(args()).val(')');
     }
 
     @Override
     default void toTop() {
-        GroupByUtils.toTop(getArgs());
+        GroupByUtils.toTop(args());
     }
 }

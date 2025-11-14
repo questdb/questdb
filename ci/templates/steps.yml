@@ -9,7 +9,8 @@ steps:
       and(
         eq(variables['os'], 'Linux'),
         ne(variables['poolName'], 'hetzner-docker'),
-        ne(variables['poolName'], 'hetzner-docker-arm')
+        ne(variables['poolName'], 'hetzner-docker-arm'),
+        ne(variables['poolName'], 'hetzner-docker-zfs')
       )
   - bash: |
       sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
@@ -19,7 +20,10 @@ steps:
       echo "JAVA_HOME will be set to: $JAVA_PATH"
     displayName: "Install JDK and Maven"
     condition: |
-      eq(variables['poolName'], 'hetzner-docker')
+      or(
+        eq(variables['poolName'], 'hetzner-docker'),
+        eq(variables['poolName'], 'hetzner-docker-zfs')
+      )
   - bash: |
       sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
       JAVA_PATH="/usr/lib/jvm/java-17-openjdk-arm64"
@@ -29,6 +33,14 @@ steps:
     displayName: "Install JDK and Maven"
     condition: |
       eq(variables['poolName'], 'hetzner-docker-arm')
+  - bash: |
+      JAVA_PATH="/opt/graalvm"
+      echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+      echo "JAVA_HOME will be set to: $JAVA_PATH"
+    displayName: "Install JDK and Maven"
+    condition: |
+      eq(variables['poolName'], 'hetzner-docker-graal')
   - task: Cache@2
     displayName: "Cache non-default Maven"
     continueOnError: true
@@ -40,7 +52,8 @@ steps:
       and(
         ne(variables['MAVEN_VERSION_OPTION'], 'Default'),
         ne(variables['poolName'], 'hetzner-docker'),
-        ne(variables['poolName'], 'hetzner-docker-arm')
+        ne(variables['poolName'], 'hetzner-docker-arm'),
+        ne(variables['poolName'], 'hetzner-docker-zfs')
       )
   - task: Cache@2
     displayName: "Cache .m2/repository"
@@ -51,7 +64,8 @@ steps:
     condition: |
       and(
         ne(variables['poolName'], 'hetzner-docker'),
-        ne(variables['poolName'], 'hetzner-docker-arm')
+        ne(variables['poolName'], 'hetzner-docker-arm'),
+        ne(variables['poolName'], 'hetzner-docker-zfs')
       )
   - task: Cache@2
     displayName: "Cache .cargo/registry"
@@ -66,7 +80,8 @@ steps:
         startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
         ne(variables['poolName'], 'hetzner-docker'),
-        ne(variables['poolName'], 'hetzner-docker-arm')
+        ne(variables['poolName'], 'hetzner-docker-arm'),
+        ne(variables['poolName'], 'hetzner-docker-zfs')
       )
   - pwsh: New-Item -Path "$HOME/.m2/repository" -ItemType Directory -Force
     displayName: "Ensure .m2/repository exists (PowerShell)"

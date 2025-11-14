@@ -65,33 +65,6 @@ import java.io.Closeable;
 public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTableSource {
 
     /**
-     * Static utility method to calculate the total size of records in a cursor.
-     * <p>
-     * This method iterates through all remaining records in the cursor, counting them
-     * and updating the provided counter. The cursor will be positioned at the end
-     * after this operation completes.
-     *
-     * @param cursor         the record cursor to count records from
-     * @param circuitBreaker optional circuit breaker to check for timeouts or interruptions during counting,
-     *                       may be null to disable circuit breaking
-     * @param counter        the counter object to be updated with the total record count
-     * @throws DataUnavailableException if data is temporarily unavailable (e.g., in cold storage)
-     * @see #calculateSize(SqlExecutionCircuitBreaker, Counter)
-     */
-    static void calculateSize(RecordCursor cursor, SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        if (circuitBreaker != null) {
-            while (cursor.hasNext()) {
-                counter.inc();
-                circuitBreaker.statefulThrowExceptionIfTripped();
-            }
-        } else {
-            while (cursor.hasNext()) {
-                counter.inc();
-            }
-        }
-    }
-
-    /**
      * Utility method to convert a boolean value to its long representation.
      * <p>
      * This is commonly used in QuestDB's internal operations where boolean
