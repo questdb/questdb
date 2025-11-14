@@ -3476,9 +3476,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         constFilter.init(null, executionContext);
                                         if (constFilter.isConstant()) {
                                             if (!constFilter.getBool(null)) {
+                                                ObjList<QueryColumn> groupByCols = new ObjList<>();
+                                                for (int k = 0, m = cols.size(); k < m; k++) {
+                                                    if (functionParser.getFunctionFactoryCache().isGroupBy(cols.get(k).getAst().token)) {
+                                                        groupByCols.add(cols.get(k));
+                                                    }
+                                                }
+
                                                 GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(masterMetadata);
-                                                for (int k = 0, m = groupByFunctions.size(); k < m; k++) {
-                                                    metadata.add(new TableColumnMetadata(groupByFunctions.get(k).getName(), groupByFunctions.get(k).getType()));
+                                                for (int k = 0, m = groupByCols.size(); k < m; k++) {
+                                                    metadata.add(new TableColumnMetadata(groupByCols.get(k).getAlias().toString(), groupByFunctions.get(k).getType()));
                                                 }
                                                 RecordCursorFactory factory = new ExtraNullColumnCursorFactory(metadata, masterMetadata.getColumnCount(), master);
                                                 if (columnIndex != null) {
