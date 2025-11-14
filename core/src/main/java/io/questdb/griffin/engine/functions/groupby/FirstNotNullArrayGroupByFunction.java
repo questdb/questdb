@@ -31,12 +31,7 @@ import org.jetbrains.annotations.NotNull;
 public class FirstNotNullArrayGroupByFunction extends NotNullArrayGroupByFunction {
 
     public FirstNotNullArrayGroupByFunction(@NotNull Function arg) {
-        super(arg, (srcRowId, destRowId) -> srcRowId < destRowId);
-    }
-
-    @Override
-    protected boolean shouldSkipUpdate(MapValue mapValue) {
-        return mapValue.getLong(valueIndex + 1) != 0;
+        super(arg, (srcRowId, destRowId) -> srcRowId < destRowId, (mapValue, valueIndex) -> mapValue.getLong(valueIndex + 1) != 0);
     }
 
     @Override

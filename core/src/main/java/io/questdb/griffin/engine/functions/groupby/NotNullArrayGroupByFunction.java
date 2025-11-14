@@ -36,13 +36,13 @@ import java.util.function.BiPredicate;
 
 public abstract class NotNullArrayGroupByFunction extends FirstArrayGroupByFunction {
     private final BiPredicate<Long, Long> mergePred;
+    private final BiPredicate<MapValue, Integer> skipUpdatePred;
 
-    public NotNullArrayGroupByFunction(@NotNull Function arg, BiPredicate<Long, Long> mergePred) {
+    public NotNullArrayGroupByFunction(@NotNull Function arg, BiPredicate<Long, Long> mergePred, BiPredicate<MapValue, Integer> skipUpdatePred) {
         super(arg);
         this.mergePred = mergePred;
+        this.skipUpdatePred = skipUpdatePred;
     }
-
-    protected abstract boolean shouldSkipUpdate(MapValue mapValue);
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
@@ -59,7 +59,7 @@ public abstract class NotNullArrayGroupByFunction extends FirstArrayGroupByFunct
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (shouldSkipUpdate(mapValue)) {
+        if (skipUpdatePred.test(mapValue, valueIndex)) {
             return;
         }
         updateValue(mapValue, record, rowId);
