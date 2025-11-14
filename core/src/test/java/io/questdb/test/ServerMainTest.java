@@ -66,19 +66,35 @@ public class ServerMainTest extends AbstractBootstrapTest {
     @Test
     public void testAsyncMunmap() throws Exception {
         assertMemoryLeak(() -> {
-            Map<String, String> env = new HashMap<>(System.getenv());
-            env.put(PropertyKey.CAIRO_FILE_ASYNC_MUNMAP_ENABLED.getEnvVarName(), "true");
-            Bootstrap bootstrap = new Bootstrap(
-                    new DefaultBootstrapConfiguration() {
-                        @Override
-                        public Map<String, String> getEnv() {
-                            return env;
-                        }
-                    },
-                    getServerMainArgs()
-            );
-            try (final ServerMain serverMain = new ServerMain(bootstrap)) {
-                serverMain.start();
+            try {
+                Map<String, String> env = new HashMap<>(System.getenv());
+                env.put(PropertyKey.CAIRO_FILE_ASYNC_MUNMAP_ENABLED.getEnvVarName(), "true");
+
+                Bootstrap bootstrap;
+                try {
+                    bootstrap = new Bootstrap(
+                            new DefaultBootstrapConfiguration() {
+                                @Override
+                                public Map<String, String> getEnv() {
+                                    return env;
+                                }
+                            },
+                            getServerMainArgs()
+                    );
+                } catch (Bootstrap.BootstrapException ex) {
+                    if (!Os.isWindows()) {
+                        throw ex;
+                    }
+                    TestUtils.assertContains(ex.getMessage(), "Async munmap is not supported on Windows");
+                    return;
+                }
+
+                Assert.assertFalse(Os.isWindows());
+                try (final ServerMain serverMain = new ServerMain(bootstrap)) {
+                    serverMain.start();
+                }
+            } finally {
+                Files.ASYNC_MUNMAP_ENABLED = false;
             }
         });
     }
