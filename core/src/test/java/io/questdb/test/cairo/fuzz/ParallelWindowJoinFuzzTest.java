@@ -98,6 +98,25 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelWindowJoinOnSymbol() throws Exception {
+        // since aggregate functions have an expression with master's and slave's columns
+        // as the argument, vectorized execution should not kick in
+        testParallelWindowJoin(
+                "SELECT max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT max(t.price + p.bid) max_bid, min(t.price + p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                        "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
+                        ")",
+                """
+                        max_bid\tmin_bid
+                        44.953688102866025\t15.166874474084109
+                        """
+        );
+    }
+
+    @Test
     public void testParallelWindowJoinOnSymbolFiltered() throws Exception {
         testParallelWindowJoin(
                 "SELECT avg(price) avg_price, max(max_bid_str) max_bid_str " +
@@ -130,6 +149,26 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                 """
                         avg_price\tmax_bid\tmin_bid
                         19.98409342766\t14.982510448352535\t5.010953919128168
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelWindowJoinOnSymbolFiltered3() throws Exception {
+        // since aggregate functions have an expression with master's and slave's columns
+        // as the argument, vectorized execution should not kick in
+        testParallelWindowJoin(
+                "SELECT max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT max(t.price + p.bid) max_bid, min(t.price + p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                        "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
+                        "  WHERE t.side = 'sell' " +
+                        ")",
+                """
+                        max_bid\tmin_bid
+                        44.92088394101361\t15.171816406042234
                         """
         );
     }

@@ -38,7 +38,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
@@ -398,20 +397,6 @@ public class GroupByUtils {
                 break;
         }
         return func;
-    }
-
-    public static boolean isBatchComputationSupported(ObjList<GroupByFunction> functions, int columnSplit) {
-        if (functions == null || functions.size() == 0) {
-            return false;
-        }
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            final var function = functions.getQuick(i);
-            // Only UnaryFunction should support batch computation, but we're still doing a sanity check
-            if (!function.supportsBatchComputation() || !(function instanceof UnaryFunction) || function.getColumnIndex() < columnSplit) {
-                return false;
-            }
-        }
-        return true;
     }
 
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
