@@ -2277,21 +2277,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void expandWindowJoins(
-            QueryModel model, SqlExecutionContext sqlExecutionContext, int recursionLevel
-    ) throws SqlException {
-        QueryModel nestedModel = model.getNestedModel();
-        if (QueryModel.isWindowJoin(nestedModel)) {
-            ObjList<QueryModel> joinModels = nestedModel.getJoinModels();
-            QueryModel formerModel = joinModels.getQuick(0);
-            ObjList<QueryColumn> columns = model.getColumns();
-            for (int i = 1, n = joinModels.size(); i < n; i++) {
-
-            }
-
-        }
-    }
-
     private CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAliases, ExpressionNode node) {
         for (int i = 0, max = groupByNodes.size(); i < max; i++) {
             ExpressionNode n = groupByNodes.getQuick(i);
