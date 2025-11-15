@@ -4927,17 +4927,21 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testScalarSubqueryDoesNotBreakJsonExtract() throws Exception {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
-            assertPlanNoLeakCheck("SELECT * FROM trades\n" +
-                            "WHERE timestamp = (SELECT max(timestamp) FROM \"trades\")\n" +
-                            "ORDER BY timestamp DESC;",
-                    "PageFrame\n" +
-                            "    Row backward scan\n" +
-                            "    Interval backward scan on: trades\n" +
-                            "      intervals: []\n");
+            assertPlanNoLeakCheck("""
+                            SELECT * FROM trades
+                            WHERE timestamp = (SELECT max(timestamp) FROM "trades")
+                            ORDER BY timestamp DESC;""",
+                    """
+                            PageFrame
+                                Row backward scan
+                                Interval backward scan on: trades
+                                  intervals: []
+                            """);
 
-            assertException("SELECT * FROM trades\n" +
-                            "WHERE timestamp = CAST((SELECT max(timstamp) FROM \"trades\") AS LONG)\n" +
-                            "ORDER BY timestamp DESC",
+            assertException("""
+                            SELECT * FROM trades
+                            WHERE timestamp = CAST((SELECT max(timstamp) FROM "trades") AS LONG)
+                            ORDER BY timestamp DESC""",
                     56,
                     "Invalid column");
         });

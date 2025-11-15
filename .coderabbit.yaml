@@ -6,6 +6,7 @@ reviews:
   request_changes_workflow: false
   high_level_summary: false
   poem: false
+  sequence_diagrams: false
   review_status: true
   collapse_walkthrough: false
   auto_review:
