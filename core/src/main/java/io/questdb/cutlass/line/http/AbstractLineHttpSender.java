@@ -266,24 +266,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                 }
                 long retryingDeadlineNanos = Long.MIN_VALUE; // we want to start retry timer only after a first failure
                 int retryBackoff = Math.min(maxBackoffMillis, RETRY_INITIAL_BACKOFF_MS);
-                long hostBlacklistBitmap = 0; // allows blacklisting up to 64 hosts; we blacklist a host upon receiving a non-retryable error
-                final int blacklistableCount = Math.min(64, hosts.size());
-                final long allBlacklistedMask = (blacklistableCount == 64) ? -1L : ((1L << blacklistableCount) - 1);
                 for (int i = 0; ; i++) {
                     currentAddressIndex = i % hosts.size();
-                    if (currentAddressIndex < 64) {
-                        // we can blacklist only the first 64 hosts, that's fine, we don't expect more hosts anyway
-                        // and if there ever are more hosts then the side effect is that we will retry on the same host
-                        // even after it returned a non-retryable error
-                        if (hostBlacklistBitmap == allBlacklistedMask) {
-                            // if all hosts are blacklisted, we can't retry
-                            break;
-                        }
-                        if ((hostBlacklistBitmap & (1L << currentAddressIndex)) != 0) {
-                            // this host is blacklisted, skip it
-                            continue;
-                        }
-                    }
 
                     final String host = hosts.getQuick(currentAddressIndex);
                     final int port = ports.getQuick(currentAddressIndex);
@@ -307,11 +291,6 @@ public abstract class AbstractLineHttpSender implements Sender {
                             // So, the protocol is set to PROTOCOL_VERSION_V1 here for both scenarios.
                             protocolVersion = PROTOCOL_VERSION_V1;
                             break;
-                        }
-                        if (!isRetryableHttpStatus(statusCode)) {
-                            if (currentAddressIndex < 64) {
-                                hostBlacklistBitmap |= (1L << currentAddressIndex);
-                            }
                         }
                         if (lastErrorSink == null) {
                             lastErrorSink = new StringSink();
