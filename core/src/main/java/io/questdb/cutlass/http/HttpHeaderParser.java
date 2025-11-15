@@ -329,7 +329,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     if (HttpKeywords.isHeaderSetCookie(headerName)) {
                         cookieParse(_lo, _wptr - 1);
                     } else {
-                        headers.put(headerName, csPool.next().of(_lo, _wptr - 1));
+                        headers.putImmutable(headerName, csPool.next().of(_lo, _wptr - 1));
                     }
                     headerName = null;
                     _lo = _wptr;
