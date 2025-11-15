@@ -235,6 +235,7 @@ import io.questdb.griffin.engine.join.SymbolKeyMappingRecordCopier;
 import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
@@ -3504,6 +3505,76 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     model.setConstWhereClause(null);
                                 }
 
+                                // try to extract symbols equal function from join filter
+                                int leftSymbolIndex = -1;
+                                int rightSymbolIndex = -1;
+                                ExpressionNode parent = null;
+                                if (node != null) {
+                                    final int columnSplit = master.getMetadata().getColumnCount();
+                                    ExpressionNode nn = node;
+                                    sqlNodeStack.clear();
+                                    sqlNodeStack2.clear();
+                                    boolean isLeft = false;
+                                    while (!sqlNodeStack.isEmpty() || nn != null) {
+                                        if (nn != null) {
+                                            if (Chars.equals(nn.token, "=")) {
+                                                ExpressionNode l = nn.lhs;
+                                                ExpressionNode r = nn.rhs;
+                                                if (l != null && r != null && l.type == ExpressionNode.LITERAL && r.type == ExpressionNode.LITERAL) {
+                                                    int index1 = joinMetadata.getColumnIndexQuiet(l.token);
+                                                    int index2 = joinMetadata.getColumnIndexQuiet(r.token);
+                                                    if (index1 >= 0 && index2 >= 0) {
+                                                        boolean index1IsSymbol = joinMetadata.getColumnType(index1) == ColumnType.SYMBOL;
+                                                        boolean index2IsSymbol = joinMetadata.getColumnType(index2) == ColumnType.SYMBOL;
+                                                        boolean index1IsLeft = index1 < columnSplit;
+                                                        boolean index2IsLeft = index2 < columnSplit;
+                                                        isLeft = parent != null && parent.lhs == nn;
+
+                                                        if (index1IsSymbol && index2IsSymbol && index1IsLeft != index2IsLeft) {
+                                                            leftSymbolIndex = index1IsLeft ? index1 : index2;
+                                                            rightSymbolIndex = index1IsLeft ? index2 : index1;
+                                                            rightSymbolIndex = rightSymbolIndex - columnSplit;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                nn = null;
+                                            } else if (Chars.equals(nn.token, "and")) {
+                                                if (nn.rhs != null) {
+                                                    sqlNodeStack.push(nn.rhs);
+                                                    sqlNodeStack2.push(nn);
+                                                }
+                                                parent = nn;
+                                                nn = nn.lhs;
+                                            } else {
+                                                nn = null;
+                                            }
+                                        } else {
+                                            nn = sqlNodeStack.poll();
+                                            parent = sqlNodeStack2.pop();
+                                        }
+                                    }
+
+                                    // extract success!
+                                    if (leftSymbolIndex != -1) {
+                                        if (parent != null && Chars.equals(parent.token, "and")) {
+                                            if (isLeft) {
+                                                parent.copyFrom(parent.rhs);
+                                            } else {
+                                                parent.copyFrom(parent.lhs);
+                                            }
+                                            parent = node;
+                                        } else {
+                                            parent = null;
+                                        }
+                                    } else {
+                                        parent = node;
+                                    }
+                                    if (parent != null) {
+                                        filter = compileJoinFilter(parent, joinMetadata, executionContext);
+                                    }
+                                }
+
                                 // is parallel windowJoin?
                                 final boolean parallelWindowJoinEnabled = executionContext.isParallelWindowJoinEnabled();
                                 final boolean masterSupportsPageFrames = master.supportsPageFrameCursor()
@@ -3527,75 +3598,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
 
                                     master.setSmalePageFrameRows(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
-                                    // try to extract symbols equal function from join filter
-                                    int leftSymbolIndex = -1;
-                                    int rightSymbolIndex = -1;
-                                    ExpressionNode parent = null;
-                                    if (node != null) {
-                                        final int columnSplit = master.getMetadata().getColumnCount();
-                                        ExpressionNode nn = node;
-                                        sqlNodeStack.clear();
-                                        sqlNodeStack2.clear();
-                                        boolean isLeft = false;
-                                        while (!sqlNodeStack.isEmpty() || nn != null) {
-                                            if (nn != null) {
-                                                if (Chars.equals(nn.token, "=")) {
-                                                    ExpressionNode l = nn.lhs;
-                                                    ExpressionNode r = nn.rhs;
-                                                    if (l != null && r != null && l.type == ExpressionNode.LITERAL && r.type == ExpressionNode.LITERAL) {
-                                                        int index1 = joinMetadata.getColumnIndexQuiet(l.token);
-                                                        int index2 = joinMetadata.getColumnIndexQuiet(r.token);
-                                                        if (index1 >= 0 && index2 >= 0) {
-                                                            boolean index1IsSymbol = joinMetadata.getColumnType(index1) == ColumnType.SYMBOL;
-                                                            boolean index2IsSymbol = joinMetadata.getColumnType(index2) == ColumnType.SYMBOL;
-                                                            boolean index1IsLeft = index1 < columnSplit;
-                                                            boolean index2IsLeft = index2 < columnSplit;
-                                                            isLeft = parent != null && parent.lhs == nn;
-
-                                                            if (index1IsSymbol && index2IsSymbol && index1IsLeft != index2IsLeft) {
-                                                                leftSymbolIndex = index1IsLeft ? index1 : index2;
-                                                                rightSymbolIndex = index1IsLeft ? index2 : index1;
-                                                                rightSymbolIndex = rightSymbolIndex - columnSplit;
-                                                                break;
-                                                            }
-                                                        }
-                                                    }
-                                                    nn = null;
-                                                } else if (Chars.equals(nn.token, "and")) {
-                                                    if (nn.rhs != null) {
-                                                        sqlNodeStack.push(nn.rhs);
-                                                        sqlNodeStack2.push(nn);
-                                                    }
-                                                    parent = nn;
-                                                    nn = nn.lhs;
-                                                } else {
-                                                    nn = null;
-                                                }
-                                            } else {
-                                                nn = sqlNodeStack.poll();
-                                                parent = sqlNodeStack2.pop();
-                                            }
-                                        }
-
-                                        // extract success!
-                                        if (leftSymbolIndex != -1) {
-                                            if (parent != null && Chars.equals(parent.token, "and")) {
-                                                if (isLeft) {
-                                                    parent.copyFrom(parent.rhs);
-                                                } else {
-                                                    parent.copyFrom(parent.lhs);
-                                                }
-                                                parent = node;
-                                            } else {
-                                                parent = null;
-                                            }
-                                        } else {
-                                            parent = node;
-                                        }
-                                        if (parent != null) {
-                                            filter = compileJoinFilter(parent, joinMetadata, executionContext);
-                                        }
-                                    }
 
                                     if (leftSymbolIndex != -1) {
                                         master = new AsyncWindowJoinFastRecordCursorFactory(
@@ -3689,8 +3691,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         );
                                     }
                                 } else if (slave.supportsTimeFrameCursor()) {
-                                    if (node != null) {
-                                        filter = compileJoinFilter(node, joinMetadata, executionContext);
+                                    if (leftSymbolIndex != -1) {
+                                        return new WindowJoinFastRecordCursorFactory(
+                                                asm,
+                                                configuration,
+                                                outerProjectionMetadata,
+                                                joinMetadata,
+                                                master,
+                                                slave,
+                                                columnIndex,
+                                                lo,
+                                                hi,
+                                                groupByFunctions,
+                                                valueTypes,
+                                                rightSymbolIndex,
+                                                leftSymbolIndex,
+                                                filter
+                                        );
                                     }
 
                                     return new WindowJoinRecordCursorFactory(
