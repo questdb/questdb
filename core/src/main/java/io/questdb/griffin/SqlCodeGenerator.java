@@ -3198,6 +3198,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 RecordCursorFactory slave = null;
+                Function joinFilter = null;
+                ObjList<GroupByFunction> groupByFunctions = null;
                 boolean closeSlaveOnFailure = true;
                 try {
                     // compile
@@ -3218,7 +3220,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final int joinType = slaveModel.getJoinType();
                         final RecordMetadata masterMetadata = master.getMetadata();
                         final RecordMetadata slaveMetadata = slave.getMetadata();
-                        Function filter = null;
 
                         switch (joinType) {
                             case JOIN_CROSS_LEFT:
@@ -3230,15 +3231,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         masterMetadata,
                                         slaveModel.getName(),
                                         slaveMetadata,
-                                        joinType == JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1);
-                                filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                        joinType == JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1
+                                );
+                                joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 master = switch (joinType) {
                                     case JOIN_CROSS_LEFT -> new NestedLoopLeftJoinRecordCursorFactory(
                                             joinMetadata,
                                             master,
                                             slave,
                                             masterMetadata.getColumnCount(),
-                                            filter,
+                                            joinFilter,
                                             NullRecordFactory.getInstance(slaveMetadata)
                                     );
                                     case JOIN_CROSS_RIGHT -> new NestedLoopRightJoinRecordCursorFactory(
@@ -3246,7 +3248,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             master,
                                             slave,
                                             masterMetadata.getColumnCount(),
-                                            filter,
+                                            joinFilter,
                                             NullRecordFactory.getInstance(masterMetadata)
                                     );
                                     case JOIN_CROSS_FULL -> new NestedLoopFullJoinRecordCursorFactory(
@@ -3255,7 +3257,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             master,
                                             slave,
                                             masterMetadata.getColumnCount(),
-                                            filter,
+                                            joinFilter,
                                             NullRecordFactory.getInstance(masterMetadata),
                                             NullRecordFactory.getInstance(slaveMetadata)
                                     );
@@ -3321,11 +3323,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_WINDOW:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
-                                WindowJoinContext context = slaveModel.getWindowJoinContext();
+                                final WindowJoinContext context = slaveModel.getWindowJoinContext();
                                 if (context.isIncludePrevailing()) {
                                     throw SqlException.position(0).put("including prevailing is not supported in WINDOW joins");
                                 }
-                                TimestampDriver timestampDriver = getTimestampDriver(masterMetadata.getTimestampType());
+                                final TimestampDriver timestampDriver = getTimestampDriver(masterMetadata.getTimestampType());
                                 long hi = context.getHi();
                                 long lo = context.getLo();
                                 if (context.getHiExprTimeUnit() != 0) {
@@ -3344,13 +3346,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // - The last window join returns metadata mapped according to the final projection
                                 final boolean isLastWindowJoin = i + 1 == n;
                                 // validate columns in aggregate model
-                                QueryModel aggModel = context.getParentModel();
+                                final QueryModel aggModel = context.getParentModel();
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, masterMetadata.getTimestampIndex());
                                 masterAlias = null;
-                                ObjList<QueryColumn> cols = aggModel.getColumns();
+                                final ObjList<QueryColumn> cols = aggModel.getColumns();
                                 ObjList<QueryColumn> aggregateCols;
-                                int splitIndex = masterMetadata.getColumnCount();
+                                final int splitIndex = masterMetadata.getColumnCount();
                                 int timestampIndex = -1;
                                 IntList columnIndex = null;
 
@@ -3377,14 +3379,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             }
                                         }
                                     }
-                                    // TODO: If aggregateCols size is empty, we can theoretically skip this intermedian join
+                                    // TODO: If aggregateCols size is empty, we can theoretically skip this intermediate join
                                 } else {
                                     aggregateCols = cols;
                                     columnIndex = new IntList(cols.size());
                                     int groupByCnt = 0;
 
                                     for (int j = 0, m = cols.size(); j < m; j++) {
-                                        ExpressionNode ast = cols.get(j).getAst();
+                                        final ExpressionNode ast = cols.get(j).getAst();
                                         if (!functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
                                             int colIndex = joinMetadata.getColumnIndexQuiet(ast.token);
                                             if (colIndex == -1) {
@@ -3418,12 +3420,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
 
                                 // assemble groupBy function
-                                ObjList<QueryColumn> columns = aggModel.getColumns();
+                                final ObjList<QueryColumn> columns = aggModel.getColumns();
                                 keyTypes.clear();
                                 valueTypes.clear();
                                 listColumnFilterA.clear();
                                 final int columnCount = columns.size();
-                                final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
+                                groupByFunctions = new ObjList<>(columnCount);
                                 tempInnerProjectionFunctions.clear();
                                 tempOuterProjectionFunctions.clear();
                                 GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
@@ -3453,7 +3455,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         aggregateCols
                                 );
                                 if (!isLastWindowJoin) {
-                                    GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(joinMetadata, splitIndex);
+                                    final GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(joinMetadata, splitIndex);
                                     for (int j = 0, m = outerProjectionMetadata.getColumnCount(); j < m; j++) {
                                         metadata.add(outerProjectionMetadata.getColumnMetadata(j));
                                     }
@@ -3463,7 +3465,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
 
                                 ExpressionNode node = slaveModel.getOuterJoinExpressionClause();
-                                ExpressionNode constFilterExpr = model.getConstWhereClause();
+                                final ExpressionNode constFilterExpr = model.getConstWhereClause();
                                 boolean alwaysTrue = false;
                                 if (constFilterExpr != null && isLastWindowJoin) {
                                     Function constFilter = functionParser.parseFunction(constFilterExpr, null, executionContext);
@@ -3571,7 +3573,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         parent = node;
                                     }
                                     if (parent != null) {
-                                        filter = compileJoinFilter(parent, joinMetadata, executionContext);
+                                        joinFilter = compileJoinFilter(parent, joinMetadata, executionContext);
                                     }
                                 }
 
@@ -3599,6 +3601,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                     master.setSmalePageFrameRows(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
 
+
                                     if (leftSymbolIndex != -1) {
                                         master = new AsyncWindowJoinFastRecordCursorFactory(
                                                 executionContext.getCairoEngine(),
@@ -3610,10 +3613,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 columnIndex,
                                                 master,
                                                 slave,
-                                                filter,
+                                                joinFilter,
                                                 compileWorkerFilterConditionally(
                                                         executionContext,
-                                                        filter,
+                                                        joinFilter,
                                                         executionContext.getSharedQueryWorkerCount(),
                                                         parent,
                                                         joinMetadata
@@ -3656,10 +3659,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 columnIndex,
                                                 master,
                                                 slave,
-                                                filter,
+                                                joinFilter,
                                                 compileWorkerFilterConditionally(
                                                         executionContext,
-                                                        filter,
+                                                        joinFilter,
                                                         executionContext.getSharedQueryWorkerCount(),
                                                         node,
                                                         joinMetadata
@@ -3706,7 +3709,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 valueTypes,
                                                 rightSymbolIndex,
                                                 leftSymbolIndex,
-                                                filter
+                                                joinFilter
                                         );
                                     }
 
@@ -3722,7 +3725,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             hi,
                                             groupByFunctions,
                                             valueTypes,
-                                            filter
+                                            joinFilter
                                     );
                                 } else {
                                     throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("right side of window join must be a table, not sub-query");
@@ -3732,10 +3735,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
-                                    filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                    joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 }
 
-                                if (filter != null && filter.isConstant() && !filter.getBool(null)) {
+                                if (joinFilter != null && joinFilter.isConstant() && !joinFilter.getBool(null)) {
                                     if (joinType == JOIN_LEFT_OUTER) {
                                         Misc.free(slave);
                                         slave = new EmptyTableRecordCursorFactory(slaveMetadata);
@@ -3758,7 +3761,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         master,
                                         slave,
                                         joinType,
-                                        filter,
+                                        joinFilter,
                                         slaveModel.getJoinContext(),
                                         executionContext
                                 );
@@ -3768,6 +3771,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 } catch (Throwable th) {
                     Misc.free(joinMetadata);
+                    Misc.free(joinFilter);
+                    Misc.freeObjList(groupByFunctions);
                     master = Misc.free(master);
                     if (closeSlaveOnFailure) {
                         Misc.free(slave);

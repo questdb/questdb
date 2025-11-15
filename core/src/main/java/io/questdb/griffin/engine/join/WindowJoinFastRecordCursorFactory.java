@@ -120,7 +120,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         var slaveMetadata = slaveFactory.getMetadata();
 
         this.slaveSymbolLookupTable = new DirectIntIntHashMap(16, 0.5, StaticSymbolTable.VALUE_NOT_FOUND, MemoryTag.NATIVE_UNORDERED_MAP);
-        final boolean vectorized = GroupByUtils.isBatchComputationSupported(groupByFunctions, columnSplit) && joinFilter == null;
+        final boolean vectorized = isBatchComputationSupported(groupByFunctions, columnSplit) && joinFilter == null;
         if (vectorized) {
             var groupByCount = groupByFunctions.size();
             var groupByColumnIndexes = new IntList(groupByCount);
@@ -241,6 +241,21 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
         sink.child(masterFactory);
         sink.child(slaveFactory);
+    }
+
+    private static boolean isBatchComputationSupported(ObjList<GroupByFunction> functions, int columnSplit) {
+        if (functions == null || functions.size() == 0) {
+            return false;
+        }
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final var function = functions.getQuick(i);
+            // All aggregate functions have to support batch computation and have slave columns as their arguments.
+            // Only UnaryFunction should support batch computation, so we're doing a sanity check.
+            if (!function.supportsBatchComputation() || !(function instanceof UnaryFunction) || function.getColumnIndex() < columnSplit) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void setupSlaveLookupTable(RecordCursor masterCursor, TimeFrameCursor slaveCursor) {

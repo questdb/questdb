@@ -156,7 +156,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
             this.masterTsScale = masterTsScale;
             this.slaveTsScale = slaveTsScale;
-            this.vectorized = ownerJoinFilter == null && GroupByUtils.isBatchComputationSupported(ownerGroupByFunctions, columnSplit);
+            this.vectorized = ownerJoinFilter == null && isBatchComputationSupported(ownerGroupByFunctions, columnSplit);
 
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
             this.ownerSlaveTimeFrameHelper = new TimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
@@ -585,5 +585,20 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+    }
+
+    private static boolean isBatchComputationSupported(ObjList<GroupByFunction> functions, int columnSplit) {
+        if (functions == null || functions.size() == 0) {
+            return false;
+        }
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final var function = functions.getQuick(i);
+            // All aggregate functions have to support batch computation and have slave columns as their arguments.
+            // Only UnaryFunction should support batch computation, so we're doing a sanity check.
+            if (!function.supportsBatchComputation() || !(function instanceof UnaryFunction) || function.getColumnIndex() < columnSplit) {
+                return false;
+            }
+        }
+        return true;
     }
 }
