@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
@@ -42,6 +44,13 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     public FirstTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
         super(timestampType);
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putLong(valueIndex + 1, Unsafe.getUnsafe().getLong(ptr));
+        }
     }
 
     @Override
@@ -58,6 +67,14 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     @Override
     public Function getArg() {
         return this.arg;
+    }
+
+    @Override
+    public int getColumnIndex() {
+        if (arg instanceof ColumnFunction columnFunction) {
+            return columnFunction.getColumnIndex();
+        }
+        return -1;
     }
 
     @Override
@@ -116,6 +133,11 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putTimestamp(valueIndex + 1, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return getColumnIndex() != -1 && arg.getType() == ColumnType.TIMESTAMP;
     }
 
     @Override
