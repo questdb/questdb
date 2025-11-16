@@ -1068,10 +1068,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                     expect,
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
-                            "    Window Join\n" +
+                            "    Window Fast Join\n" +
+                            "      symbol: t.sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
-                            "      join filter: t.sym=p1.sym\n" +
                             "        Async Window Fast Join workers: 1\n" +
                             "          symbol: sym=sym\n" +
                             "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
@@ -1114,10 +1114,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                     expect,
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
-                            "    Window Join\n" +
+                            "    Window Fast Join\n" +
+                            "      symbol: t.sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
-                            "      join filter: t.sym=p1.sym\n" +
                             "        Async Window Fast Join workers: 1\n" +
                             "          symbol: sym=sym\n" +
                             "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
@@ -1499,10 +1499,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                     expect,
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
-                            "    Window Join\n" +
+                            "    Window Fast Join\n" +
+                            "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
-                            "      join filter: t.sym=p.sym\n" +
                             "        Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
@@ -1548,10 +1548,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                     expect,
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
-                            "    Window Join\n" +
+                            "    Window Fast Join\n" +
+                            "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
-                            "      join filter: t.sym=p.sym\n" +
                             "        Limit lo: 1 hi: 4 skip-over-rows: 1 limit: 3\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
