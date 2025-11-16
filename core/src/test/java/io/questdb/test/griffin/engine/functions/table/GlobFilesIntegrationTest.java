@@ -229,11 +229,11 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testGlobNestedPathWithLimit() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
-                            "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
-                            "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
-                            "data" + File.separator + "nested" + File.separator + "deep_file.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n",
-                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, 'data/*') order by path limit 3"
+                    "path\tdiskSize\tdiskSizeHuman\n" +
+                            "data" + File.separator + "file1.parquet\t256\t256.0 B\n" +
+                            "data" + File.separator + "file2.parquet\t256\t256.0 B\n" +
+                            "data" + File.separator + "nested" + File.separator + "deep_file.parquet\t256\t256.0 B\n",
+                    "select path, diskSize, diskSizeHuman from files('" + inputRoot + "') where glob(path, 'data/*') order by path limit 3"
             );
         });
     }
