@@ -30,11 +30,13 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.pool.WriterSource;
+import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InsertMethod;
@@ -45,10 +47,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cairo.security.DenyAllSecurityContext;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompiledQuery;
@@ -56,6 +54,8 @@ import io.questdb.griffin.CompiledQueryImpl;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -134,6 +134,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private static final int SYNC_PARSE = 0;
     private final ObjectPool<PGNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PGNonNullBinaryArrayView::new, 1);
     private final CairoEngine engine;
+    private final BindVariableService entryBindVariableService;
+    // Per-entry execution context and bind variable service to avoid parameter conflicts
+    // when multiple queries are batched (multiple Bind/Execute pairs sent before Sync)
+    private final SqlExecutionContext entryExecutionContext;
     private final StringSink errorMessageSink = new StringSink();
     private final int maxRecompileAttempts;
     private final BitSet msgBindParameterFormatCodes = new BitSet();
@@ -216,10 +220,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // that all state is cleared before returning the instance to the pool
     private TypesAndInsert tai = null;
     private TypesAndSelect tas = null;
-    // Per-entry execution context and bind variable service to avoid parameter conflicts
-    // when multiple queries are batched (multiple Bind/Execute pairs sent before Sync)
-    private SqlExecutionContext entryExecutionContext;
-    private BindVariableService entryBindVariableService;
 
     public PGPipelineEntry(CairoEngine engine) {
         this.isCopy = false;
@@ -431,6 +431,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return newEntry;
     }
 
+    public SqlExecutionContext getEntryExecutionContext() {
+        return entryExecutionContext;
+    }
+
     public int getErrorMessagePosition() {
         return errorMessagePosition;
     }
@@ -441,10 +445,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             error = true;
         }
         return errorMessageSink;
-    }
-
-    public SqlExecutionContext getEntryExecutionContext() {
-        return entryExecutionContext;
     }
 
     public int getInt(long address, long msgLimit, CharSequence errorMessage) throws PGMessageProcessingException {
@@ -1011,6 +1011,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void setReturnRowCountLimit(int rowCountLimit) {
         this.sqlReturnRowCountLimit = rowCountLimit;
+    }
+
+    public PGPipelineEntry setSecurityContext(SecurityContext securityContext) {
+        ((SqlExecutionContextImpl) (entryExecutionContext)).with(securityContext, entryBindVariableService);
+        return this;
     }
 
     public void setStateBind(boolean stateBind) {

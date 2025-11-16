@@ -926,6 +926,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         lo = hi + 1;
         pipelineCurrentEntry.setReturnRowCountLimit(pipelineCurrentEntry.getInt(lo, msgLimit, "could not read max rows value"));
         pipelineCurrentEntry.setStateExec(true);
+        pipelineCurrentEntry.setSecurityContext(sqlExecutionContext.getSecurityContext());
         pipelineCurrentEntry.getEntryExecutionContext().initNow();
         transactionState = pipelineCurrentEntry.msgExecute(
                 transactionState,
