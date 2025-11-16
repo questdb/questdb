@@ -31,6 +31,32 @@ import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.ObjHashSet;
 
 public interface HttpFullFatServerConfiguration extends HttpServerConfiguration {
+    ObjHashSet<String> CONTEXT_PATH_EXEC = new ObjHashSet<>() {{
+        add("/exec");
+        add("/api/v1/sql/execute");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_EXPORT = new ObjHashSet<>() {{
+        add("/exp");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_ILP = new ObjHashSet<>() {{
+        add("/write");
+        add("/api/v2/write");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_IMPORT = new ObjHashSet<>() {{
+        add("/imp");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_SETTINGS = new ObjHashSet<>() {{
+        add("/settings");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_TABLE_STATUS = new ObjHashSet<>() {{
+        add("/chk");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_VALIDATE = new ObjHashSet<>() {{
+        add("/api/v1/sql/validate");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_WARNINGS = new ObjHashSet<>() {{
+        add("/warnings");
+    }};
     String DEFAULT_PROCESSOR_URL = "*";
 
     ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
@@ -42,23 +68,15 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
     }
 
     default ObjHashSet<String> getContextPathExec() {
-        return new ObjHashSet<>() {{
-            add("/exec");
-            add("/api/v1/sql/execute");
-        }};
+        return CONTEXT_PATH_EXEC;
     }
 
     default ObjHashSet<String> getContextPathExport() {
-        return new ObjHashSet<>() {{
-            add("/exp");
-        }};
+        return CONTEXT_PATH_EXPORT;
     }
 
     default ObjHashSet<String> getContextPathILP() {
-        return new ObjHashSet<>() {{
-            add("/write");
-            add("/api/v2/write");
-        }};
+        return CONTEXT_PATH_ILP;
     }
 
     default ObjHashSet<String> getContextPathILPPing() {
@@ -68,33 +86,23 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
     }
 
     default ObjHashSet<String> getContextPathImport() {
-        return new ObjHashSet<>() {{
-            add("/imp");
-        }};
+        return CONTEXT_PATH_IMPORT;
     }
 
     default ObjHashSet<String> getContextPathSettings() {
-        return new ObjHashSet<>() {{
-            add("/settings");
-        }};
+        return CONTEXT_PATH_SETTINGS;
     }
 
     default ObjHashSet<String> getContextPathSqlValidation() {
-        return new ObjHashSet<>() {{
-            add("/api/v1/sql/validate");
-        }};
+        return CONTEXT_PATH_VALIDATE;
     }
 
     default ObjHashSet<String> getContextPathTableStatus() {
-        return new ObjHashSet<>() {{
-            add("/chk");
-        }};
+        return CONTEXT_PATH_TABLE_STATUS;
     }
 
     default ObjHashSet<String> getContextPathWarnings() {
-        return new ObjHashSet<>() {{
-            add("/warnings");
-        }};
+        return CONTEXT_PATH_WARNINGS;
     }
 
     default String getContextPathWebConsole() {

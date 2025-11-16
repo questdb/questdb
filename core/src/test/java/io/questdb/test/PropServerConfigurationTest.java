@@ -1733,12 +1733,53 @@ public class PropServerConfigurationTest {
         final Rnd rnd = TestUtils.generateRandom(LOG);
 
         final ObjList<FuzzItem> pathsThatCanBePinned = new ObjList<>();
-        pathsThatCanBePinned.add(new FuzzItem("http.context.import", "/imp", HttpFullFatServerConfiguration::getContextPathImport));
-        pathsThatCanBePinned.add(new FuzzItem("http.context.export", "/exp", HttpFullFatServerConfiguration::getContextPathExport));
-        pathsThatCanBePinned.add(new FuzzItem("http.context.settings", "/settings", HttpFullFatServerConfiguration::getContextPathSettings));
-        pathsThatCanBePinned.add(new FuzzItem("http.context.table.status", "/chk", HttpFullFatServerConfiguration::getContextPathTableStatus));
-        pathsThatCanBePinned.add(new FuzzItem("http.context.warnings", "/warnings", HttpFullFatServerConfiguration::getContextPathWarnings));
-        pathsThatCanBePinned.add(new FuzzItem("http.context.execute", "/exec", HttpFullFatServerConfiguration::getContextPathExec));
+        pathsThatCanBePinned.add(
+                new FuzzItem(
+                        "http.context.import",
+                        "/imp_new",
+                        HttpFullFatServerConfiguration.CONTEXT_PATH_IMPORT,
+                        HttpFullFatServerConfiguration::getContextPathImport
+                )
+        );
+        pathsThatCanBePinned.add(
+                new FuzzItem(
+                        "http.context.export",
+                        "/exp_new",
+                        HttpFullFatServerConfiguration.CONTEXT_PATH_EXPORT,
+                        HttpFullFatServerConfiguration::getContextPathExport)
+        );
+        pathsThatCanBePinned.add(
+                new FuzzItem(
+                        "http.context.settings",
+                        "/settings_new",
+                        HttpFullFatServerConfiguration.CONTEXT_PATH_SETTINGS,
+                        HttpFullFatServerConfiguration::getContextPathSettings
+                )
+        );
+        pathsThatCanBePinned.add(
+                new FuzzItem(
+                        "http.context.table.status",
+                        "/chk_new",
+                        HttpFullFatServerConfiguration.CONTEXT_PATH_TABLE_STATUS,
+                        HttpFullFatServerConfiguration::getContextPathTableStatus
+                )
+        );
+        pathsThatCanBePinned.add(
+                new FuzzItem(
+                        "http.context.warnings",
+                        "/warnings_new",
+                        HttpFullFatServerConfiguration.CONTEXT_PATH_WARNINGS,
+                        HttpFullFatServerConfiguration::getContextPathWarnings
+                )
+        );
+        pathsThatCanBePinned.add(
+                new FuzzItem(
+                        "http.context.execute",
+                        "/exec_new",
+                        HttpFullFatServerConfiguration.CONTEXT_PATH_EXEC,
+                        HttpFullFatServerConfiguration::getContextPathExec
+                )
+        );
 
         String webConsolePath = rnd.nextString(64);
         Properties properties = new Properties();
@@ -1753,25 +1794,27 @@ public class PropServerConfigurationTest {
         }
 
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        var expected = new ObjHashSet<>();
 
         for (int i = 0; i < pathsThatCanBePinned.size(); i++) {
+            expected.clear();
             FuzzItem item = pathsThatCanBePinned.getQuick(i);
-            String e1 = webConsolePath + item.value;
-            String e2;
             if (pinnedIndexes.contains(i)) {
-                e2 = item.value;
-            } else {
-                e2 = e1;
+                expected.add(item.value);
+            }
+
+            for (int j = 0; j < item.webConsoleExpectedValue.size(); j++) {
+                expected.add(webConsolePath + item.webConsoleExpectedValue.get(j));
             }
             Assert.assertEquals(
-                    "[" + e2 + "," + e1 + "]",
+                    expected.toString(),
                     item.getter.apply(configuration.getHttpServerConfiguration()).toString()
             );
         }
 
         // check the ILP did not move
         Assert.assertEquals(
-                "[/write,/api/v2/write]",
+                HttpFullFatServerConfiguration.CONTEXT_PATH_ILP.toString(),
                 configuration.getHttpServerConfiguration().getContextPathILP().toString()
         );
 
@@ -2052,6 +2095,7 @@ public class PropServerConfigurationTest {
     private record FuzzItem(
             String key,
             String value,
+            ObjHashSet<String> webConsoleExpectedValue,
             Function<HttpFullFatServerConfiguration, ObjHashSet<String>> getter
     ) {
     }
