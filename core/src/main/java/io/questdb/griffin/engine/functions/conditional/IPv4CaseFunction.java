@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.std.ObjList;
 
+@SuppressWarnings("resource")
 public class IPv4CaseFunction extends IPv4Function implements CaseFunction {
 
     private final ObjList<Function> args;
@@ -41,7 +42,7 @@ public class IPv4CaseFunction extends IPv4Function implements CaseFunction {
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

@@ -459,7 +459,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public void validateAndUpdateMetadataFromSelect(
             @NotNull RecordMetadata selectMetadata,
-            @NotNull TableReaderMetadata baseTableMetadata
+            @NotNull TableReaderMetadata baseTableMetadata,
+            int scanDirection
     ) throws SqlException {
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
         // SELECT validation
@@ -469,7 +470,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         .put("materialized view query is required to have designated timestamp");
             }
         }
-        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
+        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
     }

@@ -25,11 +25,15 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.DataID;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Uuid;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -56,6 +60,35 @@ public class DataIDTest extends AbstractCairoTest {
             Assert.assertTrue(updatedId.isInitialized());
             Assert.assertEquals(updatedId.getLo(), currentId.getLo());
             Assert.assertEquals(updatedId.getHi(), currentId.getHi());
+
+            // Ensure that the data is still there
+            updatedId = DataID.open(configuration);
+            Assert.assertTrue(updatedId.isInitialized());
+            Assert.assertEquals(updatedId.getLo(), currentId.getLo());
+            Assert.assertEquals(updatedId.getHi(), currentId.getHi());
+        });
+    }
+
+    @Test
+    public void testInvalidDataID() throws Exception {
+        assertMemoryLeak(() -> {
+            // Creates a file of 8 bytes instead of 16
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot());
+                path.concat(DataID.FILENAME);
+
+                final FilesFacade ff = configuration.getFilesFacade();
+                try (var mem = new MemoryCMARWImpl(ff, path.$(), 8, -1, MemoryTag.MMAP_DEFAULT, configuration.getWriterFileOpenOpts())) {
+                    mem.putLong(0, 123);
+                    mem.sync(false);
+                }
+            }
+
+            DataID id = DataID.open(configuration);
+            Assert.assertNotNull(id);
+            Assert.assertFalse(id.isInitialized());
+            Assert.assertEquals(Numbers.LONG_NULL, id.getLo());
+            Assert.assertEquals(Numbers.LONG_NULL, id.getHi());
         });
     }
 }

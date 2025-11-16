@@ -30,6 +30,7 @@ import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
+@SuppressWarnings("resource")
 public final class VarcharCaseFunction extends VarcharFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
@@ -40,7 +41,7 @@ public final class VarcharCaseFunction extends VarcharFunction implements CaseFu
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

@@ -38,10 +38,6 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     private static final Log LOG = LogFactory.getLog(LineTcpCommitFuzzTest.class);
 
-    public LineTcpCommitFuzzTest(WalMode walMode) {
-        super(walMode);
-    }
-
     @Test
     public void testCommitIntervalBasedDefaultFractionZero() throws Exception {
         // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout

@@ -53,7 +53,7 @@ public class GroupByCharSequenceLongHashMapBenchmark {
     private static final GroupByAllocator allocator = new FastGroupByAllocator(128 * 1024, Numbers.SIZE_1GB);
     private static final int initialCapacity = 64;
     private static final CharSequenceLongHashMap charSequenceLongHashMap = new CharSequenceLongHashMap(initialCapacity);
-    private static final double loadFactor = 0.7;
+    private static final double loadFactor = 0.5;
     private static final GroupByCharSequenceLongHashMap groupByCharSequenceLongHashMap = new GroupByCharSequenceLongHashMap(initialCapacity, loadFactor, 0, 0);
     private static final Rnd rnd = new Rnd();
     private static long mapPtr = 0;

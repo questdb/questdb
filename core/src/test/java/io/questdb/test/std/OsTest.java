@@ -40,6 +40,11 @@ import static org.junit.Assert.assertTrue;
 public class OsTest {
 
     @Test
+    public void rustSmokeTest() {
+        Assert.assertEquals(42, Os.smokeTest(0, 42));
+    }
+
+    @Test
     public void testAffinity() throws Exception {
         if (Os.arch != Os.ARCH_AARCH64 || Os.type != Os.DARWIN) {
             Assert.assertEquals(0, Os.setCurrentThreadAffinity(0));

@@ -213,8 +213,8 @@ public class TableReadFailTest extends AbstractCairoTest {
     public void testTxnFileMissingConstructor() throws Exception {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public boolean exists(LPSZ path) {
-                return !Utf8s.endsWithAscii(path, TableUtils.TXN_FILE_NAME) && super.exists(path);
+            public long length(LPSZ name) {
+                return Utf8s.endsWithAscii(name, TableUtils.TXN_FILE_NAME) ? 0 : super.length(name);
             }
         };
         assertConstructorFail(ff);

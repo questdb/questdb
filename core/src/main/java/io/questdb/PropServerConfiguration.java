@@ -88,12 +88,12 @@ import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
@@ -136,7 +136,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String DB_DIRECTORY = "db";
     public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
     public static final String TMP_DIRECTORY = "tmp";
-    private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2]";
+    private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2,3]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
     private static final String RELEASE_TYPE = "release.type";
@@ -202,6 +202,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String dbLogName;
     private final String dbRoot;
     private final boolean debugWalApplyBlockFailureNoRetry;
+    private final int decimalAdapterPoolCapacity;
     private final int defaultSeqPartTxnCount;
     private final boolean defaultSymbolCacheFlag;
     private final int defaultSymbolCapacity;
@@ -906,8 +907,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         // this is when their version moves. This new version is stored in a NEW slot, in column version file.
         // This slot WILL NOT be read by older versions, hence rolling back QuestDB version will be problematic, but not
         // impossible. Old version will not find new files, the new files will have to be renamed manually. To avoid
-        // possible rollback havoc, we have auto-scaling as opt-in. It will be opt-out in the release after 9.1.0
-        this.cairoAutoScaleSymbolCapacity = getBoolean(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, false);
+        // possible rollback havoc, we have auto-scaling as opt-in. It will be opt-out in the release after 9.1.1
+        this.cairoAutoScaleSymbolCapacity = getBoolean(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, true);
         this.cairoAutoScaleSymbolCapacityThreshold = getDouble(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD, "0.8");
         if (cairoAutoScaleSymbolCapacityThreshold <= 0 || !Double.isFinite(cairoAutoScaleSymbolCapacityThreshold)) {
             throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD.getPropertyPath() + " has to be a positive non-zero real number.");
@@ -1114,7 +1115,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             long multipartIdleSpinCount = getLong(properties, env, PropertyKey.HTTP_MULTIPART_IDLE_SPIN_COUNT, 10_000);
             boolean httpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_ALLOW_DEFLATE_BEFORE_SEND, false);
             boolean httpServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
-            boolean httpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
+            boolean httpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_SERVER_COOKIES_ENABLED, true);
+            long httpSessionTimeout = getMicros(properties, env, PropertyKey.HTTP_SESSION_TIMEOUT, 1_800_000_000L);
             boolean httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
 
             this.httpNetAcceptLoopTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_ACCEPT_LOOP_TIMEOUT, 500);
@@ -1150,6 +1152,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpFrozenClock,
                     httpReadOnlySecurityContext,
                     httpServerCookiesEnabled,
+                    httpSessionTimeout,
                     httpServerKeepAlive,
                     httpVersion,
                     isReadOnlyInstance,
@@ -1168,7 +1171,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             long minHttpMultipartIdleSpinCount = getLong(properties, env, PropertyKey.HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT, 0);
             boolean minHttpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND, false);
             boolean minHttpMinServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_MIN_SERVER_KEEP_ALIVE, true);
-            boolean minHttpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_MIN_SERVER_KEEP_ALIVE, true);
             int httpMinRequestHeaderBufferSize = getIntSize(properties, env, PropertyKey.HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE, 4096);
 
             httpMinContextConfiguration = new PropHttpContextConfiguration(
@@ -1180,7 +1182,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpForceSendFragmentationChunkSize,
                     httpFrozenClock,
                     true,
-                    minHttpServerCookiesEnabled,
+                    httpServerCookiesEnabled,
+                    httpSessionTimeout,
                     minHttpMinServerKeepAlive,
                     httpVersion,
                     isReadOnlyInstance,
@@ -1241,6 +1244,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.textAnalysisMaxLines = getInt(properties, env, PropertyKey.HTTP_TEXT_ANALYSIS_MAX_LINES, 1000);
             this.textLexerStringPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_LEXER_STRING_POOL_CAPACITY, 64);
             this.timestampAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_TIMESTAMP_ADAPTER_POOL_CAPACITY, 64);
+            this.decimalAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_DECIMAL_ADAPTER_POOL_CAPACITY, 64);
             this.utf8SinkSize = getIntSize(properties, env, PropertyKey.HTTP_TEXT_UTF8_SINK_SIZE, 4096);
 
             this.httpPessimisticHealthCheckEnabled = getBoolean(properties, env, PropertyKey.HTTP_PESSIMISTIC_HEALTH_CHECK, false);
@@ -1486,7 +1490,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlBindVariablePoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_BIND_VARIABLE_POOL_SIZE, 8);
             this.sqlQueryRegistryPoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE, 32);
             this.sqlCountDistinctCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_CAPACITY, 3);
-            this.sqlCountDistinctLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR, "0.75");
+            this.sqlCountDistinctLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR, "0.5");
             final String sqlCopyFormatsFile = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_FORMATS_FILE, "/text_loader.json");
             final String dateLocale = getString(properties, env, PropertyKey.CAIRO_DATE_LOCALE, "en");
             this.locale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
@@ -1720,12 +1724,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (lineTcpEnabled || (lineHttpEnabled && httpServerEnabled)) {
                 this.lineTcpTimestampUnit = getLineTimestampUnit(properties, env, PropertyKey.LINE_TCP_TIMESTAMP);
                 this.stringToCharCastAllowed = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED, false);
+
                 String floatDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_FLOAT_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.DOUBLE));
                 this.floatDefaultColumnType = ColumnType.tagOf(floatDefaultColumnTypeName);
                 if (floatDefaultColumnType != ColumnType.DOUBLE && floatDefaultColumnType != ColumnType.FLOAT) {
                     log.info().$("invalid default column type for float ").$safe(floatDefaultColumnTypeName).$(", will use DOUBLE").$();
                     this.floatDefaultColumnType = ColumnType.DOUBLE;
                 }
+
                 String integerDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_INTEGER_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.LONG));
                 this.integerDefaultColumnType = ColumnType.tagOf(integerDefaultColumnTypeName);
                 if (integerDefaultColumnType != ColumnType.LONG && integerDefaultColumnType != ColumnType.INT && integerDefaultColumnType != ColumnType.SHORT && integerDefaultColumnType != ColumnType.BYTE) {
@@ -2905,14 +2911,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    public static class ValidationResult {
-        public final boolean isError;
-        public final String message;
-
-        private ValidationResult(boolean isError, String message) {
-            this.isError = isError;
-            this.message = message;
-        }
+    public record ValidationResult(boolean isError, String message) {
     }
 
     class PropCairoConfiguration implements CairoConfiguration {
@@ -3517,11 +3516,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getParquetExportCopyReportFrequencyLines() {
-            return parquetExportCopyReportFrequencyLines;
-        }
-
-        @Override
         public int getParquetExportCompressionCodec() {
             return parquetExportCompressionCodec;
         }
@@ -3529,6 +3523,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getParquetExportCompressionLevel() {
             return parquetExportCompressionLevel;
+        }
+
+        @Override
+        public int getParquetExportCopyReportFrequencyLines() {
+            return parquetExportCopyReportFrequencyLines;
         }
 
         @Override
@@ -3542,13 +3541,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getParquetExportVersion() {
-            return parquetExportVersion;
+        public CharSequence getParquetExportTableNamePrefix() {
+            return parquetExportTableNamePrefix;
         }
 
         @Override
-        public CharSequence getParquetExportTableNamePrefix() {
-            return parquetExportTableNamePrefix;
+        public int getParquetExportVersion() {
+            return parquetExportVersion;
         }
 
         @Override
@@ -4928,7 +4927,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public Clock getNanosecondClock() {
+        public NanosecondClock getNanosecondClock() {
             return httpFrozenClock ? StationaryNanosClock.INSTANCE : NanosecondClockImpl.INSTANCE;
         }
     }
@@ -4961,13 +4960,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getDefaultColumnTypeForTimestamp() {
-            return lineDefaultTimestampColumnType;
+        public int getDefaultPartitionBy() {
+            return lineTcpDefaultPartitionBy;
         }
 
         @Override
-        public int getDefaultPartitionBy() {
-            return lineTcpDefaultPartitionBy;
+        public int getDefaultTimestampColumnType() {
+            return lineDefaultTimestampColumnType;
         }
 
         @Override
@@ -4981,7 +4980,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public io.questdb.std.datetime.Clock getMicrosecondClock() {
+        public MicrosecondClock getMicrosecondClock() {
             return microsecondClock;
         }
 
@@ -5141,7 +5140,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getDefaultColumnTypeForTimestamp() {
+        public int getDefaultCreateTimestampColumnType() {
             return lineDefaultTimestampColumnType;
         }
 
@@ -5221,7 +5220,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public io.questdb.std.datetime.Clock getMicrosecondClock() {
+        public MicrosecondClock getMicrosecondClock() {
             return MicrosecondClockImpl.INSTANCE;
         }
 
@@ -6006,6 +6005,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getDateAdapterPoolCapacity() {
             return dateAdapterPoolCapacity;
+        }
+
+        @Override
+        public int getDecimalAdapterPoolCapacity() {
+            return decimalAdapterPoolCapacity;
         }
 
         @Override

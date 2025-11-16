@@ -33,7 +33,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.Interval;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -177,6 +179,25 @@ public class CursorPrinter {
                 break;
             case ColumnType.ARRAY_STRING:
                 sink.put(record.getStrA(columnIndex));
+                break;
+            case ColumnType.DECIMAL8:
+                putDecimal8Value(sink, record, columnIndex, columnType);
+                break;
+            case ColumnType.DECIMAL16:
+                putDecimal16Value(sink, record, columnIndex, columnType);
+                break;
+            case ColumnType.DECIMAL32:
+                putDecimal32Value(sink, record, columnIndex, columnType);
+                break;
+            case ColumnType.DECIMAL64:
+                putDecimal64Value(sink, record, columnIndex, columnType);
+                break;
+            case ColumnType.DECIMAL128:
+                putDecimal128Value(sink, record, columnIndex, columnType);
+                break;
+            case ColumnType.DECIMAL256:
+                putDecimal256Value(sink, record, columnIndex, columnType);
+                break;
             default:
                 break;
         }
@@ -251,6 +272,50 @@ public class CursorPrinter {
                 sink.put(COLUMN_DELIMITER);
             }
             printColumn(record, metadata, i, sink, printTypes);
+        }
+    }
+
+    private static void putDecimal128Value(CharSink<?> sink, Record rec, int col, int type) {
+        var decimal = Misc.getThreadLocalDecimal128();
+        rec.getDecimal128(col, decimal);
+        if (!decimal.isNull()) {
+            Decimals.append(decimal, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
+        }
+    }
+
+    private static void putDecimal16Value(CharSink<?> sink, Record rec, int col, int type) {
+        short l = rec.getDecimal16(col);
+        if (l != Decimals.DECIMAL16_NULL) {
+            Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
+        }
+    }
+
+    private static void putDecimal256Value(CharSink<?> sink, Record rec, int col, int type) {
+        var decimal = Misc.getThreadLocalDecimal256();
+        rec.getDecimal256(col, decimal);
+        if (!decimal.isNull()) {
+            Decimals.append(decimal, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
+        }
+    }
+
+    private static void putDecimal32Value(CharSink<?> sink, Record rec, int col, int type) {
+        int l = rec.getDecimal32(col);
+        if (l != Decimals.DECIMAL32_NULL) {
+            Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
+        }
+    }
+
+    private static void putDecimal64Value(CharSink<?> sink, Record rec, int col, int type) {
+        long l = rec.getDecimal64(col);
+        if (l != Decimals.DECIMAL64_NULL) {
+            Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
+        }
+    }
+
+    private static void putDecimal8Value(CharSink<?> sink, Record rec, int col, int type) {
+        byte l = rec.getDecimal8(col);
+        if (l != Decimals.DECIMAL8_NULL) {
+            Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
         }
     }
 

@@ -30,9 +30,11 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.AbstractLineTcpSender;
@@ -45,13 +47,13 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
@@ -60,27 +62,22 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.security.PrivateKey;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
-import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
-import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
+import static io.questdb.client.Sender.*;
 import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createDoubleArray;
 import static io.questdb.test.tools.TestUtils.assertContains;
+import static io.questdb.test.tools.TestUtils.assertEventually;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.*;
 
-@RunWith(Parameterized.class)
 public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     private final static String AUTH_KEY_ID1 = "testUser1";
@@ -91,17 +88,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthUtils.toPrivateKey(TOKEN);
     private final boolean walEnabled;
 
-    public LineTcpSenderTest(WalMode walMode, TestTimestampType timestampType) {
-        this.walEnabled = (walMode == WalMode.WITH_WAL);
-        this.timestampType = timestampType;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL, TestTimestampType.MICRO}, {WalMode.NO_WAL, TestTimestampType.MICRO},
-                {WalMode.WITH_WAL, TestTimestampType.NANO}, {WalMode.NO_WAL, TestTimestampType.NANO},
-        });
+    public LineTcpSenderTest() {
+        Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
+        this.walEnabled = TestUtils.isWal(rnd);
+        this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
     @Before
@@ -363,7 +353,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 TestUtils.assertReader("""
                         int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp
                         42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z
-                        """, reader, new StringSink());
+                        """, reader, sink);
             }
         });
     }
@@ -399,7 +389,64 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testCreateTimestampColumnsWithDesignatedInstantV1() throws Exception {
+        testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123123123Z"), null, PROTOCOL_VERSION_V1,
+                new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.123123Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedInstantV2() throws Exception {
+        testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123123123Z"), null, PROTOCOL_VERSION_V2,
+                new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO},
+                "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123123123Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedMicrosV1() throws Exception {
+        testCreateTimestampColumns(MicrosTimestampDriver.floor("2025-11-20T10:55:24.123456Z"), ChronoUnit.MICROS, PROTOCOL_VERSION_V1,
+                new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.123456Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedMicrosV2() throws Exception {
+        testCreateTimestampColumns(MicrosTimestampDriver.floor("2025-11-20T10:55:24.123456Z"), ChronoUnit.MICROS, PROTOCOL_VERSION_V2,
+                new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123456Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedMillisV1() throws Exception {
+        testCreateTimestampColumns(MicrosTimestampDriver.floor("2025-11-20T10:55:24.123456Z") / 1000, ChronoUnit.MILLIS, PROTOCOL_VERSION_V1,
+                new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.123000Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedMillisV2() throws Exception {
+        testCreateTimestampColumns(MicrosTimestampDriver.floor("2025-11-20T10:55:24.123456Z") / 1000, ChronoUnit.MILLIS, PROTOCOL_VERSION_V2,
+                new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123000Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedNanosV1() throws Exception {
+        testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123456789Z"), ChronoUnit.NANOS, PROTOCOL_VERSION_V1,
+                new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.123456Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedNanosV2() throws Exception {
+        testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123456789Z"), ChronoUnit.NANOS, PROTOCOL_VERSION_V2,
+                new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO},
+                "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123456789Z");
+    }
+
+    @Test
     public void testDouble_edgeValues() throws Exception {
+        final boolean isMicros = ColumnType.isTimestampMicro(timestampType.getTimestampType());
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
@@ -408,28 +455,28 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .build()) {
 
                 CountDownLatch released = createTableCommitNotifier("mytable");
-                long ts = MicrosTimestampDriver.floor("2022-02-25");
+                long ts = isMicros ? MicrosTimestampDriver.floor("2022-02-25") : NanosTimestampDriver.floor("2022-02-25");
                 sender.table("mytable")
                         .doubleColumn("negative_inf", Double.NEGATIVE_INFINITY)
                         .doubleColumn("positive_inf", Double.POSITIVE_INFINITY)
                         .doubleColumn("nan", Double.NaN)
                         .doubleColumn("max_value", Double.MAX_VALUE)
                         .doubleColumn("min_value", Double.MIN_VALUE)
-                        .at(ts, ChronoUnit.MICROS);
+                        .at(ts, isMicros ? ChronoUnit.MICROS : ChronoUnit.NANOS);
                 sender.flush();
                 waitTableWriterFinish(released);
                 assertTableSizeEventually(engine, "mytable", 1);
                 try (TableReader reader = getReader("mytable")) {
-                    if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                    if (isMicros) {
                         TestUtils.assertReader("""
                                 negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp
                                 null\tnull\tnull\t1.7976931348623157E308\t4.9E-324\t2022-02-25T00:00:00.000000Z
-                                """, reader, new StringSink());
+                                """, reader, sink);
                     } else {
                         TestUtils.assertReader("""
                                 negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp
                                 null\tnull\tnull\t1.7976931348623157E308\t4.9E-324\t2022-02-25T00:00:00.000000000Z
-                                """, reader, new StringSink());
+                                """, reader, sink);
                     }
                 }
             }
@@ -542,9 +589,564 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         x\ty\ta1\ttimestamp
                         9999.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z
                         10000.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z
-                        """, reader, new StringSink());
+                        """, reader, sink);
             }
 
+        });
+    }
+
+    @Test
+    public void testInsertDecimalTextFormatBasic() throws Exception {
+        runInContext(r -> {
+            String tableName = "decimal_text_format_basic";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("price", ColumnType.getDecimalType(10, 2))
+                    .col("quantity", ColumnType.getDecimalType(15, 4))
+                    .col("rate", ColumnType.getDecimalType(8, 5));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Basic positive decimal
+                sender.table(tableName)
+                        .decimalColumn("price", "123.45")
+                        .decimalColumn("quantity", "100.0000")
+                        .decimalColumn("rate", "0.12345")
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                // Negative decimal
+                sender.table(tableName)
+                        .decimalColumn("price", "-45.67")
+                        .decimalColumn("quantity", "-10.5000")
+                        .decimalColumn("rate", "-0.00001")
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                // Small values
+                sender.table(tableName)
+                        .decimalColumn("price", "0.01")
+                        .decimalColumn("quantity", "0.0001")
+                        .decimalColumn("rate", "0.00000")
+                        .at(100000000002L, ChronoUnit.MICROS);
+
+                // Integer strings (no decimal point)
+                sender.table(tableName)
+                        .decimalColumn("price", "999")
+                        .decimalColumn("quantity", "42")
+                        .decimalColumn("rate", "1")
+                        .at(100000000003L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+            try (TableReader reader = getReader(tableName)) {
+                CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
+                TestUtils.assertReader("price\tquantity\trate\ttimestamp\n" +
+                        "123.45\t100.0000\t0.12345\t1970-01-02T03:46:40.000000" + suffix +
+                        "-45.67\t-10.5000\t-0.00001\t1970-01-02T03:46:40.000001" + suffix +
+                        "0.01\t0.0001\t0.00000\t1970-01-02T03:46:40.000002" + suffix +
+                        "999.00\t42.0000\t1.00000\t1970-01-02T03:46:40.000003" + suffix, reader, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertDecimalTextFormatEdgeCases() throws Exception {
+        runInContext(r -> {
+            String tableName = "decimal_text_format_edge_cases";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("value", ColumnType.getDecimalType(20, 10));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Explicit positive sign
+                sender.table(tableName)
+                        .decimalColumn("value", "+123.456")
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                // Leading zeros
+                sender.table(tableName)
+                        .decimalColumn("value", "000123.450000")
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                // Very small value
+                sender.table(tableName)
+                        .decimalColumn("value", "0.0000000001")
+                        .at(100000000002L, ChronoUnit.MICROS);
+
+                // Zero with decimal point
+                sender.table(tableName)
+                        .decimalColumn("value", "0.0")
+                        .at(100000000003L, ChronoUnit.MICROS);
+
+                // Just zero
+                sender.table(tableName)
+                        .decimalColumn("value", "0")
+                        .at(100000000004L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+            try (TableReader reader = getReader(tableName)) {
+                CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
+                TestUtils.assertReader("value\ttimestamp\n" +
+                        "123.4560000000\t1970-01-02T03:46:40.000000" + suffix +
+                        "123.4500000000\t1970-01-02T03:46:40.000001" + suffix +
+                        "0.0000000001\t1970-01-02T03:46:40.000002" + suffix +
+                        "0.0000000000\t1970-01-02T03:46:40.000003" + suffix +
+                        "0.0000000000\t1970-01-02T03:46:40.000004" + suffix, reader, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertDecimalTextFormatEquivalence() throws Exception {
+        runInContext(r -> {
+            String tableName = "decimal_text_format_equivalence";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("text_format", ColumnType.getDecimalType(10, 3))
+                    .col("binary_format", ColumnType.getDecimalType(10, 3));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Test various values sent via both text and binary formats
+                sender.table(tableName)
+                        .decimalColumn("text_format", "123.450")
+                        .decimalColumn("binary_format", Decimal256.fromLong(123450, 3))
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                sender.table(tableName)
+                        .decimalColumn("text_format", "-45.670")
+                        .decimalColumn("binary_format", Decimal256.fromLong(-45670, 3))
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                sender.table(tableName)
+                        .decimalColumn("text_format", "0.001")
+                        .decimalColumn("binary_format", Decimal256.fromLong(1, 3))
+                        .at(100000000002L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+            try (TableReader reader = getReader(tableName)) {
+                CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
+                TestUtils.assertReader("text_format\tbinary_format\ttimestamp\n" +
+                        "123.450\t123.450\t1970-01-02T03:46:40.000000" + suffix +
+                        "-45.670\t-45.670\t1970-01-02T03:46:40.000001" + suffix +
+                        "0.001\t0.001\t1970-01-02T03:46:40.000002" + suffix, reader, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertDecimalTextFormatInvalid() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                sender.table("test");
+                // Test invalid characters
+                try {
+                    sender.decimalColumn("value", "abc");
+                    Assert.fail("Letters should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+
+                // Test multiple dots
+                try {
+                    sender.decimalColumn("value", "12.34.56");
+                    Assert.fail("Multiple dots should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+
+                // Test multiple signs
+                try {
+                    sender.decimalColumn("value", "+-123");
+                    Assert.fail("Multiple signs should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+
+                // Test special characters
+                try {
+                    sender.decimalColumn("value", "12$34");
+                    Assert.fail("Special characters should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+
+                // Test empty decimal
+                try {
+                    sender.decimalColumn("value", "");
+                    Assert.fail("Empty string should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+
+                // Test invalid exponent
+                try {
+                    sender.decimalColumn("value", "1.23eABC");
+                    Assert.fail("Invalid exponent should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+
+                // Test incomplete exponent
+                try {
+                    sender.decimalColumn("value", "1.23e");
+                    Assert.fail("Incomplete exponent should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+            }
+        });
+    }
+
+
+    @Test
+    public void testInsertDecimalTextFormatPrecisionOverflow() throws Exception {
+        runInContext(r -> {
+            String tableName = "decimal_text_format_precision_overflow";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("x", ColumnType.getDecimalType(6, 3));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Value that exceeds column precision (6 digits total, 3 after decimal)
+                // 1000.000 has 7 digits precision, should be rejected
+                sender.table(tableName)
+                        .decimalColumn("x", "1000.000")
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                // Another value that exceeds precision
+                sender.table(tableName)
+                        .decimalColumn("x", "12345.678")
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+            try (TableReader reader = getReader(tableName)) {
+                TestUtils.assertReader("x\ttimestamp\n", reader, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertDecimalTextFormatScientificNotation() throws Exception {
+        runInContext(r -> {
+            String tableName = "decimal_text_format_scientific_notation";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("large", ColumnType.getDecimalType(15, 2))
+                    .col("small", ColumnType.getDecimalType(20, 15));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Scientific notation with positive exponent
+                sender.table(tableName)
+                        .decimalColumn("large", "1.23e5")
+                        .decimalColumn("small", "1.23e-10")
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                // Scientific notation with uppercase E
+                sender.table(tableName)
+                        .decimalColumn("large", "4.56E3")
+                        .decimalColumn("small", "4.56E-8")
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                // Negative value with scientific notation
+                sender.table(tableName)
+                        .decimalColumn("large", "-9.99e2")
+                        .decimalColumn("small", "-1.5e-12")
+                        .at(100000000002L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+
+            try (TableReader reader = getReader(tableName)) {
+                CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
+                TestUtils.assertReader("large\tsmall\ttimestamp\n" +
+                        "123000.00\t0.000000000123000\t1970-01-02T03:46:40.000000" + suffix +
+                        "4560.00\t0.000000045600000\t1970-01-02T03:46:40.000001" + suffix +
+                        "-999.00\t-0.000000000001500\t1970-01-02T03:46:40.000002" + suffix, reader, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertDecimalTextFormatTrailingZeros() throws Exception {
+        runInContext(r -> {
+            String tableName = "decimal_text_format_trailing_zeros";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("value1", ColumnType.getDecimalType(10, 3))
+                    .col("value2", ColumnType.getDecimalType(12, 5));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Trailing zeros should be preserved in scale
+                sender.table(tableName)
+                        .decimalColumn("value1", "100.000")
+                        .decimalColumn("value2", "50.00000")
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                sender.table(tableName)
+                        .decimalColumn("value1", "1.200")
+                        .decimalColumn("value2", "0.12300")
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                sender.table(tableName)
+                        .decimalColumn("value1", "0.100")
+                        .decimalColumn("value2", "0.00100")
+                        .at(100000000002L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+            try (TableReader reader = getReader(tableName)) {
+                CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
+                TestUtils.assertReader("value1\tvalue2\ttimestamp\n" +
+                        "100.000\t50.00000\t1970-01-02T03:46:40.000000" + suffix +
+                        "1.200\t0.12300\t1970-01-02T03:46:40.000001" + suffix +
+                        "0.100\t0.00100\t1970-01-02T03:46:40.000002" + suffix, reader, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertDecimals() throws Exception {
+        runInContext(r -> {
+            String tableName = "decimal_test";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("a", ColumnType.getDecimalType(9, 0))
+                    .col("b", ColumnType.getDecimalType(9, 3));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                sender.table(tableName)
+                        .decimalColumn("a", Decimal256.fromLong(12345, 0))
+                        .decimalColumn("b", Decimal256.fromLong(12345, 2))
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                // Decimal without rescale
+                sender.table(tableName)
+                        .decimalColumn("a", Decimal256.NULL_VALUE)
+                        .decimalColumn("b", Decimal256.fromLong(123456, 3))
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                // Integers -> Decimal
+                sender.table(tableName)
+                        .longColumn("a", 42)
+                        .longColumn("b", 42)
+                        .at(100000000002L, ChronoUnit.MICROS);
+
+                // Strings -> Decimal without rescale
+                sender.table(tableName)
+                        .stringColumn("a", "42")
+                        .stringColumn("b", "42.123")
+                        .at(100000000003L, ChronoUnit.MICROS);
+
+                // Strings -> Decimal with rescale
+                sender.table(tableName)
+                        .stringColumn("a", "42.0")
+                        .stringColumn("b", "42.1")
+                        .at(100000000004L, ChronoUnit.MICROS);
+
+                // Doubles -> Decimal
+                sender.table(tableName)
+                        .doubleColumn("a", 42d)
+                        .doubleColumn("b", 42.1d)
+                        .at(100000000005L, ChronoUnit.MICROS);
+
+                // NaN/Inf Doubles -> Decimal
+                sender.table(tableName)
+                        .doubleColumn("a", Double.NaN)
+                        .doubleColumn("b", Double.POSITIVE_INFINITY)
+                        .at(100000000006L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+            assertTableSizeEventually(engine, "decimal_test", 7);
+            try (TableReader reader = getReader(tableName)) {
+                CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
+                TestUtils.assertReader("a\tb\ttimestamp\n" +
+                        "12345\t123.450\t1970-01-02T03:46:40.000000" + suffix +
+                        "\t123.456\t1970-01-02T03:46:40.000001" + suffix +
+                        "42\t42.000\t1970-01-02T03:46:40.000002" + suffix +
+                        "42\t42.123\t1970-01-02T03:46:40.000003" + suffix +
+                        "42\t42.100\t1970-01-02T03:46:40.000004" + suffix +
+                        "42\t42.100\t1970-01-02T03:46:40.000005" + suffix +
+                        "\t\t1970-01-02T03:46:40.000006" + suffix, reader, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertInvalidDecimals() throws Exception {
+        runInContext(r -> {
+            String tableName = "invalid_decimal_test";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("x", ColumnType.getDecimalType(6, 3))
+                    .col("y", ColumnType.getDecimalType(76, 73));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Integers out of bound (with scaling, 1234 becomes 1234.000 which have a precision of 7).
+                sender.table(tableName)
+                        .longColumn("x", 1234)
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                // Integers overbound during the rescale process.
+                sender.table(tableName)
+                        .longColumn("y", 12345)
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                // Floating points with a scale greater than expected.
+                sender.table(tableName)
+                        .doubleColumn("x", 1.2345d)
+                        .at(100000000002L, ChronoUnit.MICROS);
+
+                // Floating points with a precision greater than expected.
+                sender.table(tableName)
+                        .doubleColumn("x", 12345.678d)
+                        .at(100000000003L, ChronoUnit.MICROS);
+
+                // String that is not a valid decimal.
+                sender.table(tableName)
+                        .stringColumn("x", "abc")
+                        .at(100000000004L, ChronoUnit.MICROS);
+
+                // String that has a too big precision.
+                sender.table(tableName)
+                        .stringColumn("x", "1E8")
+                        .at(100000000005L, ChronoUnit.MICROS);
+
+                // Decimal with a too big precision.
+                sender.table(tableName)
+                        .decimalColumn("x", Decimal256.fromLong(12345678, 3))
+                        .at(100000000006L, ChronoUnit.MICROS);
+
+                // Decimal with a too big precision when scaled.
+                sender.table(tableName)
+                        .decimalColumn("y", Decimal256.fromLong(12345, 0))
+                        .at(100000000007L, ChronoUnit.MICROS);
+                sender.flush();
+
+                // Decimal loosing precision
+                sender.table(tableName)
+                        .decimalColumn("x", Decimal256.fromLong(123456, 4))
+                        .at(100000000007L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+            try (TableReader reader = getReader(tableName)) {
+                TestUtils.assertReader("x\ty\ttimestamp\n", reader, sink);
+            }
         });
     }
 
@@ -615,7 +1217,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         s\tu\ttimestamp
                         non-ascii äöü\t11111111-2222-3333-4444-555555555555\t2022-02-25T00:00:00.000000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -669,7 +1271,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         u1\tu2\tu3\ttimestamp
                         11111111-1111-1111-1111-111111111111\t\t33333333-3333-3333-3333-333333333333\t2022-02-25T00:00:00.000000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -711,7 +1313,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         ts_col\ttimestamp
                         2023-02-11T12:30:11.350000Z\t2022-01-10T20:40:22.540000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -779,7 +1381,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         us\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000000Z
                         ms\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -812,7 +1414,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         ts\ttimestamp
                         2323-09-18T12:01:01.011568Z\t2323-09-18T12:01:01.011568Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -856,7 +1458,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         unit\tts\ttimestamp
                         ns\t2023-09-18T12:01:01.011568Z\t2023-09-18T12:01:01.011568901Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -900,6 +1502,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testMultipleVarcharCols() throws Exception {
+        final boolean isMicros = ColumnType.isTimestampMicro(timestampType.getTimestampType());
         useLegacyStringDefault = false;
         runInContext(r -> {
             String table = "string_table";
@@ -909,23 +1512,20 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()
             ) {
-                long tsMicros = MicrosTimestampDriver.floor("2024-02-27");
+                long ts = isMicros ? MicrosTimestampDriver.floor("2024-02-27") : NanosTimestampDriver.floor("2024-02-27");
                 sender.table(table)
                         .stringColumn("string1", "some string")
                         .stringColumn("string2", "another string")
                         .stringColumn("string3", "yet another string")
-                        .at(tsMicros, ChronoUnit.MICROS);
+                        .at(ts, isMicros ? ChronoUnit.MICROS : ChronoUnit.NANOS);
                 sender.flush();
                 waitTableWriterFinish(released);
                 assertTableSizeEventually(engine, table, 1);
                 try (RecordCursorFactory fac = engine.select(table, sqlExecutionContext);
                      RecordCursor cursor = fac.getCursor(sqlExecutionContext)
                 ) {
-                    String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                            ? "some string:VARCHAR\tanother string:VARCHAR\tyet another string:VARCHAR\t2024-02-27T00:00:00.000000Z:TIMESTAMP\n"
-                            : "some string:VARCHAR\tanother string:VARCHAR\tyet another string:VARCHAR\t2024-02-27T00:00:00.000000000Z:TIMESTAMP_NS\n";
                     TestUtils.assertCursor(
-                            expected,
+                            "some string:VARCHAR\tanother string:VARCHAR\tyet another string:VARCHAR\t2024-02-27T00:00:00.000000Z:TIMESTAMP\n",
                             cursor, fac.getMetadata(), false, true, sink
                     );
                 }
@@ -980,15 +1580,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     Sender sender1 = Sender.fromConfig(confString);
                     Sender sender2 = Sender.fromConfig(confString)
             ) {
-                SOCountDownLatch writerIsBack = new SOCountDownLatch(1);
-                engine.setPoolListener(
-                        (factoryType, thread, tableToken, event, segment, position) -> {
-                            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                                writerIsBack.countDown();
-                            }
-                        }
-                );
-
                 AtomicBoolean walRunning = new AtomicBoolean(true);
                 SOCountDownLatch doneAll = new SOCountDownLatch(3);
                 SOCountDownLatch doneILP = new SOCountDownLatch(2);
@@ -1011,7 +1602,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         }
                         sender1.flush();
                     } catch (Throwable e) {
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                         errorCount.incrementAndGet();
                     } finally {
                         Path.clearThreadLocals();
@@ -1032,7 +1623,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         }
                         sender2.flush();
                     } catch (Throwable e) {
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                         errorCount.incrementAndGet();
                     } finally {
                         Path.clearThreadLocals();
@@ -1048,7 +1639,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                             Os.pause();
                         }
                     } catch (Throwable e) {
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                         errorCount.incrementAndGet();
                     } finally {
                         Path.clearThreadLocals();
@@ -1062,17 +1653,18 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
                 Assert.assertEquals(0, errorCount.get());
 
-                // make sure to assert before closing the Sender
-                // since the Sender will always flush on close
-                writerIsBack.await();
-                TestUtils.assertSql(
-                        engine,
-                        sqlExecutionContext,
-                        "select count() from mytable",
-                        sink,
-                        "count\n" +
-                                N * 2 + "\n"
-                );
+
+                assertEventually(() -> {
+                    drainWalQueue();
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count() from mytable",
+                            sink,
+                            "count\n" +
+                                    N * 2 + "\n"
+                    );
+                });
             }
         });
     }
@@ -1095,6 +1687,89 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testSymbolsCannotBeWrittenAfterString() throws Exception {
         assertSymbolsCannotBeWrittenAfterOtherType(s -> s.stringColumn("columnName", "42"));
+    }
+
+    @Test
+    public void testTimestampIngestV1() throws Exception {
+        testTimestampIngest(timestampType.getTypeName(), PROTOCOL_VERSION_V1,
+                timestampType == TestTimestampType.NANO
+                        ? """
+                        ts\tdts
+                        2025-11-19T10:55:24.123456000Z\t2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456000Z\t2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123000000Z\t2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456000Z\t2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456000Z\t2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123000000Z\t2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456000Z\t2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456000Z\t2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123000000Z\t2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456000Z\t2025-11-20T10:55:24.834129092Z
+                        """
+                        : """
+                        ts\tdts
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                        """,
+                null
+        );
+    }
+
+    @Test
+    public void testTimestampIngestV2() throws Exception {
+        testTimestampIngest(timestampType.getTypeName(), PROTOCOL_VERSION_V2,
+                timestampType == TestTimestampType.NANO
+                        ? """
+                        ts\tdts
+                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456799Z	2025-11-20T10:55:24.834129092Z
+                        """
+                        : """
+                        ts\tdts
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                        """,
+                timestampType == TestTimestampType.NANO
+                        ? null
+                        : """
+                        ts\tdts
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                        2300-11-19T10:55:24.123456Z\t2300-11-20T10:55:24.834129Z
+                        """
+        );
     }
 
     @Test
@@ -1167,6 +1842,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testUseVarcharAsString() throws Exception {
+        final boolean isMicros = ColumnType.isTimestampMicro(timestampType.getTimestampType());
         useLegacyStringDefault = false;
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
@@ -1177,18 +1853,18 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             ) {
                 String table = "string_table";
                 CountDownLatch released = createTableCommitNotifier(table);
-                long tsMicros = MicrosTimestampDriver.floor("2024-02-27");
+                long ts = isMicros ? MicrosTimestampDriver.floor("2024-02-27") : NanosTimestampDriver.floor("2024-02-27");
                 String expectedValue = "čćžšđçğéíáýůř";
                 sender.table(table)
                         .stringColumn("string1", expectedValue)
-                        .at(tsMicros, ChronoUnit.MICROS);
+                        .at(ts, isMicros ? ChronoUnit.MICROS : ChronoUnit.NANOS);
                 sender.flush();
                 waitTableWriterFinish(released);
                 assertTableSizeEventually(engine, table, 1);
                 try (RecordCursorFactory fac = engine.select(table, sqlExecutionContext);
                      RecordCursor cursor = fac.getCursor(sqlExecutionContext)
                 ) {
-                    String expectTs = ColumnType.isTimestampMicro(timestampType.getTimestampType())
+                    String expectTs = isMicros
                             ? "\t2024-02-27T00:00:00.000000Z:TIMESTAMP\n"
                             : "\t2024-02-27T00:00:00.000000000Z:TIMESTAMP_NS\n";
                     TestUtils.assertCursor(
@@ -1201,6 +1877,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriteAllTypes() throws Exception {
+        final boolean isMicros = ColumnType.isTimestampMicro(timestampType.getTimestampType());
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
@@ -1208,21 +1885,21 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
                 CountDownLatch released = createTableCommitNotifier("mytable");
-                long tsMicros = MicrosTimestampDriver.floor("2022-02-25");
+                long ts = isMicros ? MicrosTimestampDriver.floor("2022-02-25") : NanosTimestampDriver.floor("2022-02-25");
                 sender.table("mytable")
                         .longColumn("int_field", 42)
                         .boolColumn("bool_field", true)
                         .stringColumn("string_field", "foo")
                         .doubleColumn("double_field", 42.0)
-                        .timestampColumn("ts_field", tsMicros, ChronoUnit.MICROS)
-                        .at(tsMicros, ChronoUnit.MICROS);
+                        .timestampColumn("ts_field", ts, isMicros ? ChronoUnit.MICROS : ChronoUnit.NANOS)
+                        .at(ts, isMicros ? ChronoUnit.MICROS : ChronoUnit.NANOS);
                 sender.flush();
                 waitTableWriterFinish(released);
             }
 
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
-                String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
+                String expected = isMicros
                         ? """
                         int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp
                         42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z
@@ -1231,13 +1908,14 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp
                         42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000000Z\t2022-02-25T00:00:00.000000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
 
     @Test
     public void testWriteLongMinMax() throws Exception {
+        final boolean isMicros = ColumnType.isTimestampMicro(timestampType.getTimestampType());
         runInContext(r -> {
             String table = "table";
             CountDownLatch released = createTableCommitNotifier("table");
@@ -1247,18 +1925,18 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .protocolVersion(PROTOCOL_VERSION_V2)
                     .build()) {
 
-                long tsMicros = MicrosTimestampDriver.floor("2023-02-22");
+                long ts = isMicros ? MicrosTimestampDriver.floor("2023-02-22") : NanosTimestampDriver.floor("2023-02-22");
                 sender.table(table)
                         .longColumn("max", Long.MAX_VALUE)
                         .longColumn("min", Long.MIN_VALUE)
-                        .at(tsMicros, ChronoUnit.MICROS);
+                        .at(ts, isMicros ? ChronoUnit.MICROS : ChronoUnit.NANOS);
                 sender.flush();
             }
 
             waitTableWriterFinish(released);
             assertTableSizeEventually(engine, table, 1);
             try (TableReader reader = getReader(table)) {
-                String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
+                String expected = isMicros
                         ? """
                         max\tmin\ttimestamp
                         9223372036854775807\tnull\t2023-02-22T00:00:00.000000Z
@@ -1267,7 +1945,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         max\tmin\ttimestamp
                         9223372036854775807\tnull\t2023-02-22T00:00:00.000000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -1345,6 +2023,145 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         });
     }
 
+    private void testCreateTimestampColumns(long timestamp, ChronoUnit unit, int protocolVersion, int[] expectedColumnTypes, String expected) throws Exception {
+        runInContext(r -> {
+            CountDownLatch released = createTableCommitNotifier("tab1");
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(protocolVersion)
+                    .build()
+            ) {
+                long ts_ns = NanosTimestampDriver.floor("2025-11-19T10:55:24.123456789Z");
+                long ts_us = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123456Z");
+                long ts_ms = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123Z") / 1000;
+                Instant ts_instant = Instant.ofEpochSecond(ts_ns / 1_000_000_000, ts_ns % 1_000_000_000 + 10);
+
+                if (unit != null) {
+                    sender.table("tab1")
+                            .doubleColumn("col1", 1.111)
+                            .timestampColumn("ts_ns", ts_ns, ChronoUnit.NANOS)
+                            .timestampColumn("ts_us", ts_us, ChronoUnit.MICROS)
+                            .timestampColumn("ts_ms", ts_ms, ChronoUnit.MILLIS)
+                            .timestampColumn("ts_instant", ts_instant)
+                            .at(timestamp, unit);
+                } else {
+                    sender.table("tab1")
+                            .doubleColumn("col1", 1.111)
+                            .timestampColumn("ts_ns", ts_ns, ChronoUnit.NANOS)
+                            .timestampColumn("ts_us", ts_us, ChronoUnit.MICROS)
+                            .timestampColumn("ts_ms", ts_ms, ChronoUnit.MILLIS)
+                            .timestampColumn("ts_instant", ts_instant)
+                            .at(Instant.ofEpochSecond(timestamp / 1_000_000_000, timestamp % 1_000_000_000));
+                }
+
+                sender.flush();
+            }
+
+            waitTableWriterFinish(released);
+            assertTableSizeEventually(engine, "tab1", 1);
+            assertTable("col1\tts_ns\tts_us\tts_ms\tts_instant\ttimestamp\n" + expected + "\n", "tab1");
+
+            final TableToken tt = engine.verifyTableName("tab1");
+            try (TableMetadata metadata = engine.getTableMetadata(tt)) {
+                assertEquals(6, metadata.getColumnCount());
+                assertEquals(ColumnType.DOUBLE, metadata.getColumnType(0));
+                assertEquals(expectedColumnTypes[0], metadata.getColumnType(1));
+                assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType(2));
+                assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType(3));
+                assertEquals(expectedColumnTypes[1], metadata.getColumnType(4));
+                assertEquals(expectedColumnTypes[2], metadata.getColumnType(5));
+            }
+        });
+    }
+
+    private void testTimestampIngest(String timestampType, int protocolVersion, String expected1, String expected2) throws Exception {
+        runInContext(r -> {
+            engine.execute("create table tab (ts " + timestampType + ", dts " + timestampType + ") timestamp(dts) partition by DAY BYPASS WAL");
+            assertTableExists(engine, "tab");
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(protocolVersion)
+                    .build()
+            ) {
+                long ts_ns = NanosTimestampDriver.floor("2025-11-19T10:55:24.123456789Z");
+                long dts_ns = NanosTimestampDriver.floor("2025-11-20T10:55:24.834129082Z");
+                long ts_us = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123456Z");
+                long dts_us = MicrosTimestampDriver.floor("2025-11-20T10:55:24.834129Z");
+                long ts_ms = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123Z") / 1000;
+                long dts_ms = MicrosTimestampDriver.floor("2025-11-20T10:55:24.834Z") / 1000;
+                Instant tsInstant_ns = Instant.ofEpochSecond(ts_ns / 1_000_000_000, ts_ns % 1_000_000_000 + 10);
+                Instant dtsInstant_ns = Instant.ofEpochSecond(dts_ns / 1_000_000_000, dts_ns % 1_000_000_000 + 10);
+
+                sender.table("tab")
+                        .timestampColumn("ts", ts_ns, ChronoUnit.NANOS)
+                        .at(dts_ns, ChronoUnit.NANOS);
+                sender.table("tab")
+                        .timestampColumn("ts", ts_us, ChronoUnit.MICROS)
+                        .at(dts_ns, ChronoUnit.NANOS);
+                sender.table("tab")
+                        .timestampColumn("ts", ts_ms, ChronoUnit.MILLIS)
+                        .at(dts_ns, ChronoUnit.NANOS);
+
+                sender.table("tab")
+                        .timestampColumn("ts", ts_ns, ChronoUnit.NANOS)
+                        .at(dts_us, ChronoUnit.MICROS);
+                sender.table("tab")
+                        .timestampColumn("ts", ts_us, ChronoUnit.MICROS)
+                        .at(dts_us, ChronoUnit.MICROS);
+                sender.table("tab")
+                        .timestampColumn("ts", ts_ms, ChronoUnit.MILLIS)
+                        .at(dts_us, ChronoUnit.MICROS);
+
+                sender.table("tab")
+                        .timestampColumn("ts", ts_ns, ChronoUnit.NANOS)
+                        .at(dts_ms, ChronoUnit.MILLIS);
+                sender.table("tab")
+                        .timestampColumn("ts", ts_us, ChronoUnit.MICROS)
+                        .at(dts_ms, ChronoUnit.MILLIS);
+                sender.table("tab")
+                        .timestampColumn("ts", ts_ms, ChronoUnit.MILLIS)
+                        .at(dts_ms, ChronoUnit.MILLIS);
+
+                sender.table("tab")
+                        .timestampColumn("ts", tsInstant_ns)
+                        .at(dtsInstant_ns);
+
+                sender.flush();
+
+                drainWalQueue(engine);
+                assertTableSizeEventually(engine, "tab", 10);
+                assertTable(expected1, "tab");
+
+                try {
+                    // fails for nanos, long overflow
+                    long ts_tooLargeForNanos_us = MicrosTimestampDriver.floor("2300-11-19T10:55:24.123456Z");
+                    long dts_tooLargeForNanos_us = MicrosTimestampDriver.floor("2300-11-20T10:55:24.834129Z");
+                    sender.table("tab")
+                            .timestampColumn("ts", ts_tooLargeForNanos_us, ChronoUnit.MICROS)
+                            .at(dts_tooLargeForNanos_us, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    if (expected2 == null && protocolVersion == PROTOCOL_VERSION_V1) {
+                        Assert.fail("Exception expected");
+                    }
+                } catch (ArithmeticException e) {
+                    if (expected2 == null && protocolVersion == PROTOCOL_VERSION_V1) {
+                        TestUtils.assertContains(e.getMessage(), "long overflow");
+                    } else {
+                        throw e;
+                    }
+                }
+
+                drainWalQueue(engine);
+                assertTableSizeEventually(engine, "tab", expected2 == null ? 10 : 11);
+                assertTable(expected2 == null ? expected1 : expected2, "tab");
+            }
+        });
+    }
+
     private void testValueCannotBeInsertedToUuidColumn(String value) throws Exception {
         runInContext(r -> {
             // create table with UUID column
@@ -1398,7 +2215,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         u1\ttimestamp
                         11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }

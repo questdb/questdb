@@ -113,7 +113,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("AsOf Join Fast Scan");
+        sink.type("AsOf Join Fast");
         sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);
@@ -128,6 +128,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
     private class AsOfJoinKeyedFastRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
 
+        private final SingleRecordSink masterSinkTarget;
+        private final SingleRecordSink slaveSinkTarget;
+
         public AsOfJoinKeyedFastRecordCursor(
                 int columnSplit,
                 Record nullRecord,
@@ -139,12 +142,23 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 SingleRecordSink slaveSinkTarget,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget, slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
+            this.masterSinkTarget = masterSinkTarget;
+            this.slaveSinkTarget = slaveSinkTarget;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            masterSinkTarget.close();
+            slaveSinkTarget.close();
         }
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
+            masterSinkTarget.reopen();
+            slaveSinkTarget.reopen();
             symbolShortCircuit.of(slaveCursor);
         }
 

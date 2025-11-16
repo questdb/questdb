@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -44,6 +45,11 @@ public final class StaticHttpAuthenticator implements HttpAuthenticator {
             return false;
         }
         return Utf8s.equals(expectedHeader, header);
+    }
+
+    @Override
+    public byte getAuthType() {
+        return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
     @Override

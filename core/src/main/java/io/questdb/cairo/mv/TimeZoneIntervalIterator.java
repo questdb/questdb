@@ -109,7 +109,7 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
         super.of(sampler, intervals);
         this.tzRules = tzRules;
 
-        sampler.setStart(fixedOffset);
+        sampler.setOffset(fixedOffset);
         final long localMinTs = minTs + tzRules.getOffset(minTs);
         localMinTimestamp = sampler.round(localMinTs);
         final long localMaxTs = maxTs + tzRules.getOffset(maxTs);

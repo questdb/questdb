@@ -106,6 +106,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.QuestDBTestNode;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.griffin.CustomisableRunnable;
@@ -222,6 +223,15 @@ public final class TestUtils {
             return;
         }
         Assert.fail("'" + sequence + "' does not contain either: " + term1 + " or " + term2);
+    }
+
+    public static void assertContainsEither(CharSequence sequence, CharSequence... terms) {
+        for (CharSequence term : terms) {
+            if (Chars.contains(sequence, term)) {
+                return;
+            }
+        }
+        Assert.fail("'" + sequence + "' does not contain either: " + String.join(" or ", terms));
     }
 
     public static void assertCursor(
@@ -1535,6 +1545,28 @@ public final class TestUtils {
         return rnd;
     }
 
+    @NotNull
+    public static Rnd generateRandomForTestParams(Log log, long s0, long s1) {
+        if (log != null) {
+            log.info().$("random test params seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+        }
+        System.out.printf("random test params seeds: %dL, %dL%n", s0, s1);
+        Rnd rnd = new Rnd(s0, s1);
+        // Random impl is biased on first few calls, always return same bool,
+        // so we need to make a few calls to get it going randomly
+        rnd.nextBoolean();
+        rnd.nextBoolean();
+        rnd.nextBoolean();
+        rnd.nextBoolean();
+        rnd.nextBoolean();
+        return rnd;
+    }
+
+    @NotNull
+    public static Rnd generateRandomForTestParams(Log log) {
+        return generateRandomForTestParams(log, System.nanoTime(), System.currentTimeMillis());
+    }
+
     public static String getCsvRoot() {
         return getTestResourcePath("/csv");
     }
@@ -1625,6 +1657,14 @@ public final class TestUtils {
         } catch (URISyntaxException e) {
             throw new RuntimeException("Could not determine resource path", e);
         }
+    }
+
+    public static TestTimestampType getTimestampType() {
+        return getTimestampType(generateRandom(LOG));
+    }
+
+    public static TestTimestampType getTimestampType(Rnd rnd) {
+        return rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
     }
 
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
@@ -1733,6 +1773,19 @@ public final class TestUtils {
         sink.put('/');
         Numbers.intToIPv4Sink(sink, (int) (ipAndBroadcast));
         return sink.toString();
+    }
+
+    /**
+     * Helper method to bias probability of "wal" tests to 80%
+     *
+     * @return true when tests should run in WAL-enabled mode, false otherwise.
+     */
+    public static boolean isWal() {
+        return isWal(generateRandom(LOG));
+    }
+
+    public static boolean isWal(Rnd rnd) {
+        return rnd.nextInt(100) < 80;
     }
 
     public static int maxDayOfMonth(int month) {
@@ -2201,8 +2254,8 @@ public final class TestUtils {
         if (dim == actual.getDimCount() - 1) {
             for (int i = 0; i < dimLen; i++) {
                 Assert.assertEquals(
-                        expected.getDouble(expected.getFlatViewOffset() + expectedFlatIndex + i),
-                        actual.getDouble(actual.getFlatViewOffset() + actualFlatIndex + i),
+                        expected.getDouble(expectedFlatIndex + i * expected.getStride(dim)),
+                        actual.getDouble(actualFlatIndex + i * actual.getStride(dim)),
                         Numbers.TOLERANCE
                 );
             }
