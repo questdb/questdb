@@ -379,7 +379,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public void compileNewSQL(
             CharSequence sqlText,
             CairoEngine engine,
-            SqlExecutionContext sqlExecutionContext,
             WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
             boolean recompile
     ) throws PGMessageProcessingException {
@@ -387,17 +386,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // we do not need to create new objects until we know we're caching the entry
         this.sqlText = sqlText;
         if (!recompile) {
-            sqlExecutionContext.resetFlags();
+            entryExecutionContext.resetFlags();
         }
         this.empty = sqlText == null || sqlText.isEmpty();
         if (empty) {
-            sqlExecutionContext.setCacheHit(cacheHit = true);
+            entryExecutionContext.setCacheHit(cacheHit = true);
             return;
         }
         // try insert, peek because this is our private cache,
         // and we do not want to remove statement from it
         try {
-            sqlExecutionContext.setCacheHit(cacheHit = false);
+            entryExecutionContext.setCacheHit(cacheHit = false);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 // When recompiling, we would already have bind variable values in the bind variable
                 // service. This is because re-compilation is typically triggered from "sync" message.
@@ -406,12 +405,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     // Define the provided PostgresSQL types on the BindVariableService. The compilation
                     // below will use these types to build the plan, and it will also define any missing bind
                     // variables.
-                    msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
+                    msgParseDefineBindVariableTypes(entryExecutionContext.getBindVariableService());
                 }
-                CompiledQuery cq = compiler.compile(sqlText, sqlExecutionContext);
+                CompiledQuery cq = compiler.compile(sqlText, entryExecutionContext);
                 // copy actual bind variable types as supplied by the client + defined by the SQL compiler
-                msgParseCopyOutTypeDescriptionTypeOIDs(sqlExecutionContext.getBindVariableService());
-                setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
+                msgParseCopyOutTypeDescriptionTypeOIDs(entryExecutionContext.getBindVariableService());
+                setupEntryAfterSQLCompilation(entryExecutionContext, taiPool, cq);
             }
             validatePgResultSetColumnTypesAndNames();
         } catch (Throwable th) {
@@ -636,17 +635,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case CompiledQuery.EXPLAIN:
                 case CompiledQuery.SELECT:
                 case CompiledQuery.PSEUDO_SELECT:
-                    msgExecuteSelect(entryExecutionContext, transactionState, pendingWriters, taiPool, maxRecompileAttempts);
+                    msgExecuteSelect(transactionState, pendingWriters, taiPool, maxRecompileAttempts);
                     break;
                 case CompiledQuery.INSERT:
                 case CompiledQuery.INSERT_AS_SELECT:
-                    msgExecuteInsert(entryExecutionContext, transactionState, pendingWriters, writerSource, taiPool);
+                    msgExecuteInsert(transactionState, pendingWriters, writerSource, taiPool);
                     break;
                 case CompiledQuery.UPDATE:
-                    msgExecuteUpdate(entryExecutionContext, transactionState, pendingWriters, tempSequence, taiPool);
+                    msgExecuteUpdate(transactionState, pendingWriters, tempSequence, taiPool);
                     break;
                 case CompiledQuery.ALTER:
-                    msgExecuteDDL(entryExecutionContext, transactionState, tempSequence, taiPool);
+                    msgExecuteDDL(transactionState, tempSequence, taiPool);
                     break;
                 case CompiledQuery.DEALLOCATE:
                     // this is supposed to work instead of sending 'close' message via the
@@ -919,7 +918,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.empty = true;
     }
 
-    public void ofSimpleCachedSelect(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, TypesAndSelect tas) throws SqlException {
+    public void ofSimpleCachedSelect(CharSequence sqlText, TypesAndSelect tas) throws SqlException {
         setStateDesc(SYNC_DESC_ROW_DESCRIPTION); // send out the row description message
         this.empty = sqlText == null || sqlText.isEmpty();
         this.sqlText = sqlText;
@@ -934,9 +933,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // We cannot use regular msgExecuteSelect() since this method is called from a callback in SqlCompiler and
         // msgExecuteSelect() may try to recompile the query on its own when it gets TableReferenceOutOfDateException.
         // Calling a compiler while being called from a compiler is a bad idea.
-        sqlExecutionContext.setCacheHit(cacheHit);
-        sqlExecutionContext.getCircuitBreaker().resetTimer();
-        cursor = factory.getCursor(sqlExecutionContext);
+        entryExecutionContext.setCacheHit(cacheHit);
+        entryExecutionContext.getCircuitBreaker().resetTimer();
+        cursor = factory.getCursor(entryExecutionContext);
         copyPgResultSetColumnTypesAndNames();
         setStateExec(true);
     }
@@ -1491,7 +1490,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void msgExecuteDDL(
-            SqlExecutionContext sqlExecutionContext,
             int transactionState,
             SCSequence tempSequence,
             WeakSelfReturningObjectPool<TypesAndInsert> taiPool
@@ -1502,7 +1500,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             try {
                 ensureCompiledQuery();
                 for (int attempt = 1; ; attempt++) {
-                    try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
+                    try (OperationFuture fut = compiledQuery.execute(entryExecutionContext, tempSequence, false)) {
                         // this doesn't actually wait, because the call is synchronous
                         fut.await();
                         sqlAffectedRowCount = fut.getAffectedRowsCount();
@@ -1512,7 +1510,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         if (attempt == maxRecompileAttempts) {
                             throw e;
                         }
-                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+                        compileNewSQL(sqlText, engine, taiPool, true);
                     }
                 }
             } finally {
@@ -1522,7 +1520,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void msgExecuteInsert(
-            SqlExecutionContext sqlExecutionContext,
             int transactionState,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             // todo: WriterSource is the interface used exclusively in PG Wire. We should not need to pass
@@ -1534,16 +1531,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case IMPLICIT_TRANSACTION:
                 // fall through, there is no difference between implicit and explicit transaction at this stage
             case IN_TRANSACTION: {
-                sqlExecutionContext.setCacheHit(cacheHit);
+                entryExecutionContext.setCacheHit(cacheHit);
                 engine.getMetrics().pgWireMetrics().markStart();
                 try {
                     for (int attempt = 1; ; attempt++) {
                         final InsertOperation insertOp = tai.getInsert();
                         InsertMethod m;
                         try {
-                            m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                            m = insertOp.createMethod(entryExecutionContext, writerSource);
                             try {
-                                sqlAffectedRowCount = m.execute(sqlExecutionContext);
+                                sqlAffectedRowCount = m.execute(entryExecutionContext);
                                 TableWriterAPI writer = m.popWriter();
                                 pendingWriters.put(writer.getTableToken(), writer);
                             } catch (Throwable th) {
@@ -1560,7 +1557,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             if (attempt == maxRecompileAttempts) {
                                 throw e;
                             }
-                            compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+                            compileNewSQL(sqlText, engine, taiPool, true);
                         }
                     }
                 } finally {
@@ -1577,7 +1574,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void msgExecuteSelect(
-            SqlExecutionContext sqlExecutionContext,
             int transactionState,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
@@ -1592,8 +1588,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 commit(pendingWriters);
             }
 
-            sqlExecutionContext.getCircuitBreaker().resetTimer();
-            sqlExecutionContext.setCacheHit(cacheHit);
+            entryExecutionContext.getCircuitBreaker().resetTimer();
+            entryExecutionContext.setCacheHit(cacheHit);
             // if the current execution is in the execute stage of prepare-execute mode, we always set the `cacheHit` to true after the first execution.
             // (The execute stage always does not compile the query, while the first execution corresponds to the prepare stage's cacheHit flag.)
             if (isPreparedStatement()) {
@@ -1607,7 +1603,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     // The goal would be to just recompile from text.
                     if (factory != null) {
                         try {
-                            cursor = factory.getCursor(sqlExecutionContext);
+                            cursor = factory.getCursor(entryExecutionContext);
                             // when factory is not null, and we can obtain cursor without issues
                             // we would exit early
                             break;
@@ -1618,7 +1614,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         }
                         factory = Misc.free(factory);
                     }
-                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+                    compileNewSQL(sqlText, engine, taiPool, true);
                 }
             } catch (Throwable e) {
                 // un-cache the erroneous SQL
@@ -1630,7 +1626,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void msgExecuteUpdate(
-            SqlExecutionContext sqlExecutionContext,
             int transactionState,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             SCSequence tempSequence,
@@ -1647,7 +1642,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         TableToken tableToken = updateOperation.getTableToken();
                         final int index = pendingWriters.keyIndex(tableToken);
                         if (index < 0) {
-                            updateOperation.withContext(sqlExecutionContext);
+                            updateOperation.withContext(entryExecutionContext);
                             // cached writers to remain in the list until transaction end
                             @SuppressWarnings("resource")
                             TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
@@ -1655,7 +1650,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             tableWriterAPI.commit();
                             sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
                         } else {
-                            try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
+                            try (OperationFuture fut = compiledQuery.execute(entryExecutionContext, tempSequence, false)) {
                                 fut.await();
                                 sqlAffectedRowCount = fut.getAffectedRowsCount();
                             }
@@ -1666,7 +1661,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         if (attempt == maxRecompileAttempts) {
                             throw e;
                         }
-                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+                        compileNewSQL(sqlText, engine, taiPool, true);
                     }
                 }
             } finally {

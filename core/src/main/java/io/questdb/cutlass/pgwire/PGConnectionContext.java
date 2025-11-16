@@ -733,6 +733,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         pipelineCurrentEntry.setStateBind(true);
+        pipelineCurrentEntry.setSecurityContext(sqlExecutionContext.getSecurityContext());
 
         // "bind" is asking us to create portal. We take the conservative approach and assume
         // that the prepared statement and the portal can be interleaved in the pipeline. For that
@@ -774,7 +775,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         pe.compileNewSQL(
                                 pipelineCurrentEntry.getSqlText(),
                                 engine,
-                                sqlExecutionContext,
                                 taiPool,
                                 false
                         );
@@ -989,6 +989,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // mark the pipeline entry as received "parse" message
         pipelineCurrentEntry.setStateParse(true);
+        pipelineCurrentEntry.setSecurityContext(sqlExecutionContext.getSecurityContext());
 
         // 'Parse'
         // "statement name" length
@@ -1062,6 +1063,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     pipelineCurrentEntry.ofCachedSelect(utf16SqlText, tas);
                     cachedStatus = CACHE_HIT_SELECT_VALID;
                     sqlExecutionContext.resetFlags();
+                    pipelineCurrentEntry.getEntryExecutionContext().resetFlags();
                 } else {
                     tas.close();
                     cachedStatus = CACHE_HIT_SELECT_INVALID;
@@ -1069,11 +1071,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
 
+
         if (cachedStatus != CACHE_HIT_INSERT_VALID && cachedStatus != CACHE_HIT_SELECT_VALID) {
             // When parameter types are not supplied we will assume that the types are STRING
             // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
             // compiling the SQL from scratch.
-            pipelineCurrentEntry.compileNewSQL(utf16SqlText, engine, sqlExecutionContext, taiPool, false);
+            pipelineCurrentEntry.compileNewSQL(utf16SqlText, engine, taiPool, false);
         }
         msgParseCreateNamedStatement(namedStatement);
     }
@@ -1110,12 +1113,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         sqlExecutionContext.initNow();
         CharSequence activeSqlText = sqlTextCharacterStore.toImmutable();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
             if (pipelineCurrentEntry == null) {
                 pipelineCurrentEntry = entryPool.next();
                 pipelineCurrentEntry.ofEmpty(activeSqlText);
                 pipelineCurrentEntry.setStateExec(true);
             }
+            pipelineCurrentEntry.setSecurityContext(sqlExecutionContext.getSecurityContext());
+            pipelineCurrentEntry.getEntryExecutionContext().initNow();
+            compiler.compileBatch(activeSqlText, pipelineCurrentEntry.getEntryExecutionContext(), batchCallback);
         } catch (Throwable ex) {
             if (transactionState == IN_TRANSACTION) {
                 transactionState = ERROR_TRANSACTION;
@@ -1552,10 +1557,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             entry.put(queryText);
             pipelineCurrentEntry.ofSimpleQuery(
                     entry.toImmutable(),
-                    pipelineCurrentEntry.getEntryExecutionContext(),
+                    sqlExecutionContext,
                     cq,
                     taiPool
             );
+            pipelineCurrentEntry.setSecurityContext(sqlExecutionContext.getSecurityContext());
             transactionState = pipelineCurrentEntry.msgExecute(
                     transactionState,
                     taiPool,
@@ -1592,7 +1598,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             CharacterStoreEntry entry = sqlTextCharacterStore.newEntry();
             entry.put(sqlText);
             try {
-                pipelineCurrentEntry.ofSimpleCachedSelect(entry.toImmutable(), sqlExecutionContext, tas);
+                pipelineCurrentEntry.ofSimpleCachedSelect(entry.toImmutable(), tas);
                 return false; // we will not compile the query
             } catch (Throwable e) {
                 // a bad thing happened while we tried to use cached query
