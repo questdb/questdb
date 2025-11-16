@@ -2022,6 +2022,15 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     flushAndAssertError(
                             sender,
                             "12345 is out bounds of column type: DECIMAL(76,73)");
+
+                    sender.reset();
+                    // Decimal mustn't lose precision when scaled.
+                    sender.table(tableName)
+                            .decimalColumn("x", Decimal256.fromLong(123456, 4))
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "converting 12.3456 to DECIMAL(6,3) will result in loss of precision");
                 }
             }
         });
@@ -2142,7 +2151,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "arr_nullable_test";
                 serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, l1 LONG, a1 DOUBLE[], " +
-                        "a2 DOUBLE[][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "a2 DOUBLE[][], a3 DOUBLE[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -2158,6 +2167,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .longColumn("l1", 123098948)
                             .doubleArray("a1", (double[]) null)
                             .doubleArray("a2", (double[][]) null)
+                            .doubleArray("a3", (double[][][]) null)
                             .at(100000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
@@ -2166,8 +2176,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 serverMain.assertSql("select * from " + tableName,
                         """
-                                x\tl1\ta1\ta2\tts
-                                42i\t123098948\tnull\tnull\t1970-01-02T03:46:40.000000Z
+                                x\tl1\ta1\ta2\ta3\tts
+                                42i\t123098948\tnull\tnull\tnull\t1970-01-02T03:46:40.000000Z
                                 """);
             }
         });
