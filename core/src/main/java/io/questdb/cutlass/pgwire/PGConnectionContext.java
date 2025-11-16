@@ -926,9 +926,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         lo = hi + 1;
         pipelineCurrentEntry.setReturnRowCountLimit(pipelineCurrentEntry.getInt(lo, msgLimit, "could not read max rows value"));
         pipelineCurrentEntry.setStateExec(true);
-        sqlExecutionContext.initNow();
+        pipelineCurrentEntry.getEntryExecutionContext().initNow();
         transactionState = pipelineCurrentEntry.msgExecute(
-                sqlExecutionContext,
                 transactionState,
                 taiPool,
                 pendingWriters,
@@ -1395,7 +1394,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             while (true) {
                 try {
                     pipelineCurrentEntry.msgSync(
-                            sqlExecutionContext,
+                            pipelineCurrentEntry.getEntryExecutionContext(),
                             pendingWriters,
                             responseUtf8Sink
                     );
@@ -1410,7 +1409,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                                 .put(", requiredSize=").put(Math.max(e.getBytesRequired(), 2 * responseUtf8Sink.getSendBufferSize()))
                                 .put(']');
                         pipelineCurrentEntry.msgSync(
-                                sqlExecutionContext,
+                                pipelineCurrentEntry.getEntryExecutionContext(),
                                 pendingWriters,
                                 responseUtf8Sink
                         );
@@ -1552,12 +1551,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             entry.put(queryText);
             pipelineCurrentEntry.ofSimpleQuery(
                     entry.toImmutable(),
-                    sqlExecutionContext,
+                    pipelineCurrentEntry.getEntryExecutionContext(),
                     cq,
                     taiPool
             );
             transactionState = pipelineCurrentEntry.msgExecute(
-                    sqlExecutionContext,
                     transactionState,
                     taiPool,
                     pendingWriters,

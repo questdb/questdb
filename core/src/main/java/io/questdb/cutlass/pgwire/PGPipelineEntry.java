@@ -45,6 +45,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompiledQuery;
@@ -212,6 +216,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // that all state is cleared before returning the instance to the pool
     private TypesAndInsert tai = null;
     private TypesAndSelect tas = null;
+    // Per-entry execution context and bind variable service to avoid parameter conflicts
+    // when multiple queries are batched (multiple Bind/Execute pairs sent before Sync)
+    private SqlExecutionContext entryExecutionContext;
+    private BindVariableService entryBindVariableService;
 
     public PGPipelineEntry(CairoEngine engine) {
         this.isCopy = false;
@@ -221,6 +229,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.outParameterTypeDescriptionTypes = new LongList();
         this.pgResultSetColumnTypes = new IntList();
         this.pgResultSetColumnNames = new ObjList<>();
+
+        // Create per-entry execution context and bind variable service
+        this.entryBindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
+        final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 0);
+        ctx.with(DenyAllSecurityContext.INSTANCE, entryBindVariableService, engine.getConfiguration().getRandom());
+        this.entryExecutionContext = ctx;
     }
 
     public void bindPortalName(Utf8String portalName) {
@@ -337,6 +351,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         tas = null;
         arrayViewPool.clear();
         utf8StringSink.clear();
+        // Clear per-entry execution context bind variables
+        entryBindVariableService.clear();
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws PGMessageProcessingException {
@@ -425,6 +441,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             error = true;
         }
         return errorMessageSink;
+    }
+
+    public SqlExecutionContext getEntryExecutionContext() {
+        return entryExecutionContext;
     }
 
     public int getInt(long address, long msgLimit, CharSequence errorMessage) throws PGMessageProcessingException {
@@ -576,7 +596,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     // return transaction state
     public int msgExecute(
-            SqlExecutionContext sqlExecutionContext,
             int transactionState,
             WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
@@ -592,7 +611,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             stateParseExecuted = false;
             return transactionState;
         }
-        sqlExecutionContext.containsSecret(sqlTextHasSecret);
+        entryExecutionContext.containsSecret(sqlTextHasSecret);
         try {
             switch (this.sqlType) {
                 case CompiledQuery.EXPLAIN:
@@ -603,7 +622,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case CompiledQuery.UPDATE:
                 case CompiledQuery.ALTER:
                     copyParameterValuesToBindVariableService(
-                            sqlExecutionContext,
+                            entryExecutionContext,
                             bindVariableCharacterStore,
                             directUtf8String,
                             binarySequenceParamsPool
@@ -616,17 +635,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case CompiledQuery.EXPLAIN:
                 case CompiledQuery.SELECT:
                 case CompiledQuery.PSEUDO_SELECT:
-                    msgExecuteSelect(sqlExecutionContext, transactionState, pendingWriters, taiPool, maxRecompileAttempts);
+                    msgExecuteSelect(entryExecutionContext, transactionState, pendingWriters, taiPool, maxRecompileAttempts);
                     break;
                 case CompiledQuery.INSERT:
                 case CompiledQuery.INSERT_AS_SELECT:
-                    msgExecuteInsert(sqlExecutionContext, transactionState, pendingWriters, writerSource, taiPool);
+                    msgExecuteInsert(entryExecutionContext, transactionState, pendingWriters, writerSource, taiPool);
                     break;
                 case CompiledQuery.UPDATE:
-                    msgExecuteUpdate(sqlExecutionContext, transactionState, pendingWriters, tempSequence, taiPool);
+                    msgExecuteUpdate(entryExecutionContext, transactionState, pendingWriters, tempSequence, taiPool);
                     break;
                 case CompiledQuery.ALTER:
-                    msgExecuteDDL(sqlExecutionContext, transactionState, tempSequence, taiPool);
+                    msgExecuteDDL(entryExecutionContext, transactionState, tempSequence, taiPool);
                     break;
                 case CompiledQuery.DEALLOCATE:
                     // this is supposed to work instead of sending 'close' message via the
@@ -644,7 +663,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     return IMPLICIT_TRANSACTION;
                 case CompiledQuery.CREATE_TABLE_AS_SELECT:
                     engine.getMetrics().pgWireMetrics().markStart();
-                    try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
+                    try (OperationFuture fut = operation.execute(entryExecutionContext, tempSequence)) {
                         fut.await();
                         sqlAffectedRowCount = fut.getAffectedRowsCount();
                     } finally {
@@ -657,7 +676,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     // fall-through
                 case CompiledQuery.DROP:
                     engine.getMetrics().pgWireMetrics().markStart();
-                    try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
+                    try (OperationFuture fut = operation.execute(entryExecutionContext, tempSequence)) {
                         fut.await();
                     } finally {
                         engine.getMetrics().pgWireMetrics().markComplete();
@@ -669,7 +688,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     if (!empty) {
                         engine.getMetrics().pgWireMetrics().markStart();
                         try {
-                            engine.execute(sqlText, sqlExecutionContext);
+                            engine.execute(sqlText, entryExecutionContext);
                         } finally {
                             engine.getMetrics().pgWireMetrics().markComplete();
                         }
