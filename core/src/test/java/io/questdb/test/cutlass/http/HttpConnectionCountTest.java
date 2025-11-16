@@ -30,6 +30,7 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.Services;
+import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
@@ -38,7 +39,6 @@ import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
-import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
 import io.questdb.mp.SOCountDownLatch;
@@ -69,7 +69,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.PropertyKey.*;
 import static io.questdb.cutlass.http.HttpResponseSink.HTTP_TOO_MANY_REQUESTS;
 import static io.questdb.test.tools.TestUtils.unchecked;
-import static java.net.HttpURLConnection.*;
+import static java.net.HttpURLConnection.HTTP_NO_CONTENT;
+import static java.net.HttpURLConnection.HTTP_OK;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
@@ -326,7 +327,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                                 server.bind(new HttpRequestHandlerFactory() {
                                     @Override
                                     public ObjHashSet<String> getUrls() {
-                                        return new ObjHashSet<>(){{
+                                        return new ObjHashSet<>() {{
                                             add(EXEC_TEST_URI);
                                         }};
                                     }
