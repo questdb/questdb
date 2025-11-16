@@ -4944,6 +4944,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             ORDER BY timestamp DESC""",
                     56,
                     "Invalid column");
+
+            assertException("""
+                            SELECT * FROM trades
+                            WHERE timestamp = CAST((SELECT max(timestamp) FROM "trades") AS LONG)
+                            ORDER BY timestamp DESC;""",
+                    39, "there is no matching function");
         });
     }
 
