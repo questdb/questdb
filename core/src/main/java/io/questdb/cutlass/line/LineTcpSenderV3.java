@@ -66,7 +66,7 @@ public class LineTcpSenderV3 extends LineTcpSenderV2 implements ArrayBufferAppen
 
     @Override
     public Sender decimalColumn(CharSequence name, Decimal256 value) {
-        if (value.isNull()) {
+        if (value == null || value.isNull()) {
             return this;
         }
         writeFieldName(name)
@@ -83,7 +83,7 @@ public class LineTcpSenderV3 extends LineTcpSenderV2 implements ArrayBufferAppen
 
     @Override
     public Sender decimalColumn(CharSequence name, Decimal128 value) {
-        if (value.isNull()) {
+        if (value == null || value.isNull()) {
             return this;
         }
         writeFieldName(name)
@@ -98,7 +98,7 @@ public class LineTcpSenderV3 extends LineTcpSenderV2 implements ArrayBufferAppen
 
     @Override
     public Sender decimalColumn(CharSequence name, Decimal64 value) {
-        if (value.isNull()) {
+        if (value == null || value.isNull()) {
             return this;
         }
         writeFieldName(name)

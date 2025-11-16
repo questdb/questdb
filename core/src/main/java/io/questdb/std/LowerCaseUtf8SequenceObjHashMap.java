@@ -36,7 +36,7 @@ import java.util.Arrays;
  * Note: this class is case-insensitive only for ASCII chars.
  */
 public class LowerCaseUtf8SequenceObjHashMap<V> extends AbstractLowerCaseUtf8SequenceHashSet {
-    private final ObjList<Utf8String> list;
+    private final ObjList<Utf8Sequence> list;
     private V[] values;
 
     public LowerCaseUtf8SequenceObjHashMap() {
@@ -64,7 +64,7 @@ public class LowerCaseUtf8SequenceObjHashMap<V> extends AbstractLowerCaseUtf8Seq
         return valueAt(keyIndex(key));
     }
 
-    public ObjList<Utf8String> keys() {
+    public ObjList<Utf8Sequence> keys() {
         return list;
     }
 
@@ -77,36 +77,35 @@ public class LowerCaseUtf8SequenceObjHashMap<V> extends AbstractLowerCaseUtf8Seq
     }
 
     public boolean putAt(int index, Utf8Sequence key, V value) {
-        assert value != null;
-        if (index < 0) {
-            values[-index - 1] = value;
-            return false;
-        }
         Utf8String onHeapKey = Utf8String.newInstance(key);
-        keys[index] = onHeapKey;
-        hashCodes[index] = Utf8s.lowerCaseAsciiHashCode(key);
-        values[index] = value;
-        if (--free == 0) {
-            rehash();
-        }
-        list.add(onHeapKey);
-        return true;
+        return putImmutableAt(index, onHeapKey, value);
     }
 
     public boolean putAt(int index, Utf8String key, V value) {
-        assert value != null;
-        if (index < 0) {
-            values[-index - 1] = value;
-            return false;
-        }
-        keys[index] = key;
-        hashCodes[index] = Utf8s.lowerCaseAsciiHashCode(key);
-        values[index] = value;
-        if (--free == 0) {
-            rehash();
-        }
-        list.add(key);
-        return true;
+        return putImmutableAt(index, key, value);
+    }
+
+    /**
+     * Stores a key-value pair in the map without creating a defensive copy of the key.
+     * <p>
+     * Unlike {@link #put(Utf8Sequence, Object)}, this method stores the exact key instance provided,
+     * preserving its identity.
+     * <p>
+     * <b>Important lifecycle requirement:</b> The caller must guarantee that:
+     * <ul>
+     *     <li>The key instance will not be modified after insertion</li>
+     *     <li>The key instance will remain valid (e.g., backing memory not freed) while stored in the map</li>
+     *     <li>The key instance will not be reused or returned to a pool until removed from the map</li>
+     * </ul>
+     * <p>
+     * Use {@link #put(Utf8Sequence, Object)} instead when the key lifecycle cannot be guaranteed.
+     *
+     * @param key   the immutable key whose exact instance will be stored (must not be null)
+     * @param value the value to associate with the key (must not be null)
+     * @return true if this is a new entry, false if an existing entry was updated
+     */
+    public boolean putImmutable(Utf8Sequence key, V value) {
+        return putImmutableAt(keyIndex(key), key, value);
     }
 
     public void removeAt(int index) {
@@ -127,6 +126,22 @@ public class LowerCaseUtf8SequenceObjHashMap<V> extends AbstractLowerCaseUtf8Seq
 
     public V valueQuick(int index) {
         return get(list.getQuick(index));
+    }
+
+    private boolean putImmutableAt(int index, Utf8Sequence key, V value) {
+        assert value != null;
+        if (index < 0) {
+            values[-index - 1] = value;
+            return false;
+        }
+        keys[index] = key;
+        hashCodes[index] = Utf8s.lowerCaseAsciiHashCode(key);
+        values[index] = value;
+        if (--free == 0) {
+            rehash();
+        }
+        list.add(key);
+        return true;
     }
 
     @SuppressWarnings({"unchecked"})
