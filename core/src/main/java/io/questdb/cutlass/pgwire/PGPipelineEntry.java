@@ -353,6 +353,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8StringSink.clear();
         // Clear per-entry execution context bind variables
         entryBindVariableService.clear();
+        setSecurityContext(DenyAllSecurityContext.INSTANCE);
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws PGMessageProcessingException {
@@ -1013,9 +1014,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlReturnRowCountLimit = rowCountLimit;
     }
 
-    public PGPipelineEntry setSecurityContext(SecurityContext securityContext) {
+    public void setSecurityContext(SecurityContext securityContext) {
         ((SqlExecutionContextImpl) (entryExecutionContext)).with(securityContext, entryBindVariableService);
-        return this;
     }
 
     public void setStateBind(boolean stateBind) {
