@@ -1695,7 +1695,7 @@ public class JoinTest extends AbstractCairoTest {
             String selectWithEmpty = "(" +
                     "select * from TabA " +
                     "cross join TabC )";
-            assertSkipToAndCalculateSize(selectWithEmpty, 0, true);
+            assertSkipToAndCalculateSize(selectWithEmpty, 0);
 
             // async filter
             String selectWithFilter = "(" +
@@ -1703,39 +1703,39 @@ public class JoinTest extends AbstractCairoTest {
                     "cross join TabB " +
                     "where TabA.x = 0 " +
                     "and TabB.x = 1 )";
-            assertSkipToAndCalculateSize(selectWithFilter, 25, true);
+            assertSkipToAndCalculateSize(selectWithFilter, 25);
 
             // async filter with limit
             String selectWithFilterWithLimit = "( select * from " +
                     "(select * from TabA where x = 0 limit 3) " +
                     "cross join " +
                     "(select * from TabB where x = 1 limit 3) )";
-            assertSkipToAndCalculateSize(selectWithFilterWithLimit, 9, true);
+            assertSkipToAndCalculateSize(selectWithFilterWithLimit, 9);
 
             // fwd page frame
             String selectWithFwdFrame = "(select * from TabA " +
                     "cross join TabB )";
-            assertSkipToAndCalculateSize(selectWithFwdFrame, 100, true);
+            assertSkipToAndCalculateSize(selectWithFwdFrame, 100);
 
             // bwd page frame
             String selectWithBwdFrame = "(select * from " +
                     "(select * from TabA order by ts desc) " +
                     "cross join " +
                     "(select * from TabB order by ts desc) )";
-            assertSkipToAndCalculateSize(selectWithBwdFrame, 100, true);
+            assertSkipToAndCalculateSize(selectWithBwdFrame, 100);
 
             String selectWithIntervalFwdFrame = "( select * from " +
                     "(select * from TabA where ts > 1) " +
                     "cross join " +
                     "(select * from TabB where ts > 15L*60L*1000000L) )";
-            assertSkipToAndCalculateSize(selectWithIntervalFwdFrame, 81, true);
+            assertSkipToAndCalculateSize(selectWithIntervalFwdFrame, 81);
 
             // bwd page frame
             String selectWithIntervalBwdFrame = "( select * from " +
                     "(select * from TabA where ts > 1 order by ts desc ) " +
                     "cross join " +
                     "(select * from TabB where ts > 15L*60L*1000000L order by ts desc) )";
-            assertSkipToAndCalculateSize(selectWithIntervalBwdFrame, 81, true);
+            assertSkipToAndCalculateSize(selectWithIntervalBwdFrame, 81);
         });
     }
 
@@ -3605,7 +3605,7 @@ public class JoinTest extends AbstractCairoTest {
                             "2\tb\t1970-01-01T00:00:00.000002Z\tnull\t\t\n" +
                             "1\ta\t1970-01-01T00:00:00.000001Z\t1\ta\t1970-01-01T00:00:00.000001Z\n" +
                             "1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z\n",
-                    "ts1###DESC", true, false
+                    "ts1###DESC", true
             );
 
             assertHashJoinSql(
@@ -3616,7 +3616,7 @@ public class JoinTest extends AbstractCairoTest {
                             "null\t\t\t3\tc\t1970-01-01T00:00:00.000005Z\n" +
                             "null\t\t\t1\tf\t1970-01-01T00:00:00.000002Z\n" +
                             "null\t\t\t1\tg\t1970-01-01T00:00:00.000003Z\n",
-                    "ts1###DESC", true, false
+                    "ts1###DESC", true
             );
             assertHashJoinSql(
                     "select * from t1 full join t2 on j = i and (s2 ~ '[abde]') order by ts1 desc, s2",
@@ -3627,7 +3627,7 @@ public class JoinTest extends AbstractCairoTest {
                             "null\t\t\t3\tc\t1970-01-01T00:00:00.000005Z\n" +
                             "null\t\t\t1\tf\t1970-01-01T00:00:00.000002Z\n" +
                             "null\t\t\t1\tg\t1970-01-01T00:00:00.000003Z\n",
-                    "ts1###DESC", true, false
+                    "ts1###DESC", true
             );
         });
     }
@@ -3649,7 +3649,6 @@ public class JoinTest extends AbstractCairoTest {
                             "4\td\tnull\t\n" +
                             "5\te\tnull\t\n",
                     null,
-                    false,
                     false
             );
             assertHashJoinSql(
@@ -3661,7 +3660,6 @@ public class JoinTest extends AbstractCairoTest {
                             "null\t\t5\te\n" +
                             "null\t\t4\td\n",
                     null,
-                    false,
                     false
             );
             assertHashJoinSql(
@@ -3676,7 +3674,6 @@ public class JoinTest extends AbstractCairoTest {
                             "null\t\t5\te\n" +
                             "null\t\t4\td\n",
                     null,
-                    false,
                     false
             );
         });
@@ -6076,7 +6073,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select * from TabB where x = 1 " +
                     "union all " +
                     "select * from taBC where x = 0 )";
-            assertSkipToAndCalculateSize(selectWithFilter, 10, true);
+            assertSkipToAndCalculateSize(selectWithFilter, 10);
 
             // async filter with limit
             String selectWithFilterAndLimit = "( " +
@@ -6086,7 +6083,7 @@ public class JoinTest extends AbstractCairoTest {
                     "(select * from TabB where x = 1 limit 3) " +
                     "union all " +
                     "(select * from taBC where x = 0 limit 1) )";
-            assertSkipToAndCalculateSize(selectWithFilterAndLimit, 6, true);
+            assertSkipToAndCalculateSize(selectWithFilterAndLimit, 6);
 
             // fwd page frame
             String selectWithFwdFrame = "(select * from TabA union all select * from TabB union all select * from TabC)";
@@ -6098,7 +6095,7 @@ public class JoinTest extends AbstractCairoTest {
                     "union all " +
                     "(select * from TabB order by ts desc) " +
                     "union all (select * from tabC order by ts desc) )";
-            assertSkipToAndCalculateSize(selectWithBwdFrame, 20, true);
+            assertSkipToAndCalculateSize(selectWithBwdFrame, 20);
 
             // interval fwd page frame
             String selectWithIntervalFwdFrame = "(" +
@@ -6107,7 +6104,7 @@ public class JoinTest extends AbstractCairoTest {
                     "(select * from TabB where ts > 15L*60L*1000000L) " +
                     "union all " +
                     "(select * from TabC where ts > 1))";
-            assertSkipToAndCalculateSize(selectWithIntervalFwdFrame, 18, true);
+            assertSkipToAndCalculateSize(selectWithIntervalFwdFrame, 18);
 
             String selectWithIntervalBwdFrame = "(" +
                     "(select * from TabA where ts > 1 order by ts desc) " +
@@ -6115,7 +6112,7 @@ public class JoinTest extends AbstractCairoTest {
                     "(select * from TabB where ts > 15L*60L*1000000L order by ts desc) " +
                     "union all " +
                     "(select * from TabC where ts > 1 order by ts desc))";
-            assertSkipToAndCalculateSize(selectWithIntervalBwdFrame, 18, true);
+            assertSkipToAndCalculateSize(selectWithIntervalBwdFrame, 18);
         });
     }
 
@@ -6140,17 +6137,17 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     private void assertHashJoinSql(String query, String expected) throws Exception {
-        assertHashJoinSql(query, expected, null, false, false);
+        assertHashJoinSql(query, expected, null, false);
     }
 
-    private void assertHashJoinSql(String query, String expected, String ts, boolean supportRandom, boolean expectSize) throws Exception {
-        assertQueryFullFatNoLeakCheck(expected, query, ts, supportRandom, expectSize, true);
+    private void assertHashJoinSql(String query, String expected, String ts, boolean supportRandom) throws Exception {
+        assertQueryFullFatNoLeakCheck(expected, query, ts, supportRandom, false, true);
         printSql(query, true);
         TestUtils.assertEquals("full fat join", expected, sink);
     }
 
     private void assertHashJoinSqlWithRandomAccess(String query, String expected) throws Exception {
-        assertHashJoinSql(query, expected, null, true, false);
+        assertHashJoinSql(query, expected, null, true);
     }
 
     private void assertRepeatedJoinQuery(String query, String left, boolean expectSize) throws Exception {
@@ -6158,11 +6155,7 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     private void assertSkipToAndCalculateSize(String select, int size) throws Exception {
-        assertSkipToAndCalculateSize(select, size, true);
-    }
-
-    private void assertSkipToAndCalculateSize(String select, int size, boolean expectedSize) throws Exception {
-        assertQueryNoLeakCheck("count\n" + size + "\n", "select count(*) from " + select, null, false, expectedSize);
+        assertQueryNoLeakCheck("count\n" + size + "\n", "select count(*) from " + select, null, false, true);
 
         RecordCursor.Counter counter = new RecordCursor.Counter();
 
