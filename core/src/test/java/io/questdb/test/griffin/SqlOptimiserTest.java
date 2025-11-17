@@ -5041,6 +5041,24 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testUnaryMinusInAggregateFunction() throws Exception {
+        assertMemoryLeak(() -> {
+                    execute(tradesDdl);
+                    assertPlanNoLeakCheck(
+                            "SELECT symbol, sum(-amount) FROM trades;",
+                            "Async Group By workers: 1\n" +
+                                    "  keys: [symbol]\n" +
+                                    "  values: [sum(-amount)]\n" +
+                                    "  filter: null\n" +
+                                    "    PageFrame\n" +
+                                    "        Row forward scan\n" +
+                                    "        Frame forward scan on: trades\n"
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testUnionQueryOnForMinMaxFirstLastOnAggregateTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");

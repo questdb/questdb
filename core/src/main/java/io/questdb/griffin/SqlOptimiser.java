@@ -2589,8 +2589,8 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
-    private boolean isIntegerConstant(ExpressionNode n) {
-        if (n.type != CONSTANT) {
+    private boolean isIntegerConstant(@Nullable ExpressionNode n) {
+        if (n == null || n.type != CONSTANT) {
             return false;
         }
 
