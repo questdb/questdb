@@ -1602,11 +1602,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Attempts to detect the "markout horizon" pattern in a cross-join with ORDER BY.
      * <p>
      * The pattern consists of:
-     * 1. A cross-join between a table with a designated timestamp and an arithmetic sequence
-     * 2. An ORDER BY clause on the sum of the timestamp and the sequence element
+     * <ol>
+     *   <li>A cross-join between a table with a designated timestamp and an arithmetic sequence
+     *   <li>An ORDER BY clause on the sum of the timestamp and the sequence element
+     * </ol>
      * <p>
      * Detection isn't foolproof and can result in false positives. We do not attempt it unless
      * the hint {@value SqlHints#MARKOUT_HORIZON_HINT} is present in the query.
+     * <p>
+     * These are the prerequisites for the Markout Horizon optimization to kick in:
+     * <ol>
+     *  <li><code>markout_horizon(lhs rhs)</code> hint is present
+     *  <li>LHS (master) cursor supports random access
+     *  <li>RHS (slave) cursor originates from the <code>long_sequence</code> function
+     *  <li>LHS table has a designated timestamp column
+     *  <li><code>ORDER BY</code> is a sum of two operands
+     *  <li>one operand is the designated timestamp of LHS table
+     *  <li>the other operand is a column of the RHS table
+     * </ol>
      *
      * @param masterAlias         alias for the master LHS of the join
      * @param masterModel         QueryModel for the LHS of the join
