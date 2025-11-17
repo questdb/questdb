@@ -5046,13 +5046,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     execute(tradesDdl);
                     assertPlanNoLeakCheck(
                             "SELECT symbol, sum(-amount) FROM trades;",
-                            "Async Group By workers: 1\n" +
-                                    "  keys: [symbol]\n" +
-                                    "  values: [sum(-amount)]\n" +
-                                    "  filter: null\n" +
-                                    "    PageFrame\n" +
-                                    "        Row forward scan\n" +
-                                    "        Frame forward scan on: trades\n"
+                            """
+                                    Async Group By workers: 1
+                                      keys: [symbol]
+                                      values: [sum(-amount)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                    """
                     );
                 }
         );
