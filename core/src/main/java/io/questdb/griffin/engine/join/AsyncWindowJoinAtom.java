@@ -258,7 +258,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                         for (int j = 0, n = groupByFunctions.size(); i < n; i++) {
                             final var func = groupByFunctions.getQuick(j);
                             final var funcArg = ((UnaryFunction) func).getArg();
-                            final int index = findFunctionIndex(ownerGroupByFunctionArgs, funcArg);
+                            final int index = findFunctionIndex(workerFunctionArgs, funcArg);
                             if (index < 0) {
                                 workerFunctionArgs.add(funcArg);
                             }
