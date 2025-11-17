@@ -73,6 +73,7 @@ import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
@@ -3577,7 +3578,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                 }
 
-                                // check all the group by function can be vectorized
+                                // check that all group by functions can be vectorized
                                 boolean allVectorized = joinFilter == null;
                                 if (allVectorized) {
                                     if (aggregateCols.size() == 0) {
@@ -3585,7 +3586,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     } else {
                                         windowJoinAggColumnVectorizedCheck.of(joinMetadata, splitIndex);
                                         for (int j = 0, m = groupByFunctions.size(); j < m; j++) {
-                                            if (!groupByFunctions.getQuick(j).supportsBatchComputation()) {
+                                            // Copying to column sink relies on UnaryFunction cast, hence the extra instanceof check.
+                                            if (!groupByFunctions.getQuick(j).supportsBatchComputation() || !(groupByFunctions.getQuick(j) instanceof UnaryFunction)) {
                                                 allVectorized = false;
                                                 break;
                                             }
