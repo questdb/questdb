@@ -334,8 +334,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.SqlOptimiser.concatFilters;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -3521,21 +3521,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     while (!sqlNodeStack.isEmpty() || nn != null) {
                                         if (nn != null) {
                                             if (Chars.equals(nn.token, "=")) {
-                                                ExpressionNode l = nn.lhs;
-                                                ExpressionNode r = nn.rhs;
+                                                final ExpressionNode l = nn.lhs;
+                                                final ExpressionNode r = nn.rhs;
                                                 if (l != null && r != null && l.type == ExpressionNode.LITERAL && r.type == ExpressionNode.LITERAL) {
-                                                    int index1 = joinMetadata.getColumnIndexQuiet(l.token);
-                                                    int index2 = joinMetadata.getColumnIndexQuiet(r.token);
-                                                    if (index1 >= 0 && index2 >= 0) {
-                                                        boolean index1IsSymbol = joinMetadata.getColumnType(index1) == ColumnType.SYMBOL;
-                                                        boolean index2IsSymbol = joinMetadata.getColumnType(index2) == ColumnType.SYMBOL;
-                                                        boolean index1IsLeft = index1 < columnSplit;
-                                                        boolean index2IsLeft = index2 < columnSplit;
+                                                    final int leftColumnIndex = joinMetadata.getColumnIndexQuiet(l.token);
+                                                    final int rightColumnIndex = joinMetadata.getColumnIndexQuiet(r.token);
+                                                    if (leftColumnIndex >= 0 && rightColumnIndex >= 0) {
+                                                        final boolean leftIsSymbol = joinMetadata.getColumnType(leftColumnIndex) == ColumnType.SYMBOL;
+                                                        final boolean rightIsSymbol = joinMetadata.getColumnType(rightColumnIndex) == ColumnType.SYMBOL;
+                                                        final boolean leftIsMaster = leftColumnIndex < columnSplit;
+                                                        final boolean rightIsMaster = rightColumnIndex < columnSplit;
                                                         isLeft = parent != null && parent.lhs == nn;
 
-                                                        if (index1IsSymbol && index2IsSymbol && index1IsLeft != index2IsLeft) {
-                                                            leftSymbolIndex = index1IsLeft ? index1 : index2;
-                                                            rightSymbolIndex = index1IsLeft ? index2 : index1;
+                                                        if (leftIsSymbol && rightIsSymbol && leftIsMaster != rightIsMaster) {
+                                                            leftSymbolIndex = leftIsMaster ? leftColumnIndex : rightColumnIndex;
+                                                            rightSymbolIndex = leftIsMaster ? rightColumnIndex : leftColumnIndex;
                                                             rightSymbolIndex = rightSymbolIndex - columnSplit;
                                                             break;
                                                         }
