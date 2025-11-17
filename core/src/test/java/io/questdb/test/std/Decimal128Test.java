@@ -51,19 +51,19 @@ public class Decimal128Test {
     }
 
     @Test
-    public void testAddZeroMaxValue() {
-        Decimal128 b = new Decimal128(0, 0, 0);
-        b.add(Decimal128.MAX_VALUE);
-        Assert.assertEquals(b, Decimal128.MAX_VALUE);
-    }
-
-    @Test
     public void testAddRescaleB() {
         Decimal128 a = new Decimal128(0, 100, 2);
         Decimal128 b = new Decimal128(0, 1, 0);
         a.add(b);
         Assert.assertEquals(200, a.getLow());
         Assert.assertEquals(2, a.getScale());
+    }
+
+    @Test
+    public void testAddZeroMaxValue() {
+        Decimal128 b = new Decimal128(0, 0, 0);
+        b.add(Decimal128.MAX_VALUE);
+        Assert.assertEquals(b, Decimal128.MAX_VALUE);
     }
 
     @Test
@@ -1015,11 +1015,34 @@ public class Decimal128Test {
             }
         }
 
-        printPowerTable(table);
+        printTable("POWERS_TEN_TABLE", table);
 
         long[][] currentTable = Decimal128.getPowersTenTable();
         for (int i = 0; i < Decimal128.MAX_PRECISION; i++) {
             for (int j = 0; j < 9 * 2; j++) {
+                Assert.assertEquals(table[i][j], currentTable[i][j]);
+            }
+        }
+    }
+
+    @Test
+    public void testPowersTenTableThresholds() {
+        BigDecimal max = new BigDecimal(10).pow(Decimal128.MAX_PRECISION).subtract(BigDecimal.ONE);
+        BigDecimal bd = BigDecimal.TEN;
+        long[][] table = new long[Decimal128.MAX_PRECISION - 1][2];
+        for (int i = 0; i < Decimal128.MAX_PRECISION - 1; i++) {
+            BigDecimal maxCurrent = max.divide(bd, RoundingMode.DOWN);
+            Decimal128 d = Decimal128.fromBigDecimal(maxCurrent);
+            table[i][0] = d.getHigh();
+            table[i][1] = d.getLow();
+            bd = bd.multiply(BigDecimal.TEN);
+        }
+
+        printTable("POWERS_TEN_TABLE_THRESHOLDS", table);
+
+        long[][] currentTable = Decimal128.getPowersTenThresholdsTable();
+        for (int i = 0; i < Decimal128.MAX_PRECISION - 1; i++) {
+            for (int j = 0; j < 2; j++) {
                 Assert.assertEquals(table[i][j], currentTable[i][j]);
             }
         }
@@ -1051,6 +1074,12 @@ public class Decimal128Test {
         a.rescale(2);
         Assert.assertEquals(-1000, a.getLow());
         Assert.assertEquals(2, a.getScale());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleOverflow() {
+        Decimal128 a = new Decimal128(0, 1, 0);
+        a.rescale(38);
     }
 
     @Test(expected = NumericException.class)
@@ -1910,13 +1939,14 @@ public class Decimal128Test {
         Assert.assertEquals(5.0, accumulator.toDouble(), 0.01);
     }
 
-    private void printPowerTable(long[][] table) {
-        System.err.println("    private static final long[][] POWERS_TEN_TABLE = new long[][]{");
+    private void printTable(String name, long[][] table) {
+        long l = table[0].length;
+        System.err.printf("    private static final long[][] %s = new long[][]{\n", name);
         for (int i = 0, n = table.length; i < n; i++) {
             System.err.print("            {");
-            for (int j = 0; j < 9 * 2; j++) {
+            for (int j = 0; j < l; j++) {
                 System.err.printf("%dL", table[i][j]);
-                if (j < (9 * 2 - 1)) {
+                if (j < (l - 1)) {
                     System.err.print(", ");
                 }
             }

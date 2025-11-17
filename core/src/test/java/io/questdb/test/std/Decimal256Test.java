@@ -62,7 +62,7 @@ public class Decimal256Test {
 
     @Test
     public void testAdditionFuzz() {
-        Rnd rnd = TestUtils.generateRandom(null);
+        Rnd rnd = TestUtils.generateRandom(null, 1052545574291713L, 1763338068366L);
 
         // Number of test iterations
         final int ITERATIONS = 10_000;
@@ -73,7 +73,12 @@ public class Decimal256Test {
             Decimal256 b = rnd.nextDecimal256();
 
             // Test addition accuracy
-            testAdditionAccuracy(a, b, i);
+            try {
+                testAdditionAccuracy(a, b, i);
+            } catch (Exception e) {
+                System.out.printf("Test thrown at iter %d\n", i);
+                throw e;
+            }
         }
     }
 
@@ -2087,11 +2092,36 @@ public class Decimal256Test {
             }
         }
 
-        printPowerTable(table);
+        printTable("POWERS_TEN_TABLE", table);
 
         long[][] currentTable = Decimal256.getPowersTenTable();
         for (int i = 0; i < Decimals.MAX_PRECISION; i++) {
             for (int j = 0; j < 9 * 4; j++) {
+                Assert.assertEquals(table[i][j], currentTable[i][j]);
+            }
+        }
+    }
+
+    @Test
+    public void testPowersTenTableThresholds() {
+        BigDecimal max = new BigDecimal(10).pow(76).subtract(BigDecimal.ONE);
+        BigDecimal bd = BigDecimal.TEN;
+        long[][] table = new long[Decimals.MAX_PRECISION - 1][4];
+        for (int i = 0; i < Decimals.MAX_PRECISION - 1; i++) {
+            BigDecimal maxCurrent = max.divide(bd, RoundingMode.DOWN);
+            Decimal256 d = Decimal256.fromBigDecimal(maxCurrent);
+            table[i][0] = d.getHh();
+            table[i][1] = d.getHl();
+            table[i][2] = d.getLh();
+            table[i][3] = d.getLl();
+            bd = bd.multiply(BigDecimal.TEN);
+        }
+
+        printTable("POWERS_TEN_TABLE_THRESHOLDS", table);
+
+        long[][] currentTable = Decimal256.getPowersTenThresholdsTable();
+        for (int i = 0; i < Decimals.MAX_PRECISION - 1; i++) {
+            for (int j = 0; j < 4; j++) {
                 Assert.assertEquals(table[i][j], currentTable[i][j]);
             }
         }
@@ -2167,6 +2197,12 @@ public class Decimal256Test {
         m.copyFrom(Decimal256.NULL_VALUE);
         m.rescale(10);
         Assert.assertTrue(m.isNull());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleOverflow() {
+        Decimal256 a = new Decimal256(0, 0, 0, 1, 0);
+        a.rescale(76);
     }
 
     @Test(expected = NumericException.class)
@@ -2737,13 +2773,14 @@ public class Decimal256Test {
         Assert.assertEquals("-0.75", result.toString());
     }
 
-    private void printPowerTable(long[][] table) {
-        System.err.println("    private static final long[][] POWERS_TEN_TABLE = new long[][]{");
+    private void printTable(String name, long[][] table) {
+        int l = table[0].length;
+        System.err.printf("    private static final long[][] %s = new long[][]{\n", name);
         for (int i = 0, n = table.length; i < n; i++) {
             System.err.print("            {");
-            for (int j = 0; j < 9 * 4; j++) {
+            for (int j = 0; j < l; j++) {
                 System.err.printf("%dL", table[i][j]);
-                if (j < (9 * 4 - 1)) {
+                if (j < (l - 1)) {
                     System.err.print(", ");
                 }
             }

@@ -102,6 +102,45 @@ public class Decimal128 implements Sinkable, Decimal {
             {54210108624275221L, -5527149226598858752L, 108420217248550443L, 7392445620511834112L, 162630325872825665L, 1865296393912975360L, 216840434497100886L, -3661852832685883392L, 271050543121376108L, -9189002059284742144L, 325260651745651330L, 3730592787825950720L, 379470760369926551L, -1796556438772908032L, 433680868994201773L, -7323705665371766784L, 487890977618476995L, 5595889181738926080L},
             {542101086242752217L, 68739955140067328L, 1084202172485504434L, 137479910280134656L, 1626303258728256651L, 206219865420201984L, 2168404344971008868L, 274959820560269312L, 2710505431213761085L, 343699775700336640L, 3252606517456513302L, 412439730840403968L, 3794707603699265519L, 481179685980471296L, 4336808689942017736L, 549919641120538624L, 4878909776184769953L, 618659596260605952L}
     };
+    private static final long[][] POWERS_TEN_TABLE_THRESHOLDS = new long[][]{
+            {542101086242752217L, 68739955140067327L},
+            {54210108624275221L, -5527149226598858753L},
+            {5421010862427522L, 3136633892082024447L},
+            {542101086242752L, 4003012203950112767L},
+            {54210108624275L, 4089650035136921599L},
+            {5421010862427L, -8814407033341083649L},
+            {542101086242L, -4570789518076018689L},
+            {54210108624L, 5076944270305263615L},
+            {5421010862L, 7886392056514347007L},
+            {542101086L, 4477988020393345023L},
+            {54210108L, -6930898827444486145L},
+            {5421010L, -2537764290115403777L},
+            {542101L, 1590897978359414783L},
+            {54210L, 2003764205206896639L},
+            {5421L, 200376420520689663L},
+            {542L, 1864712049423024127L},
+            {54L, 3875820019684212735L},
+            {5L, 7766279631452241919L},
+            {0L, -8446744073709551617L},
+            {0L, 999999999999999999L},
+            {0L, 99999999999999999L},
+            {0L, 9999999999999999L},
+            {0L, 999999999999999L},
+            {0L, 99999999999999L},
+            {0L, 9999999999999L},
+            {0L, 999999999999L},
+            {0L, 99999999999L},
+            {0L, 9999999999L},
+            {0L, 999999999L},
+            {0L, 99999999L},
+            {0L, 9999999L},
+            {0L, 999999L},
+            {0L, 99999L},
+            {0L, 9999L},
+            {0L, 999L},
+            {0L, 99L},
+            {0L, 9L}
+    };
     private static final long[] TEN_POWERS_TABLE_HIGH = { // High 64-bit part of the ten powers table from 10^20 to 10^38
             5L, // 10^20
             54L, // 10^21
@@ -163,70 +202,6 @@ public class Decimal128 implements Sinkable, Decimal {
             -5527149226598858752L, // 10^36
             68739955140067328L, // 10^37
             687399551400673280L, // 10^38
-    };
-    // High 64-bit part of the maximum value that 10^x can multiply without overflowing
-    private static final long[] TEN_POWERS_TABLE_THRESHOLD_HIGH = {
-            9223372036854775807L, // 10^0
-            922337203685477580L, // 10^1
-            92233720368547758L, // 10^2
-            9223372036854775L, // 10^3
-            922337203685477L, // 10^4
-            92233720368547L, // 10^5
-            9223372036854L, // 10^6
-            922337203685L, // 10^7
-            92233720368L, // 10^8
-            9223372036L, // 10^9
-            922337203L, // 10^10
-            92233720L, // 10^11
-            9223372L, // 10^12
-            922337L, // 10^13
-            92233L, // 10^14
-            9223L, // 10^15
-            922L, // 10^16
-            92L, // 10^17
-            9L, // 10^18
-    };
-    // Low 64-bit part of the maximum value that 10^x can multiply without overflowing
-    private static final long[] TEN_POWERS_TABLE_THRESHOLD_LOW = {
-            -9223372036854775808L, // 10^0
-            -4611686018427387904L, // 10^1
-            1383505805528216371L, // 10^2
-            -3550998234189088687L, // 10^3
-            -7733797452902729516L, // 10^4
-            -4462728560032183275L, // 10^5
-            -4135621670745128651L, // 10^6
-            8809809869780262942L, // 10^7
-            -8342391049876749514L, // 10^8
-            -2678913512358630113L, // 10^9
-            -5801914573348728497L, // 10^10
-            6798506172148947796L, // 10^11
-            679850617214894779L, // 10^12
-            3757333876463399801L, // 10^13
-            -5158289834466525505L, // 10^14
-            6862868646037168095L, // 10^15
-            6220310086716582294L, // 10^16
-            4311379823413568552L, // 10^17
-            4120486797083267178L, // 10^18
-            -1432625727662628444L, // 10^19
-            1701411834604692317L, // 10^20
-            170141183460469231L, // 10^21
-            17014118346046923L, // 10^22
-            1701411834604692L, // 10^23
-            170141183460469L, // 10^24
-            17014118346046L, // 10^25
-            1701411834604L, // 10^26
-            170141183460L, // 10^27
-            17014118346L, // 10^28
-            1701411834L, // 10^29
-            170141183L, // 10^30
-            17014118L, // 10^31
-            1701411L, // 10^32
-            170141L, // 10^33
-            17014L, // 10^34
-            1701L, // 10^35
-            170L, // 10^36
-            17L, // 10^37
-            1L, // 10^38
     };
     private final DecimalKnuthDivider divider = new DecimalKnuthDivider();
     private long high;  // High 64 bits
@@ -485,6 +460,11 @@ public class Decimal128 implements Sinkable, Decimal {
     @TestOnly
     public static long[][] getPowersTenTable() {
         return POWERS_TEN_TABLE;
+    }
+
+    @TestOnly
+    public static long[][] getPowersTenThresholdsTable() {
+        return POWERS_TEN_TABLE_THRESHOLDS;
     }
 
     /**
@@ -1626,13 +1606,16 @@ public class Decimal128 implements Sinkable, Decimal {
             return;
         }
 
+        if (n >= 38) {
+            throw NumericException.instance().put("Overflow in scale adjustment: multiplying by 10^" + n + " exceeds 128-bit capacity");
+        }
+
         // For larger powers, break down into smaller chunks, first check the threshold to ensure that we won't overflow
         // and then apply either a fast multiplyBy64 or multiplyBy128 depending on high/low.
         // The bound checks for these tables already happens at the beginning of the method.
-        final long thresholdH = n >= TEN_POWERS_TABLE_THRESHOLD_HIGH.length ? 0 : TEN_POWERS_TABLE_THRESHOLD_HIGH[n];
-        final long thresholdL = TEN_POWERS_TABLE_THRESHOLD_LOW[n];
+        final long[] thresholds = POWERS_TEN_TABLE_THRESHOLDS[n - 1];
 
-        if (high > thresholdH || (high == thresholdH && unsignedLongCompare(low, thresholdL))) {
+        if (high > thresholds[0] || (high == thresholds[0] && unsignedLongCompare(low, thresholds[1]))) {
             throw NumericException.instance().put("Overflow in scale adjustment: multiplying by 10^" + n + " exceeds 128-bit capacity");
         }
 
