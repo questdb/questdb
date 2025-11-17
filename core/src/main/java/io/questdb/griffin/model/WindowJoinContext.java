@@ -46,6 +46,7 @@ public class WindowJoinContext implements Mutable {
     private int loKind = PRECEDING;
     private int loKindPos;
     private QueryModel parentModel;
+    private int prevailingPos;
 
     @Override
     public void clear() {
@@ -62,6 +63,7 @@ public class WindowJoinContext implements Mutable {
         hiKind = CURRENT;
         hiKindPos = 0;
         includePrevailing = false;
+        prevailingPos = 0;
         parentModel = null;
     }
 
@@ -76,6 +78,7 @@ public class WindowJoinContext implements Mutable {
                 hiKind == that.hiKind &&
                 hiKindPos == that.hiKindPos &&
                 includePrevailing == that.includePrevailing &&
+                prevailingPos == that.prevailingPos &&
                 lo == that.lo &&
                 loExprPos == that.loExprPos &&
                 loExprTimeUnit == that.loExprTimeUnit &&
@@ -137,10 +140,14 @@ public class WindowJoinContext implements Mutable {
         return parentModel;
     }
 
+    public int getPrevailingPos() {
+        return prevailingPos;
+    }
+
     @Override
     public int hashCode() {
         return Objects.hash(hi, hiExpr, hiExprPos, hiExprTimeUnit, hiKind, hiKindPos,
-                includePrevailing, lo, loExpr, loExprPos, loExprTimeUnit, loKind, loKindPos);
+                includePrevailing, prevailingPos, lo, loExpr, loExprPos, loExprTimeUnit, loKind, loKindPos);
     }
 
     public boolean isIncludePrevailing() {
@@ -165,8 +172,9 @@ public class WindowJoinContext implements Mutable {
         this.hiKindPos = hiKindPos;
     }
 
-    public void setIncludePrevailing(boolean includePrevailing) {
+    public void setIncludePrevailing(boolean includePrevailing, int pos) {
         this.includePrevailing = includePrevailing;
+        this.prevailingPos = pos;
     }
 
     public void setLo(long lo) {
@@ -184,10 +192,6 @@ public class WindowJoinContext implements Mutable {
 
     public void setLoKind(int loKind, int loKindPos) {
         this.loKind = loKind;
-        this.loKindPos = loKindPos;
-    }
-
-    public void setLoKindPos(int loKindPos) {
         this.loKindPos = loKindPos;
     }
 

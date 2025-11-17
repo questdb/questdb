@@ -3325,15 +3325,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 final WindowJoinContext context = slaveModel.getWindowJoinContext();
-                                if (context.isIncludePrevailing()) {
-                                    throw SqlException.position(0).put("including prevailing is not supported in WINDOW joins");
-                                }
+                                // already validated by SqlOptimiser
+                                assert !context.isIncludePrevailing();
                                 final TimestampDriver timestampDriver = getTimestampDriver(masterMetadata.getTimestampType());
                                 long hi = context.getHi();
-                                long lo = context.getLo();
                                 if (context.getHiExprTimeUnit() != 0) {
                                     hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
                                 }
+                                long lo = context.getLo();
                                 if (context.getLoExprTimeUnit() != 0) {
                                     lo = timestampDriver.from(lo, context.getLoExprTimeUnit());
                                 }
@@ -3578,7 +3577,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                 }
 
-                                // check all the groupby function can be vectorized
+                                // check all the group by function can be vectorized
                                 boolean allVectorized = joinFilter == null;
                                 if (allVectorized) {
                                     if (aggregateCols.size() == 0) {

@@ -2973,9 +2973,9 @@ public class SqlParser {
             tok = optTok(lexer);
             if (tok != null) {
                 if (isIncludingPrevailing(lexer, tok)) {
-                    context.setIncludePrevailing(true);
+                    context.setIncludePrevailing(true, lexer.lastTokenPosition());
                 } else if (isExcludingPrevailing(lexer, tok)) {
-                    context.setIncludePrevailing(false);
+                    context.setIncludePrevailing(false, lexer.lastTokenPosition());
                 } else {
                     lexer.unparseLast();
                 }
