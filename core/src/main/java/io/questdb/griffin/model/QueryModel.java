@@ -250,6 +250,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
+    // Window join must be the last join in the query; no other join types can follow it.
+    // This constraint is enforced at the SQL parser stage.
     public static boolean isWindowJoin(QueryModel model) {
         if (model == null) {
             return false;

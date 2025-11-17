@@ -112,7 +112,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final long slaveTsScale;
     private final long valueSizeInBytes;
     private final boolean vectorized;
-    private boolean onlyFiltered = false;
+    private boolean masterFilterAndNoAggregate = false;
 
     public AsyncWindowJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -489,7 +489,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
         }
 
-        // now we can init join filters
+        // now we can init groupBy functions and join filters
         final SymbolTableSource slaveSymbolTableSource = ownerSlaveTimeFrameHelper.getSymbolTableSource();
         joinSymbolTableSource.of(masterSymbolTableSource, slaveSymbolTableSource);
 
@@ -522,8 +522,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
     }
 
-    public boolean isOnlyFiltered() {
-        return onlyFiltered;
+    public boolean isMasterFilterAndNoAggregate() {
+        return masterFilterAndNoAggregate;
     }
 
     public boolean isVectorized() {
@@ -548,8 +548,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         perWorkerLocks.releaseSlot(slotId);
     }
 
-    public void setOnlyFiltered(boolean onlyFiltered) {
-        this.onlyFiltered = onlyFiltered;
+    public void setMasterFilterAndNoAggregate(boolean masterFilterAndNoAggregate) {
+        this.masterFilterAndNoAggregate = masterFilterAndNoAggregate;
     }
 
     @Override

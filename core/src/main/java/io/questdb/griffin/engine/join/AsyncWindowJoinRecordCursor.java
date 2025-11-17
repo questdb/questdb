@@ -221,8 +221,8 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private void calculateSizeFiltered(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-        boolean old = masterFrameSequence.getAtom().isOnlyFiltered();
-        masterFrameSequence.getAtom().setOnlyFiltered(true);
+        boolean old = masterFrameSequence.getAtom().isMasterFilterAndNoAggregate();
+        masterFrameSequence.getAtom().setMasterFilterAndNoAggregate(true);
         try {
             if (frameIndex == -1) {
                 fetchNextFrame();
@@ -255,7 +255,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             }
         } finally {
-            masterFrameSequence.getAtom().setOnlyFiltered(old);
+            masterFrameSequence.getAtom().setMasterFilterAndNoAggregate(old);
         }
     }
 

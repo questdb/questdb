@@ -417,7 +417,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     public static boolean ALLOW_FUNCTION_MEMOIZATION = true;
     private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
     private final BytecodeAssembler asm = new BytecodeAssembler();
-    private final ColCheckVisitor colCheckVisitor = new ColCheckVisitor();
     private final CairoConfiguration configuration;
     private final ObjList<TableColumnMetadata> deferredWindowMetadata = new ObjList<>();
     private final boolean enableJitDebug;
@@ -459,6 +458,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final boolean validateSampleByFillType;
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
+    private final WindowJoinColCheckVisitor windowJoinColCheckVisitor = new WindowJoinColCheckVisitor();
     // a bitset of string/symbol columns forced to be serialised as varchar
     private final BitSet writeStringAsVarcharA = new BitSet();
     private final BitSet writeStringAsVarcharB = new BitSet();
@@ -3345,22 +3345,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // - Intermediate window joins return metadata combining master metadata + aggregated columns from current slave model
                                 // - The last window join returns metadata mapped according to the final projection
                                 final boolean isLastWindowJoin = i + 1 == n;
-                                // validate columns in aggregate model
-                                final QueryModel aggModel = context.getParentModel();
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, masterMetadata.getTimestampIndex());
                                 masterAlias = null;
-                                final ObjList<QueryColumn> cols = aggModel.getColumns();
                                 ObjList<QueryColumn> aggregateCols;
                                 final int splitIndex = masterMetadata.getColumnCount();
                                 int timestampIndex = -1;
                                 IntList columnIndex = null;
+                                final QueryModel aggModel = context.getParentModel();
+                                final ObjList<QueryColumn> columns = aggModel.getColumns();
 
                                 if (!isLastWindowJoin) {
                                     // intermediate window join - keep only aggregate columns
                                     aggregateCols = new ObjList<>();
-                                    for (int j = 0, m = cols.size(); j < m; j++) {
-                                        ExpressionNode ast = cols.get(j).getAst();
+                                    for (int j = 0, m = columns.size(); j < m; j++) {
+                                        ExpressionNode ast = columns.get(j).getAst();
                                         if (!functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
                                             int colIndex = joinMetadata.getColumnIndexQuiet(ast.token);
                                             if (colIndex >= splitIndex) {
@@ -3368,25 +3367,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             }
                                         } else {
                                             sqlNodeStack.clear();
-                                            colCheckVisitor.of(joinMetadata);
-                                            traversalAlgo.traverse(ast, colCheckVisitor);
-                                            if (colCheckVisitor.shouldInclude) {
-                                                QueryColumn column = cols.get(j);
-                                                aggregateCols.add(cols.get(j));
+                                            windowJoinColCheckVisitor.of(joinMetadata);
+                                            traversalAlgo.traverse(ast, windowJoinColCheckVisitor);
+                                            if (windowJoinColCheckVisitor.shouldInclude) {
+                                                QueryColumn column = columns.get(j);
+                                                aggregateCols.add(columns.get(j));
                                                 aggModel.replaceColumn(j, SqlUtil.nextColumn(queryColumnPool, expressionNodePool, column.getAlias(), column.getAlias(), ast.position));
-                                            } else if (colCheckVisitor.hasIncludeCol) {
+                                            } else if (windowJoinColCheckVisitor.hasIncludeCol) {
                                                 throw SqlException.position(ast.position).put("WINDOW join aggregate function cannot reference columns from multiple models");
                                             }
                                         }
                                     }
                                     // TODO: If aggregateCols size is empty, we can theoretically skip this intermediate join
                                 } else {
-                                    aggregateCols = cols;
-                                    columnIndex = new IntList(cols.size());
+                                    aggregateCols = columns;
+                                    columnIndex = new IntList(columns.size());
                                     int groupByCnt = 0;
 
-                                    for (int j = 0, m = cols.size(); j < m; j++) {
-                                        final ExpressionNode ast = cols.get(j).getAst();
+                                    // validate columns in aggregate model
+                                    for (int j = 0, m = columns.size(); j < m; j++) {
+                                        final ExpressionNode ast = columns.get(j).getAst();
                                         if (!functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
                                             int colIndex = joinMetadata.getColumnIndexQuiet(ast.token);
                                             if (colIndex == -1) {
@@ -3420,11 +3420,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
 
                                 // assemble groupBy function
-                                final ObjList<QueryColumn> columns = aggModel.getColumns();
                                 keyTypes.clear();
                                 valueTypes.clear();
                                 listColumnFilterA.clear();
-                                final int columnCount = columns.size();
+                                final int columnCount = aggregateCols.size();
                                 groupByFunctions = new ObjList<>(columnCount);
                                 tempInnerProjectionFunctions.clear();
                                 tempOuterProjectionFunctions.clear();
@@ -3454,6 +3453,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         validateSampleByFillType,
                                         aggregateCols
                                 );
+
                                 if (!isLastWindowJoin) {
                                     final GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(joinMetadata, splitIndex);
                                     for (int j = 0, m = outerProjectionMetadata.getColumnCount(); j < m; j++) {
@@ -3464,9 +3464,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     outerProjectionMetadata.setTimestampIndex(timestampIndex);
                                 }
 
+                                // handle constant join filter
                                 ExpressionNode node = slaveModel.getOuterJoinExpressionClause();
                                 final ExpressionNode constFilterExpr = model.getConstWhereClause();
-                                boolean alwaysTrue = false;
+                                boolean constantTrue = false;
                                 if (constFilterExpr != null && isLastWindowJoin) {
                                     Function constFilter = functionParser.parseFunction(constFilterExpr, null, executionContext);
                                     try {
@@ -3477,9 +3478,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         if (constFilter.isConstant()) {
                                             if (!constFilter.getBool(null)) {
                                                 ObjList<QueryColumn> groupByCols = new ObjList<>();
-                                                for (int k = 0, m = cols.size(); k < m; k++) {
-                                                    if (functionParser.getFunctionFactoryCache().isGroupBy(cols.get(k).getAst().token)) {
-                                                        groupByCols.add(cols.get(k));
+                                                for (int k = 0, m = columns.size(); k < m; k++) {
+                                                    if (functionParser.getFunctionFactoryCache().isGroupBy(columns.get(k).getAst().token)) {
+                                                        groupByCols.add(columns.get(k));
                                                     }
                                                 }
 
@@ -3495,13 +3496,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 Misc.free(joinMetadata);
                                                 return factory;
                                             } else {
-                                                alwaysTrue = true;
+                                                constantTrue = true;
                                             }
                                         }
                                     } finally {
                                         Misc.free(constFilter);
                                     }
-                                    if (!alwaysTrue) {
+                                    if (!constantTrue) {
                                         node = concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, node, constFilterExpr);
                                     }
                                     model.setConstWhereClause(null);
@@ -3557,8 +3558,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         }
                                     }
 
-                                    // extract success!
                                     if (leftSymbolIndex != -1) {
+                                        // extract success!
                                         if (parent != null && Chars.equals(parent.token, "and")) {
                                             if (isLeft) {
                                                 parent.copyFrom(parent.rhs);
@@ -3582,13 +3583,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 final boolean masterSupportsPageFrames = master.supportsPageFrameCursor()
                                         || (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor());
                                 if (parallelWindowJoinEnabled && masterSupportsPageFrames && slave.supportsTimeFrameCursor()) {
-                                    // steal master filter
+                                    // try to steal master filter
                                     CompiledFilter compiledFilter = null;
                                     MemoryCARW bindVarMemory = null;
                                     ObjList<Function> bindVarFunctions = null;
                                     Function masterFilter = null;
                                     ExpressionNode masterFilterExpr = null;
-                                    if (master.supportsFilterStealing()) {
+                                    if (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor()) {
                                         RecordCursorFactory filterFactory = master;
                                         master = master.getBaseFactory();
                                         compiledFilter = filterFactory.getCompiledFilter();
@@ -3600,9 +3601,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
 
                                     master.setSmalePageFrameRows(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
-
-
                                     if (leftSymbolIndex != -1) {
+                                        assert rightSymbolIndex != -1;
                                         master = new AsyncWindowJoinFastRecordCursorFactory(
                                                 executionContext.getCairoEngine(),
                                                 asm,
@@ -7645,30 +7645,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         void operate(ObjectPool<ExpressionNode> pool, QueryModel model);
     }
 
-    private static class ColCheckVisitor implements PostOrderTreeTraversalAlgo.Visitor {
-        boolean hasIncludeCol;
-        RecordMetadata metadata;
-        boolean shouldInclude;
-
-        @Override
-        public void visit(ExpressionNode node) {
-            if (node.type == LITERAL) {
-                int columnIndex = metadata.getColumnIndexQuiet(node.token);
-                if (columnIndex == -1) {
-                    shouldInclude = false;
-                } else {
-                    hasIncludeCol = true;
-                }
-            }
-        }
-
-        void of(RecordMetadata metadata) {
-            this.metadata = metadata;
-            this.shouldInclude = true;
-            this.hasIncludeCol = false;
-        }
-    }
-
     private static class RecordCursorFactoryStub implements RecordCursorFactory {
         final ExecutionModel model;
         RecordCursorFactory factory;
@@ -7713,6 +7689,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (factory != null) {
                 sink.child(factory);
             }
+        }
+    }
+
+    private static class WindowJoinColCheckVisitor implements PostOrderTreeTraversalAlgo.Visitor {
+        boolean hasIncludeCol;
+        RecordMetadata metadata;
+        boolean shouldInclude;
+
+        @Override
+        public void visit(ExpressionNode node) {
+            if (node.type == LITERAL) {
+                int columnIndex = metadata.getColumnIndexQuiet(node.token);
+                if (columnIndex == -1) {
+                    shouldInclude = false;
+                } else {
+                    hasIncludeCol = true;
+                }
+            }
+        }
+
+        void of(RecordMetadata metadata) {
+            this.metadata = metadata;
+            this.shouldInclude = true;
+            this.hasIncludeCol = false;
         }
     }
 
