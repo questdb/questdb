@@ -1665,6 +1665,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (lastSeenOrderByModel == null) {
             return null;
         }
+        // Ensure there's only one sort column
+        if (lastSeenOrderByModel.getOrderBy().size() != 1) {
+            return null;
+        }
         ExpressionNode orderByNode = lastSeenOrderByModel.getOrderBy().getQuick(0);
 
         // The ORDER BY node may be a column alias (LITERAL) - resolve it to the actual expression

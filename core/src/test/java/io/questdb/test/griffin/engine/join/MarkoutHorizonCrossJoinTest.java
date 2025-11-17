@@ -431,6 +431,23 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultipleOrderByColumnsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+            String query = """
+                    WITH offsets AS (
+                        SELECT 1_000_000 * (x-1) usec_offs
+                        FROM long_sequence(3)
+                    )
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs, id desc;
+                    """;
+            assertMarkoutHorizonJoinNotUsed(query);
+        });
+    }
+
+    @Test
     public void testNegativeOffsets() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
@@ -820,7 +837,11 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
         TestUtils.assertEquals(resultWithoutHint, resultWithHint);
     }
 
-    private void assertMarkoutHorizonJoinUsed(String query) throws Exception {
+    private void assertMarkoutHorizonJoinNotUsed(String query) throws Exception {
+        assertMarkoutHorizonJoinUsage(query, false);
+    }
+
+    private void assertMarkoutHorizonJoinUsage(String query, boolean expectUsage) throws Exception {
         // Get the execution plan
         try (RecordCursorFactory factory = select("EXPLAIN " + query)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -828,8 +849,16 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                 sink.clear();
                 CursorPrinter.println(cursor, factory.getMetadata(), sink);
                 // Check that it contains our optimization
-                TestUtils.assertContains(sink, "Markout Horizon Join");
+                if (expectUsage) {
+                    TestUtils.assertContains(sink, "Markout Horizon Join");
+                } else {
+                    TestUtils.assertNotContains(sink, "Markout Horizon Join");
+                }
             }
         }
+    }
+
+    private void assertMarkoutHorizonJoinUsed(String query) throws Exception {
+        assertMarkoutHorizonJoinUsage(query, true);
     }
 }
