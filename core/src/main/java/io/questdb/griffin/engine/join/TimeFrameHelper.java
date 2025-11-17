@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
@@ -46,6 +47,40 @@ public class TimeFrameHelper {
     public TimeFrameHelper(long lookahead, long scale) {
         this.lookahead = lookahead;
         this.scale = scale;
+    }
+
+    // Finds the first (most-left) value in the given interval.
+    @TestOnly
+    public long binarySearch(long timestampLo, long timestampHi, long rowLo) {
+        long low = rowLo;
+        long high = timeFrame.getRowHi() - 1;
+        while (high - low > 65) {
+            final long mid = (low + high) >>> 1;
+            recordAtRowIndex(mid);
+            long midTimestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
+
+            if (midTimestamp < timestampLo) {
+                low = mid;
+            } else if (midTimestamp > timestampLo) {
+                high = mid;
+            } else {
+                // In case of multiple values equal to timestampLo, find the first one
+                return binarySearchScrollUp(low, mid, timestampLo);
+            }
+        }
+
+        // scan up
+        for (long r = low; r < high + 1; r++) {
+            recordAtRowIndex(r);
+            long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
+            if (timestamp >= timestampLo) {
+                if (timestamp <= timestampHi) {
+                    return r;
+                }
+                return Long.MIN_VALUE;
+            }
+        }
+        return Long.MIN_VALUE;
     }
 
     // finds the first row id within the given interval and load the record to it
@@ -201,39 +236,6 @@ public class TimeFrameHelper {
         }
         bookmarkedFrameIndex = -1;
         bookmarkedRowId = Long.MIN_VALUE;
-    }
-
-    // Finds the first (most-left) value in the given interval.
-    private long binarySearch(long timestampLo, long timestampHi, long rowLo) {
-        long low = rowLo;
-        long high = timeFrame.getRowHi() - 1;
-        while (high - low > 65) {
-            final long mid = (low + high) >>> 1;
-            recordAtRowIndex(mid);
-            long midTimestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
-
-            if (midTimestamp < timestampLo) {
-                low = mid;
-            } else if (midTimestamp > timestampLo) {
-                high = mid;
-            } else {
-                // In case of multiple values equal to timestampLo, find the first one
-                return binarySearchScrollUp(low, mid, timestampLo);
-            }
-        }
-
-        // scan up
-        for (long r = low; r < high + 1; r++) {
-            recordAtRowIndex(r);
-            long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
-            if (timestamp >= timestampLo) {
-                if (timestamp <= timestampHi) {
-                    return r;
-                }
-                return Long.MIN_VALUE;
-            }
-        }
-        return Long.MIN_VALUE;
     }
 
     private long binarySearchScrollUp(long low, long high, long timestampLo) {
