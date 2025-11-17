@@ -112,7 +112,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final long slaveTsScale;
     private final long valueSizeInBytes;
     private final boolean vectorized;
-    private boolean masterFilterAndNoAggregate = false;
+    private boolean skipAggregation = false;
 
     public AsyncWindowJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -522,8 +522,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
     }
 
-    public boolean isMasterFilterAndNoAggregate() {
-        return masterFilterAndNoAggregate;
+    public boolean isSkipAggregation() {
+        return skipAggregation;
     }
 
     public boolean isVectorized() {
@@ -548,8 +548,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         perWorkerLocks.releaseSlot(slotId);
     }
 
-    public void setMasterFilterAndNoAggregate(boolean masterFilterAndNoAggregate) {
-        this.masterFilterAndNoAggregate = masterFilterAndNoAggregate;
+    public void setSkipAggregation(boolean skipAggregation) {
+        this.skipAggregation = skipAggregation;
     }
 
     @Override

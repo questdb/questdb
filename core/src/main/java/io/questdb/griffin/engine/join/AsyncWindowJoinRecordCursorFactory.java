@@ -506,7 +506,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             final long filteredRowCount = rows.size();
             task.setFilteredRowCount(filteredRowCount);
 
-            if (filteredRowCount > 0 && !atom.isMasterFilterAndNoAggregate()) {
+            if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
                 final long joinWindowLo = atom.getJoinWindowLo();
                 final long joinWindowHi = atom.getJoinWindowHi();
@@ -645,7 +645,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             final long filteredRowCount = rows.size();
             task.setFilteredRowCount(filteredRowCount);
 
-            if (filteredRowCount > 0 && !atom.isMasterFilterAndNoAggregate()) {
+            if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
                 final long joinWindowLo = atom.getJoinWindowLo();
                 final long joinWindowHi = atom.getJoinWindowHi();
