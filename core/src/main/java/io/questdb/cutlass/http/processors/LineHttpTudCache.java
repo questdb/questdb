@@ -83,7 +83,7 @@ public class LineHttpTudCache implements QuietCloseable {
     }
 
     public void clear() {
-        ObjList<Utf8String> keys = tableUpdateDetails.keys();
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
             WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
@@ -101,7 +101,7 @@ public class LineHttpTudCache implements QuietCloseable {
     @Override
     public void close() {
         // Close happens when HTTP connection is closed
-        ObjList<Utf8String> keys = tableUpdateDetails.keys();
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
             WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
@@ -116,7 +116,7 @@ public class LineHttpTudCache implements QuietCloseable {
         boolean droppedTableFound;
         do {
             droppedTableFound = false;
-            ObjList<Utf8String> keys = tableUpdateDetails.keys();
+            ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
             for (int i = 0, n = keys.size(); i < n; i++) {
                 Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
                 WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
@@ -184,7 +184,7 @@ public class LineHttpTudCache implements QuietCloseable {
     }
 
     public void reset() {
-        ObjList<Utf8String> keys = tableUpdateDetails.keys();
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
             WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
