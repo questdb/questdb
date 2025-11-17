@@ -80,6 +80,7 @@ import org.junit.Test;
 import java.util.HashMap;
 
 public class OrderedMapTest extends AbstractCairoTest {
+
     @Test
     public void testAllTypesFixedSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
