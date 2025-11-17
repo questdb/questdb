@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
@@ -43,6 +44,17 @@ public class Decimal256Constant extends Decimal256Function implements ConstantFu
         this.hl = hl;
         this.lh = lh;
         this.ll = ll;
+    }
+
+    @Override
+    public boolean equals(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof Decimal256Constant that) {
+            return this.hh == that.hh && this.type == that.type && this.hl == that.hl && this.lh == that.lh && this.ll == that.ll;
+        }
+        return false;
     }
 
     @Override

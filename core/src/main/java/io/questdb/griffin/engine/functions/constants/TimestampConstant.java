@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -42,6 +43,17 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
 
     public static ConstantFunction newInstance(long value, int timestampType) {
         return value != Numbers.LONG_NULL ? new TimestampConstant(value, timestampType) : ColumnType.getTimestampDriver(timestampType).getTimestampConstantNull();
+    }
+
+    @Override
+    public boolean equals(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof TimestampConstant that) {
+            return this.value == that.value;
+        }
+        return false;
     }
 
     @Override

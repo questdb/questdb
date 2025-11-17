@@ -917,6 +917,41 @@ public class WindowJoinTest extends AbstractCairoTest {
                     true,
                     true
             );
+
+            expect = replaceTimestampSuffix("sym\tprice\tts\tmax\tsum\tavg\tmin\tavg1\n" +
+                    "AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t2023-01-01T09:01:00.000000Z\t601.5\t200.5\t2023-01-01T08:59:00.000000Z\t201.5\n" +
+                    "AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t2023-01-01T09:02:00.000000Z\t701.5\t233.83333333333334\t2023-01-01T09:00:00.000000Z\t234.83333333333334\n" +
+                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t2023-01-01T09:03:00.000000Z\t801.5\t267.1666666666667\t2023-01-01T09:01:00.000000Z\t268.1666666666667\n" +
+                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t2023-01-01T09:04:00.000000Z\t999.5\t333.1666666666667\t2023-01-01T09:02:00.000000Z\t334.1666666666667\n" +
+                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t2023-01-01T09:05:00.000000Z\t1100.5\t366.8333333333333\t2023-01-01T09:03:00.000000Z\t367.8333333333333\n" +
+                    "GOOGL\t300.0\t2023-01-01T09:05:00.000000Z\t2023-01-01T09:06:00.000000Z\t1002.5\t334.1666666666667\t2023-01-01T09:04:00.000000Z\t335.1666666666667\n" +
+                    "GOOGL\t301.0\t2023-01-01T09:06:00.000000Z\t2023-01-01T09:07:00.000000Z\t904.5\t301.5\t2023-01-01T09:05:00.000000Z\t302.5\n" +
+                    "AAPL\t103.0\t2023-01-01T09:07:00.000000Z\t2023-01-01T09:08:00.000000Z\t905.5\t301.8333333333333\t2023-01-01T09:06:00.000000Z\t302.8333333333333\n" +
+                    "MSFT\t202.0\t2023-01-01T09:08:00.000000Z\t2023-01-01T09:08:00.000000Z\t703.0\t351.5\t2023-01-01T09:07:00.000000Z\t352.5\n" +
+                    "GOOGL\t302.0\t2023-01-01T09:09:00.000000Z\t2023-01-01T09:08:00.000000Z\t401.5\t401.5\t2023-01-01T09:08:00.000000Z\t402.5\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Async Window Join workers: 1\n" +
+                            "      vectorized: true\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.*, max(p.ts), sum(p.price + 100), avg(p.price + 100), min(p.ts), avg(p.price + 101) " +
+                            "from trades t " +
+                            "window join prices p " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    false
+            );
         });
     }
 
