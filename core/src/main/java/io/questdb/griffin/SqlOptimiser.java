@@ -4247,6 +4247,7 @@ public class SqlOptimiser implements Mutable {
                         && functionParser.getFunctionFactoryCache().isGroupBy(agg.token)
                         && Chars.equalsIgnoreCase("sum", agg.token)
                         && op.type == OPERATION
+                        && op.paramCount == 2
         ) {
             if (Chars.equals(op.token, '*')) { // sum(x*10) == sum(x)*10
                 if (isIntegerConstant(op.rhs) && isSimpleIntegerColumn(op.lhs, model)) {
