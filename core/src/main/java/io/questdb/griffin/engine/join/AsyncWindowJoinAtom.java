@@ -232,7 +232,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
                     final var func = ownerGroupByFunctions.getQuick(i);
                     final var funcArg = ((UnaryFunction) func).getArg();
-                    final int index = ownerGroupByFunctionArgs.indexOf(funcArg);
+                    final int index = findFunctionIndex(ownerGroupByFunctionArgs, funcArg);
                     if (index < 0) {
                         ownerGroupByFunctionArgs.add(funcArg);
                         groupByFunctionToColumnIndex.add(ownerGroupByFunctionArgs.size() - 1);
@@ -258,7 +258,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                         for (int j = 0, n = groupByFunctions.size(); i < n; i++) {
                             final var func = groupByFunctions.getQuick(j);
                             final var funcArg = ((UnaryFunction) func).getArg();
-                            final int index = workerFunctionArgs.indexOf(funcArg);
+                            final int index = findFunctionIndex(workerFunctionArgs, funcArg);
                             if (index < 0) {
                                 workerFunctionArgs.add(funcArg);
                             }
@@ -602,5 +602,14 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+    }
+
+    static int findFunctionIndex(ObjList<Function> lists, Function target) {
+        for (int i = 0, n = lists.size(); i < n; i++) {
+            if (target.equals(lists.getQuick(i))) {
+                return i;
+            }
+        }
+        return -1;
     }
 }

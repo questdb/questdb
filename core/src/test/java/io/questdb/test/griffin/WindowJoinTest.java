@@ -34,6 +34,7 @@ import io.questdb.test.TestTimestampType;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -216,6 +217,72 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "ts",
                     true,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testAggregateNotTrivialColumnCastRequired() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x (" +
+                            "  s symbol," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table y (" +
+                            "  s symbol," +
+                            "  x long," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into x values " +
+                            "('sym0', '2023-01-01T09:00:00.000000Z');"
+            );
+            execute(
+                    "insert into y values " +
+                            "('sym0', null, '2023-01-01T08:59:58.000000Z')," +
+                            "('sym0', null, '2023-01-01T08:59:59.000000Z')," +
+                            "('sym0', 1, '2023-01-01T09:00:00.000000Z')," +
+                            "('sym0', 2, '2023-01-01T09:00:01.000000Z')," +
+                            "('sym0', 3, '2023-01-01T09:00:02.000000Z');"
+            );
+
+            assertQueryAndPlan(
+                    """
+                            s\tts\tavg_y
+                            sym0\t2023-01-01T09:00:00.000000Z\t1.0
+                            """,
+                    """
+                            Sort
+                              keys: [ts, s]
+                                Async Window Fast Join workers: 1
+                                  vectorized: true
+                                  symbol: s=s
+                                  window lo: 1000000 preceding
+                                  window hi: 1000000 following
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
+                            """,
+                    "select x.*, avg(y.x) as avg_y " +
+                            "from x " +
+                            "window join y " +
+                            "on (x.s = y.s) " +
+                            " range between 1 second preceding and 1 second following " +
+                            "order by x.ts, x.s;",
+                    "ts",
+                    true,
+                    false
             );
         });
     }
@@ -916,6 +983,41 @@ public class WindowJoinTest extends AbstractCairoTest {
                     true,
                     true
             );
+
+            expect = replaceTimestampSuffix("sym\tprice\tts\tmax\tsum\tavg\tmin\tavg1\n" +
+                    "AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t2023-01-01T09:01:00.000000Z\t601.5\t200.5\t2023-01-01T08:59:00.000000Z\t201.5\n" +
+                    "AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t2023-01-01T09:02:00.000000Z\t701.5\t233.83333333333334\t2023-01-01T09:00:00.000000Z\t234.83333333333334\n" +
+                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t2023-01-01T09:03:00.000000Z\t801.5\t267.1666666666667\t2023-01-01T09:01:00.000000Z\t268.1666666666667\n" +
+                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t2023-01-01T09:04:00.000000Z\t999.5\t333.1666666666667\t2023-01-01T09:02:00.000000Z\t334.1666666666667\n" +
+                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t2023-01-01T09:05:00.000000Z\t1100.5\t366.8333333333333\t2023-01-01T09:03:00.000000Z\t367.8333333333333\n" +
+                    "GOOGL\t300.0\t2023-01-01T09:05:00.000000Z\t2023-01-01T09:06:00.000000Z\t1002.5\t334.1666666666667\t2023-01-01T09:04:00.000000Z\t335.1666666666667\n" +
+                    "GOOGL\t301.0\t2023-01-01T09:06:00.000000Z\t2023-01-01T09:07:00.000000Z\t904.5\t301.5\t2023-01-01T09:05:00.000000Z\t302.5\n" +
+                    "AAPL\t103.0\t2023-01-01T09:07:00.000000Z\t2023-01-01T09:08:00.000000Z\t905.5\t301.8333333333333\t2023-01-01T09:06:00.000000Z\t302.8333333333333\n" +
+                    "MSFT\t202.0\t2023-01-01T09:08:00.000000Z\t2023-01-01T09:08:00.000000Z\t703.0\t351.5\t2023-01-01T09:07:00.000000Z\t352.5\n" +
+                    "GOOGL\t302.0\t2023-01-01T09:09:00.000000Z\t2023-01-01T09:08:00.000000Z\t401.5\t401.5\t2023-01-01T09:08:00.000000Z\t402.5\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Async Window Join workers: 1\n" +
+                            "      vectorized: true\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.*, max(p.ts), sum(p.price + 100), avg(p.price + 100), min(p.ts), avg(p.price + 101) " +
+                            "from trades t " +
+                            "window join prices p " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    false
+            );
         });
     }
 
@@ -1219,6 +1321,86 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "order by t.ts, t.sym;",
                     21,
                     "WINDOW join aggregate function cannot reference columns from multiple models"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinFailsOnConstantNonBooleanJoinFilter() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+
+            assertExceptionNoLeakCheck(
+                    "select t.*, sum(p.price) sum_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on t.price-p.price " +
+                            " range between 1 second preceding and 1 second following;",
+                    80,
+                    "boolean expression expected"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinFailsOnIncludePrevailing() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+
+            assertExceptionNoLeakCheck(
+                    "select t.*, sum(p.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 2 minute preceding and 2 minute following including prevailing;",
+                    162,
+                    "including prevailing is not supported in WINDOW joins"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinFailsOnInvalidBoundaries() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+
+            assertExceptionNoLeakCheck(
+                    "select t.*, sum(p.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 2 minute preceding and 4 minute preceding;",
+                    133,
+                    "WINDOW join hi value cannot be less than lo value"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinFailsOnMasterColumnAggregate() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+
+            assertExceptionNoLeakCheck(
+                    "select t.*, p.price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 second preceding and 1 second following;",
+                    12,
+                    "WINDOW join cannot reference right table non-aggregate column: p.price"
             );
         });
     }
@@ -1539,6 +1721,61 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinWithConstantFilter() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tprice\tts\tsum_price
+                            AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t100.5
+                            AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t101.5
+                            AAPL\t102.0\t2023-01-01T09:02:00.000000Z\tnull
+                            """,
+                    "select t.*, sum(p.price) sum_price " +
+                            "from (trades limit 3) t " +
+                            "window join prices p " +
+                            "on (t.sym=p.sym) " +
+                            " range between 1 second preceding and 1 second following " +
+                            "where 42=42;",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinWithConstantJoinFilter() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tprice\tts\tsum_price
+                            AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t100.5
+                            AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t101.5
+                            AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t199.5
+                            """,
+                    "select t.*, sum(p.price) sum_price " +
+                            "from (trades limit 3) t " +
+                            "window join prices p " +
+                            "on (42=42) " +
+                            " range between 1 second preceding and 1 second following;",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinWithMasterLimit() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -1597,6 +1834,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t101.5\n" +
                     "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t400.0\n" +
                     "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t200.5\n", leftTableTimestampType.getTypeName());
+
+            // fast factory
             assertQueryAndPlan(
                     expect,
                     "Sort\n" +
@@ -1636,6 +1875,78 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "order by t.ts, t.sym;",
                     "ts",
                     true,
+                    true
+            );
+
+            // non-fast factory
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Window Join\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "      join filter: concat([t.sym,'_0'])=concat([p.sym,'_0'])\n" +
+                            "        Limit lo: 1 hi: 4 skip-over-rows: 1 limit: 3\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: trades\n" +
+                            "                  intervals: [(\"2023-01-01T09:00:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000001" : "000000001") + "Z\",\"MAX\")]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Interval forward scan on: prices\n" +
+                            "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000001Z" : "2023-01-01T08:59:00.000001000Z")
+                            : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000000Z" : "2023-01-01T08:59:00.000000001Z")) + "\",\"MAX\")]\n",
+                    "select t.*, sum(p.price) as window_price " +
+                            "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
+                            "window join prices p " +
+                            "on (concat(t.sym, '_0') = concat(p.sym, '_0')) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQuery(
+                    expect,
+                    "select t.*, sum(p.price) window_price " +
+                            "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
+                            "left join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Ignore // FIXME: we can't merge master filter into the join one
+    // if (!constantTrue) {
+    //     node = concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, node, constFilterExpr);
+    // }
+    @Test
+    public void testWindowJoinWithRndFilter() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tprice\tts\tsum_price
+                            """,
+                    "select t.*, sum(p.price) sum_price " +
+                            "from (trades limit 3) t " +
+                            "window join prices p " +
+                            "on (t.sym=p.sym) " +
+                            " range between 1 second preceding and 1 second following " +
+                            "where rnd_long() = 42;",
+                    "ts",
+                    false,
                     true
             );
         });

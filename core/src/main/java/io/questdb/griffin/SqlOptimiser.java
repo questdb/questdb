@@ -233,7 +233,12 @@ public class SqlOptimiser implements Mutable {
         return appearsInArgs;
     }
 
-    public static ExpressionNode concatFilters(boolean cairoSqlLegacyOperatorPrecedence, ObjectPool<ExpressionNode> expressionNodePool, ExpressionNode old, ExpressionNode filter) {
+    public static ExpressionNode concatFilters(
+            boolean cairoSqlLegacyOperatorPrecedence,
+            ObjectPool<ExpressionNode> expressionNodePool,
+            ExpressionNode old,
+            ExpressionNode filter
+    ) {
         if (old == null) {
             return filter;
         } else {
@@ -7241,7 +7246,7 @@ public class SqlOptimiser implements Mutable {
                 }
                 WindowJoinContext context = windowJoinModel.getWindowJoinContext();
                 if (context.isIncludePrevailing()) {
-                    throw SqlException.position(0).put("including prevailing is not supported in WINDOW joins");
+                    throw SqlException.position(context.getPrevailingPos()).put("including prevailing is not supported in WINDOW joins");
                 }
                 long lo = 0, hi = 0;
                 switch (context.getLoKind()) {

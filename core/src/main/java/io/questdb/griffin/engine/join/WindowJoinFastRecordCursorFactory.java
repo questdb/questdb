@@ -68,6 +68,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinAtom.findFunctionIndex;
 
 /**
  * Single-threaded WINDOW JOIN factory which supports an equal symbol comparison between master and slave
@@ -127,7 +128,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             ObjList<Function> groupByFunctionArgs = new ObjList<>(groupByCount);
             for (int i = 0; i < groupByCount; i++) {
                 var func = ((UnaryFunction) groupByFunctions.getQuick(i)).getArg();
-                int mappedIndex = groupByFunctionArgs.indexOf(func);
+                int mappedIndex = findFunctionIndex(groupByFunctionArgs, func);
                 if (mappedIndex == -1) {
                     groupByFunctionArgs.add(func);
                     groupByFunctionToColumnIndex.add(groupByFunctionArgs.size() - 1);

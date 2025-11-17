@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UuidFunction;
@@ -42,6 +43,17 @@ public class UuidConstant extends UuidFunction implements ConstantFunction {
     public UuidConstant(long lo, long hi) {
         this.lo = lo;
         this.hi = hi;
+    }
+
+    @Override
+    public boolean equals(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof UuidConstant that) {
+            return this.lo == that.lo && this.hi == that.hi;
+        }
+        return false;
     }
 
     @Override

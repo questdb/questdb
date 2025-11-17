@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DateFunction;
@@ -39,6 +40,17 @@ public class DateConstant extends DateFunction implements ConstantFunction {
 
     public static DateConstant newInstance(long value) {
         return value != Numbers.LONG_NULL ? new DateConstant(value) : NULL;
+    }
+
+    @Override
+    public boolean equals(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof DateConstant that) {
+            return this.value == that.value;
+        }
+        return false;
     }
 
     @Override
