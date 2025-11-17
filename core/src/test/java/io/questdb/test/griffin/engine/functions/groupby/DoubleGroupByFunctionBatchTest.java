@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
-import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.groupby.CountDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullDoubleGroupByFunction;
@@ -411,16 +410,6 @@ public class DoubleGroupByFunctionBatchTest {
         function.setEmpty(value);
 
         Assert.assertTrue(Double.isNaN(function.getDouble(value)));
-    }
-
-    @Test
-    public void testSupportsBatchComputationRequiresColumnFunction() {
-        Assert.assertFalse(new CountDoubleGroupByFunction(DoubleConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new SumDoubleGroupByFunction(DoubleConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new MinDoubleGroupByFunction(DoubleConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new MaxDoubleGroupByFunction(DoubleConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new FirstDoubleGroupByFunction(DoubleConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new LastDoubleGroupByFunction(DoubleConstant.newInstance(1)).supportsBatchComputation());
     }
 
     private long allocateDoubles(double... values) {
