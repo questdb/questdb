@@ -5345,6 +5345,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWindowJoinNotSupportGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+            assertException(
+                    """
+                             select a as a0, sum(b), ts from x window join x x1 range between 2 second preceding and 2 second following sample by 2m align to calendar time zone 'Europe/Paris'
+                            """,
+                    118,
+                    "SAMPLE BY cannot be used with WINDOW JOIN");
+
+            assertException(
+                    """
+                             select x.a, sum(x1.b), x.ts from x window join x x1 range between 2 second preceding and 2 second following group by x.a
+                            """,
+                    118,
+                    "GROUP BY cannot be used with WINDOW JOIN");
+        });
+    }
+
+    @Test
     public void testWindowRangeFrameDependOnSubqueryOrderBy() throws SqlException {
         execute("create table cpu_ts ( hostname symbol, usage_system double, ts1 timestamp, ts2 timestamp) timestamp(ts1);");
         execute("insert into cpu_ts select rnd_symbol('A', 'B', 'C'), x, x::timestamp, x::timestamp + 6000000 from long_sequence(10)");

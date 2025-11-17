@@ -4925,6 +4925,7 @@ public class SqlOptimiser implements Mutable {
         QueryModel baseGroupBy = null;
         QueryModel baseOuter = null;
         QueryModel baseDistinct = null;
+        QueryModel baseWindowJoin = null;
         // while order by is initially kept in the base model (most inner one)
         // columns used in order by could be stored in one of many models : inner model, group by model, window or outer model
         // here we've to descend and keep track of all of those
@@ -4939,6 +4940,9 @@ public class SqlOptimiser implements Mutable {
                     break;
                 case QueryModel.SELECT_MODEL_GROUP_BY:
                     baseGroupBy = base;
+                    break;
+                case QueryModel.SELECT_MODEL_WINDOW_JOIN:
+                    baseWindowJoin = base;
                     break;
                 case QueryModel.SELECT_MODEL_VIRTUAL:
                 case QueryModel.SELECT_MODEL_CHOOSE:
@@ -4957,6 +4961,8 @@ public class SqlOptimiser implements Mutable {
             baseParent = baseOuter;
         } else if (baseGroupBy != null) {
             baseParent = baseGroupBy;
+        } else if (baseWindowJoin != null) {
+            baseParent = baseWindowJoin;
         }
 
         ObjList<ExpressionNode> orderByNodes = base.getOrderBy();
