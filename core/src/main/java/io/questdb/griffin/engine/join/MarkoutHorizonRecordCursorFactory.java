@@ -398,10 +398,6 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_NEXT_FREE_SLOT, slot);
         }
 
-        private static int block_usedSlotCount(long blockAddr) {
-            return Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
-        }
-
         private static long iter_masterRowId(long iterAddr) {
             return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_MASTER_ROW_ID);
         }
