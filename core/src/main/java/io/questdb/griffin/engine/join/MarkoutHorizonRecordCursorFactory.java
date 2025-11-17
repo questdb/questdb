@@ -223,9 +223,9 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         private final int slaveSequenceColumnIndex;
         private SqlExecutionCircuitBreaker circuitBreaker;
 
-        // Algorithm state
         private long currMasterRowId = -1;
         private long currentIterAddr;
+        private long emittedRowCount;
         private long firstIteratorBlockAddr;
         private long firstSlaveTimeOffset;
         private boolean isMasterHasNextPending;
@@ -250,14 +250,22 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         }
 
         @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            long size = size();
+            if (size != -1) {
+                isMasterHasNextPending = false;
+                masterHasNext = false;
+                freeAllIteratorBlocks();
+                counter.add(size() - emittedRowCount);
+            } else {
+                super.calculateSize(circuitBreaker, counter);
+            }
+        }
+
+        @Override
         public void close() {
             // Free all iterator blocks in the linked list
             freeAllIteratorBlocks();
-            firstIteratorBlockAddr = 0;
-            lastIteratorBlockAddr = 0;
-            currentIterAddr = 0;
-            prevIterAddr = 0;
-
             Misc.free(slaveRecordArray);
             super.close();
         }
@@ -276,7 +284,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 }
                 isMasterHasNextPending = true;
                 currentIterAddr = prevIterAddr = createIterator(masterRecord);
-                setupJoinRecord(iter_masterRowId(currentIterAddr), currentRowNum(currentIterAddr));
+                emitJoinRecord(iter_masterRowId(currentIterAddr), currentRowNum(currentIterAddr));
                 return true;
             }
 
@@ -316,7 +324,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 }
             }
             currentIterAddr = nextIterAddr;
-            setupJoinRecord(iter_masterRowId(currentIterAddr), currentRowNum(currentIterAddr));
+            emitJoinRecord(iter_masterRowId(currentIterAddr), currentRowNum(currentIterAddr));
             return true;
         }
 
@@ -343,15 +351,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         @Override
         public void toTop() {
             freeAllIteratorBlocks();
-
-            // Reset state
-            currentIterAddr = 0;
-            prevIterAddr = 0;
-            firstIteratorBlockAddr = 0;
-            lastIteratorBlockAddr = 0;
-            isMasterHasNextPending = true;
-            masterHasNext = false;
-            currMasterRowId = -1;
+            resetLocalState();
             masterCursor.toTop();
             slaveRecordArray.toTop();
         }
@@ -521,6 +521,14 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 }
         }
 
+        private void emitJoinRecord(long masterRowId, int slaveRowNum) {
+            long slaveOffset = slaveRecordOffsets.getQuick(slaveRowNum);
+            Record slaveRecord = slaveRecordArray.getRecordAt(slaveOffset);
+            masterCursor.recordAt(masterRecord, masterRowId);
+            joinRecord.of(masterRecord, slaveRecord);
+            emittedRowCount++;
+        }
+
         private void freeAllIteratorBlocks() {
             long blockAddr = firstIteratorBlockAddr;
             while (blockAddr != 0) {
@@ -528,6 +536,10 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 block_free(blockAddr);
                 blockAddr = nextBlockAddr;
             }
+            firstIteratorBlockAddr = 0;
+            lastIteratorBlockAddr = 0;
+            currentIterAddr = 0;
+            prevIterAddr = 0;
         }
 
         private void gotoNextRow(long iterAddr) {
@@ -579,11 +591,11 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             return nextAddr;
         }
 
-        private void setupJoinRecord(long masterRowId, int slaveRowNum) {
-            long slaveOffset = slaveRecordOffsets.getQuick(slaveRowNum);
-            Record slaveRecord = slaveRecordArray.getRecordAt(slaveOffset);
-            masterCursor.recordAt(masterRecord, masterRowId);
-            joinRecord.of(masterRecord, slaveRecord);
+        private void resetLocalState() {
+            isMasterHasNextPending = true;
+            masterHasNext = false;
+            currMasterRowId = -1;
+            emittedRowCount = 0;
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -614,14 +626,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             // Reset iterator state for new execution
             // Free any existing iterator blocks from previous execution
             freeAllIteratorBlocks();
-
-            currentIterAddr = 0;
-            prevIterAddr = 0;
-            firstIteratorBlockAddr = 0;
-            lastIteratorBlockAddr = 0;
-            isMasterHasNextPending = true;
-            masterHasNext = false;
-            currMasterRowId = -1;
+            resetLocalState();
         }
     }
 }
