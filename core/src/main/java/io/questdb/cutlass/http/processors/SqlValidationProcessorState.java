@@ -59,6 +59,7 @@ import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_VERSION;
 public class SqlValidationProcessorState implements Mutable, Closeable {
     public static final String HIDDEN = "hidden";
     static final int QUERY_DONE = 5;
+    static final int QUERY_ERROR = 6;
     static final int QUERY_METADATA = 2;
     static final int QUERY_METADATA_SUFFIX = 3;
     static final int QUERY_PREFIX = 1;
@@ -69,15 +70,18 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     private final ObjList<String> columnNames = new ObjList<>();
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
+    private final StringSink errorMessage = new StringSink();
     private final HttpConnectionContext httpConnectionContext;
     private final CharSequence keepAliveHeader;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
+    public boolean fucked;
     private byte apiVersion = DEFAULT_API_VERSION;
     private int columnCount;
     private int columnIndex;
     private long compilerNanos;
     private boolean containsSecret;
+    private int errorPosition;
     private boolean noMeta = false;
     private int queryState = QUERY_SETUP_FIRST_RECORD;
     private int queryTimestampIndex;
@@ -95,6 +99,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         resumeActions.extendAndSet(QUERY_METADATA_SUFFIX, this::onQueryMetadataSuffix);
         resumeActions.extendAndSet(QUERY_SUFFIX, (response, columnCount1) -> querySuffixWithError(response, 0, null, 0));
         resumeActions.extendAndSet(QUERY_DONE, (response, columnCount) -> response.done());
+        resumeActions.extendAndSet(QUERY_ERROR, (response, columnCount) -> onResumeError());
         this.keepAliveHeader = keepAliveHeader;
     }
 
@@ -209,6 +214,13 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
 
     public void setRnd(Rnd rnd) {
         this.rnd = rnd;
+    }
+
+    public void storeError(int errorPosition, CharSequence errorMessage) {
+        this.queryState = QUERY_ERROR;
+        this.errorPosition = errorPosition;
+        this.errorMessage.clear();
+        this.errorMessage.put(errorMessage);
     }
 
     private static byte parseApiVersion(HttpRequestHeader header) {
@@ -366,6 +378,15 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
             this.columnCount = columnCount;
             return true;
         }
+    }
+
+    void onResumeError() throws PeerIsSlowToReadException, PeerDisconnectedException {
+        JsonQueryProcessorState.prepareExceptionJson(
+                getHttpConnectionContext().getChunkedResponse(),
+                errorPosition,
+                errorMessage,
+                query
+        );
     }
 
     void querySuffixWithError(

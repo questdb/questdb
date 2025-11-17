@@ -115,58 +115,16 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
         Misc.free(circuitBreaker);
     }
 
-    public void execute0(
-            SqlValidationProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
-        final HttpConnectionContext context = state.getHttpConnectionContext();
-        circuitBreaker.resetTimer();
-
-        try {
-            // new query
-            compileAndExecuteQuery(state);
-        } catch (SqlException | ImplicitCastException e) {
-            sqlError(context.getChunkedResponse(), state, e, configuration.getKeepAliveHeader());
-            // close the factory on reset instead of caching it
-            readyForNextRequest(context);
-        } catch (EntryUnavailableException e) {
-            LOG.info().$("[fd=").$(context.getFd()).$("] resource busy, will retry").$();
-            throw RetryOperationException.INSTANCE;
-        } catch (DataUnavailableException e) {
-            LOG.info().$("[fd=").$(context.getFd()).$("] data is in cold storage, will retry").$();
-            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
-        } catch (CairoException e) {
-            internalError(
-                    context.getChunkedResponse(),
-                    context.getLastRequestBytesSent(),
-                    e.getFlyweightMessage(),
-                    getStatusCode(e),
-                    e,
-                    state,
-                    context.getMetrics()
-            );
-            readyForNextRequest(context);
-        } catch (PeerIsSlowToReadException | PeerDisconnectedException | QueryPausedException e) {
-            // re-throw the exception
-            throw e;
-        } catch (Throwable e) {
-            internalError(
-                    context.getChunkedResponse(),
-                    context.getLastRequestBytesSent(),
-                    e.getMessage(),
-                    HTTP_INTERNAL_ERROR,
-                    e,
-                    state,
-                    context.getMetrics()
-            );
-            readyForNextRequest(context);
-        }
-    }
-
     @Override
     public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final SqlValidationProcessorState state = LV.get(context);
         final HttpChunkedResponse response = context.getChunkedResponse();
-        sendException(response, context, 0, e.getFlyweightMessage(), state.getQuery(), configuration.getKeepAliveHeader(), HTTP_BAD_REQUEST);
+        sendException(
+                state,
+                e.getPosition(),
+                e.getFlyweightMessage(),
+                HTTP_BAD_REQUEST
+        );
         response.shutdownWrite();
     }
 
@@ -196,7 +154,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
         state.setRnd(null);
 
         if (parseUrl(state, configuration.getKeepAliveHeader())) {
-            execute0(state);
+            validate0(state);
         } else {
             readyForNextRequest(context);
         }
@@ -207,7 +165,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         SqlValidationProcessorState state = LV.get(context);
-        execute0(state);
+        validate0(state);
     }
 
     @Override
@@ -225,32 +183,56 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         final SqlValidationProcessorState state = LV.get(context);
         if (state != null) {
+//            if (state.fucked) {
+//                context.resumeResponseSend();
+//                state.clear();
+//                return;
+//            }
             // we are resuming request execution, we need to copy random to execution context
             sqlExecutionContext.with(context.getSecurityContext(), null, state.getRnd(), context.getFd(), circuitBreaker.of(context.getFd()));
             context.resumeResponseSend();
             try {
                 doResumeSend(state, context);
             } catch (CairoError e) {
-                internalError(
-                        context.getChunkedResponse(),
-                        context.getLastRequestBytesSent(),
-                        e.getFlyweightMessage(),
-                        HTTP_INTERNAL_ERROR,
-                        e,
-                        state,
-                        context.getMetrics()
-                );
+                internalError(state, HTTP_INTERNAL_ERROR, e);
             } catch (CairoException e) {
-                internalError(
-                        context.getChunkedResponse(),
-                        context.getLastRequestBytesSent(),
-                        e.getFlyweightMessage(),
-                        HTTP_BAD_REQUEST,
-                        e,
-                        state,
-                        context.getMetrics()
-                );
+                internalError(state, HTTP_BAD_REQUEST, e);
             }
+        }
+    }
+
+    public void validate0(SqlValidationProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+        final HttpConnectionContext context = state.getHttpConnectionContext();
+        circuitBreaker.resetTimer();
+
+        try {
+            // new query
+            compileAndValidate(state);
+        } catch (SqlException | ImplicitCastException e) {
+            state.fucked = true;
+            sendException(
+                    state,
+                    e.getPosition(),
+                    e.getFlyweightMessage(),
+                    HTTP_BAD_REQUEST
+            );
+            // close the factory on reset instead of caching it
+            readyForNextRequest(context);
+        } catch (EntryUnavailableException e) {
+            LOG.info().$("[fd=").$(context.getFd()).$("] resource busy, will retry").$();
+            throw RetryOperationException.INSTANCE;
+        } catch (DataUnavailableException e) {
+            LOG.info().$("[fd=").$(context.getFd()).$("] data is in cold storage, will retry").$();
+            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+        } catch (CairoException e) {
+            internalError(state, getStatusCode(e), e);
+            readyForNextRequest(context);
+        } catch (PeerIsSlowToReadException | PeerDisconnectedException | QueryPausedException e) {
+            // re-throw the exception
+            throw e;
+        } catch (Throwable e) {
+            internalError(state, HTTP_INTERNAL_ERROR, e);
+            readyForNextRequest(context);
         }
     }
 
@@ -309,7 +291,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponse response = context.getChunkedResponse();
-        header(response, context, keepAliveHeader, 200);
+        JsonQueryProcessor.header(response, context, keepAliveHeader, 200);
         response.put('{')
                 .putAsciiQuoted("queryType").putAscii(':').putAsciiQuoted(queryType)
                 .putAscii('}');
@@ -323,7 +305,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponse response = context.getChunkedResponse();
-        header(response, context, keepAliveHeader, 200);
+        JsonQueryProcessor.header(response, context, keepAliveHeader, 200);
         String noticeOrError = state.getApiVersion() >= 2 ? "notice" : "error";
         response.put('{')
                 .putAsciiQuoted(noticeOrError).putAscii(':').putAsciiQuoted("empty query")
@@ -336,24 +318,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
         readyForNextRequest(context);
     }
 
-    private static void sqlError(
-            HttpChunkedResponse response,
-            SqlValidationProcessorState state,
-            FlyweightMessageContainer container,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        sendException(
-                response,
-                state.getHttpConnectionContext(),
-                container.getPosition(),
-                container.getFlyweightMessage(),
-                state.getQuery(),
-                keepAliveHeader,
-                HTTP_BAD_REQUEST
-        );
-    }
-
-    private void compileAndExecuteQuery(
+    private void compileAndValidate(
             SqlValidationProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -440,7 +405,12 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                 state.resume(response);
                 break;
             } catch (SqlException | ImplicitCastException e) {
-                sqlError(context.getChunkedResponse(), state, e, configuration.getKeepAliveHeader());
+                sendException(
+                        state,
+                        e.getPosition(),
+                        e.getFlyweightMessage(),
+                        HTTP_BAD_REQUEST
+                );
                 // close the factory on reset instead of caching it
                 break;
             } catch (DataUnavailableException e) {
@@ -478,27 +448,29 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     }
 
     private void internalError(
-            HttpChunkedResponse response,
-            long bytesSent,
-            CharSequence message,
-            int code,
-            Throwable e,
             SqlValidationProcessorState state,
-            Metrics metrics
+            int httpStatusCode,
+            Throwable e
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        logInternalError(e, state, metrics);
-        final int messagePosition = e instanceof CairoException ? ((CairoException) e).getPosition() : 0;
-        if (bytesSent > 0) {
-            state.querySuffixWithError(response, code, message, messagePosition);
+        HttpConnectionContext context = state.getHttpConnectionContext();
+        logInternalError(e, state, context.getMetrics());
+        final int errorMessagePosition;
+        final CharSequence errorMessage;
+        if (e instanceof FlyweightMessageContainer ex) {
+            errorMessagePosition = ex.getPosition();
+            errorMessage = ex.getFlyweightMessage();
+        } else {
+            errorMessagePosition = 0;
+            errorMessage = e.getMessage();
+        }
+        if (context.getTotalBytesSent() > 0) {
+            state.querySuffixWithError(context.getChunkedResponse(), httpStatusCode, errorMessage, errorMessagePosition);
         } else {
             sendException(
-                    response,
-                    state.getHttpConnectionContext(),
-                    messagePosition,
-                    message,
-                    state.getQuery(),
-                    configuration.getKeepAliveHeader(),
-                    code
+                    state,
+                    errorMessagePosition,
+                    errorMessage,
+                    httpStatusCode
             );
         }
     }
@@ -533,13 +505,17 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
         return true;
     }
 
-    protected static void header(
-            HttpChunkedResponse response,
-            HttpConnectionContext context,
-            CharSequence keepAliveHeader,
-            int statusCode
+    private void sendException(
+            SqlValidationProcessorState state,
+            int errorPosition,
+            CharSequence errorMessage,
+            int httpStatusCode
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        JsonQueryProcessor.header(response, context, keepAliveHeader, statusCode);
+        final HttpConnectionContext context = state.getHttpConnectionContext();
+        final HttpChunkedResponse response = context.getChunkedResponse();
+        state.storeError(errorPosition, errorMessage);
+        JsonQueryProcessor.header(response, context, configuration.getKeepAliveHeader(), httpStatusCode);
+        state.onResumeError();
     }
 
     static void sendBadUtf8EncodingInRequestResponse(
@@ -548,26 +524,13 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             DirectUtf8Sequence query,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(response, context, keepAliveHeader, HTTP_BAD_REQUEST);
+        JsonQueryProcessor.header(response, context, keepAliveHeader, HTTP_BAD_REQUEST);
         response.putAscii('{')
                 .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query.asAsciiCharSequence()).putAscii(',')
                 .putAsciiQuoted("error").putAscii(':').putQuoted("Bad UTF8 encoding in query text").putAscii(',')
                 .putAsciiQuoted("position").putAscii(':').put(0)
                 .putAscii('}');
         response.sendChunk(true);
-    }
-
-    static void sendException(
-            HttpChunkedResponse response,
-            HttpConnectionContext context,
-            int position,
-            CharSequence message,
-            CharSequence query,
-            CharSequence keepAliveHeader,
-            int code
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(response, context, keepAliveHeader, code);
-        JsonQueryProcessorState.prepareExceptionJson(response, position, message, query);
     }
 
     @FunctionalInterface
