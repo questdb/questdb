@@ -44,17 +44,6 @@ public class IPv4Constant extends IPv4Function implements ConstantFunction {
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof IPv4Constant that) {
-            return this.value == that.value;
-        }
-        return false;
-    }
-
-    @Override
     public int getIPv4(Record rec) {
         return value;
     }
@@ -62,6 +51,17 @@ public class IPv4Constant extends IPv4Function implements ConstantFunction {
     @Override
     public boolean isNullConstant() {
         return value == Numbers.IPv4_NULL;
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof IPv4Constant that) {
+            return this.value == that.value;
+        }
+        return false;
     }
 
     @Override

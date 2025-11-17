@@ -43,17 +43,6 @@ public interface UnaryFunction extends Function {
         getArg().cursorClosed();
     }
 
-    @Override
-    default boolean equals(Function other) {
-        if (other == this) {
-            return true;
-        }
-        if (other instanceof UnaryFunction that) {
-            return getArg().equals(that.getArg());
-        }
-        return false;
-    }
-
     Function getArg();
 
     @Override
@@ -84,6 +73,17 @@ public interface UnaryFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return getArg().isThreadSafe();
+    }
+
+    @Override
+    default boolean matches(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof UnaryFunction that) {
+            return getArg().matches(that.getArg());
+        }
+        return false;
     }
 
     @Override

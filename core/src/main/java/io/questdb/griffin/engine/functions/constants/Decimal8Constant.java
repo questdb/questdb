@@ -40,17 +40,6 @@ public class Decimal8Constant extends Decimal8Function implements ConstantFuncti
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof Decimal8Constant that) {
-            return this.value == that.value && this.type == that.type;
-        }
-        return false;
-    }
-
-    @Override
     public byte getDecimal8(Record rec) {
         return value;
     }
@@ -58,6 +47,17 @@ public class Decimal8Constant extends Decimal8Function implements ConstantFuncti
     @Override
     public boolean isNullConstant() {
         return value == Decimals.DECIMAL8_NULL;
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof Decimal8Constant that) {
+            return this.value == that.value && this.type == that.type;
+        }
+        return false;
     }
 
     @Override

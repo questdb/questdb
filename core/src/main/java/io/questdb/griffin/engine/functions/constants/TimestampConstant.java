@@ -46,17 +46,6 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof TimestampConstant that) {
-            return this.value == that.value;
-        }
-        return false;
-    }
-
-    @Override
     public long getTimestamp(Record rec) {
         return value;
     }
@@ -64,6 +53,17 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
     @Override
     public boolean isNullConstant() {
         return value == Numbers.LONG_NULL;
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof TimestampConstant that) {
+            return this.value == that.value;
+        }
+        return false;
     }
 
     @Override

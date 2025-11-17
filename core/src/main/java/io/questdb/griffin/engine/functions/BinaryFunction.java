@@ -46,17 +46,6 @@ public interface BinaryFunction extends Function {
         getRight().cursorClosed();
     }
 
-    @Override
-    default boolean equals(Function other) {
-        if (other == this) {
-            return true;
-        }
-        if (other instanceof BinaryFunction that) {
-            return getLeft().equals(that.getLeft()) && getRight().equals(that.getRight());
-        }
-        return false;
-    }
-
     Function getLeft();
 
     Function getRight();
@@ -97,6 +86,17 @@ public interface BinaryFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return getLeft().isThreadSafe() && getRight().isThreadSafe();
+    }
+
+    @Override
+    default boolean matches(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof BinaryFunction that) {
+            return getLeft().matches(that.getLeft()) && getRight().matches(that.getRight());
+        }
+        return false;
     }
 
     @Override

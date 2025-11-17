@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -108,6 +109,17 @@ public interface GroupByFunction extends Function, Mutable {
      */
     default boolean earlyExit(MapValue mapValue) {
         return false;
+    }
+
+    /**
+     * Returns the expected argument type for this group by function.
+     * For unary functions, default returns the function's output type.
+     */
+    default int getArgType() {
+        if (this instanceof UnaryFunction) {
+            return getType();
+        }
+        return ColumnType.UNDEFINED;
     }
 
     default int getSampleByFlags() {

@@ -40,17 +40,6 @@ public class Decimal32Constant extends Decimal32Function implements ConstantFunc
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof Decimal32Constant that) {
-            return this.value == that.value && this.type == that.type;
-        }
-        return false;
-    }
-
-    @Override
     public int getDecimal32(Record rec) {
         return value;
     }
@@ -58,6 +47,17 @@ public class Decimal32Constant extends Decimal32Function implements ConstantFunc
     @Override
     public boolean isNullConstant() {
         return value == Decimals.DECIMAL32_NULL;
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof Decimal32Constant that) {
+            return this.value == that.value && this.type == that.type;
+        }
+        return false;
     }
 
     @Override

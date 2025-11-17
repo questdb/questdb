@@ -422,6 +422,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
         final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
         final ObjList<Function> groupByFunArgs = atom.getGroupByFunctionArgs(workerId);
+        final IntList groupByFunctionTypes = atom.getGroupByFunctionTypes();
         final int columnCount = groupByFunArgs.size();
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
@@ -465,7 +466,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
                         // copy the column values to be aggregated
                         for (int i = 0; i < columnCount; i++) {
-                            columnSink.of(slaveData.get(idx, 2 + i)).put(joinRecord, groupByFunArgs.getQuick(i));
+                            columnSink.of(slaveData.get(idx, 2 + i)).put(joinRecord, groupByFunArgs.getQuick(i), (short) groupByFunctionTypes.getQuick(i));
                             slaveData.put(idx, 2 + i, columnSink.ptr());
                         }
                     }
@@ -509,7 +510,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                         final int mapIndex = mapIndexes.getQuick(i);
                         final long ptr = slaveData.get(idx, 2 + mapIndex);
-                        final long typeSize = ColumnType.sizeOfTag(ColumnType.tagOf(groupByFunArgs.getQuick(mapIndex).getType()));
+                        final long typeSize = ColumnType.sizeOfTag((short) groupByFunctionTypes.getQuick(mapIndex));
                         groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
                     }
                 }
@@ -719,6 +720,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
                 columnSink.resetPtr();
                 final ObjList<Function> groupByFunArgs = atom.getGroupByFunctionArgs(workerId);
+                final IntList groupByFunctionTypes = atom.getGroupByFunctionTypes();
                 final int columnCount = groupByFunArgs.size();
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
@@ -759,7 +761,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             // Copy column values to be aggregated
                             for (int i = 0; i < columnCount; i++) {
                                 long ptr = slaveData.get(idx, 2 + i);
-                                columnSink.of(ptr).put(joinRecord, groupByFunArgs.getQuick(i));
+                                columnSink.of(ptr).put(joinRecord, groupByFunArgs.getQuick(i), (short) groupByFunctionTypes.getQuick(i));
                                 slaveData.put(idx, 2 + i, columnSink.ptr());
                             }
                         }
@@ -803,7 +805,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                             final int mapIndex = mapIndexes.getQuick(i);
                             final long ptr = slaveData.get(idx, 2 + mapIndex);
-                            final long typeSize = ColumnType.sizeOfTag(ColumnType.tagOf(groupByFunArgs.getQuick(mapIndex).getType()));
+                            final long typeSize = ColumnType.sizeOfTag((short) groupByFunctionTypes.getQuick(mapIndex));
                             groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
                         }
                     }

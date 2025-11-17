@@ -97,6 +97,11 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getArgType() {
+            return ColumnType.DECIMAL128;
+        }
+
+        @Override
         public boolean isThreadSafe() {
             return false;
         }
@@ -125,6 +130,11 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
                 mapValue.addLong(valueIndex, 1);
             }
         }
+
+        @Override
+        public int getArgType() {
+            return ColumnType.DECIMAL16;
+        }
     }
 
     private static class Decimal256Func extends AbstractCountGroupByFunction {
@@ -150,6 +160,11 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
             if (!decimal256.isNull()) {
                 mapValue.addLong(valueIndex, 1);
             }
+        }
+
+        @Override
+        public int getArgType() {
+            return ColumnType.DECIMAL256;
         }
 
         @Override
@@ -181,6 +196,11 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
                 mapValue.addLong(valueIndex, 1);
             }
         }
+
+        @Override
+        public int getArgType() {
+            return ColumnType.DECIMAL32;
+        }
     }
 
     private static class Decimal64Func extends AbstractCountGroupByFunction {
@@ -206,6 +226,11 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
                 mapValue.addLong(valueIndex, 1);
             }
         }
+
+        @Override
+        public int getArgType() {
+            return ColumnType.DECIMAL64;
+        }
     }
 
     private static class Decimal8Func extends AbstractCountGroupByFunction {
@@ -230,6 +255,11 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
             if (value != Decimals.DECIMAL8_NULL) {
                 mapValue.addLong(valueIndex, 1);
             }
+        }
+
+        @Override
+        public int getArgType() {
+            return ColumnType.DECIMAL8;
         }
     }
 }

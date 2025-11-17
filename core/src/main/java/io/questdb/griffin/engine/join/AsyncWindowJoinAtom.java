@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -72,6 +73,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledMasterFilter;
     private final IntList groupByFunctionToColumnIndex;
+    private final IntList groupByFunctionTypes;
     private final WindowJoinSymbolTableSource joinSymbolTableSource;
     private final long joinWindowHi;
     private final long joinWindowLo;
@@ -229,11 +231,13 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 final int groupByFunctionSize = ownerGroupByFunctions.size();
                 this.groupByFunctionToColumnIndex = new IntList(groupByFunctionSize);
                 this.ownerGroupByFunctionArgs = new ObjList<>(groupByFunctionSize);
+                this.groupByFunctionTypes = new IntList(groupByFunctionSize);
                 for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
                     final var func = ownerGroupByFunctions.getQuick(i);
                     final var funcArg = ((UnaryFunction) func).getArg();
                     final int index = findFunctionIndex(ownerGroupByFunctionArgs, funcArg);
                     if (index < 0) {
+                        groupByFunctionTypes.add(ColumnType.tagOf(func.getArgType()));
                         ownerGroupByFunctionArgs.add(funcArg);
                         groupByFunctionToColumnIndex.add(ownerGroupByFunctionArgs.size() - 1);
                     } else {
@@ -275,6 +279,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 this.groupByFunctionToColumnIndex = null;
                 this.ownerGroupByFunctionArgs = null;
                 this.perWorkerGroupByFunctionArgs = null;
+                this.groupByFunctionTypes = null;
             }
         } catch (Throwable th) {
             close();
@@ -365,6 +370,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
     public IntList getGroupByFunctionToColumnIndex() {
         return groupByFunctionToColumnIndex;
+    }
+
+    public IntList getGroupByFunctionTypes() {
+        return groupByFunctionTypes;
     }
 
     public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
@@ -606,7 +615,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
     static int findFunctionIndex(ObjList<Function> lists, Function target) {
         for (int i = 0, n = lists.size(); i < n; i++) {
-            if (target.equals(lists.getQuick(i))) {
+            if (target.matches(lists.getQuick(i))) {
                 return i;
             }
         }

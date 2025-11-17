@@ -49,17 +49,6 @@ public class Long256Constant extends Long256Function implements Long256, Constan
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof Long256Constant that) {
-            return this.value.equals(that.value);
-        }
-        return false;
-    }
-
-    @Override
     public long getLong0() {
         return value.getLong0();
     }
@@ -97,6 +86,17 @@ public class Long256Constant extends Long256Function implements Long256, Constan
     @Override
     public boolean isNullConstant() {
         return Long256Impl.NULL_LONG256.equals(value);
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof Long256Constant that) {
+            return this.value.equals(that.value);
+        }
+        return false;
     }
 
     @Override

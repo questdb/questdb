@@ -107,10 +107,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     default void cursorClosed() {
     }
 
-    default boolean equals(Function obj) {
-        return this == obj;
-    }
-
     default FunctionExtension extendedOps() {
         return null;
     }
@@ -292,6 +288,13 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     default boolean isUndefined() {
         return getType() == ColumnType.UNDEFINED;
+    }
+
+    /**
+     * Performs a best-effort comparison between functions.
+     */
+    default boolean matches(Function obj) {
+        return this == obj;
     }
 
     /**

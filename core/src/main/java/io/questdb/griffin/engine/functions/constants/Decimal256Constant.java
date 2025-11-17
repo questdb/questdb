@@ -47,17 +47,6 @@ public class Decimal256Constant extends Decimal256Function implements ConstantFu
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof Decimal256Constant that) {
-            return this.hh == that.hh && this.type == that.type && this.hl == that.hl && this.lh == that.lh && this.ll == that.ll;
-        }
-        return false;
-    }
-
-    @Override
     public void getDecimal128(Record rec, Decimal128 sink) {
         sink.ofRaw(lh, ll);
     }
@@ -70,6 +59,17 @@ public class Decimal256Constant extends Decimal256Function implements ConstantFu
     @Override
     public boolean isNullConstant() {
         return Decimal256.isNull(hh, hl, lh, ll);
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof Decimal256Constant that) {
+            return this.hh == that.hh && this.type == that.type && this.hl == that.hl && this.lh == that.lh && this.ll == that.ll;
+        }
+        return false;
     }
 
     @Override

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -69,6 +70,11 @@ public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
         if (value != Numbers.IPv4_NULL) {
             mapValue.addLong(valueIndex, 1);
         }
+    }
+
+    @Override
+    public int getArgType() {
+        return ColumnType.IPv4;
     }
 
     @Override

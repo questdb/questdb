@@ -43,17 +43,6 @@ public class DateConstant extends DateFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof DateConstant that) {
-            return this.value == that.value;
-        }
-        return false;
-    }
-
-    @Override
     public long getDate(Record rec) {
         return value;
     }
@@ -61,6 +50,17 @@ public class DateConstant extends DateFunction implements ConstantFunction {
     @Override
     public boolean isNullConstant() {
         return value == Numbers.LONG_NULL;
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof DateConstant that) {
+            return this.value == that.value;
+        }
+        return false;
     }
 
     @Override

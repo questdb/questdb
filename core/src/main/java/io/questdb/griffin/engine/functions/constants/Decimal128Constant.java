@@ -43,17 +43,6 @@ public class Decimal128Constant extends Decimal128Function implements ConstantFu
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof Decimal128Constant that) {
-            return this.lo == that.lo && this.hi == that.hi && this.type == that.type;
-        }
-        return false;
-    }
-
-    @Override
     public void getDecimal128(Record rec, Decimal128 sink) {
         sink.ofRaw(hi, lo);
     }
@@ -66,6 +55,17 @@ public class Decimal128Constant extends Decimal128Function implements ConstantFu
     @Override
     public boolean isNullConstant() {
         return Decimal128.isNull(hi, lo);
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof Decimal128Constant that) {
+            return this.lo == that.lo && this.hi == that.hi && this.type == that.type;
+        }
+        return false;
     }
 
     @Override

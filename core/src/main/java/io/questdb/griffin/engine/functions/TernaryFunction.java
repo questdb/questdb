@@ -47,19 +47,6 @@ public interface TernaryFunction extends Function {
         getRight().cursorClosed();
     }
 
-    @Override
-    default boolean equals(Function other) {
-        if (other == this) {
-            return true;
-        }
-        if (other instanceof TernaryFunction that) {
-            return getLeft().equals(that.getLeft())
-                    && getCenter().equals(that.getCenter())
-                    && getRight().equals(that.getRight());
-        }
-        return false;
-    }
-
     Function getCenter();
 
     Function getLeft();
@@ -104,6 +91,19 @@ public interface TernaryFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return getLeft().isThreadSafe() && getCenter().isThreadSafe() && getRight().isThreadSafe();
+    }
+
+    @Override
+    default boolean matches(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof TernaryFunction that) {
+            return getLeft().matches(that.getLeft())
+                    && getCenter().matches(that.getCenter())
+                    && getRight().matches(that.getRight());
+        }
+        return false;
     }
 
     @Override

@@ -95,6 +95,11 @@ public class CountDistinctUuidGroupByFunction extends LongFunction implements Un
     }
 
     @Override
+    public int getArgType() {
+        return ColumnType.UUID;
+    }
+
+    @Override
     public long getLong(Record rec) {
         final long cnt = rec.getLong(valueIndex);
         if (cnt != -1) {

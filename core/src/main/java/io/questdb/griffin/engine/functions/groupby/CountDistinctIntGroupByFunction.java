@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -80,5 +81,10 @@ public class CountDistinctIntGroupByFunction extends AbstractCountDistinctIntGro
                 }
             }
         }
+    }
+
+    @Override
+    public int getArgType() {
+        return ColumnType.INT;
     }
 }

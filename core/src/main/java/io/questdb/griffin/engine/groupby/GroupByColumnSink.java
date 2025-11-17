@@ -84,8 +84,8 @@ public class GroupByColumnSink {
         return ptr;
     }
 
-    public void put(JoinRecord record, Function function) {
-        switch (ColumnType.tagOf(function.getType())) {
+    public void put(JoinRecord record, Function function, short argType) {
+        switch (argType) {
             case ColumnType.BYTE:
                 putByte(function.getByte(record));
                 break;

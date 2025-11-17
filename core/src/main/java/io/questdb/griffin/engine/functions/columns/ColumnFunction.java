@@ -33,8 +33,13 @@ import io.questdb.griffin.PlanSink;
  */
 public interface ColumnFunction extends Function {
 
+    /**
+     * Returns index of the column in the table metadata.
+     */
+    int getColumnIndex();
+
     @Override
-    default boolean equals(Function obj) {
+    default boolean matches(Function obj) {
         if (this == obj) {
             return true;
         }
@@ -43,11 +48,6 @@ public interface ColumnFunction extends Function {
         }
         return false;
     }
-
-    /**
-     * Returns index of the column in the table metadata.
-     */
-    int getColumnIndex();
 
     @Override
     default void toPlan(PlanSink sink) {

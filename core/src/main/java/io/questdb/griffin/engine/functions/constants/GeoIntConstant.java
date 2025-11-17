@@ -43,17 +43,6 @@ public class GeoIntConstant extends GeoIntFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof GeoIntConstant that) {
-            return this.hash == that.hash;
-        }
-        return false;
-    }
-
-    @Override
     public int getGeoInt(Record rec) {
         return hash;
     }
@@ -61,6 +50,17 @@ public class GeoIntConstant extends GeoIntFunction implements ConstantFunction {
     @Override
     public boolean isNullConstant() {
         return hash == GeoHashes.INT_NULL;
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof GeoIntConstant that) {
+            return this.hash == that.hash;
+        }
+        return false;
     }
 
     @Override

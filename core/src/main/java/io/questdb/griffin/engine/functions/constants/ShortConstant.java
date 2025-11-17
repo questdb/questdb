@@ -42,7 +42,12 @@ public class ShortConstant extends ShortFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean equals(Function obj) {
+    public short getShort(Record rec) {
+        return value;
+    }
+
+    @Override
+    public boolean matches(Function obj) {
         if (this == obj) {
             return true;
         }
@@ -50,11 +55,6 @@ public class ShortConstant extends ShortFunction implements ConstantFunction {
             return this.value == that.value;
         }
         return false;
-    }
-
-    @Override
-    public short getShort(Record rec) {
-        return value;
     }
 
     @Override

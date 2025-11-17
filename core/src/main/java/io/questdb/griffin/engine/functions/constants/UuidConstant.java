@@ -46,17 +46,6 @@ public class UuidConstant extends UuidFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof UuidConstant that) {
-            return this.lo == that.lo && this.hi == that.hi;
-        }
-        return false;
-    }
-
-    @Override
     public long getLong128Hi(Record rec) {
         return hi;
     }
@@ -69,6 +58,17 @@ public class UuidConstant extends UuidFunction implements ConstantFunction {
     @Override
     public boolean isNullConstant() {
         return hi == Numbers.LONG_NULL && lo == Numbers.LONG_NULL;
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof UuidConstant that) {
+            return this.lo == that.lo && this.hi == that.hi;
+        }
+        return false;
     }
 
     public void toPlan(PlanSink sink) {

@@ -61,17 +61,6 @@ public class IntervalConstant extends IntervalFunction implements ConstantFuncti
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof IntervalConstant that) {
-            return this.interval.equals(that.interval) && this.intervalType == that.intervalType;
-        }
-        return false;
-    }
-
-    @Override
     public FunctionExtension extendedOps() {
         return this;
     }
@@ -109,6 +98,17 @@ public class IntervalConstant extends IntervalFunction implements ConstantFuncti
     @Override
     public boolean isNullConstant() {
         return interval.equals(Interval.NULL);
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof IntervalConstant that) {
+            return this.interval.equals(that.interval) && this.intervalType == that.intervalType;
+        }
+        return false;
     }
 
     @Override

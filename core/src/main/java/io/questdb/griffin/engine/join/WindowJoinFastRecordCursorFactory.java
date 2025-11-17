@@ -126,11 +126,13 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             var groupByCount = groupByFunctions.size();
             var groupByFunctionToColumnIndex = new IntList(groupByCount);
             ObjList<Function> groupByFunctionArgs = new ObjList<>(groupByCount);
+            IntList groupByFunctionTypes = new IntList(groupByCount);
             for (int i = 0; i < groupByCount; i++) {
                 var func = ((UnaryFunction) groupByFunctions.getQuick(i)).getArg();
                 int mappedIndex = findFunctionIndex(groupByFunctionArgs, func);
                 if (mappedIndex == -1) {
                     groupByFunctionArgs.add(func);
+                    groupByFunctionTypes.add(ColumnType.tagOf(groupByFunctions.getQuick(i).getArgType()));
                     groupByFunctionToColumnIndex.add(groupByFunctionArgs.size() - 1);
                 } else {
                     groupByFunctionToColumnIndex.add(mappedIndex);
@@ -149,6 +151,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     groupByFunctions,
                     columnTypes,
                     groupByFunctionArgs,
+                    groupByFunctionTypes,
                     groupByFunctionToColumnIndex
             );
         } else {
@@ -539,6 +542,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         private final @Nullable IntList crossIndex;
         private final ObjList<Function> groupByFunctionArgs;
         private final IntList groupByFunctionToColumnIndex;
+        private final IntList groupByFunctionTypes;
         private final ObjList<GroupByFunction> groupByFunctions;
         private final VirtualRecord groupByRecord;
         private final JoinRecord internalJoinRecord;
@@ -571,6 +575,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
                 @NotNull ArrayColumnTypes columnTypes,
                 ObjList<Function> groupByFunctionArgs,
+                IntList groupByFunctionTypes,
                 IntList groupByFunctionToColumnIndex
         ) {
             this.crossIndex = columnIndex;
@@ -613,6 +618,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.lastSlaveTimestamp = Long.MIN_VALUE;
 
             this.groupByFunctionArgs = groupByFunctionArgs;
+            this.groupByFunctionTypes = groupByFunctionTypes;
             this.groupByFunctionToColumnIndex = groupByFunctionToColumnIndex;
         }
 
@@ -693,7 +699,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
                             // copy the column values to be aggregated
                             for (int i = 0; i < columnCount; i++) {
-                                columnSink.of(slaveData.get(idx, 2 + i)).put(internalJoinRecord, groupByFunctionArgs.getQuick(i));
+                                columnSink.of(slaveData.get(idx, 2 + i)).put(internalJoinRecord, groupByFunctionArgs.getQuick(i), (short) groupByFunctionTypes.getQuick(i));
                                 slaveData.put(idx, 2 + i, columnSink.ptr());
                             }
                         }

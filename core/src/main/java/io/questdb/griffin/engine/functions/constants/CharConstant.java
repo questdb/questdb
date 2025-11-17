@@ -46,17 +46,6 @@ public class CharConstant extends CharFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof CharConstant that) {
-            return this.value == that.value;
-        }
-        return false;
-    }
-
-    @Override
     public char getChar(Record rec) {
         return value;
     }
@@ -69,6 +58,17 @@ public class CharConstant extends CharFunction implements ConstantFunction {
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         return utf8Value;
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof CharConstant that) {
+            return this.value == that.value;
+        }
+        return false;
     }
 
     @Override

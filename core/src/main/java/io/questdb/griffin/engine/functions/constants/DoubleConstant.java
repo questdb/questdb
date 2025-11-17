@@ -45,17 +45,6 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof DoubleConstant that) {
-            return this.value == that.value;
-        }
-        return false;
-    }
-
-    @Override
     public double getDouble(Record rec) {
         return value;
     }
@@ -64,6 +53,17 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
     public boolean isNullConstant() {
         // NaN is used as a marker for NULL
         return Numbers.isNull(value);
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof DoubleConstant that) {
+            return this.value == that.value;
+        }
+        return false;
     }
 
     @Override

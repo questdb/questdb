@@ -40,17 +40,6 @@ public class Decimal64Constant extends Decimal64Function implements ConstantFunc
     }
 
     @Override
-    public boolean equals(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof Decimal64Constant that) {
-            return this.value == that.value && this.type == that.type;
-        }
-        return false;
-    }
-
-    @Override
     public long getDecimal64(Record rec) {
         return value;
     }
@@ -58,6 +47,17 @@ public class Decimal64Constant extends Decimal64Function implements ConstantFunc
     @Override
     public boolean isNullConstant() {
         return value == Decimals.DECIMAL64_NULL;
+    }
+
+    @Override
+    public boolean matches(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof Decimal64Constant that) {
+            return this.value == that.value && this.type == that.type;
+        }
+        return false;
     }
 
     @Override

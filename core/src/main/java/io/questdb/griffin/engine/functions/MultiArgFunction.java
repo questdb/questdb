@@ -43,26 +43,6 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
-    default boolean equals(Function other) {
-        if (other == this) {
-            return true;
-        }
-        if (other instanceof MultiArgFunction that) {
-            ObjList<Function> thatArgs = that.args();
-            ObjList<Function> thisArgs = args();
-            if (thatArgs.size() == thisArgs.size()) {
-                for (int i = 0, n = thisArgs.size(); i < n; i++) {
-                    if (!thisArgs.getQuick(i).equals(thatArgs.getQuick(i))) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-        }
-        return false;
-    }
-
-    @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         Function.init(args(), symbolTableSource, executionContext, null);
     }
@@ -124,6 +104,26 @@ public interface MultiArgFunction extends Function {
             }
         }
         return true;
+    }
+
+    @Override
+    default boolean matches(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof MultiArgFunction that) {
+            ObjList<Function> thatArgs = that.args();
+            ObjList<Function> thisArgs = args();
+            if (thatArgs.size() == thisArgs.size()) {
+                for (int i = 0, n = thisArgs.size(); i < n; i++) {
+                    if (!thisArgs.getQuick(i).matches(thatArgs.getQuick(i))) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

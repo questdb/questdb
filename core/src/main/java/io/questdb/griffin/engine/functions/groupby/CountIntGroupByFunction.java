@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -63,6 +64,11 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
         if (value != Numbers.INT_NULL) {
             mapValue.addLong(valueIndex, 1);
         }
+    }
+
+    @Override
+    public int getArgType() {
+        return ColumnType.GEOINT;
     }
 
     @Override
