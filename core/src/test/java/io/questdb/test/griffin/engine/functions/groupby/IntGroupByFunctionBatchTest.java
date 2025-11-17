@@ -70,7 +70,6 @@ public class IntGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 5);
 
         Assert.assertEquals(3L, function.getLong(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -128,7 +127,6 @@ public class IntGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertEquals(5, function.getInt(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -200,18 +198,7 @@ public class IntGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertEquals(42, function.getInt(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
-    }
-
-    @Test
-    public void testGetColumnIndexRequiresColumnFunction() {
-        Assert.assertEquals(-1, new CountIntGroupByFunction(IntConstant.newInstance(1)).getColumnIndex());
-        Assert.assertEquals(-1, new SumIntGroupByFunction(IntConstant.newInstance(1)).getColumnIndex());
-        Assert.assertEquals(-1, new MinIntGroupByFunction(IntConstant.newInstance(1)).getColumnIndex());
-        Assert.assertEquals(-1, new MaxIntGroupByFunction(IntConstant.newInstance(1)).getColumnIndex());
-        Assert.assertEquals(-1, new FirstIntGroupByFunction(IntConstant.newInstance(1)).getColumnIndex());
-        Assert.assertEquals(-1, new LastIntGroupByFunction(IntConstant.newInstance(1)).getColumnIndex());
     }
 
     @Test
@@ -229,7 +216,6 @@ public class IntGroupByFunctionBatchTest {
 
         Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
         Assert.assertEquals(33, function.getInt(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -251,6 +237,18 @@ public class IntGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastIntSetEmpty() {
+        LastIntGroupByFunction function = new LastIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
+        var columnTypes = new ArrayColumnTypes();
+        function.initValueTypes(columnTypes);
+        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
+        function.initValueIndex(0);
+        function.setEmpty(value);
+
+        Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
+    }
+
+    @Test
     public void testLastNotNullIntBatch() {
         LastNotNullIntGroupByFunction function = new LastNotNullIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
@@ -264,20 +262,7 @@ public class IntGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(20, function.getInt(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
-    }
-
-    @Test
-    public void testLastIntSetEmpty() {
-        LastIntGroupByFunction function = new LastIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-
-        Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
     }
 
     @Test
@@ -294,7 +279,6 @@ public class IntGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(15, function.getInt(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -339,7 +323,6 @@ public class IntGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(2, function.getInt(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -384,7 +367,6 @@ public class IntGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(10L, function.getLong(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 

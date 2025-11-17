@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.join.JoinRecord;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -83,74 +84,74 @@ public class GroupByColumnSink {
         return ptr;
     }
 
-    public void put(JoinRecord record, int colIndex, int colTag) {
-        switch (colTag) {
+    public void put(JoinRecord record, Function function) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.BYTE:
-                putByte(record.getByte(colIndex));
+                putByte(function.getByte(record));
                 break;
             case ColumnType.BOOLEAN:
-                putByte(record.getBool(colIndex) ? (byte) 1 : (byte) 0);
+                putByte(function.getBool(record) ? (byte) 1 : (byte) 0);
                 break;
             case ColumnType.GEOBYTE:
-                putByte(record.getGeoByte(colIndex));
+                putByte(function.getGeoByte(record));
                 break;
             case ColumnType.SHORT:
-                putShort(record.getShort(colIndex));
+                putShort(function.getShort(record));
                 break;
             case ColumnType.GEOSHORT:
-                putShort(record.getGeoShort(colIndex));
+                putShort(function.getGeoShort(record));
                 break;
             case ColumnType.INT:
-                putInt(record.getInt(colIndex));
+                putInt(function.getInt(record));
                 break;
             case ColumnType.IPv4:
-                putInt(record.getIPv4(colIndex));
+                putInt(function.getIPv4(record));
                 break;
             case ColumnType.FLOAT:
-                putFloat(record.getFloat(colIndex));
+                putFloat(function.getFloat(record));
                 break;
             case ColumnType.GEOINT:
-                putInt(record.getGeoInt(colIndex));
+                putInt(function.getGeoInt(record));
                 break;
             case ColumnType.LONG:
-                putLong(record.getLong(colIndex));
+                putLong(function.getLong(record));
                 break;
             case ColumnType.GEOLONG:
-                putLong(record.getGeoLong(colIndex));
+                putLong(function.getGeoLong(record));
                 break;
             case ColumnType.DOUBLE:
-                putDouble(record.getDouble(colIndex));
+                putDouble(function.getDouble(record));
                 break;
             case ColumnType.DATE:
-                putLong(record.getDate(colIndex));
+                putLong(function.getDate(record));
                 break;
             case ColumnType.TIMESTAMP:
-                putLong(record.getTimestamp(colIndex));
+                putLong(function.getTimestamp(record));
                 break;
             case ColumnType.LONG128, ColumnType.UUID:
-                putLong128(record.getLong128Lo(colIndex), record.getLong128Hi(colIndex));
+                putLong128(function.getLong128Lo(record), function.getLong128Hi(record));
                 break;
             case ColumnType.CHAR:
-                putChar(record.getChar(colIndex));
+                putChar(function.getChar(record));
                 break;
             case ColumnType.DECIMAL8:
-                putByte(record.getDecimal8(colIndex));
+                putByte(function.getDecimal8(record));
                 break;
             case ColumnType.DECIMAL16:
-                putShort(record.getDecimal16(colIndex));
+                putShort(function.getDecimal16(record));
                 break;
             case ColumnType.DECIMAL32:
-                putInt(record.getDecimal32(colIndex));
+                putInt(function.getDecimal32(record));
                 break;
             case ColumnType.DECIMAL64:
-                putLong(record.getDecimal64(colIndex));
+                putLong(function.getDecimal64(record));
                 break;
             case ColumnType.DECIMAL128:
-                record.getDecimal128(colIndex, decimal128);
+                function.getDecimal128(record, decimal128);
                 putDecimal128();
                 break;
             case ColumnType.DECIMAL256:
-                record.getDecimal256(colIndex, decimal256);
+                function.getDecimal256(record, decimal256);
                 putDecimal256();
                 break;
         }

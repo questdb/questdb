@@ -77,6 +77,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function ownerMasterFilter,
             @Nullable ObjList<Function> perWorkerMasterFilters,
+            boolean vectorized,
             long masterTsScale,
             long slaveTsScale,
             int workerCount
@@ -99,6 +100,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                 bindVarFunctions,
                 ownerMasterFilter,
                 perWorkerMasterFilters,
+                vectorized,
                 masterTsScale,
                 slaveTsScale,
                 workerCount
@@ -109,7 +111,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             this.masterSymbolIndex = masterSymbolIndex;
             this.slaveSymbolIndex = slaveSymbolIndex;
             this.slaveSymbolLookupTable = new DirectIntIntHashMap(16, 0.5, StaticSymbolTable.VALUE_NOT_FOUND, MemoryTag.NATIVE_UNORDERED_MAP);
-            int slaveDataLen = isVectorized() ? 2 + groupByColumnIndexes.size() : 3;
+            int slaveDataLen = isVectorized() ? 2 + ownerGroupByFunctionArgs.size() : 3;
             // Combined storage with 4 values: rowIds ptr, timestamps ptr, rowLos value, columnSink ptr
             this.ownerSlaveData = new DirectIntMultiLongHashMap(16, 0.5, 0, slaveDataLen, MemoryTag.NATIVE_UNORDERED_MAP);
             this.perWorkerSlaveData = new ObjList<>(slotCount);

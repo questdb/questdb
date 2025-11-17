@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.groupby.FirstBooleanGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.LastBooleanGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
@@ -64,7 +63,6 @@ public class BooleanGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertTrue(function.getBool(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -96,12 +94,6 @@ public class BooleanGroupByFunctionBatchTest {
     }
 
     @Test
-    public void testGetColumnIndexRequiresColumnFunction() {
-        Assert.assertEquals(-1, new FirstBooleanGroupByFunction(BooleanConstant.TRUE).getColumnIndex());
-        Assert.assertEquals(-1, new LastBooleanGroupByFunction(BooleanConstant.TRUE).getColumnIndex());
-    }
-
-    @Test
     public void testLastBooleanBatch() {
         LastBooleanGroupByFunction function = new LastBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
@@ -116,7 +108,6 @@ public class BooleanGroupByFunctionBatchTest {
 
         Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
         Assert.assertTrue(function.getBool(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 

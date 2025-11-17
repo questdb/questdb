@@ -33,6 +33,17 @@ import io.questdb.griffin.PlanSink;
  */
 public interface ColumnFunction extends Function {
 
+    @Override
+    default boolean equals(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof ColumnFunction that) {
+            return getColumnIndex() == that.getColumnIndex();
+        }
+        return false;
+    }
+
     /**
      * Returns index of the column in the table metadata.
      */

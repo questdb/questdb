@@ -77,7 +77,6 @@ public class GeoHashGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(3L, function.getLong(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -117,7 +116,6 @@ public class GeoHashGroupByFunctionBatchTest {
         CountGeoHashGroupByFunctionLong function = new CountGeoHashGroupByFunctionLong(
                 Constants.getGeoHashConstantWithType(GeoHashes.NULL, type)
         );
-        Assert.assertEquals(-1, function.getColumnIndex());
         Assert.assertFalse(function.supportsBatchComputation());
     }
 
@@ -150,6 +148,15 @@ public class GeoHashGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testFirstGeoHashSetEmpty() {
+        int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOBYTE_MAX_BITS);
+        GroupByFunction function = newFirstGeoHashFunction(GeoByteColumn.newInstance(COLUMN_INDEX, type));
+        SimpleMapValue value = prepare(function);
+        function.setEmpty(value);
+        Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoByte(value));
+    }
+
+    @Test
     public void testFirstNotNullGeoHashBatchByte() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOBYTE_MAX_BITS);
         GroupByFunction function = newFirstNotNullGeoHashFunction(GeoByteColumn.newInstance(COLUMN_INDEX, type));
@@ -159,7 +166,6 @@ public class GeoHashGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 2);
 
         Assert.assertEquals(42, function.getGeoByte(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -177,15 +183,6 @@ public class GeoHashGroupByFunctionBatchTest {
     }
 
     @Test
-    public void testFirstGeoHashSetEmpty() {
-        int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOBYTE_MAX_BITS);
-        GroupByFunction function = newFirstGeoHashFunction(GeoByteColumn.newInstance(COLUMN_INDEX, type));
-        SimpleMapValue value = prepare(function);
-        function.setEmpty(value);
-        Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoByte(value));
-    }
-
-    @Test
     public void testLastGeoHashBatchByte() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOBYTE_MAX_BITS);
         GroupByFunction function = newLastGeoHashFunction(GeoByteColumn.newInstance(COLUMN_INDEX, type));
@@ -196,7 +193,6 @@ public class GeoHashGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertEquals(11, function.getGeoByte(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 

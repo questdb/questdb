@@ -70,7 +70,6 @@ public class DoubleGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 5);
 
         Assert.assertEquals(3L, function.getLong(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -128,7 +127,6 @@ public class DoubleGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertEquals(5.5, function.getDouble(value), 0.0);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -201,18 +199,7 @@ public class DoubleGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertEquals(7.7, function.getDouble(value), 0.0);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
-    }
-
-    @Test
-    public void testGetColumnIndexRequiresColumnFunction() {
-        Assert.assertEquals(-1, new CountDoubleGroupByFunction(DoubleConstant.newInstance(1)).getColumnIndex());
-        Assert.assertEquals(-1, new SumDoubleGroupByFunction(DoubleConstant.newInstance(1)).getColumnIndex());
-        Assert.assertEquals(-1, new MinDoubleGroupByFunction(DoubleConstant.newInstance(1)).getColumnIndex());
-        Assert.assertEquals(-1, new MaxDoubleGroupByFunction(DoubleConstant.newInstance(1)).getColumnIndex());
-        Assert.assertEquals(-1, new FirstDoubleGroupByFunction(DoubleConstant.newInstance(1)).getColumnIndex());
-        Assert.assertEquals(-1, new LastDoubleGroupByFunction(DoubleConstant.newInstance(1)).getColumnIndex());
     }
 
     @Test
@@ -230,7 +217,6 @@ public class DoubleGroupByFunctionBatchTest {
 
         Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
         Assert.assertEquals(33.0, function.getDouble(value), 0.0);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -252,6 +238,18 @@ public class DoubleGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastDoubleSetEmpty() {
+        LastDoubleGroupByFunction function = new LastDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        var columnTypes = new ArrayColumnTypes();
+        function.initValueTypes(columnTypes);
+        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
+        function.initValueIndex(0);
+        function.setEmpty(value);
+
+        Assert.assertTrue(Double.isNaN(function.getDouble(value)));
+    }
+
+    @Test
     public void testLastNotNullDoubleBatch() {
         LastNotNullDoubleGroupByFunction function = new LastNotNullDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
@@ -265,20 +263,7 @@ public class DoubleGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(6.6, function.getDouble(value), 0.0);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
-    }
-
-    @Test
-    public void testLastDoubleSetEmpty() {
-        LastDoubleGroupByFunction function = new LastDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-
-        Assert.assertTrue(Double.isNaN(function.getDouble(value)));
     }
 
     @Test
@@ -295,7 +280,6 @@ public class DoubleGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(15.5, function.getDouble(value), 0.0);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -340,7 +324,6 @@ public class DoubleGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(2.5, function.getDouble(value), 0.0);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -385,7 +368,6 @@ public class DoubleGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(7.0, function.getDouble(value), 0.0);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 

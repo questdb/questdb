@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
@@ -67,15 +66,7 @@ public class CountDoubleGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public int getColumnIndex() {
-        if (arg instanceof ColumnFunction columnFunction) {
-            return columnFunction.getColumnIndex();
-        }
-        return -1;
-    }
-
-    @Override
     public boolean supportsBatchComputation() {
-        return getColumnIndex() != -1;
+        return true;
     }
 }

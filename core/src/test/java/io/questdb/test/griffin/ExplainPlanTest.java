@@ -9955,6 +9955,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Sort
                       keys: [a]
                         Async Window Join workers: 1
+                          vectorized: false
                           window lo: 1000000 preceding
                           window hi: 2000000 following
                             PageFrame
@@ -9972,6 +9973,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             VirtualRecord
                               functions: [a,sum,10*a]
                                 Async Window Join workers: 1
+                                  vectorized: false
                                   window lo: 1000000 preceding
                                   window hi: 2000000 following
                                     PageFrame
@@ -9986,6 +9988,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Sort
                       keys: [a desc]
                         Async Window Join workers: 1
+                          vectorized: false
                           window lo: 1000000 preceding
                           window hi: 2000000 following
                             PageFrame
@@ -10002,6 +10005,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         VirtualRecord
                           functions: [10*a,sum]
                             Async Window Join workers: 1
+                              vectorized: false
                               window lo: 1000000 preceding
                               window hi: 2000000 following
                                 PageFrame
@@ -10019,6 +10023,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             VirtualRecord
                               functions: [a0,sum,10*a0]
                                 Async Window Join workers: 1
+                                  vectorized: false
                                   window lo: 1000000 preceding
                                   window hi: 2000000 following
                                     PageFrame
@@ -10036,6 +10041,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             VirtualRecord
                               functions: [a0,sum,ts,10*a0]
                                 Async Window Join workers: 1
+                                  vectorized: false
                                   window lo: 1000000 preceding
                                   window hi: 2000000 following
                                     PageFrame
@@ -10053,6 +10059,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             VirtualRecord
                               functions: [ts,to_utc(ts),a0,sum,10*a0]
                                 Async Window Join workers: 1
+                                  vectorized: false
                                   window lo: 1000000 preceding
                                   window hi: 2000000 following
                                     PageFrame

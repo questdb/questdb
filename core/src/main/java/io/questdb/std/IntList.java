@@ -215,10 +215,6 @@ public class IntList implements Mutable, Sinkable {
         return -1;
     }
 
-    public int indexOf(int v) {
-        return indexOf(v, 0, pos);
-    }
-
     public void insert(int index, int element) {
         setPos(++pos);
         System.arraycopy(data, index, data, index + 1, pos - index - 1);

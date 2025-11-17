@@ -69,7 +69,6 @@ public class IPv4GroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(3L, function.getLong(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -87,7 +86,6 @@ public class IPv4GroupByFunctionBatchTest {
     @Test
     public void testCountIPv4RequiresColumnFunction() {
         CountIPv4GroupByFunction function = new CountIPv4GroupByFunction(IPv4Constant.newInstance(Numbers.IPv4_NULL));
-        Assert.assertEquals(-1, function.getColumnIndex());
         Assert.assertFalse(function.supportsBatchComputation());
     }
 
@@ -100,7 +98,6 @@ public class IPv4GroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 2);
 
         Assert.assertEquals(ipv4("10.0.0.1"), function.getIPv4(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -122,7 +119,6 @@ public class IPv4GroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertEquals(ipv4("10.0.0.7"), function.getIPv4(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -136,7 +132,6 @@ public class IPv4GroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(ipv4("192.168.1.3"), function.getIPv4(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -150,7 +145,6 @@ public class IPv4GroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(ipv4("5.6.7.8"), function.getIPv4(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -164,7 +158,6 @@ public class IPv4GroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(ipv4("9.9.9.9"), function.getIPv4(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -178,7 +171,6 @@ public class IPv4GroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertEquals(Numbers.IPv4_NULL, function.getIPv4(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -192,7 +184,6 @@ public class IPv4GroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 2);
 
         Assert.assertEquals(ipv4("1.1.1.1"), function.getIPv4(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 

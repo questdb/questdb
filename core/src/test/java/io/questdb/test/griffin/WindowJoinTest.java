@@ -87,6 +87,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: true\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -137,6 +138,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
+                            "      vectorized: true\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
                             "        PageFrame\n" +
@@ -184,6 +186,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
+                            "      vectorized: false\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
                             "        PageFrame\n" +
@@ -237,6 +240,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: true\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -323,6 +327,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: false\n" +
                             "      symbol: sym=sym\n" +
                             "      join filter: p.price<300\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
@@ -374,6 +379,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: true\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
@@ -424,6 +430,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: false\n" +
                             "      symbol: sym=sym\n" +
                             "      join filter: (p.price<200 or 300<p.price)\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
@@ -475,6 +482,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: false\n" +
                             "      symbol: sym=sym\n" +
                             "      join filter: (p.price<200 and 300<p.price)\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
@@ -527,6 +535,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: false\n" +
                             "      symbol: sym=sym\n" +
                             "      join filter: (1000<p.ts and p.price<300 and p.sym!='AAAAAA')\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
@@ -585,6 +594,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: true\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
@@ -634,6 +644,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    Sort\n" +
                             "      keys: [ts, sym]\n" +
                             "        Async Window Fast Join workers: 1\n" +
+                            "          vectorized: true\n" +
                             "          symbol: sym=sym\n" +
                             "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
                             "          window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
@@ -686,6 +697,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: true\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -713,6 +725,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: true\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -760,6 +773,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: true\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -820,6 +834,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: true\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -870,6 +885,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
+                            "      vectorized: true\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
                             "        PageFrame\n" +
@@ -923,6 +939,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: true\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -987,6 +1004,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     expect,
                     "Async Window Join workers: 1\n" +
+                            "  vectorized: true\n" +
                             "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "900000000" : "900000000000") + " preceding\n" +
                             "  window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "840000000" : "840000000000") + " preceding\n" +
                             "    PageFrame\n" +
@@ -1042,6 +1060,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     expect,
                     "Async Window Fast Join workers: 1\n" +
+                            "  vectorized: true\n" +
                             "  symbol: sym=sym\n" +
                             "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "300000000" : "300000000000") + " preceding\n" +
                             "  window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "240000000" : "240000000000") + " preceding\n" +
@@ -1100,6 +1119,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
                             "        Async Window Fast Join workers: 1\n" +
+                            "          vectorized: true\n" +
                             "          symbol: sym=sym\n" +
                             "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "          window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -1146,6 +1166,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
                             "        Async Window Fast Join workers: 1\n" +
+                            "          vectorized: false\n" +
                             "          symbol: sym=sym\n" +
                             "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "          window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -1281,6 +1302,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     expect,
                     "Async Window Join workers: 1\n" +
+                            "  vectorized: true\n" +
                             "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
                             "  window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "    PageFrame\n" +
@@ -1326,6 +1348,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     expect,
                     "Async Window Join workers: 1\n" +
+                            "  vectorized: true\n" +
                             "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "180000000" : "180000000000") + " preceding\n" +
                             "  window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
                             "    PageFrame\n" +
@@ -1368,6 +1391,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     expect,
                     "Async Window Join workers: 1\n" +
+                            "  vectorized: true\n" +
                             "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "  window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
                             "  master filter: price<300\n" +
@@ -1424,6 +1448,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    VirtualRecord\n" +
                             "      functions: [sum+2,price+1,sym,ts]\n" +
                             "        Async Window Fast Join workers: 1\n" +
+                            "          vectorized: true\n" +
                             "          symbol: sym=sym\n" +
                             "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "          window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -1476,6 +1501,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    VirtualRecord\n" +
                             "      functions: [sum+2,price+1,sym,ts]\n" +
                             "        Async Window Join workers: 1\n" +
+                            "          vectorized: false\n" +
                             "          join filter: (t.sym!=p.sym and 100<p.price)\n" +
                             "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "          window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -1722,6 +1748,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     expect,
                     "Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: true\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -1778,6 +1805,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: false\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +

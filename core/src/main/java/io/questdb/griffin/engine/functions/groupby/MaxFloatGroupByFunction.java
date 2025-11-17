@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
@@ -77,14 +76,6 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public Function getArg() {
         return arg;
-    }
-
-    @Override
-    public int getColumnIndex() {
-        if (arg instanceof ColumnFunction columnFunction) {
-            return columnFunction.getColumnIndex();
-        }
-        return -1;
     }
 
     @Override
@@ -149,7 +140,7 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public boolean supportsBatchComputation() {
-        return getColumnIndex() != -1;
+        return true;
     }
 
     @Override

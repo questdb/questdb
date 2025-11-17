@@ -458,6 +458,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final boolean validateSampleByFillType;
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
+    private final WindowJoinAggColumnVectorizedCheck windowJoinAggColumnVectorizedCheck = new WindowJoinAggColumnVectorizedCheck();
     private final WindowJoinColCheckVisitor windowJoinColCheckVisitor = new WindowJoinColCheckVisitor();
     // a bitset of string/symbol columns forced to be serialised as varchar
     private final BitSet writeStringAsVarcharA = new BitSet();
@@ -3348,7 +3349,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, masterMetadata.getTimestampIndex());
                                 masterAlias = null;
-                                ObjList<QueryColumn> aggregateCols;
+                                ObjList<QueryColumn> aggregateCols = new ObjList<>();
                                 final int splitIndex = masterMetadata.getColumnCount();
                                 int timestampIndex = -1;
                                 IntList columnIndex = null;
@@ -3357,7 +3358,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                 if (!isLastWindowJoin) {
                                     // intermediate window join - keep only aggregate columns
-                                    aggregateCols = new ObjList<>();
                                     for (int j = 0, m = columns.size(); j < m; j++) {
                                         ExpressionNode ast = columns.get(j).getAst();
                                         if (!functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
@@ -3380,7 +3380,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                     // TODO: If aggregateCols size is empty, we can theoretically skip this intermediate join
                                 } else {
-                                    aggregateCols = columns;
                                     columnIndex = new IntList(columns.size());
                                     int groupByCnt = 0;
 
@@ -3402,6 +3401,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         } else {
                                             columnIndex.add(splitIndex + groupByCnt);
                                             groupByCnt++;
+                                            aggregateCols.add(columns.get(j));
                                         }
                                     }
 
@@ -3423,7 +3423,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 keyTypes.clear();
                                 valueTypes.clear();
                                 listColumnFilterA.clear();
-                                final int columnCount = aggregateCols.size();
+                                final int columnCount = isLastWindowJoin ? columns.size() : aggregateCols.size();
                                 groupByFunctions = new ObjList<>(columnCount);
                                 tempInnerProjectionFunctions.clear();
                                 tempOuterProjectionFunctions.clear();
@@ -3451,7 +3451,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         listColumnFilterA,
                                         null,
                                         validateSampleByFillType,
-                                        aggregateCols
+                                        isLastWindowJoin ? columns : aggregateCols
                                 );
 
                                 if (!isLastWindowJoin) {
@@ -3578,6 +3578,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                 }
 
+                                // check all the groupby function can be vectorized
+                                boolean allVectorized = joinFilter == null;
+                                if (allVectorized) {
+                                    if (aggregateCols.size() == 0) {
+                                        allVectorized = false;
+                                    } else {
+                                        windowJoinAggColumnVectorizedCheck.of(joinMetadata, splitIndex);
+                                        for (int j = 0, m = groupByFunctions.size(); j < m; j++) {
+                                            if (!groupByFunctions.getQuick(j).supportsBatchComputation()) {
+                                                allVectorized = false;
+                                                break;
+                                            }
+                                            traversalAlgo.traverse(aggregateCols.get(j).getAst(), windowJoinAggColumnVectorizedCheck);
+                                            if (!windowJoinAggColumnVectorizedCheck.vectorized) {
+                                                allVectorized = false;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+
                                 // is parallel windowJoin?
                                 final boolean parallelWindowJoinEnabled = executionContext.isParallelWindowJoinEnabled();
                                 final boolean masterSupportsPageFrames = master.supportsPageFrameCursor()
@@ -3645,6 +3666,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         masterFilterExpr,
                                                         master.getMetadata()
                                                 ),
+                                                allVectorized,
                                                 reduceTaskFactory,
                                                 executionContext.getSharedQueryWorkerCount()
                                         );
@@ -3689,6 +3711,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         masterFilterExpr,
                                                         master.getMetadata()
                                                 ),
+                                                allVectorized,
                                                 reduceTaskFactory,
                                                 executionContext.getSharedQueryWorkerCount()
                                         );
@@ -3709,7 +3732,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 valueTypes,
                                                 rightSymbolIndex,
                                                 leftSymbolIndex,
-                                                joinFilter
+                                                joinFilter,
+                                                allVectorized
                                         );
                                     }
 
@@ -7689,6 +7713,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (factory != null) {
                 sink.child(factory);
             }
+        }
+    }
+
+    private static class WindowJoinAggColumnVectorizedCheck implements PostOrderTreeTraversalAlgo.Visitor {
+        int columnSplit;
+        RecordMetadata metadata;
+        boolean vectorized;
+
+        @Override
+        public void visit(ExpressionNode node) {
+            if (!vectorized) {
+                return;
+            }
+            if (node.type == LITERAL) {
+                int columnIndex = metadata.getColumnIndexQuiet(node.token);
+                if (columnIndex < columnSplit) {
+                    vectorized = false;
+                }
+            }
+        }
+
+        void of(RecordMetadata metadata, int columnSplit) {
+            this.metadata = metadata;
+            this.columnSplit = columnSplit;
+            this.vectorized = true;
         }
     }
 

@@ -113,6 +113,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function masterFilter,
             @Nullable ObjList<Function> perWorkerMasterFilters,
+            boolean vectorized,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             int workerCount
     ) {
@@ -161,6 +162,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 bindVarFunctions,
                 masterFilter,
                 perWorkerMasterFilters,
+                vectorized,
                 masterTsScale,
                 slaveTsScale,
                 workerCount
@@ -224,6 +226,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         sink.type("Async Window Fast Join");
         sink.meta("workers").val(workerCount);
         final AsyncWindowJoinFastAtom atom = (AsyncWindowJoinFastAtom) frameSequence.getAtom();
+        sink.attr("vectorized").val(atom.isVectorized());
         sink.attr("symbol")
                 .val(masterFactory.getMetadata().getColumnName(atom.getMasterSymbolIndex()))
                 .val("=")
@@ -418,9 +421,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
         final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
         final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
-        final IntList columnIndexes = atom.getGroupByColumnIndexes();
-        final int columnCount = columnIndexes.size();
-        final var columnTags = atom.getGroupByColumnTags();
+        final ObjList<Function> groupByFunArgs = atom.getGroupByFunctionArgs(workerId);
+        final int columnCount = groupByFunArgs.size();
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
         final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
@@ -463,7 +465,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
                         // copy the column values to be aggregated
                         for (int i = 0; i < columnCount; i++) {
-                            columnSink.of(slaveData.get(idx, 2 + i)).put(joinRecord, columnIndexes.getQuick(i), columnTags.getQuick(i));
+                            columnSink.of(slaveData.get(idx, 2 + i)).put(joinRecord, groupByFunArgs.getQuick(i));
                             slaveData.put(idx, 2 + i, columnSink.ptr());
                         }
                     }
@@ -507,7 +509,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                         final int mapIndex = mapIndexes.getQuick(i);
                         final long ptr = slaveData.get(idx, 2 + mapIndex);
-                        final long typeSize = ColumnType.sizeOfTag(ColumnType.tagOf(columnTags.getQuick(mapIndex)));
+                        final long typeSize = ColumnType.sizeOfTag(ColumnType.tagOf(groupByFunArgs.getQuick(mapIndex).getType()));
                         groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
                     }
                 }
@@ -716,9 +718,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
                 final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
                 columnSink.resetPtr();
-                final IntList columnIndexes = atom.getGroupByColumnIndexes();
-                final int columnCount = columnIndexes.size();
-                final var columnTags = atom.getGroupByColumnTags();
+                final ObjList<Function> groupByFunArgs = atom.getGroupByFunctionArgs(workerId);
+                final int columnCount = groupByFunArgs.size();
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
                 final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
@@ -758,7 +759,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             // Copy column values to be aggregated
                             for (int i = 0; i < columnCount; i++) {
                                 long ptr = slaveData.get(idx, 2 + i);
-                                columnSink.of(ptr).put(joinRecord, columnIndexes.getQuick(i), columnTags.getQuick(i));
+                                columnSink.of(ptr).put(joinRecord, groupByFunArgs.getQuick(i));
                                 slaveData.put(idx, 2 + i, columnSink.ptr());
                             }
                         }
@@ -802,7 +803,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                             final int mapIndex = mapIndexes.getQuick(i);
                             final long ptr = slaveData.get(idx, 2 + mapIndex);
-                            final long typeSize = ColumnType.sizeOfTag(ColumnType.tagOf(columnTags.getQuick(mapIndex)));
+                            final long typeSize = ColumnType.sizeOfTag(ColumnType.tagOf(groupByFunArgs.getQuick(mapIndex).getType()));
                             groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
                         }
                     }

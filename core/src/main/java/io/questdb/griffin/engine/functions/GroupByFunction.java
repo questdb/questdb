@@ -110,16 +110,6 @@ public interface GroupByFunction extends Function, Mutable {
         return false;
     }
 
-    /**
-     * Returns the zero-based index of the source column in the table metadata when the function
-     * operates directly on that column. Functions that do not map to a single metadata column
-     * should return {@code -1}. Batch aggregation code paths use this to decide which columns need
-     * to be materialised before invoking {@link #computeBatch(MapValue, long, int)}.
-     */
-    default int getColumnIndex() {
-        throw new UnsupportedOperationException();
-    }
-
     default int getSampleByFlags() {
         return SAMPLE_BY_FILL_VALUE | SAMPLE_BY_FILL_NONE | SAMPLE_BY_FILL_NULL | SAMPLE_BY_FILL_PREVIOUS;
     }

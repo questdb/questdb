@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -67,12 +66,11 @@ import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactor
 public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int INITIAL_LIST_CAPACITY = 16;
-    protected final IntList groupByColumnIndexes;
+    protected final ObjList<Function> ownerGroupByFunctionArgs;
     protected final TimeFrameHelper ownerSlaveTimeFrameHelper;
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledMasterFilter;
-    private final IntList groupByColumnTags;
     private final IntList groupByFunctionToColumnIndex;
     private final WindowJoinSymbolTableSource joinSymbolTableSource;
     private final long joinWindowHi;
@@ -98,6 +96,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final ObjList<GroupByColumnSink> perWorkerColumnSinks;
     private final ObjList<GroupByAllocator> perWorkerFunctionAllocators;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
+    private final ObjList<ObjList<Function>> perWorkerGroupByFunctionArgs;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<DirectMapValue> perWorkerGroupByValues;
     private final ObjList<Function> perWorkerJoinFilters;
@@ -132,6 +131,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function ownerMasterFilter,
             @Nullable ObjList<Function> perWorkerMasterFilters,
+            boolean vectorized,
             long masterTsScale,
             long slaveTsScale,
             int workerCount
@@ -156,7 +156,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
             this.masterTsScale = masterTsScale;
             this.slaveTsScale = slaveTsScale;
-            this.vectorized = ownerJoinFilter == null && isBatchComputationSupported(ownerGroupByFunctions, columnSplit);
+            this.vectorized = vectorized;
 
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
             this.ownerSlaveTimeFrameHelper = new TimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
@@ -227,20 +227,17 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
             if (vectorized) {
                 final int groupByFunctionSize = ownerGroupByFunctions.size();
-                this.groupByColumnIndexes = new IntList(groupByFunctionSize);
-                this.groupByColumnTags = new IntList(groupByFunctionSize);
                 this.groupByFunctionToColumnIndex = new IntList(groupByFunctionSize);
+                this.ownerGroupByFunctionArgs = new ObjList<>(groupByFunctionSize);
                 for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
-                    var func = ownerGroupByFunctions.getQuick(i);
-                    int index = func.getColumnIndex();
-                    int mappedIndex = groupByColumnIndexes.indexOf(index);
-                    if (mappedIndex == -1) {
-                        groupByColumnIndexes.add(func.getColumnIndex());
-                        var unary = (UnaryFunction) func;
-                        groupByColumnTags.add(ColumnType.tagOf(unary.getArg().getType()));
-                        groupByFunctionToColumnIndex.add(groupByColumnIndexes.size() - 1);
+                    final var func = ownerGroupByFunctions.getQuick(i);
+                    final var funcArg = ((UnaryFunction) func).getArg();
+                    final int index = ownerGroupByFunctionArgs.indexOf(funcArg);
+                    if (index < 0) {
+                        ownerGroupByFunctionArgs.add(funcArg);
+                        groupByFunctionToColumnIndex.add(ownerGroupByFunctionArgs.size() - 1);
                     } else {
-                        groupByFunctionToColumnIndex.add(mappedIndex);
+                        groupByFunctionToColumnIndex.add(index);
                     }
                 }
 
@@ -252,12 +249,32 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                     sink.setAllocator(perWorkerTemporaryAllocators.getQuick(i));
                     perWorkerColumnSinks.extendAndSet(i, sink);
                 }
+
+                if (perWorkerGroupByFunctions != null) {
+                    this.perWorkerGroupByFunctionArgs = new ObjList<>(slotCount);
+                    for (int i = 0; i < slotCount; i++) {
+                        final ObjList<Function> workerFunctionArgs = new ObjList<>(groupByFunctionSize);
+                        final var groupByFunctions = perWorkerGroupByFunctions.getQuick(i);
+                        for (int j = 0, n = groupByFunctions.size(); i < n; i++) {
+                            final var func = groupByFunctions.getQuick(j);
+                            final var funcArg = ((UnaryFunction) func).getArg();
+                            final int index = workerFunctionArgs.indexOf(funcArg);
+                            if (index < 0) {
+                                workerFunctionArgs.add(funcArg);
+                            }
+                        }
+                        assert workerFunctionArgs.size() == ownerGroupByFunctionArgs.size();
+                        perWorkerGroupByFunctionArgs.extendAndSet(i, workerFunctionArgs);
+                    }
+                } else {
+                    this.perWorkerGroupByFunctionArgs = null;
+                }
             } else {
-                this.groupByColumnIndexes = null;
-                this.groupByColumnTags = null;
                 this.ownerColumnSink = null;
                 this.perWorkerColumnSinks = null;
                 this.groupByFunctionToColumnIndex = null;
+                this.ownerGroupByFunctionArgs = null;
+                this.perWorkerGroupByFunctionArgs = null;
             }
         } catch (Throwable th) {
             close();
@@ -338,12 +355,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return perWorkerFunctionUpdaters.getQuick(slotId);
     }
 
-    public IntList getGroupByColumnIndexes() {
-        return groupByColumnIndexes;
-    }
+    public ObjList<Function> getGroupByFunctionArgs(int slotId) {
+        if (slotId == -1 || perWorkerGroupByFunctionArgs == null) {
+            return ownerGroupByFunctionArgs;
+        }
 
-    public IntList getGroupByColumnTags() {
-        return groupByColumnTags;
+        return perWorkerGroupByFunctionArgs.getQuick(slotId);
     }
 
     public IntList getGroupByFunctionToColumnIndex() {
@@ -585,20 +602,5 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
             }
         }
-    }
-
-    private static boolean isBatchComputationSupported(ObjList<GroupByFunction> functions, int columnSplit) {
-        if (functions == null || functions.size() == 0) {
-            return false;
-        }
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            final var function = functions.getQuick(i);
-            // All aggregate functions have to support batch computation and have slave columns as their arguments.
-            // Only UnaryFunction should support batch computation, so we're doing a sanity check.
-            if (!function.supportsBatchComputation() || !(function instanceof UnaryFunction) || function.getColumnIndex() < columnSplit) {
-                return false;
-            }
-        }
-        return true;
     }
 }

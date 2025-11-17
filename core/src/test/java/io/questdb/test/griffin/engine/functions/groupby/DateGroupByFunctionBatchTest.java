@@ -67,7 +67,6 @@ public class DateGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 2);
 
         Assert.assertEquals(epochDay(1), function.getDate(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -80,7 +79,6 @@ public class DateGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -93,7 +91,6 @@ public class DateGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 0);
 
         Assert.assertEquals(Numbers.LONG_NULL, function.getDate(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -236,7 +233,6 @@ public class DateGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(epochDay(20), function.getDate(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -250,7 +246,6 @@ public class DateGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertEquals(epochDay(50), function.getDate(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 

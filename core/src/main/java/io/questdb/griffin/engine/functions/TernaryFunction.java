@@ -47,6 +47,19 @@ public interface TernaryFunction extends Function {
         getRight().cursorClosed();
     }
 
+    @Override
+    default boolean equals(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof TernaryFunction that) {
+            return getLeft().equals(that.getLeft())
+                    && getCenter().equals(that.getCenter())
+                    && getRight().equals(that.getRight());
+        }
+        return false;
+    }
+
     Function getCenter();
 
     Function getLeft();

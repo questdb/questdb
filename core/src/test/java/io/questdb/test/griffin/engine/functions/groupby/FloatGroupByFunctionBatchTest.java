@@ -70,7 +70,6 @@ public class FloatGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 5);
 
         Assert.assertEquals(3L, function.getLong(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -128,7 +127,6 @@ public class FloatGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertEquals(5.5f, function.getFloat(value), 0.000001f);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -200,7 +198,6 @@ public class FloatGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertEquals(4.4f, function.getFloat(value), 0.0f);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -219,7 +216,6 @@ public class FloatGroupByFunctionBatchTest {
 
         Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
         Assert.assertEquals(33.0f, function.getFloat(value), 0.000001f);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -240,6 +236,18 @@ public class FloatGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastFloatSetEmpty() {
+        LastFloatGroupByFunction function = new LastFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        var columnTypes = new ArrayColumnTypes();
+        function.initValueTypes(columnTypes);
+        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
+        function.initValueIndex(0);
+        function.setEmpty(value);
+
+        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
+    }
+
+    @Test
     public void testLastNotNullFloatBatch() {
         LastNotNullFloatGroupByFunction function = new LastNotNullFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
@@ -253,20 +261,7 @@ public class FloatGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(2.5f, function.getFloat(value), 0.0f);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
-    }
-
-    @Test
-    public void testLastFloatSetEmpty() {
-        LastFloatGroupByFunction function = new LastFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-
-        Assert.assertTrue(Float.isNaN(function.getFloat(value)));
     }
 
     @Test
@@ -283,7 +278,6 @@ public class FloatGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(15.5f, function.getFloat(value), 0.000001f);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -328,7 +322,6 @@ public class FloatGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(2.5f, function.getFloat(value), 0.000001f);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -373,7 +366,6 @@ public class FloatGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 4);
 
         Assert.assertEquals(7.0f, function.getFloat(value), 0.000001f);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -427,16 +419,6 @@ public class FloatGroupByFunctionBatchTest {
         Assert.assertFalse(new MaxFloatGroupByFunction(FloatConstant.newInstance(1.0f)).supportsBatchComputation());
         Assert.assertFalse(new FirstFloatGroupByFunction(FloatConstant.newInstance(1.0f)).supportsBatchComputation());
         Assert.assertFalse(new LastFloatGroupByFunction(FloatConstant.newInstance(1.0f)).supportsBatchComputation());
-    }
-
-    @Test
-    public void testGetColumnIndexRequiresColumnFunction() {
-        Assert.assertEquals(-1, new CountFloatGroupByFunction(FloatConstant.newInstance(1.0f)).getColumnIndex());
-        Assert.assertEquals(-1, new SumFloatGroupByFunction(FloatConstant.newInstance(1.0f)).getColumnIndex());
-        Assert.assertEquals(-1, new MinFloatGroupByFunction(FloatConstant.newInstance(1.0f)).getColumnIndex());
-        Assert.assertEquals(-1, new MaxFloatGroupByFunction(FloatConstant.newInstance(1.0f)).getColumnIndex());
-        Assert.assertEquals(-1, new FirstFloatGroupByFunction(FloatConstant.newInstance(1.0f)).getColumnIndex());
-        Assert.assertEquals(-1, new LastFloatGroupByFunction(FloatConstant.newInstance(1.0f)).getColumnIndex());
     }
 
     private long allocateFloats(float... values) {

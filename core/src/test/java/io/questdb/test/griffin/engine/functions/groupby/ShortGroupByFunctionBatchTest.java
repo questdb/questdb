@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.griffin.engine.functions.columns.ShortColumn;
-import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.groupby.AvgShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.LastShortGroupByFunction;
@@ -54,63 +53,31 @@ public class ShortGroupByFunctionBatchTest {
     }
 
     @Test
-    public void testSumShortBatch() {
-        SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+    public void testAvgShortBatch() {
+        AvgShortGroupByFunction function = new AvgShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
         SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
         function.initValueIndex(0);
         function.setEmpty(value);
-        value.putLong(0, 10);
 
-        long ptr = allocateShorts((short) 1, (short) 2, (short) 3, (short) 4);
-        function.computeBatch(value, ptr, 4);
+        long ptr = allocateShorts((short) 2, (short) 4, (short) 6);
+        function.computeBatch(value, ptr, 3);
 
-        Assert.assertEquals(10L, function.getLong(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
+        Assert.assertEquals(4.0, function.getDouble(value), 0.0);
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
     @Test
-    public void testSumShortBatchAllZero() {
-        SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+    public void testAvgShortSetEmpty() {
+        AvgShortGroupByFunction function = new AvgShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
         SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
         function.initValueIndex(0);
         function.setEmpty(value);
 
-        long ptr = allocateShorts((short) 0, (short) 0);
-        function.computeBatch(value, ptr, 2);
-
-        Assert.assertEquals(0L, function.getLong(value));
-    }
-
-    @Test
-    public void testSumShortBatchZeroCountKeepsExistingValue() {
-        SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        value.putLong(0, 55);
-
-        function.computeBatch(value, 0, 0);
-
-        Assert.assertEquals(55L, function.getLong(value));
-    }
-
-    @Test
-    public void testSumShortSetEmpty() {
-        SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-
-        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
+        Assert.assertTrue(Double.isNaN(function.getDouble(value)));
     }
 
     @Test
@@ -126,7 +93,6 @@ public class ShortGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertEquals(5, function.getShort(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -173,14 +139,6 @@ public class ShortGroupByFunctionBatchTest {
     }
 
     @Test
-    public void testGetColumnIndexRequiresColumnFunction() {
-        Assert.assertEquals(-1, new SumShortGroupByFunction(ShortConstant.newInstance((short) 1)).getColumnIndex());
-        Assert.assertEquals(-1, new FirstShortGroupByFunction(ShortConstant.newInstance((short) 1)).getColumnIndex());
-        Assert.assertEquals(-1, new LastShortGroupByFunction(0, ShortConstant.newInstance((short) 1)).getColumnIndex());
-        Assert.assertEquals(-1, new AvgShortGroupByFunction(ShortConstant.newInstance((short) 1)).getColumnIndex());
-    }
-
-    @Test
     public void testLastShortBatch() {
         LastShortGroupByFunction function = new LastShortGroupByFunction(0, ShortColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
@@ -195,7 +153,6 @@ public class ShortGroupByFunctionBatchTest {
 
         Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
         Assert.assertEquals(33, function.getShort(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -228,32 +185,62 @@ public class ShortGroupByFunctionBatchTest {
     }
 
     @Test
-    public void testAvgShortBatch() {
-        AvgShortGroupByFunction function = new AvgShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+    public void testSumShortBatch() {
+        SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
         SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
         function.initValueIndex(0);
         function.setEmpty(value);
+        value.putLong(0, 10);
 
-        long ptr = allocateShorts((short) 2, (short) 4, (short) 6);
-        function.computeBatch(value, ptr, 3);
+        long ptr = allocateShorts((short) 1, (short) 2, (short) 3, (short) 4);
+        function.computeBatch(value, ptr, 4);
 
-        Assert.assertEquals(4.0, function.getDouble(value), 0.0);
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
+        Assert.assertEquals(10L, function.getLong(value));
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
     @Test
-    public void testAvgShortSetEmpty() {
-        AvgShortGroupByFunction function = new AvgShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+    public void testSumShortBatchAllZero() {
+        SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
         SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
         function.initValueIndex(0);
         function.setEmpty(value);
 
-        Assert.assertTrue(Double.isNaN(function.getDouble(value)));
+        long ptr = allocateShorts((short) 0, (short) 0);
+        function.computeBatch(value, ptr, 2);
+
+        Assert.assertEquals(0L, function.getLong(value));
+    }
+
+    @Test
+    public void testSumShortBatchZeroCountKeepsExistingValue() {
+        SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+        var columnTypes = new ArrayColumnTypes();
+        function.initValueTypes(columnTypes);
+        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
+        function.initValueIndex(0);
+        function.setEmpty(value);
+        value.putLong(0, 55);
+
+        function.computeBatch(value, 0, 0);
+
+        Assert.assertEquals(55L, function.getLong(value));
+    }
+
+    @Test
+    public void testSumShortSetEmpty() {
+        SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+        var columnTypes = new ArrayColumnTypes();
+        function.initValueTypes(columnTypes);
+        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
+        function.initValueIndex(0);
+        function.setEmpty(value);
+
+        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
     }
 
     private long allocateShorts(short... values) {

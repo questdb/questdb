@@ -46,6 +46,17 @@ public interface BinaryFunction extends Function {
         getRight().cursorClosed();
     }
 
+    @Override
+    default boolean equals(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof BinaryFunction that) {
+            return getLeft().equals(that.getLeft()) && getRight().equals(that.getRight());
+        }
+        return false;
+    }
+
     Function getLeft();
 
     Function getRight();

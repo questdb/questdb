@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
-import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.groupby.FirstByteGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.LastByteGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
@@ -64,7 +63,6 @@ public class ByteGroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 3);
 
         Assert.assertEquals(11, function.getByte(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 
@@ -96,12 +94,6 @@ public class ByteGroupByFunctionBatchTest {
     }
 
     @Test
-    public void testGetColumnIndexRequiresColumnFunction() {
-        Assert.assertEquals(-1, new FirstByteGroupByFunction(ByteConstant.newInstance((byte) 1)).getColumnIndex());
-        Assert.assertEquals(-1, new LastByteGroupByFunction(0, ByteConstant.newInstance((byte) 1)).getColumnIndex());
-    }
-
-    @Test
     public void testLastByteBatch() {
         LastByteGroupByFunction function = new LastByteGroupByFunction(0, ByteColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
@@ -116,7 +108,6 @@ public class ByteGroupByFunctionBatchTest {
 
         Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
         Assert.assertEquals(30, function.getByte(value));
-        Assert.assertEquals(COLUMN_INDEX, function.getColumnIndex());
         Assert.assertTrue(function.supportsBatchComputation());
     }
 

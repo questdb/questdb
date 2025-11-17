@@ -105,7 +105,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             @NotNull ArrayColumnTypes columnTypes,
             int slaveSymbolIndex,
             int masterSymbolIndex,
-            @Nullable Function joinFilter
+            @Nullable Function joinFilter,
+            boolean vectorized
     ) {
         super(metadata);
         assert slaveFactory.supportsTimeFrameCursor();
@@ -120,27 +121,22 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         var slaveMetadata = slaveFactory.getMetadata();
 
         this.slaveSymbolLookupTable = new DirectIntIntHashMap(16, 0.5, StaticSymbolTable.VALUE_NOT_FOUND, MemoryTag.NATIVE_UNORDERED_MAP);
-        final boolean vectorized = isBatchComputationSupported(groupByFunctions, columnSplit) && joinFilter == null;
         if (vectorized) {
             var groupByCount = groupByFunctions.size();
-            var groupByColumnIndexes = new IntList(groupByCount);
-            var groupByColumnTags = new IntList(groupByCount);
             var groupByFunctionToColumnIndex = new IntList(groupByCount);
+            ObjList<Function> groupByFunctionArgs = new ObjList<>(groupByCount);
             for (int i = 0; i < groupByCount; i++) {
-                var func = groupByFunctions.getQuick(i);
-                int index = func.getColumnIndex();
-                int mappedIndex = groupByColumnIndexes.indexOf(index);
+                var func = ((UnaryFunction) groupByFunctions.getQuick(i)).getArg();
+                int mappedIndex = groupByFunctionArgs.indexOf(func);
                 if (mappedIndex == -1) {
-                    groupByColumnIndexes.add(func.getColumnIndex());
-                    var unary = (UnaryFunction) func;
-                    groupByColumnTags.add(ColumnType.tagOf(unary.getArg().getType()));
-                    groupByFunctionToColumnIndex.add(groupByColumnIndexes.size() - 1);
+                    groupByFunctionArgs.add(func);
+                    groupByFunctionToColumnIndex.add(groupByFunctionArgs.size() - 1);
                 } else {
                     groupByFunctionToColumnIndex.add(mappedIndex);
                 }
             }
 
-            this.slaveData = new DirectIntMultiLongHashMap(16, 0.5, 0, 2 + groupByColumnIndexes.size(), MemoryTag.NATIVE_UNORDERED_MAP);
+            this.slaveData = new DirectIntMultiLongHashMap(16, 0.5, 0, 2 + groupByFunctionArgs.size(), MemoryTag.NATIVE_UNORDERED_MAP);
             this.cursor = new WindowJoinFastVectRecordCursor(
                     configuration,
                     columnIndex,
@@ -151,8 +147,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     slaveMetadata.getTimestampType(),
                     groupByFunctions,
                     columnTypes,
-                    groupByColumnIndexes,
-                    groupByColumnTags,
+                    groupByFunctionArgs,
                     groupByFunctionToColumnIndex
             );
         } else {
@@ -241,21 +236,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
         sink.child(masterFactory);
         sink.child(slaveFactory);
-    }
-
-    private static boolean isBatchComputationSupported(ObjList<GroupByFunction> functions, int columnSplit) {
-        if (functions == null || functions.size() == 0) {
-            return false;
-        }
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            final var function = functions.getQuick(i);
-            // All aggregate functions have to support batch computation and have slave columns as their arguments.
-            // Only UnaryFunction should support batch computation, so we're doing a sanity check.
-            if (!function.supportsBatchComputation() || !(function instanceof UnaryFunction) || function.getColumnIndex() < columnSplit) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private void setupSlaveLookupTable(RecordCursor masterCursor, TimeFrameCursor slaveCursor) {
@@ -556,8 +536,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         private final GroupByColumnSink columnSink;
         private final int columnSplit;
         private final @Nullable IntList crossIndex;
-        private final IntList groupByColumnIndexes;
-        private final IntList groupByColumnTags;
+        private final ObjList<Function> groupByFunctionArgs;
         private final IntList groupByFunctionToColumnIndex;
         private final ObjList<GroupByFunction> groupByFunctions;
         private final VirtualRecord groupByRecord;
@@ -590,8 +569,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 int slaveTimestampType,
                 @NotNull ObjList<GroupByFunction> groupByFunctions,
                 @NotNull ArrayColumnTypes columnTypes,
-                IntList groupByColumnIndexes,
-                IntList groupByColumnTags,
+                ObjList<Function> groupByFunctionArgs,
                 IntList groupByFunctionToColumnIndex
         ) {
             this.crossIndex = columnIndex;
@@ -630,11 +608,10 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.timestamps = new GroupByLongList(INITIAL_LIST_CAPACITY);
             this.timestamps.setAllocator(slaveAllocator);
 
-            this.columnCount = groupByColumnIndexes.size();
+            this.columnCount = groupByFunctionArgs.size();
             this.lastSlaveTimestamp = Long.MIN_VALUE;
 
-            this.groupByColumnIndexes = groupByColumnIndexes;
-            this.groupByColumnTags = groupByColumnTags;
+            this.groupByFunctionArgs = groupByFunctionArgs;
             this.groupByFunctionToColumnIndex = groupByFunctionToColumnIndex;
         }
 
@@ -715,7 +692,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
                             // copy the column values to be aggregated
                             for (int i = 0; i < columnCount; i++) {
-                                columnSink.of(slaveData.get(idx, 2 + i)).put(internalJoinRecord, groupByColumnIndexes.getQuick(i), groupByColumnTags.getQuick(i));
+                                columnSink.of(slaveData.get(idx, 2 + i)).put(internalJoinRecord, groupByFunctionArgs.getQuick(i));
                                 slaveData.put(idx, 2 + i, columnSink.ptr());
                             }
                         }
@@ -750,7 +727,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                     int mapIndex = groupByFunctionToColumnIndex.getQuick(i);
                     final long ptr = slaveData.get(idx, 2 + mapIndex);
-                    final long typeSize = ColumnType.sizeOfTag((short) groupByColumnTags.getQuick(mapIndex));
+                    final long typeSize = ColumnType.sizeOfTag(ColumnType.tagOf(groupByFunctionArgs.getQuick(mapIndex).getType()));
                     groupByFunctions.getQuick(i).computeBatch(simpleMapValue, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
                 }
             }

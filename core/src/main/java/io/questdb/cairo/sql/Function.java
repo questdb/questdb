@@ -107,6 +107,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     default void cursorClosed() {
     }
 
+    default boolean equals(Function obj) {
+        return this == obj;
+    }
+
     default FunctionExtension extendedOps() {
         return null;
     }
