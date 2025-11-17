@@ -215,7 +215,7 @@ public class TimeFrameHelper {
             if (midTimestamp < timestampLo) {
                 low = mid;
             } else if (midTimestamp > timestampLo) {
-                high = mid - 1;
+                high = mid;
             } else {
                 // In case of multiple values equal to timestampLo, find the first one
                 return binarySearchScrollUp(low, mid, timestampLo);
