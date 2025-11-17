@@ -222,6 +222,72 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAggregateNotTrivialColumnCastRequired() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x (" +
+                            "  s symbol," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table y (" +
+                            "  s symbol," +
+                            "  x long," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into x values " +
+                            "('sym0', '2023-01-01T09:00:00.000000Z');"
+            );
+            execute(
+                    "insert into y values " +
+                            "('sym0', null, '2023-01-01T08:59:58.000000Z')," +
+                            "('sym0', null, '2023-01-01T08:59:59.000000Z')," +
+                            "('sym0', 1, '2023-01-01T09:00:00.000000Z')," +
+                            "('sym0', 2, '2023-01-01T09:00:01.000000Z')," +
+                            "('sym0', 3, '2023-01-01T09:00:02.000000Z');"
+            );
+
+            assertQueryAndPlan(
+                    """
+                            s\tts\tavg_y
+                            sym0\t2023-01-01T09:00:00.000000Z\t1.0
+                            """,
+                    """
+                            Sort
+                              keys: [ts, s]
+                                Async Window Fast Join workers: 1
+                                  vectorized: true
+                                  symbol: s=s
+                                  window lo: 1000000 preceding
+                                  window hi: 1000000 following
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
+                            """,
+                    "select x.*, avg(y.x) as avg_y " +
+                            "from x " +
+                            "window join y " +
+                            "on (x.s = y.s) " +
+                            " range between 1 second preceding and 1 second following " +
+                            "order by x.ts, x.s;",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testBasicWindowJoin() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
