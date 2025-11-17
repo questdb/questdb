@@ -62,7 +62,7 @@ public class Decimal256Test {
 
     @Test
     public void testAdditionFuzz() {
-        Rnd rnd = TestUtils.generateRandom(null, 1052545574291713L, 1763338068366L);
+        Rnd rnd = TestUtils.generateRandom(null);
 
         // Number of test iterations
         final int ITERATIONS = 10_000;
