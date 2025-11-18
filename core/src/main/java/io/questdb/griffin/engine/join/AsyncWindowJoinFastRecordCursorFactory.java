@@ -424,6 +424,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final ObjList<Function> groupByFunArgs = atom.getGroupByFunctionArgs(workerId);
         final IntList groupByFunctionTypes = atom.getGroupByFunctionTypes();
         final int groupByFunctionsSize = groupByFunctions.size();
+        final int columnCount = groupByFunArgs.size();
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
         final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
@@ -465,7 +466,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         slaveData.put(idx, 0, timestamps.ptr());
 
                         // copy the column values to be aggregated
-                        for (int i = 0; i < groupByFunctionsSize; i++) {
+                        for (int i = 0; i < columnCount; i++) {
                             var funcArg = groupByFunArgs.getQuick(i);
                             if (funcArg != null) {
                                 columnSink.of(slaveData.get(idx, 2 + i)).put(joinRecord, funcArg, (short) groupByFunctionTypes.getQuick(i));
@@ -725,6 +726,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final ObjList<Function> groupByFunArgs = atom.getGroupByFunctionArgs(workerId);
                 final IntList groupByFunctionTypes = atom.getGroupByFunctionTypes();
                 final int groupByFunctionsSize = groupByFunctions.size();
+                final int columnCount = groupByFunArgs.size();
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
                 final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
@@ -762,7 +764,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             slaveData.put(idx, 0, timestamps.ptr());
 
                             // Copy column values to be aggregated
-                            for (int i = 0; i < groupByFunctionsSize; i++) {
+                            for (int i = 0; i < columnCount; i++) {
                                 var funcArg = groupByFunArgs.getQuick(i);
                                 if (funcArg != null) {
                                     long ptr = slaveData.get(idx, 2 + i);
