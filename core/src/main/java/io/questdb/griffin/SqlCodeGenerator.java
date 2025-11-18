@@ -3539,19 +3539,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (joinFilter != null && joinFilter.isConstant()) {
                                     joinFilter.init(null, executionContext);
                                     if (!joinFilter.getBool(null)) {
-                                        GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(masterMetadata);
-                                        for (int k = 0, m = aggregateCols.size(); k < m; k++) {
-                                            metadata.add(new TableColumnMetadata(aggregateCols.get(k).getAlias().toString(), groupByFunctions.get(k).getType()));
+                                        RecordCursorFactory factory;
+                                        if (isLastWindowJoin) {
+                                            if (columnIndex == null) {
+                                                factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master);
+                                            } else {
+                                                GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(masterMetadata);
+                                                for (int k = 0, m = aggregateCols.size(); k < m; k++) {
+                                                    metadata.add(new TableColumnMetadata(aggregateCols.get(k).getAlias().toString(), groupByFunctions.get(k).getType()));
+                                                }
+                                                factory = new SelectedRecordCursorFactory(outerProjectionMetadata, columnIndex, new ExtraNullColumnCursorFactory(metadata, masterMetadata.getColumnCount(), master));
+                                            }
+                                        } else {
+                                            factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master);
                                         }
-                                        RecordCursorFactory factory = new ExtraNullColumnCursorFactory(metadata, masterMetadata.getColumnCount(), master);
-                                        if (columnIndex != null) {
-                                            factory = new SelectedRecordCursorFactory(outerProjectionMetadata, columnIndex, factory);
-                                        }
+
                                         Misc.free(slave);
                                         Misc.free(joinMetadata);
                                         Misc.free(joinFilter);
                                         master = factory;
                                         break;
+                                    } else {
+                                        joinFilter = Misc.free(joinFilter);
+                                        parent = null;
                                     }
                                 }
 
