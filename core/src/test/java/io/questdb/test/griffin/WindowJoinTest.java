@@ -740,14 +740,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                     true
             );
 
-            expect = replaceTimestampSuffix("ts\tmax\n" +
-                    "2023-01-01T09:00:00.000000Z\t2023-01-01T09:01:00.000000Z\n" +
-                    "2023-01-01T09:01:00.000000Z\t2023-01-01T09:01:00.000000Z\n" +
-                    "2023-01-01T09:02:00.000000Z\t2023-01-01T09:01:00.000000Z\n" +
-                    "2023-01-01T09:03:00.000000Z\t2023-01-01T09:03:00.000000Z\n" +
-                    "2023-01-01T09:04:00.000000Z\t2023-01-01T09:03:00.000000Z\n" +
-                    "2023-01-01T09:07:00.000000Z\t2023-01-01T09:06:00.000000Z\n" +
-                    "2023-01-01T09:08:00.000000Z\t2023-01-01T09:07:00.000000Z\n", leftTableTimestampType.getTypeName());
+            expect = replaceTimestampSuffix("ts\tcount\tmax\n" +
+                    "2023-01-01T09:00:00.000000Z\t3\t2023-01-01T09:01:00.000000Z\n" +
+                    "2023-01-01T09:01:00.000000Z\t3\t2023-01-01T09:01:00.000000Z\n" +
+                    "2023-01-01T09:02:00.000000Z\t2\t2023-01-01T09:01:00.000000Z\n" +
+                    "2023-01-01T09:03:00.000000Z\t2\t2023-01-01T09:03:00.000000Z\n" +
+                    "2023-01-01T09:04:00.000000Z\t2\t2023-01-01T09:03:00.000000Z\n" +
+                    "2023-01-01T09:07:00.000000Z\t1\t2023-01-01T09:06:00.000000Z\n" +
+                    "2023-01-01T09:08:00.000000Z\t1\t2023-01-01T09:07:00.000000Z\n", leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
                     "SelectedRecord\n" +
@@ -765,7 +765,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: prices\n",
-                    "select t.ts, max(p.ts) " +
+                    "select t.ts, count(), max(p.ts) " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -780,7 +780,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             // verify result
             assertQuery(
                     expect,
-                    "select t.ts, max(p.ts) " +
+                    "select t.ts, count(), max(p.ts) " +
                             "from (select * from trades where price < 300) t " +
                             "left join prices p " +
                             "on (t.sym = p.sym) " +
@@ -1423,8 +1423,41 @@ public class WindowJoinTest extends AbstractCairoTest {
                     false
             );
 
-            assertExceptionNoLeakCheck(
-                    "select t.ts, t.sym,  sum(p1.price), p.price as window_price2 " +
+            // count is resolved to the first slave
+            expect = replaceTimestampSuffix("ts\tsym\twindow_price1\twindow_price2\tcnt\n" +
+                    "2023-01-01T09:00:00.000000Z\tAAPL\t99.5\t101.5\t3\n" +
+                    "2023-01-01T09:01:00.000000Z\tAAPL\t100.5\t101.5\t2\n" +
+                    "2023-01-01T09:02:00.000000Z\tAAPL\t101.5\t101.5\t1\n" +
+                    "2023-01-01T09:03:00.000000Z\tMSFT\t199.5\t200.5\t2\n" +
+                    "2023-01-01T09:04:00.000000Z\tMSFT\t200.5\t200.5\t1\n" +
+                    "2023-01-01T09:05:00.000000Z\tGOOGL\t299.5\t300.5\t2\n" +
+                    "2023-01-01T09:06:00.000000Z\tGOOGL\t300.5\t301.5\t1\n" +
+                    "2023-01-01T09:07:00.000000Z\tAAPL\t102.5\t102.5\t1\n" +
+                    "2023-01-01T09:08:00.000000Z\tMSFT\t201.5\t201.5\t1\n" +
+                    "2023-01-01T09:09:00.000000Z\tGOOGL\t301.5\t301.5\t1\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Window Fast Join\n" +
+                            "      symbol: t.sym=sym\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
+                            "        Async Window Fast Join workers: 1\n" +
+                            "          vectorized: true\n" +
+                            "          symbol: sym=sym\n" +
+                            "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "          window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: prices\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.ts, t.sym, min(p.price) window_price1, max(p1.price) as window_price2, count() as cnt " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -1433,12 +1466,27 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "on (t.sym = p1.sym) " +
                             " range between 2 minute preceding and 2 minute following " +
                             "order by t.ts, t.sym;",
-                    36,
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertExceptionNoLeakCheck(
+                    "select t.ts, t.sym, sum(p1.price), p.price as window_price2 " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "window join prices p1 " +
+                            "on (t.sym = p1.sym) " +
+                            " range between 2 minute preceding and 2 minute following " +
+                            "order by t.ts, t.sym;",
+                    35,
                     "WINDOW join cannot reference right table non-aggregate column: p.price"
             );
 
             assertExceptionNoLeakCheck(
-                    "select t.ts, t.sym,  sum(p1.price + p.price) as window_price2 " +
+                    "select t.ts, t.sym, sum(p1.price + p.price) as window_price2 " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -1447,7 +1495,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "on (t.sym = p1.sym) " +
                             " range between 2 minute preceding and 2 minute following " +
                             "order by t.ts, t.sym;",
-                    21,
+                    20,
                     "WINDOW join aggregate function cannot reference columns from multiple models"
             );
         });
@@ -1690,14 +1738,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                     true
             );
 
-            expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\n" +
-                    "AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t301.5\n" +
-                    "AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t401.5\n" +
-                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t501.5\n" +
-                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t699.5\n" +
-                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t800.5\n" +
-                    "AAPL\t103.0\t2023-01-01T09:07:00.000000Z\t605.5\n" +
-                    "MSFT\t202.0\t2023-01-01T09:08:00.000000Z\t503.0\n", leftTableTimestampType.getTypeName());
+            expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\tcnt\n" +
+                    "AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t301.5\t3\n" +
+                    "AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t401.5\t3\n" +
+                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t501.5\t3\n" +
+                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t699.5\t3\n" +
+                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t800.5\t3\n" +
+                    "AAPL\t103.0\t2023-01-01T09:07:00.000000Z\t605.5\t3\n" +
+                    "MSFT\t202.0\t2023-01-01T09:08:00.000000Z\t503.0\t2\n", leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
                     "Async Window Join workers: 1\n" +
@@ -1711,7 +1759,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: prices\n",
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.*, sum(p.price) as window_price, count() as cnt " +
                             "from trades t " +
                             "window join prices p " +
                             " range between 1 minute preceding and 1 minute following " +
@@ -1725,7 +1773,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             // verify result
             assertQuery(
                     expect,
-                    "select t.*, sum(p.price) window_price " +
+                    "select t.*, sum(p.price) window_price, count() as cnt " +
                             "from (select * from trades where price < 300) t " +
                             "left join prices p " +
                             "on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)" +
@@ -2081,10 +2129,10 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testWindowJoinWithMasterLimitOffsetFilter() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
-            String expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\n" +
-                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t101.5\n" +
-                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t400.0\n" +
-                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t200.5\n", leftTableTimestampType.getTypeName());
+            String expect = replaceTimestampSuffix("sym\tprice\tts\tf\n" +
+                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t101.5000\n" +
+                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t200.5000\n" +
+                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t200.5000\n", leftTableTimestampType.getTypeName());
 
             // fast factory
             assertQueryAndPlan(
@@ -2105,7 +2153,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Interval forward scan on: prices\n" +
                             "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000001Z" : "2023-01-01T08:59:00.000001000Z")
                             : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000000Z" : "2023-01-01T08:59:00.000000001Z")) + "\",\"MAX\")]\n",
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.*, max(concat(p.price, '000')) f " +
                             "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -2118,7 +2166,55 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             assertQuery(
                     expect,
-                    "select t.*, sum(p.price) window_price " +
+                    "select t.*, max(concat(p.price, '000')) f " +
+                            "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
+                            "left join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+
+            expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\tcnt\n" +
+                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\t101.5\t1\n" +
+                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\t400.0\t2\n" +
+                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\t200.5\t1\n", leftTableTimestampType.getTypeName());
+
+            // fast factory, vectorized
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Window Fast Join\n" +
+                            "      symbol: sym=sym\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "        Limit lo: 1 hi: 4 skip-over-rows: 1 limit: 3\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: trades\n" +
+                            "                  intervals: [(\"2023-01-01T09:00:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000001" : "000000001") + "Z\",\"MAX\")]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Interval forward scan on: prices\n" +
+                            "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000001Z" : "2023-01-01T08:59:00.000001000Z")
+                            : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000000Z" : "2023-01-01T08:59:00.000000001Z")) + "\",\"MAX\")]\n",
+                    "select t.*, sum(p.price) as window_price, count as cnt " +
+                            "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQuery(
+                    expect,
+                    "select t.*, sum(p.price) window_price, count as cnt " +
                             "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
                             "left join prices p " +
                             "on (t.sym = p.sym) " +
@@ -2148,7 +2244,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Interval forward scan on: prices\n" +
                             "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000001Z" : "2023-01-01T08:59:00.000001000Z")
                             : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000000Z" : "2023-01-01T08:59:00.000000001Z")) + "\",\"MAX\")]\n",
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.*, sum(p.price) as window_price, count as cnt " +
                             "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
                             "window join prices p " +
                             "on (concat(t.sym, '_0') = concat(p.sym, '_0')) " +
@@ -2161,7 +2257,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             assertQuery(
                     expect,
-                    "select t.*, sum(p.price) window_price " +
+                    "select t.*, sum(p.price) window_price, count as cnt " +
                             "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
                             "left join prices p " +
                             "on (t.sym = p.sym) " +

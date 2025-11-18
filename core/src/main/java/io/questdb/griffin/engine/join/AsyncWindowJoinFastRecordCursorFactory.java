@@ -356,10 +356,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 timestamps.of(timestampsPtr);
 
                 if (rowIds.size() > 0) {
-                    long newRowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
-                    newRowLo = newRowLo < 0 ? -newRowLo - 1 : newRowLo;
-                    slaveData.put(idx, 2, newRowLo);
-                    rowLo = newRowLo;
+                    rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
+                    slaveData.put(idx, 2, rowLo);
                     long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                     if (rowLo < rowHi) {
@@ -504,10 +503,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 timestamps.of(timestampsPtr);
 
                 if (timestamps.size() > 0) {
-                    long newRowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
-                    newRowLo = newRowLo < 0 ? -newRowLo - 1 : newRowLo;
-                    slaveData.put(idx, 1, newRowLo);
-                    rowLo = newRowLo;
+                    rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
+                    slaveData.put(idx, 1, rowLo);
                     long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                     for (int i = 0; i < groupByFuncCount; i++) {
@@ -649,10 +647,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     timestamps.of(timestampsPtr);
 
                     if (rowIds.size() > 0) {
-                        long newRowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
-                        newRowLo = newRowLo < 0 ? -newRowLo - 1 : newRowLo;
-                        slaveData.put(idx, 2, newRowLo);
-                        rowLo = newRowLo;
+                        rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
+                        slaveData.put(idx, 2, rowLo);
                         long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                         if (rowLo < rowHi) {
@@ -806,10 +803,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     timestamps.of(timestampsPtr);
 
                     if (timestamps.size() > 0) {
-                        long newRowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
-                        newRowLo = newRowLo < 0 ? -newRowLo - 1 : newRowLo;
-                        slaveData.put(idx, 1, newRowLo);
-                        rowLo = newRowLo;
+                        rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
+                        slaveData.put(idx, 1, rowLo);
                         long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                         for (int i = 0; i < groupByFuncCount; i++) {
