@@ -345,10 +345,6 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         }
 
         @Override
-        public void skipRows(Counter rowCount) throws DataUnavailableException {
-        }
-
-        @Override
         public void toTop() {
             freeAllIteratorBlocks();
             resetLocalState();

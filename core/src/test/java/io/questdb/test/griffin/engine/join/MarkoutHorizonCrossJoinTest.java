@@ -645,7 +645,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             id\tts
-                            1\t1970-01-01T00:00:00.000000Z
+                            1\t1970-01-01T00:20:00.000000Z
                             """,
                     "SELECT /*+ markout_horizon(orders offsets) */ id, ts FROM (" + sql + ") LIMIT -1",
                     EXPECTED_TS,
