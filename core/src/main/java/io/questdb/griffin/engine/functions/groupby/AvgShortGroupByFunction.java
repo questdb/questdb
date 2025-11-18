@@ -72,6 +72,11 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     }
 
     @Override
+    public int getComputeBatchArgType() {
+        return ColumnType.SHORT;
+    }
+
+    @Override
     public double getDouble(Record rec) {
         final long sum = rec.getLong(valueIndex);
         final long count = rec.getLong(valueIndex + 1);

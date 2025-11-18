@@ -129,11 +129,11 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             IntList groupByFunctionTypes = new IntList(groupByCount);
             for (int i = 0; i < groupByCount; i++) {
                 var func = groupByFunctions.getQuick(i);
-                var funcArg = func.hasArgs() ? ((UnaryFunction) func).getArg() : null;
+                var funcArg = func instanceof UnaryFunction ? ((UnaryFunction) func).getArg() : null;
                 int mappedIndex = findFunctionIndex(groupByFunctionArgs, funcArg);
                 if (mappedIndex == -1) {
                     groupByFunctionArgs.add(funcArg);
-                    groupByFunctionTypes.add(ColumnType.tagOf(func.getArgType()));
+                    groupByFunctionTypes.add(ColumnType.tagOf(func.getComputeBatchArgType()));
                     groupByFunctionToColumnIndex.add(groupByFunctionArgs.size() - 1);
                 } else {
                     groupByFunctionToColumnIndex.add(mappedIndex);

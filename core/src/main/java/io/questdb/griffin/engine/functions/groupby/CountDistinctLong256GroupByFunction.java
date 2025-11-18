@@ -98,7 +98,7 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     }
 
     @Override
-    public int getArgType() {
+    public int getComputeBatchArgType() {
         return ColumnType.LONG256;
     }
 

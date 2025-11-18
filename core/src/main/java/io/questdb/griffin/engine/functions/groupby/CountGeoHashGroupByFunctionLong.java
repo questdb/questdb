@@ -71,7 +71,7 @@ public class CountGeoHashGroupByFunctionLong extends AbstractCountGroupByFunctio
     }
 
     @Override
-    public int getArgType() {
+    public int getComputeBatchArgType() {
         return ColumnType.GEOLONG;
     }
 

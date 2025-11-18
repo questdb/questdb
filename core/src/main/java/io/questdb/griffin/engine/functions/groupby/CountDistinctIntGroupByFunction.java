@@ -84,7 +84,7 @@ public class CountDistinctIntGroupByFunction extends AbstractCountDistinctIntGro
     }
 
     @Override
-    public int getArgType() {
+    public int getComputeBatchArgType() {
         return ColumnType.INT;
     }
 }

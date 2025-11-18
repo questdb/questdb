@@ -334,8 +334,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -3575,7 +3575,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         for (int j = 0, m = groupByFunctions.size(); j < m; j++) {
                                             // Copying to column sink relies on UnaryFunction cast, hence the extra instanceof check.
                                             var func = groupByFunctions.getQuick(j);
-                                            if (!func.supportsBatchComputation() || (!(func instanceof UnaryFunction) && func.hasArgs())) {
+                                            if (!func.supportsBatchComputation() || (!(func instanceof UnaryFunction) && func.getComputeBatchArgType() == UNDEFINED)) {
                                                 allVectorized = false;
                                                 break;
                                             }

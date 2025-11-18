@@ -56,7 +56,7 @@ public class CountStrGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public int getArgType() {
+    public int getComputeBatchArgType() {
         return ColumnType.STRING;
     }
 }

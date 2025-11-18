@@ -218,13 +218,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     int getVarcharSize(Record rec);
 
     /**
-     * Returns true if the function has one or multiple arguments.
-     */
-    default boolean hasArgs() {
-        return false;
-    }
-
-    /**
      * Returns true if function is constant, i.e. its value does not require
      * any input from the record.
      *
@@ -243,11 +236,12 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     /**
      * Performs a best-effort comparison to check if two functions are equivalent.
      * This is used for optimization purposes to identify duplicate or equivalent expressions.
+     * <p>
+     * Note: A false result does not guarantee that the functions are different - it just means
+     * equivalence could not be determined through this best-effort comparison.
      *
      * @param obj the function to compare with
      * @return true if the functions are definitely equivalent, false if they may or may not be equivalent.
-     * Note: A false result does not guarantee the functions are different - it just means
-     * equivalence could not be determined through this best-effort comparison.
      */
     default boolean isEquivalentTo(Function obj) {
         return this == obj;

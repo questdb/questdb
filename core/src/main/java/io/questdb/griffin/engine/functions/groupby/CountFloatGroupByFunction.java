@@ -73,7 +73,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public int getArgType() {
+    public int getComputeBatchArgType() {
         return ColumnType.FLOAT;
     }
 

@@ -112,10 +112,10 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
-     * Returns the expected argument type for this group by function.
+     * Returns the compute batch argument type for this group by function.
      * For unary functions, default returns the function's output type.
      */
-    default int getArgType() {
+    default int getComputeBatchArgType() {
         if (this instanceof UnaryFunction) {
             return getType();
         }
@@ -239,9 +239,10 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
-     * Indicates whether {@link #computeBatch(MapValue, long, int)} is implemented for this function.
-     * When {@code true}, the engine may materialise the argument column into native memory buffers
-     * and invoke {@code computeBatch} instead of per-row aggregation for compatible execution paths.
+     * Indicates whether {@link #computeBatch(MapValue, long, int)} and {@link #getComputeBatchArgType()}
+     * are implemented for this function. When {@code true}, the engine may materialise the argument
+     * column into native memory buffers and invoke {@code computeBatch} instead of per-row aggregation
+     * for compatible execution paths.
      *
      * @return {@code true} if the function can consume batches via {@code computeBatch}, {@code false} otherwise
      */

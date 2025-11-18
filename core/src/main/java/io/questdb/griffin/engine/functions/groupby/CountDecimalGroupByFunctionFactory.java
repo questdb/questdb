@@ -97,7 +97,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getArgType() {
+        public int getComputeBatchArgType() {
             return ColumnType.DECIMAL128;
         }
 
@@ -132,7 +132,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getArgType() {
+        public int getComputeBatchArgType() {
             return ColumnType.DECIMAL16;
         }
     }
@@ -163,7 +163,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getArgType() {
+        public int getComputeBatchArgType() {
             return ColumnType.DECIMAL256;
         }
 
@@ -198,7 +198,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getArgType() {
+        public int getComputeBatchArgType() {
             return ColumnType.DECIMAL32;
         }
     }
@@ -228,7 +228,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getArgType() {
+        public int getComputeBatchArgType() {
             return ColumnType.DECIMAL64;
         }
     }
@@ -258,7 +258,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getArgType() {
+        public int getComputeBatchArgType() {
             return ColumnType.DECIMAL8;
         }
     }

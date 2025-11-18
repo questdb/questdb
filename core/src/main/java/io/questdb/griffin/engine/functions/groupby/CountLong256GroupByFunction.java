@@ -57,7 +57,7 @@ public class CountLong256GroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public int getArgType() {
+    public int getComputeBatchArgType() {
         return ColumnType.LONG256;
     }
 }

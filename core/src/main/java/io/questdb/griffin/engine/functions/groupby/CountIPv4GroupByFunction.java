@@ -73,7 +73,7 @@ public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public int getArgType() {
+    public int getComputeBatchArgType() {
         return ColumnType.IPv4;
     }
 

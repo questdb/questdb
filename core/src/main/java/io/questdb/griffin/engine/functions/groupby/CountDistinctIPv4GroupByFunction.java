@@ -85,7 +85,7 @@ public class CountDistinctIPv4GroupByFunction extends AbstractCountDistinctIntGr
     }
 
     @Override
-    public int getArgType() {
+    public int getComputeBatchArgType() {
         return ColumnType.IPv4;
     }
 }

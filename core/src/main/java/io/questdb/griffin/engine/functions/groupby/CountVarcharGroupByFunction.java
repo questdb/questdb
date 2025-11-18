@@ -56,7 +56,7 @@ public class CountVarcharGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public int getArgType() {
+    public int getComputeBatchArgType() {
         return ColumnType.VARCHAR;
     }
 }

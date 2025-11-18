@@ -46,11 +46,6 @@ public interface UnaryFunction extends Function {
     Function getArg();
 
     @Override
-    default boolean hasArgs() {
-        return true;
-    }
-
-    @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         getArg().init(symbolTableSource, executionContext);
     }

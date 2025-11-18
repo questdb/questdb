@@ -56,7 +56,7 @@ public class CountSymbolGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public int getArgType() {
+    public int getComputeBatchArgType() {
         return ColumnType.SYMBOL;
     }
 }

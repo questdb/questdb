@@ -97,7 +97,7 @@ public class CountDistinctVarcharGroupByFunction extends LongFunction implements
     }
 
     @Override
-    public int getArgType() {
+    public int getComputeBatchArgType() {
         return ColumnType.VARCHAR;
     }
 

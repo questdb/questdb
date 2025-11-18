@@ -95,7 +95,7 @@ public class CountDistinctUuidGroupByFunction extends LongFunction implements Un
     }
 
     @Override
-    public int getArgType() {
+    public int getComputeBatchArgType() {
         return ColumnType.UUID;
     }
 

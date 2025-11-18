@@ -51,11 +51,6 @@ public interface BinaryFunction extends Function {
     Function getRight();
 
     @Override
-    default boolean hasArgs() {
-        return true;
-    }
-
-    @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         getLeft().init(symbolTableSource, executionContext);
         getRight().init(symbolTableSource, executionContext);

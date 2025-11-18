@@ -43,11 +43,6 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
-    default boolean hasArgs() {
-        return true;
-    }
-
-    @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         Function.init(args(), symbolTableSource, executionContext, null);
     }
