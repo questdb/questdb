@@ -518,7 +518,8 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         private void discardIterator(long iterAddr) {
             long blockAddr = iterAddr - iter_offsetFromBlockStart(iterAddr);
             int newCount = block_decUsedSlotCount(blockAddr);
-            if (newCount == 0)
+            if (newCount == 0) {
+                assert blockAddr == firstIteratorBlockAddr : "blockAddr != firstIteratorBlockAddr";
                 if (blockAddr != lastIteratorBlockAddr) {
                     long nextBlockAddr = block_nextBlockAddr(blockAddr);
                     block_free(blockAddr);
@@ -526,6 +527,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 } else {
                     block_setNextFreeSlot(blockAddr, 0);
                 }
+            }
         }
 
         private void emitJoinRecord(long masterRowId, int slaveRowNum) {
