@@ -362,14 +362,15 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
                     "from trades t " +
                     "window join prices p " +
-                    "on (t.sym = p.sym and t.price < 400) " +
+                    "on t.sym = p.sym " +
                     " range between 1 minute preceding and 1 minute following " +
+                    " where t.price < 400 " +
                     "order by t.ts, t.sym", 10, true);
             assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
                     "from trades t " +
                     "window join prices p " +
-                    "on (t.price < 400) " +
                     " range between 1 minute preceding and 1 minute following " +
+                    " where t.price < 400 " +
                     "order by t.ts, t.sym", 10, true);
         });
     }
@@ -619,8 +620,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "select t.*, avg(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
-                            "on t.ts > 1000 and p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA'" +
+                            "on p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA'" +
                             " range between 2 minute preceding and 2 minute following " +
+                            " where t.ts > 1000 " +
                             "order by t.ts, t.sym;",
                     "ts",
                     true,
@@ -675,8 +677,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "select t.*, avg(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
-                            "on (t.sym = p.sym) and  t.price < 300 " +
+                            "on (t.sym = p.sym) " +
                             " range between 2 minute preceding and 2 minute following " +
+                            " where t.price < 300 " +
                             "order by t.ts, t.sym;",
                     "ts",
                     true,
@@ -725,8 +728,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "select t.ts, max(p.ts) " +
                             "from trades t " +
                             "window join prices p " +
-                            "on (t.sym = p.sym) and  t.price < 300 " +
+                            "on (t.sym = p.sym) " +
                             " range between 2 minute preceding and 2 minute following " +
+                            " where t.price < 300 " +
                             "order by t.ts, t.sym;",
                     "ts",
                     true,
@@ -779,8 +783,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "select t.*, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
-                            "on (t.sym = p.sym) and t.ts <= '2023-01-01T09:04:00.000000Z' " +
+                            "on (t.sym = p.sym) " +
                             " range between 1 minute preceding and 1 minute following " +
+                            " where t.ts <= '2023-01-01T09:04:00.000000Z' " +
                             "order by t.ts, t.sym;",
                     "ts",
                     true,
@@ -807,8 +812,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "declare @x := '2023-01-01T09:04:00.000000Z' select t.*, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
-                            "on (t.sym = p.sym) and t.ts <= @x " +
+                            "on (t.sym = p.sym)  " +
                             " range between 1 minute preceding and 1 minute following " +
+                            " where t.ts <= @x " +
                             "order by t.ts, t.sym;",
                     "ts",
                     true,
@@ -856,8 +862,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "select t.*, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
-                            "on (t.sym = p.sym) and t.ts > '2023-01-01T09:04:00.000000Z' " +
+                            "on (t.sym = p.sym)  " +
                             " range between 1 minute preceding and 1 minute following " +
+                            " where t.ts > '2023-01-01T09:04:00.000000Z'" +
                             "order by t.ts, t.sym;",
                     "ts",
                     true,
@@ -1585,8 +1592,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        Frame forward scan on: prices\n",
                     "select t.*, sum(p.price) as window_price " +
                             "from trades t " +
-                            "window join prices p on t.price < 300" +
+                            "window join prices p " +
                             " range between 1 minute preceding and 1 minute following " +
+                            " where t.price < 300 " +
                             "order by t.ts;",
                     "ts",
                     false,
@@ -1741,6 +1749,21 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "on (t.sym=p.sym) " +
                             " range between 1 second preceding and 1 second following " +
                             "where 42=42;",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym	price	ts	sum_price
+                            """,
+                    "select t.*, sum(p.price) sum_price " +
+                            "from (trades limit 3) t " +
+                            "window join prices p " +
+                            "on (t.sym=p.sym) " +
+                            " range between 1 second preceding and 1 second following " +
+                            "where 42=43;",
                     "ts",
                     false,
                     true
@@ -1923,10 +1946,35 @@ public class WindowJoinTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore // FIXME: we can't merge master filter into the join one
-    // if (!constantTrue) {
-    //     node = concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, node, constFilterExpr);
-    // }
+    @Ignore // FIXME window join should support this type filter
+    @Test
+    public void testWindowJoinWithPostFilter() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tprice\tts\tsum_price
+                            AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t100.5
+                            AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t101.5
+                            AAPL\t102.0\t2023-01-01T09:02:00.000000Z\tnull
+                            """,
+                    "select t.price, sum(p.price) sum_price " +
+                            "from (trades limit 3) t " +
+                            "window join prices p " +
+                            "on (t.sym=p.sym) " +
+                            " range between 1 second preceding and 1 second following " +
+                            "where sum_price = 100.5;",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
     @Test
     public void testWindowJoinWithRndFilter() throws Exception {
         // timestamp types don't matter for this test
@@ -1937,17 +1985,17 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     """
-                            sym\tprice\tts\tsum_price
+                            sym	sum_price
                             """,
-                    "select t.*, sum(p.price) sum_price " +
+                    "select t.sym, sum(p.price) sum_price " +
                             "from (trades limit 3) t " +
                             "window join prices p " +
                             "on (t.sym=p.sym) " +
                             " range between 1 second preceding and 1 second following " +
                             "where rnd_long() = 42;",
-                    "ts",
+                    null,
                     false,
-                    true
+                    false
             );
         });
     }

@@ -333,10 +333,9 @@ import java.util.Arrays;
 import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
-import static io.questdb.griffin.SqlOptimiser.concatFilters;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -644,13 +643,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @NotNull
     public Function compileJoinFilter(
             ExpressionNode expr,
-            JoinRecordMetadata metadata,
+            RecordMetadata metadata,
             SqlExecutionContext executionContext
     ) throws SqlException {
         try {
             return compileBooleanFilter(expr, metadata, executionContext);
         } catch (Throwable t) {
-            Misc.free(metadata);
+            if (metadata instanceof JoinRecordMetadata that) {
+                Misc.free(that);
+            }
             throw t;
         }
     }
@@ -3464,50 +3465,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     outerProjectionMetadata.setTimestampIndex(timestampIndex);
                                 }
 
-                                // handle constant join filter
                                 ExpressionNode node = slaveModel.getOuterJoinExpressionClause();
-                                final ExpressionNode constFilterExpr = model.getConstWhereClause();
-                                boolean constantTrue = false;
-                                if (constFilterExpr != null && isLastWindowJoin) {
-                                    Function constFilter = functionParser.parseFunction(constFilterExpr, null, executionContext);
-                                    try {
-                                        if (!isBoolean(constFilter.getType())) {
-                                            throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
-                                        }
-                                        constFilter.init(null, executionContext);
-                                        if (constFilter.isConstant()) {
-                                            if (!constFilter.getBool(null)) {
-                                                ObjList<QueryColumn> groupByCols = new ObjList<>();
-                                                for (int k = 0, m = columns.size(); k < m; k++) {
-                                                    if (functionParser.getFunctionFactoryCache().isGroupBy(columns.get(k).getAst().token)) {
-                                                        groupByCols.add(columns.get(k));
-                                                    }
-                                                }
-
-                                                GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(masterMetadata);
-                                                for (int k = 0, m = groupByCols.size(); k < m; k++) {
-                                                    metadata.add(new TableColumnMetadata(groupByCols.get(k).getAlias().toString(), groupByFunctions.get(k).getType()));
-                                                }
-                                                RecordCursorFactory factory = new ExtraNullColumnCursorFactory(metadata, masterMetadata.getColumnCount(), master);
-                                                if (columnIndex != null) {
-                                                    factory = new SelectedRecordCursorFactory(outerProjectionMetadata, columnIndex, factory);
-                                                }
-                                                Misc.free(slave);
-                                                Misc.free(joinMetadata);
-                                                return factory;
-                                            } else {
-                                                constantTrue = true;
-                                            }
-                                        }
-                                    } finally {
-                                        Misc.free(constFilter);
-                                    }
-                                    if (!constantTrue) {
-                                        node = concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, node, constFilterExpr);
-                                    }
-                                    model.setConstWhereClause(null);
-                                }
-
                                 // try to extract symbols equal function from join filter
                                 int leftSymbolIndex = -1;
                                 int rightSymbolIndex = -1;
@@ -3575,6 +3533,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                     if (parent != null) {
                                         joinFilter = compileJoinFilter(parent, joinMetadata, executionContext);
+                                    }
+                                }
+
+                                if (joinFilter != null && joinFilter.isConstant()) {
+                                    joinFilter.init(null, executionContext);
+                                    if (!joinFilter.getBool(null)) {
+                                        GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(masterMetadata);
+                                        for (int k = 0, m = aggregateCols.size(); k < m; k++) {
+                                            metadata.add(new TableColumnMetadata(aggregateCols.get(k).getAlias().toString(), groupByFunctions.get(k).getType()));
+                                        }
+                                        RecordCursorFactory factory = new ExtraNullColumnCursorFactory(metadata, masterMetadata.getColumnCount(), master);
+                                        if (columnIndex != null) {
+                                            factory = new SelectedRecordCursorFactory(outerProjectionMetadata, columnIndex, factory);
+                                        }
+                                        Misc.free(slave);
+                                        Misc.free(joinMetadata);
+                                        Misc.free(joinFilter);
+                                        master = factory;
+                                        break;
                                     }
                                 }
 
@@ -3719,7 +3696,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                 } else if (slave.supportsTimeFrameCursor()) {
                                     if (leftSymbolIndex != -1) {
-                                        return new WindowJoinFastRecordCursorFactory(
+                                        master = new WindowJoinFastRecordCursorFactory(
                                                 asm,
                                                 configuration,
                                                 outerProjectionMetadata,
@@ -3736,22 +3713,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 joinFilter,
                                                 allVectorized
                                         );
+                                    } else {
+                                        master = new WindowJoinRecordCursorFactory(
+                                                asm,
+                                                configuration,
+                                                outerProjectionMetadata,
+                                                joinMetadata,
+                                                master,
+                                                slave,
+                                                columnIndex,
+                                                lo,
+                                                hi,
+                                                groupByFunctions,
+                                                valueTypes,
+                                                joinFilter
+                                        );
                                     }
-
-                                    return new WindowJoinRecordCursorFactory(
-                                            asm,
-                                            configuration,
-                                            outerProjectionMetadata,
-                                            joinMetadata,
-                                            master,
-                                            slave,
-                                            columnIndex,
-                                            lo,
-                                            hi,
-                                            groupByFunctions,
-                                            valueTypes,
-                                            joinFilter
-                                    );
                                 } else {
                                     throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("right side of window join must be a table, not sub-query");
                                 }
@@ -3840,7 +3817,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else {
                         master = new FilteredRecordCursorFactory(
                                 master,
-                                compileJoinFilter(filterExpr, (JoinRecordMetadata) master.getMetadata(), executionContext)
+                                compileJoinFilter(filterExpr, master.getMetadata(), executionContext)
                         );
                     }
                 }
@@ -3861,8 +3838,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // this would have been JoinRecordMetadata, which is new instance anyway
                         // we have to make sure that this metadata is safely transitioned
                         // to empty cursor factory
-                        JoinRecordMetadata metadata = (JoinRecordMetadata) master.getMetadata();
-                        metadata.incrementRefCount();
+                        RecordMetadata metadata = master.getMetadata();
+                        if (metadata instanceof JoinRecordMetadata that) {
+                            that.incrementRefCount();
+                        }
                         RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
                         Misc.free(master);
                         return factory;
@@ -6299,13 +6278,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         QueryModel child = model.getNestedModel();
         if (!isWindowJoin(child)) {
             throw SqlException.$(0, "expected window join model");
-        }
-        ObjList<QueryModel> jms = child.getJoinModels();
-        for (int i = 1, n = jms.size(); i < n; i++) {
-            QueryModel model1 = jms.getQuick(i);
-            if (model1.getJoinType() == JOIN_WINDOW) {
-                model1.getWindowJoinContext().setParentModel(model);
-            }
         }
         return generate(child, executionContext);
     }

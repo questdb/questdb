@@ -899,10 +899,6 @@ public class SqlOptimiser implements Mutable {
     // - predicates on both or right table may be added to post join clause as long as they're marked properly (via ExpressionNode.isOuterJoinPredicate)
     private void analyseEquals(QueryModel parent, ExpressionNode node, boolean innerPredicate, QueryModel joinModel, int joinIndex) throws SqlException {
         traverseNamesAndIndices(parent, node);
-        if (isConditionWindowJoinAndInvolvedRightTable(parent, joinModel, joinIndex, node, false)) {
-            addOuterJoinExpression(parent, joinModel, joinIndex, node);
-            return;
-        }
         int aSize = literalCollectorAIndexes.size();
         int bSize = literalCollectorBIndexes.size();
 
@@ -986,7 +982,7 @@ public class SqlOptimiser implements Mutable {
                         jc.parents.add(rhi);
                     }
 
-                    if (canMovePredicate || jc.slaveIndex == joinIndex) {
+                    if (canMovePredicate || (jc.slaveIndex == joinIndex && parent.getJoinModels().get(joinIndex).getJoinType() != JOIN_WINDOW)) {
                         //we can't push anything into another left/right join
                         if (jc.slaveIndex != joinIndex && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
                             addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
@@ -2542,27 +2538,6 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    private boolean isConditionWindowJoinAndInvolvedRightTable(QueryModel parent, QueryModel joinModel, int joinIndex, ExpressionNode node, boolean needTraverse) throws SqlException {
-        if (joinModel.getJoinType() == QueryModel.JOIN_WINDOW) {
-            if (needTraverse) {
-                traverseNamesAndIndices(parent, node);
-            }
-
-            for (int i = 0; i < literalCollectorAIndexes.size(); i++) {
-                if (literalCollectorAIndexes.get(i) == joinIndex) {
-                    return true;
-                }
-            }
-            for (int i = 0; i < literalCollectorBIndexes.size(); i++) {
-                if (literalCollectorBIndexes.get(i) == joinIndex) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        return false;
-    }
-
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
@@ -2872,7 +2847,6 @@ public class SqlOptimiser implements Mutable {
                 model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT
                         // in theory, we could push down predicates as long as they align with ALL partition by clauses and remove whole partition(s)
                         && model.getSelectModelType() != QueryModel.SELECT_MODEL_WINDOW
-                        && model.getSelectModelType() != QueryModel.SELECT_MODEL_WINDOW_JOIN
         ) {
             model.getParsedWhere().clear();
             final ObjList<ExpressionNode> nodes = model.parseWhereClause();
@@ -3524,7 +3498,7 @@ public class SqlOptimiser implements Mutable {
                         break;
                     case JOIN_OP_REGEX:
                         analyseRegex(parent, n);
-                        if (joinBarriers.contains(joinModel.getJoinType()) || isConditionWindowJoinAndInvolvedRightTable(parent, joinModel, joinIndex, n, false)) {
+                        if (joinBarriers.contains(joinModel.getJoinType())) {
                             addOuterJoinExpression(parent, joinModel, joinIndex, n);
                         } else {
                             parent.addParsedWhereNode(n, innerPredicate);
@@ -3532,7 +3506,7 @@ public class SqlOptimiser implements Mutable {
                         n = null;
                         break;
                     default:
-                        if (joinBarriers.contains(joinModel.getJoinType()) || isConditionWindowJoinAndInvolvedRightTable(parent, joinModel, joinIndex, n, true)) {
+                        if (joinBarriers.contains(joinModel.getJoinType())) {
                             addOuterJoinExpression(parent, joinModel, joinIndex, n);
                         } else {
                             parent.addParsedWhereNode(n, innerPredicate);
@@ -6542,6 +6516,13 @@ public class SqlOptimiser implements Mutable {
             root = groupByModel;
             limitSource = groupByModel;
         } else if ((rewriteStatus & REWRITE_STATUS_USE_WINDOWS_JOIN_MODE) != 0) {
+            final ObjList<QueryModel> jms = root.getJoinModels();
+            for (int i = 1, n = jms.size(); i < n; i++) {
+                QueryModel jm = jms.getQuick(i);
+                if (jm.getJoinType() == QueryModel.JOIN_WINDOW) {
+                    jm.getWindowJoinContext().setParentModel(windowJoinModel);
+                }
+            }
             windowJoinModel.setNestedModel(root);
             windowJoinModel.moveLimitFrom(limitSource);
             windowJoinModel.moveJoinAliasFrom(limitSource);
@@ -7735,6 +7716,7 @@ public class SqlOptimiser implements Mutable {
         joinBarriers.add(QueryModel.JOIN_ASOF);
         joinBarriers.add(QueryModel.JOIN_SPLICE);
         joinBarriers.add(QueryModel.JOIN_LT);
+        joinBarriers.add(QueryModel.JOIN_WINDOW);
 
         nullConstants.add("null");
         nullConstants.add("NaN");
