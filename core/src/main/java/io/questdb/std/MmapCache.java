@@ -27,10 +27,9 @@ package io.questdb.std;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
-import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
 
 /**
  * Thread-safe cache for memory-mapped file regions with reference counting.
@@ -42,10 +41,9 @@ public final class MmapCache {
     private static final Log LOG = LogFactory.getLog(MmapCache.class);
     private static final int MAX_RECORD_POOL_CAPACITY = 16 * 1024;
     private static final int MUNMAP_QUEUE_CAPACITY = 8 * 1024;
-    private static final QueueConsumer<MunmapTask> MUNMAP_TASK_QUEUE_CONSUMER = MmapCache::munmapTaskConsumer;
     private final LongObjHashMap<MmapCacheRecord> mmapAddrCache = new LongObjHashMap<>();
     private final LongObjHashMap<MmapCacheRecord> mmapFileCache = new LongObjHashMap<>();
-    private final SCSequence munmapConsumerSequence;
+    private final MCSequence munmapConsumerSequence;
     private final MPSequence munmapProducesSequence;
     private final RingQueue<MunmapTask> munmapTaskRingQueue;
     private final ObjStack<MmapCacheRecord> recordPool = new ObjStack<>();
@@ -54,7 +52,7 @@ public final class MmapCache {
     private MmapCache() {
         munmapTaskRingQueue = new RingQueue<>(MunmapTask::new, MUNMAP_QUEUE_CAPACITY);
         munmapProducesSequence = new MPSequence(munmapTaskRingQueue.getCycle());
-        munmapConsumerSequence = new SCSequence();
+        munmapConsumerSequence = new MCSequence(munmapTaskRingQueue.getCycle());
         munmapProducesSequence.then(munmapConsumerSequence).then(munmapProducesSequence);
     }
 
@@ -65,7 +63,19 @@ public final class MmapCache {
      * @return true if at least one mapping was unmapped, false otherwise.
      */
     public boolean asyncMunmap() {
-        return munmapConsumerSequence.consumeAll(munmapTaskRingQueue, MUNMAP_TASK_QUEUE_CONSUMER);
+        boolean useful = false;
+        long cursor;
+        do {
+            cursor = munmapConsumerSequence.next();
+            if (cursor > -1) {
+                useful = true;
+                munmapTaskConsumer(munmapTaskRingQueue.get(cursor));
+                munmapConsumerSequence.done(cursor);
+            } else if (cursor == -2) {
+                Os.pause();
+            }
+        } while (cursor != -1);
+        return useful;
     }
 
     /**
