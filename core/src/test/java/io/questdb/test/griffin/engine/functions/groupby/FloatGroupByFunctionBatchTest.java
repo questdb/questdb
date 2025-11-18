@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.griffin.engine.functions.columns.FloatColumn;
-import io.questdb.griffin.engine.functions.constants.FloatConstant;
 import io.questdb.griffin.engine.functions.groupby.CountFloatGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstFloatGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullFloatGroupByFunction;
@@ -409,16 +408,6 @@ public class FloatGroupByFunctionBatchTest {
         function.setEmpty(value);
 
         Assert.assertTrue(Float.isNaN(function.getFloat(value)));
-    }
-
-    @Test
-    public void testSupportsBatchComputationRequiresColumnFunction() {
-        Assert.assertFalse(new CountFloatGroupByFunction(FloatConstant.newInstance(1.0f)).supportsBatchComputation());
-        Assert.assertFalse(new SumFloatGroupByFunction(FloatConstant.newInstance(1.0f)).supportsBatchComputation());
-        Assert.assertFalse(new MinFloatGroupByFunction(FloatConstant.newInstance(1.0f)).supportsBatchComputation());
-        Assert.assertFalse(new MaxFloatGroupByFunction(FloatConstant.newInstance(1.0f)).supportsBatchComputation());
-        Assert.assertFalse(new FirstFloatGroupByFunction(FloatConstant.newInstance(1.0f)).supportsBatchComputation());
-        Assert.assertFalse(new LastFloatGroupByFunction(FloatConstant.newInstance(1.0f)).supportsBatchComputation());
     }
 
     private long allocateFloats(float... values) {

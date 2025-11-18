@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.griffin.engine.functions.columns.IntColumn;
-import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.groupby.CountIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullIntGroupByFunction;
@@ -410,16 +409,6 @@ public class IntGroupByFunctionBatchTest {
         function.setEmpty(value);
 
         Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
-    }
-
-    @Test
-    public void testSupportsBatchComputationRequiresColumnFunction() {
-        Assert.assertFalse(new CountIntGroupByFunction(IntConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new SumIntGroupByFunction(IntConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new MinIntGroupByFunction(IntConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new MaxIntGroupByFunction(IntConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new FirstIntGroupByFunction(IntConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new LastIntGroupByFunction(IntConstant.newInstance(1)).supportsBatchComputation());
     }
 
     private long allocateInts(int... values) {

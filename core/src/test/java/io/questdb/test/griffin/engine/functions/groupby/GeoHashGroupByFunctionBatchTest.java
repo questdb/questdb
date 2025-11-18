@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
 import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
 import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
 import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
-import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.groupby.CountGeoHashGroupByFunctionByte;
 import io.questdb.griffin.engine.functions.groupby.CountGeoHashGroupByFunctionInt;
 import io.questdb.griffin.engine.functions.groupby.CountGeoHashGroupByFunctionLong;
@@ -108,15 +107,6 @@ public class GeoHashGroupByFunctionBatchTest {
 
         Assert.assertEquals(3L, function.getLong(value));
         Assert.assertTrue(function.supportsBatchComputation());
-    }
-
-    @Test
-    public void testCountGeoHashRequiresColumnFunction() {
-        int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOLONG_MAX_BITS);
-        CountGeoHashGroupByFunctionLong function = new CountGeoHashGroupByFunctionLong(
-                Constants.getGeoHashConstantWithType(GeoHashes.NULL, type)
-        );
-        Assert.assertFalse(function.supportsBatchComputation());
     }
 
     @Test

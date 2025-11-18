@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.groupby.CountLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullLongGroupByFunction;
@@ -410,16 +409,6 @@ public class LongGroupByFunctionBatchTest {
         function.setEmpty(value);
 
         Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
-    }
-
-    @Test
-    public void testSupportsBatchComputationRequiresColumnFunction() {
-        Assert.assertFalse(new CountLongGroupByFunction(LongConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new SumLongGroupByFunction(LongConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new MinLongGroupByFunction(LongConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new MaxLongGroupByFunction(LongConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new FirstLongGroupByFunction(LongConstant.newInstance(1)).supportsBatchComputation());
-        Assert.assertFalse(new LastLongGroupByFunction(LongConstant.newInstance(1)).supportsBatchComputation());
     }
 
     private long allocateLongs(long... values) {

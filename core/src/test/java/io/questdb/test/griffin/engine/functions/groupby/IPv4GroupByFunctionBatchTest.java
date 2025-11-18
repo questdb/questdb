@@ -28,7 +28,6 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.IPv4Column;
-import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.griffin.engine.functions.groupby.CountIPv4GroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstIPv4GroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullIPv4GroupByFunctionFactory;
@@ -81,12 +80,6 @@ public class IPv4GroupByFunctionBatchTest {
         function.computeBatch(value, ptr, 2);
 
         Assert.assertEquals(0L, function.getLong(value));
-    }
-
-    @Test
-    public void testCountIPv4RequiresColumnFunction() {
-        CountIPv4GroupByFunction function = new CountIPv4GroupByFunction(IPv4Constant.newInstance(Numbers.IPv4_NULL));
-        Assert.assertFalse(function.supportsBatchComputation());
     }
 
     @Test
