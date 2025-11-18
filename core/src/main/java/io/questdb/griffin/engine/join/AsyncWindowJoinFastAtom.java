@@ -50,6 +50,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
+    static final int SLAVE_MAP_INITIAL_CAPACITY = 16;
+    static final double SLAVE_MAP_LOAD_FACTOR = 0.5;
     private final int masterSymbolIndex;
     private final DirectIntMultiLongHashMap ownerSlaveData;
     private final ObjList<DirectIntMultiLongHashMap> perWorkerSlaveData;
@@ -111,12 +113,12 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             this.masterSymbolIndex = masterSymbolIndex;
             this.slaveSymbolIndex = slaveSymbolIndex;
             this.slaveSymbolLookupTable = new DirectIntIntHashMap(16, 0.5, StaticSymbolTable.VALUE_NOT_FOUND, MemoryTag.NATIVE_UNORDERED_MAP);
-            int slaveDataLen = isVectorized() ? 2 + ownerGroupByFunctionArgs.size() : 3;
+            final int slaveDataLen = isVectorized() ? 2 + ownerGroupByFunctionArgs.size() : 3;
             // Combined storage with 4 values: rowIds ptr, timestamps ptr, rowLos value, columnSink ptr
-            this.ownerSlaveData = new DirectIntMultiLongHashMap(16, 0.5, 0, slaveDataLen, MemoryTag.NATIVE_UNORDERED_MAP);
+            this.ownerSlaveData = new DirectIntMultiLongHashMap(SLAVE_MAP_INITIAL_CAPACITY, SLAVE_MAP_LOAD_FACTOR, 0, slaveDataLen, MemoryTag.NATIVE_UNORDERED_MAP);
             this.perWorkerSlaveData = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerSlaveData.extendAndSet(i, new DirectIntMultiLongHashMap(16, 0.5, 0, slaveDataLen, MemoryTag.NATIVE_UNORDERED_MAP));
+                perWorkerSlaveData.extendAndSet(i, new DirectIntMultiLongHashMap(SLAVE_MAP_INITIAL_CAPACITY, SLAVE_MAP_LOAD_FACTOR, 0, slaveDataLen, MemoryTag.NATIVE_UNORDERED_MAP));
             }
         } catch (Throwable th) {
             close();
@@ -147,7 +149,6 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         Misc.free(ownerSlaveData);
         Misc.freeObjList(perWorkerSlaveData);
         Misc.clear(ownerSlaveData);
-        Misc.clearObjList(perWorkerSlaveData);
     }
 
     public int getMasterSymbolIndex() {

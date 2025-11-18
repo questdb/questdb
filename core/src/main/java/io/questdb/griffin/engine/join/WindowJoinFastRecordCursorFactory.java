@@ -68,7 +68,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
-import static io.questdb.griffin.engine.join.AsyncWindowJoinAtom.findFunctionIndex;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinAtom.findFunctionWithSameArg;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom.SLAVE_MAP_INITIAL_CAPACITY;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom.SLAVE_MAP_LOAD_FACTOR;
 
 /**
  * Single-threaded WINDOW JOIN factory which supports an equal symbol comparison between master and slave
@@ -131,17 +133,17 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 var func = groupByFunctions.getQuick(i);
                 var funcArg = func instanceof UnaryFunction ? ((UnaryFunction) func).getArg() : null;
                 var funcArgType = ColumnType.tagOf(func.getComputeBatchArgType());
-                int mappedIndex = findFunctionIndex(groupByFunctionArgs, groupByFunctionTypes, funcArg, funcArgType);
-                if (mappedIndex == -1) {
+                int index = findFunctionWithSameArg(groupByFunctionArgs, groupByFunctionTypes, funcArg, funcArgType);
+                if (index == -1) {
                     groupByFunctionArgs.add(funcArg);
                     groupByFunctionTypes.add(funcArgType);
                     groupByFunctionToColumnIndex.add(groupByFunctionArgs.size() - 1);
                 } else {
-                    groupByFunctionToColumnIndex.add(mappedIndex);
+                    groupByFunctionToColumnIndex.add(index);
                 }
             }
 
-            this.slaveData = new DirectIntMultiLongHashMap(16, 0.5, 0, 2 + groupByFunctionArgs.size(), MemoryTag.NATIVE_UNORDERED_MAP);
+            this.slaveData = new DirectIntMultiLongHashMap(SLAVE_MAP_INITIAL_CAPACITY, SLAVE_MAP_LOAD_FACTOR, 0, 2 + groupByFunctionArgs.size(), MemoryTag.NATIVE_UNORDERED_MAP);
             this.cursor = new WindowJoinFastVectRecordCursor(
                     configuration,
                     columnIndex,
@@ -157,7 +159,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     groupByFunctionToColumnIndex
             );
         } else {
-            this.slaveData = new DirectIntMultiLongHashMap(16, 0.5, 0, 3, MemoryTag.NATIVE_UNORDERED_MAP);
+            this.slaveData = new DirectIntMultiLongHashMap(SLAVE_MAP_INITIAL_CAPACITY, SLAVE_MAP_LOAD_FACTOR, 0, 3, MemoryTag.NATIVE_UNORDERED_MAP);
             final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.cursor = new WindowJoinFastRecordCursor(
                     configuration,

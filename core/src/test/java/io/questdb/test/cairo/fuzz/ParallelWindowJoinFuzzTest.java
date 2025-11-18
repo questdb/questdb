@@ -192,6 +192,24 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelWindowJoinOnSymbolThreadUnsafeVectorized() throws Exception {
+        // covers case when we need to clone group by functions per-worker since their args aren't thread-safe
+        testParallelWindowJoin(
+                "SELECT avg(price) avg_price, max(max_bid) max_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(cast(concat(p.bid, '0') as double)) max_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                        "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
+                        ")",
+                """
+                        avg_price\tmax_bid
+                        19.958398885587915\t14.982510448352535
+                        """
+        );
+    }
+
+    @Test
     public void testParallelWindowJoinOnSymbolVectorized() throws Exception {
         testParallelWindowJoin(
                 "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
