@@ -148,6 +148,8 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                     context,
                     configuration.getKeepAliveHeader()
             ));
+        } else {
+            state.clear();
         }
 
         // clear random for new request to avoid reusing random between requests

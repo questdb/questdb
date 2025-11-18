@@ -360,8 +360,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         onQueryPrefix(response, columnCount);
     }
 
-    boolean of(RecordCursorFactory factory)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    boolean of(RecordCursorFactory factory) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         try (factory) {
             // Enable column pre-touch in REST API only when LIMIT K,N is not specified since when limit is defined
             // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
@@ -387,6 +386,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
                 errorMessage,
                 query
         );
+        queryState = QUERY_DONE;
     }
 
     void querySuffixWithError(

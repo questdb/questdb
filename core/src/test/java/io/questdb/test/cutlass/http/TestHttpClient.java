@@ -195,26 +195,6 @@ public class TestHttpClient implements QuietCloseable {
     public void assertGetContains(
             CharSequence url,
             CharSequence expectedResponse,
-            CharSequence sql,
-            String host,
-            int port,
-            @Nullable CharSequence username,
-            @Nullable CharSequence password,
-            @Nullable CharSequence token
-    ) {
-        try {
-            toSink0(host, port, url, sql, sink, username, password, token, null, null);
-            TestUtils.assertContains(sink.asAsciiCharSequence(), expectedResponse);
-        } finally {
-            if (!keepConnection) {
-                httpClient.disconnect();
-            }
-        }
-    }
-
-    public void assertGetContains(
-            CharSequence url,
-            CharSequence expectedResponse,
             @Nullable CharSequenceObjHashMap<String> queryParams,
             @Nullable CharSequence username,
             @Nullable CharSequence password
@@ -362,6 +342,10 @@ public class TestHttpClient implements QuietCloseable {
         httpClient = Misc.free(httpClient);
     }
 
+    public void disconnect() {
+        httpClient.disconnect();
+    }
+
     public HttpClient getHttpClient() {
         return httpClient;
     }
@@ -409,7 +393,7 @@ public class TestHttpClient implements QuietCloseable {
             }
         }
 
-        HttpClient.ResponseHeaders rsp = req.send();
+        @SuppressWarnings("resource") HttpClient.ResponseHeaders rsp = req.send();
         rsp.await();
 
         Response chunkedResponse = rsp.getResponse();
