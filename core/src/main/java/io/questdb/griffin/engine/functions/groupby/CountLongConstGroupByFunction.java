@@ -52,6 +52,11 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     }
 
     @Override
+    public int getComputeBatchArgType() {
+        return ColumnType.UNDEFINED;
+    }
+
+    @Override
     public long getLong(Record rec) {
         return rec.getLong(valueIndex);
     }

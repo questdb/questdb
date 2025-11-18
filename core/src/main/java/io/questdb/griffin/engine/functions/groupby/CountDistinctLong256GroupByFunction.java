@@ -98,11 +98,6 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     }
 
     @Override
-    public int getComputeBatchArgType() {
-        return ColumnType.LONG256;
-    }
-
-    @Override
     public long getLong(Record rec) {
         final long cnt = rec.getLong(valueIndex);
         if (cnt != -1) {

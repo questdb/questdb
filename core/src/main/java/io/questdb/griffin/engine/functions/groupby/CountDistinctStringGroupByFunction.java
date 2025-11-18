@@ -103,11 +103,6 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     }
 
     @Override
-    public int getComputeBatchArgType() {
-        return ColumnType.STRING;
-    }
-
-    @Override
     public long getLong(Record rec) {
         return rec.getLong(valueIndex);
     }

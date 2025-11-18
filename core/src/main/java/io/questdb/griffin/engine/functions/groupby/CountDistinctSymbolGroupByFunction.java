@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -100,11 +99,6 @@ public class CountDistinctSymbolGroupByFunction extends AbstractCountDistinctInt
     public boolean earlyExit(MapValue mapValue) {
         // Fast path for the case when we've reached total number of symbols.
         return knownSymbolCount != -1 && mapValue.getLong(valueIndex) == knownSymbolCount;
-    }
-
-    @Override
-    public int getComputeBatchArgType() {
-        return ColumnType.SYMBOL;
     }
 
     @Override

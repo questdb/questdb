@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -82,10 +81,5 @@ public class CountDistinctIPv4GroupByFunction extends AbstractCountDistinctIntGr
                 }
             }
         }
-    }
-
-    @Override
-    public int getComputeBatchArgType() {
-        return ColumnType.IPv4;
     }
 }

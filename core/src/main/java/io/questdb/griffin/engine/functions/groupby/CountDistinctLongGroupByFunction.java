@@ -105,11 +105,6 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     }
 
     @Override
-    public int getComputeBatchArgType() {
-        return ColumnType.LONG;
-    }
-
-    @Override
     public long getLong(Record rec) {
         final long cnt = rec.getLong(valueIndex);
         if (cnt != -1) {

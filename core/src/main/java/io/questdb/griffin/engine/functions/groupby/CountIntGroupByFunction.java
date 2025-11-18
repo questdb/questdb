@@ -68,7 +68,7 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
 
     @Override
     public int getComputeBatchArgType() {
-        return ColumnType.GEOINT;
+        return ColumnType.INT;
     }
 
     @Override

@@ -80,6 +80,11 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     }
 
     @Override
+    public int getComputeBatchArgType() {
+        return ColumnType.INT;
+    }
+
+    @Override
     public long getLong(Record rec) {
         return rec.getLong(valueIndex);
     }
