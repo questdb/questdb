@@ -383,16 +383,16 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
         final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
 
-        final ObjList<Function> groupByFunArgs = atom.getGroupByFunctionArgs(workerId);
-        final IntList groupByFunctionTypes = atom.getGroupByFunctionTypes();
-        final int columnCount = groupByFunArgs.size();
+        final ObjList<Function> groupByFuncArgs = atom.getGroupByFunctionArgs(workerId);
+        final IntList groupByFuncTypes = atom.getGroupByFunctionTypes();
+        final int columnCount = groupByFuncArgs.size();
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
         atom.clearTemporaryData(workerId);
-        final GroupByLongList groupByColumnSinkPtrs = atom.getLongList(slotId);
-        groupByColumnSinkPtrs.of(0);
-        groupByColumnSinkPtrs.checkCapacity(columnCount);
+        final GroupByLongList slaveColumnSinkPtrs = atom.getLongList(slotId);
+        slaveColumnSinkPtrs.of(0);
+        slaveColumnSinkPtrs.checkCapacity(columnCount);
         final GroupByLongList timestamps = atom.getTimestampList(slotId);
         timestamps.of(0);
 
@@ -417,9 +417,12 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     timestamps.add(slaveTimestamp);
 
                     for (int i = 0; i < columnCount; i++) {
-                        long ptr = groupByColumnSinkPtrs.get(i);
-                        columnSink.of(ptr).put(joinRecord, groupByFunArgs.getQuick(i), (short) groupByFunctionTypes.getQuick(i));
-                        groupByColumnSinkPtrs.set(i, columnSink.ptr());
+                        var funcArg = groupByFuncArgs.getQuick(i);
+                        if (funcArg != null) {
+                            long ptr = slaveColumnSinkPtrs.get(i);
+                            columnSink.of(ptr).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
+                            slaveColumnSinkPtrs.set(i, columnSink.ptr());
+                        }
                     }
 
                     if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
@@ -457,17 +460,12 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                     for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                         final int mapIndex = mapIndexes.getQuick(i);
-                        final long ptr = groupByColumnSinkPtrs.get(mapIndex);
+                        final long ptr = slaveColumnSinkPtrs.get(mapIndex);
                         if (ptr != 0) {
-                            columnSink.of(ptr);
-                            if (columnSink.size() > 0 && rowLo < rowHi) {
-                                final long typeSize = ColumnType.sizeOfTag((short) groupByFunctionTypes.getQuick(mapIndex));
-                                groupByFunctions.getQuick(i).computeBatch(
-                                        value,
-                                        columnSink.startAddress() + typeSize * rowLo,
-                                        (int) (rowHi - rowLo)
-                                );
-                            }
+                            final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
+                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
+                        } else { // no-arg function, e.g. count()
+                            groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
                         }
                     }
                 }
@@ -663,16 +661,16 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 joinRecord.of(record, slaveRecord);
                 final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
                 final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
-                final ObjList<Function> groupByFunArgs = atom.getGroupByFunctionArgs(workerId);
-                final IntList groupByFunctionTypes = atom.getGroupByFunctionTypes();
-                final int columnCount = groupByFunArgs.size();
+                final ObjList<Function> groupByFuncArgs = atom.getGroupByFunctionArgs(workerId);
+                final IntList groupByFuncTypes = atom.getGroupByFunctionTypes();
+                final int columnCount = groupByFuncArgs.size();
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
 
                 atom.clearTemporaryData(workerId);
-                final GroupByLongList groupByColumnSinkPtrs = atom.getLongList(slotId);
-                groupByColumnSinkPtrs.of(0);
-                groupByColumnSinkPtrs.checkCapacity(columnCount);
+                final GroupByLongList slaveColumnSinkPtrs = atom.getLongList(slotId);
+                slaveColumnSinkPtrs.of(0);
+                slaveColumnSinkPtrs.checkCapacity(columnCount);
                 final GroupByLongList timestamps = atom.getTimestampList(slotId);
                 timestamps.of(0);
 
@@ -697,9 +695,12 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         timestamps.add(slaveTimestamp);
 
                         for (int i = 0; i < columnCount; i++) {
-                            long ptr = groupByColumnSinkPtrs.get(i);
-                            columnSink.of(ptr).put(joinRecord, groupByFunArgs.getQuick(i), (short) groupByFunctionTypes.getQuick(i));
-                            groupByColumnSinkPtrs.set(i, columnSink.ptr());
+                            var funcArg = groupByFuncArgs.getQuick(i);
+                            if (funcArg != null) {
+                                long ptr = slaveColumnSinkPtrs.get(i);
+                                columnSink.of(ptr).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
+                                slaveColumnSinkPtrs.set(i, columnSink.ptr());
+                            }
                         }
 
                         if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
@@ -739,17 +740,12 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
                         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                             final int mapIndex = mapIndexes.getQuick(i);
-                            final long ptr = groupByColumnSinkPtrs.get(mapIndex);
+                            final long ptr = slaveColumnSinkPtrs.get(mapIndex);
                             if (ptr != 0) {
-                                columnSink.of(ptr);
-                                if (columnSink.size() > 0 && rowLo < rowHi) {
-                                    final long typeSize = ColumnType.sizeOfTag((short) groupByFunctionTypes.getQuick(mapIndex));
-                                    groupByFunctions.getQuick(i).computeBatch(
-                                            value,
-                                            columnSink.startAddress() + typeSize * rowLo,
-                                            (int) (rowHi - rowLo)
-                                    );
-                                }
+                                final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
+                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
+                            } else { // no-arg function, e.g. count()
+                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
                             }
                         }
                     }

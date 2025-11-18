@@ -186,7 +186,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
-                            "      vectorized: false\n" +
+                            "      vectorized: true\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
                             "        PageFrame\n" +
