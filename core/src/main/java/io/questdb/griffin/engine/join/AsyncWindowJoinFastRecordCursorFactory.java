@@ -465,7 +465,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         slaveData.put(idx, 0, timestamps.ptr());
 
                         // copy the column values to be aggregated
-                        for (int i = 0; i < groupByFuncCount; i++) {
+                        for (int i = 0, n = groupByFuncArgs.size(); i < n; i++) {
                             var funcArg = groupByFuncArgs.getQuick(i);
                             if (funcArg != null) {
                                 columnSink.of(slaveData.get(idx, 2 + i)).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
@@ -766,7 +766,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             slaveData.put(idx, 0, timestamps.ptr());
 
                             // Copy column values to be aggregated
-                            for (int i = 0; i < groupByFuncCount; i++) {
+                            for (int i = 0, n = groupByFuncArgs.size(); i < n; i++) {
                                 var funcArg = groupByFuncArgs.getQuick(i);
                                 if (funcArg != null) {
                                     long ptr = slaveData.get(idx, 2 + i);
