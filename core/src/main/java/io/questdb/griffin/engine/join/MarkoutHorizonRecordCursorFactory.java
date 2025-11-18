@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.RecordArray;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableToken;
@@ -215,11 +214,12 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         private static final int ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START = 36; // int (4 bytes)
         private static final int ITERATOR_SIZE = 40;
         private static final long BLOCK_SIZE = BLOCK_HEADER_SIZE + (ITERATORS_PER_BLOCK * ITERATOR_SIZE);
-
+        private static final int MAX_FREELIST_LENGTH = 1024;
+        private final LongList iteratorBlockFreeList = new LongList();
         private final JoinRecord joinRecord;
         private final int masterTimestampColumnIndex;
         private final RecordArray slaveRecordArray;
-        private final LongList slaveRecordOffsets;
+        private final LongList slaveRecordOffsets = new LongList();
         private final int slaveSequenceColumnIndex;
         private SqlExecutionCircuitBreaker circuitBreaker;
 
@@ -246,7 +246,6 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.slaveSequenceColumnIndex = slaveSequenceColumnIndex;
             this.slaveRecordArray = slaveRecordArray;
-            this.slaveRecordOffsets = new LongList();
         }
 
         @Override
@@ -352,21 +351,11 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             slaveRecordArray.toTop();
         }
 
-        private static long block_alloc() {
-            long blockAddr = Unsafe.malloc(BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.getUnsafe().setMemory(blockAddr, BLOCK_SIZE, (byte) 0);
-            return blockAddr;
-        }
-
         private static int block_decUsedSlotCount(long blockAddr) {
             int count = Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
             count--;
             Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count);
             return count;
-        }
-
-        private static void block_free(long blockAddr) {
-            Unsafe.free(blockAddr, BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
 
         private static void block_incUsedSlotCount(long blockAddr) {
@@ -463,6 +452,27 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             }
         }
 
+        private long block_alloc() {
+            long blockAddr;
+            int indexOfLastFreeBlock = iteratorBlockFreeList.size() - 1;
+            if (indexOfLastFreeBlock >= 0) {
+                blockAddr = iteratorBlockFreeList.getQuick(indexOfLastFreeBlock);
+                iteratorBlockFreeList.removeIndex(indexOfLastFreeBlock);
+            } else {
+                blockAddr = Unsafe.malloc(BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            Unsafe.getUnsafe().setMemory(blockAddr, BLOCK_HEADER_SIZE, (byte) 0);
+            return blockAddr;
+        }
+
+        private void block_free(long blockAddr) {
+            if (iteratorBlockFreeList.size() < MAX_FREELIST_LENGTH) {
+                iteratorBlockFreeList.add(blockAddr);
+            } else {
+                Unsafe.free(blockAddr, BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+
         private long createIterator(Record masterRecord) {
             // Get or create the last iterator block
             if (lastIteratorBlockAddr == 0) {
@@ -529,9 +539,14 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             long blockAddr = firstIteratorBlockAddr;
             while (blockAddr != 0) {
                 long nextBlockAddr = block_nextBlockAddr(blockAddr);
-                block_free(blockAddr);
+                Unsafe.free(blockAddr, BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
                 blockAddr = nextBlockAddr;
             }
+            for (int n = iteratorBlockFreeList.size(), i = 0; i < n; i++) {
+                blockAddr = iteratorBlockFreeList.getQuick(i);
+                Unsafe.free(blockAddr, BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            iteratorBlockFreeList.clear();
             firstIteratorBlockAddr = 0;
             lastIteratorBlockAddr = 0;
             currentIterAddr = 0;
