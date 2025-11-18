@@ -963,7 +963,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     """
                             s\tts\tfirst\tavg
-                            sym0\t2023-01-01T09:00:00.000000Z\t1.0\t3.0
+                            sym0\t2023-01-01T09:00:00.000000Z\t2.0\t3.0
                             """,
                     """
                             Sort
@@ -971,8 +971,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 Async Window Fast Join workers: 1
                                   vectorized: true
                                   symbol: s=s
-                                  window lo: 60000000 preceding
-                                  window hi: 60000000 following
+                                  window lo: 1000000 preceding
+                                  window hi: 1000000 following
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
@@ -984,14 +984,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "from x " +
                             "window join y " +
                             "on (x.s = y.s) " +
-                            " range between 1 minute preceding and 1 minute following " +
+                            " range between 1 second preceding and 1 second following " +
                             "order by x.ts, x.s;",
                     "ts",
                     true,
                     false
             );
         });
-
     }
 
     @Test
