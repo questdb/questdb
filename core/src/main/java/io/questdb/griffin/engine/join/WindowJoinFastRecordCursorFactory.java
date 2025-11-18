@@ -128,11 +128,12 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             ObjList<Function> groupByFunctionArgs = new ObjList<>(groupByCount);
             IntList groupByFunctionTypes = new IntList(groupByCount);
             for (int i = 0; i < groupByCount; i++) {
-                var func = ((UnaryFunction) groupByFunctions.getQuick(i)).getArg();
-                int mappedIndex = findFunctionIndex(groupByFunctionArgs, func);
+                var func = groupByFunctions.getQuick(i);
+                var funcArg = func.hasArgs() ? ((UnaryFunction) func).getArg() : null;
+                int mappedIndex = findFunctionIndex(groupByFunctionArgs, funcArg);
                 if (mappedIndex == -1) {
-                    groupByFunctionArgs.add(func);
-                    groupByFunctionTypes.add(ColumnType.tagOf(groupByFunctions.getQuick(i).getArgType()));
+                    groupByFunctionArgs.add(funcArg);
+                    groupByFunctionTypes.add(ColumnType.tagOf(func.getArgType()));
                     groupByFunctionToColumnIndex.add(groupByFunctionArgs.size() - 1);
                 } else {
                     groupByFunctionToColumnIndex.add(mappedIndex);
@@ -699,8 +700,12 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
                             // copy the column values to be aggregated
                             for (int i = 0; i < columnCount; i++) {
-                                columnSink.of(slaveData.get(idx, 2 + i)).put(internalJoinRecord, groupByFunctionArgs.getQuick(i), (short) groupByFunctionTypes.getQuick(i));
-                                slaveData.put(idx, 2 + i, columnSink.ptr());
+                                var funcArg = groupByFunctionArgs.getQuick(i);
+                                if (funcArg != null) {
+                                    final long ptr = slaveData.get(idx, 2 + i);
+                                    columnSink.of(ptr).put(internalJoinRecord, funcArg, (short) groupByFunctionTypes.getQuick(i));
+                                    slaveData.put(idx, 2 + i, columnSink.ptr());
+                                }
                             }
                         }
 

@@ -37,6 +37,11 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     private int valueIndex;
 
     @Override
+    public void computeBatch(MapValue mapValue, long p, int count) {
+        mapValue.putLong(valueIndex, count);
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, 1);
     }
@@ -103,6 +108,11 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

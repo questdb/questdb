@@ -3574,7 +3574,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         windowJoinAggColumnVectorizedCheck.of(joinMetadata, splitIndex);
                                         for (int j = 0, m = groupByFunctions.size(); j < m; j++) {
                                             // Copying to column sink relies on UnaryFunction cast, hence the extra instanceof check.
-                                            if (!groupByFunctions.getQuick(j).supportsBatchComputation() || !(groupByFunctions.getQuick(j) instanceof UnaryFunction)) {
+                                            var func = groupByFunctions.getQuick(j);
+                                            if (!func.supportsBatchComputation() || (!(func instanceof UnaryFunction) && func.hasArgs())) {
                                                 allVectorized = false;
                                                 break;
                                             }

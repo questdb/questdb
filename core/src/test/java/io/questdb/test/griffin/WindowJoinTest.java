@@ -393,7 +393,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     expect,
 
                     "Async Window Fast Join workers: 1\n" +
-                            "  vectorized: false\n" +
+                            "  vectorized: true\n" +
                             "  symbol: sym=sym\n" +
                             "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "  window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +

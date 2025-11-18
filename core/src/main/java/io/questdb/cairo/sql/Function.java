@@ -218,6 +218,13 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     int getVarcharSize(Record rec);
 
     /**
+     * Returns true if the function has one or multiple arguments.
+     */
+    default boolean hasArgs() {
+        return false;
+    }
+
+    /**
      * Returns true if function is constant, i.e. its value does not require
      * any input from the record.
      *
