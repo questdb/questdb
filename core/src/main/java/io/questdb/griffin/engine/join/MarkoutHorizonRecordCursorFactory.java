@@ -560,6 +560,10 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             }
             nextSlaveRowNum++;
             iter_setNextSlaveRowNum(iterAddr, nextSlaveRowNum);
+            if (nextSlaveRowNum == slaveRowCount) {
+                iter_setNextTimestamp(iterAddr, Long.MIN_VALUE);
+                return;
+            }
             long slaveRecordOffset = slaveRecordOffsets.getQuick(nextSlaveRowNum);
             Record slaveRec = slaveRecordArray.getRecordAt(slaveRecordOffset);
             long slaveOffset = slaveRec.getLong(slaveSequenceColumnIndex);
@@ -577,9 +581,6 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         }
 
         private long peekNextTimestamp(long iterAddr) {
-            if (iter_nextSlaveRowNum(iterAddr) == slaveRowCount) {
-                return Long.MIN_VALUE;
-            }
             return iter_nextTimestamp(iterAddr);
         }
 
