@@ -207,13 +207,21 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
      */
     @Test
     public void testGlobNestedPathWithLimit() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertEventually(() -> assertSql(
-                "path\tdiskSize\tdiskSizeHuman\n" +
-                        "data" + File.separator + "file1.parquet\t256\t256.0 B\n" +
-                        "data" + File.separator + "file2.parquet\t256\t256.0 B\n" +
-                        "data" + File.separator + "nested" + File.separator + "deep_file.parquet\t256\t256.0 B\n",
-                "select path, diskSize, diskSizeHuman from files('" + inputRoot + "') where glob(path, 'data" + File.separator + "*') order by path limit 3"
-        )));
+        assertMemoryLeak(() ->
+                {
+                    String expected = """
+                            path\tdiskSize\tdiskSizeHuman
+                            data/file1.parquet\t256\t256.0 B
+                            data/file2.parquet\t256\t256.0 B
+                            data/nested/deep_file.parquet\t256\t256.0 B
+                            """.replace("/", File.separator);
+
+                    String query = "select path, diskSize, diskSizeHuman from files('" + inputRoot + "') where glob(path, 'data/*') order by path limit 3"
+                            .replace("/", File.separator);
+
+                    assertSql(expected, query);
+                }
+        );
     }
 
     private void createTestFile(String relativePath) {

@@ -56,6 +56,9 @@ public class GlobStrFunctionFactory implements FunctionFactory {
                     sink.put('\\');
                     sink.put(c);
                     break;
+                case '\\':
+                    sink.put("\\\\");
+                    break;
                 case '*':
                     sink.put(".*");
                     break;
