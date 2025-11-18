@@ -497,7 +497,7 @@ public class ServerMain implements Closeable {
         return "http";
     }
 
-    public static final class AsyncMunmapJob extends SynchronizedJob {
+    public static final class AsyncMunmapJob implements Job {
 
         private final MmapCache cache;
 
@@ -506,7 +506,7 @@ public class ServerMain implements Closeable {
         }
 
         @Override
-        protected boolean runSerially() {
+        public boolean run(int workerId, @NotNull RunStatus runStatus) {
             return cache.asyncMunmap();
         }
     }
