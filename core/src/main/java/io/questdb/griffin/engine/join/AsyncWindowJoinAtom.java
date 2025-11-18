@@ -235,9 +235,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
                     final var func = ownerGroupByFunctions.getQuick(i);
                     final var funcArg = func instanceof UnaryFunction ? ((UnaryFunction) func).getArg() : null;
-                    final int index = findFunctionIndex(ownerGroupByFunctionArgs, funcArg);
+                    final var funcArgType = ColumnType.tagOf(func.getComputeBatchArgType());
+                    final int index = findFunctionIndex(ownerGroupByFunctionArgs, groupByFunctionTypes, funcArg, funcArgType);
                     if (index < 0) {
-                        groupByFunctionTypes.add(ColumnType.tagOf(func.getComputeBatchArgType()));
+                        groupByFunctionTypes.add(funcArgType);
                         ownerGroupByFunctionArgs.add(funcArg);
                         groupByFunctionToColumnIndex.add(groupByFunctionTypes.size() - 1);
                     } else {
@@ -256,19 +257,24 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
                 if (perWorkerGroupByFunctions != null) {
                     this.perWorkerGroupByFunctionArgs = new ObjList<>(slotCount);
+                    var workerFunctionArgTypes = new IntList(groupByFunctionSize);
                     for (int i = 0; i < slotCount; i++) {
                         final ObjList<Function> workerFunctionArgs = new ObjList<>(groupByFunctionSize);
                         final var groupByFunctions = perWorkerGroupByFunctions.getQuick(i);
+                        workerFunctionArgTypes.clear();
                         for (int j = 0, n = groupByFunctions.size(); i < n; i++) {
                             final var func = groupByFunctions.getQuick(j);
                             if (func instanceof UnaryFunction) {
                                 final var funcArg = ((UnaryFunction) func).getArg();
-                                final int index = findFunctionIndex(workerFunctionArgs, funcArg);
+                                final var funcArgType = ColumnType.tagOf(func.getComputeBatchArgType());
+                                final int index = findFunctionIndex(workerFunctionArgs, workerFunctionArgTypes, funcArg, funcArgType);
                                 if (index < 0) {
                                     workerFunctionArgs.add(funcArg);
+                                    workerFunctionArgTypes.add(funcArgType);
                                 }
                             } else {
                                 workerFunctionArgs.add(null);
+                                workerFunctionArgTypes.add(ColumnType.UNDEFINED);
                             }
                         }
                         assert workerFunctionArgs.size() == ownerGroupByFunctionArgs.size();
@@ -616,16 +622,16 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
     }
 
-    static int findFunctionIndex(ObjList<Function> lists, Function target) {
+    static int findFunctionIndex(ObjList<Function> functions, IntList functionTypes, Function target, int targetType) {
         if (target == null) {
-            for (int i = 0, n = lists.size(); i < n; i++) {
-                if (lists.getQuick(i) == null) {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                if (functions.getQuick(i) == null) {
                     return i;
                 }
             }
         } else {
-            for (int i = 0, n = lists.size(); i < n; i++) {
-                if (target.isEquivalentTo(lists.getQuick(i))) {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                if (functionTypes.getQuick(i) == targetType && target.isEquivalentTo(functions.getQuick(i))) {
                     return i;
                 }
             }
