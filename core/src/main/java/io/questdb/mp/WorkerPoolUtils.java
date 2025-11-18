@@ -25,7 +25,6 @@
 package io.questdb.mp;
 
 import io.questdb.MessageBus;
-import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
@@ -40,6 +39,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
+import io.questdb.std.AsyncMunmapJob;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -52,7 +52,7 @@ public class WorkerPoolUtils {
         if (config.getAsyncMunmapEnabled()) {
             assert Os.isPosix();
             Files.ASYNC_MUNMAP_ENABLED = true;
-            ServerMain.AsyncMunmapJob asyncMunmapJob = new ServerMain.AsyncMunmapJob();
+            AsyncMunmapJob asyncMunmapJob = new AsyncMunmapJob();
             pool.assign(asyncMunmapJob);
         } else {
             Files.ASYNC_MUNMAP_ENABLED = false;

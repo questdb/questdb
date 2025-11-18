@@ -497,20 +497,6 @@ public class ServerMain implements Closeable {
         return "http";
     }
 
-    public static final class AsyncMunmapJob implements Job {
-
-        private final MmapCache cache;
-
-        public AsyncMunmapJob() {
-            this.cache = Files.getMmapCache();
-        }
-
-        @Override
-        public boolean run(int workerId, @NotNull RunStatus runStatus) {
-            return cache.asyncMunmap();
-        }
-    }
-
     public static class EngineMaintenanceJob extends SynchronizedJob {
         private final long checkInterval;
         private final Clock clock;
