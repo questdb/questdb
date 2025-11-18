@@ -47,7 +47,7 @@ public class ShortConstant extends ShortFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean matches(Function obj) {
+    public boolean isEquivalentTo(Function obj) {
         if (this == obj) {
             return true;
         }

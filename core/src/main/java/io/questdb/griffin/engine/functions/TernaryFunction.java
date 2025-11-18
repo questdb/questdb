@@ -66,6 +66,19 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default boolean isEquivalentTo(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof TernaryFunction that) {
+            return getLeft().isEquivalentTo(that.getLeft())
+                    && getCenter().isEquivalentTo(that.getCenter())
+                    && getRight().isEquivalentTo(that.getRight());
+        }
+        return false;
+    }
+
+    @Override
     default boolean isNonDeterministic() {
         return getLeft().isNonDeterministic() || getCenter().isNonDeterministic() || getRight().isNonDeterministic();
     }
@@ -91,19 +104,6 @@ public interface TernaryFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return getLeft().isThreadSafe() && getCenter().isThreadSafe() && getRight().isThreadSafe();
-    }
-
-    @Override
-    default boolean matches(Function other) {
-        if (other == this) {
-            return true;
-        }
-        if (other instanceof TernaryFunction that) {
-            return getLeft().matches(that.getLeft())
-                    && getCenter().matches(that.getCenter())
-                    && getRight().matches(that.getRight());
-        }
-        return false;
     }
 
     @Override

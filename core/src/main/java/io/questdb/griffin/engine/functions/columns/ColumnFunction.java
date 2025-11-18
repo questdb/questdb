@@ -39,7 +39,7 @@ public interface ColumnFunction extends Function {
     int getColumnIndex();
 
     @Override
-    default boolean matches(Function obj) {
+    default boolean isEquivalentTo(Function obj) {
         if (this == obj) {
             return true;
         }

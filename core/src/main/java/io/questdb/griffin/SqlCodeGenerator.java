@@ -3801,7 +3801,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
                         final Function filter = compileJoinFilter(
                                 filterExpr,
-                                (JoinRecordMetadata) master.getMetadata(),
+                                master.getMetadata(),
                                 executionContext
                         );
 

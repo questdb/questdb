@@ -1850,6 +1850,113 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinWithComplicityAggFunctions() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE trades (
+                                ts TIMESTAMP,
+                                sym SYMBOL,
+                                price DOUBLE
+                            ) timestamp(ts);
+                            """
+            );
+            execute(
+                    """
+                            CREATE TABLE prices (
+                                ts TIMESTAMP,
+                                sym SYMBOL,
+                                val0 DOUBLE,
+                                val1 DOUBLE
+                            ) timestamp(ts);
+                            """
+            );
+
+            assertQueryAndPlan(
+                    "ts\tsym\tprice\tagg0\tagg1\tagg2\tagg3\n",
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [ts,sym,price,agg0,agg1,agg2,agg1]\n" +
+                            "        Async Window Join workers: 1\n" +
+                            "          vectorized: true\n" +
+                            "          window lo: 773 preceding\n" +
+                            "          window hi: 773 following\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: prices\n",
+                    "SELECT t.ts, t.sym, t.price, first(val0) agg0, last(val1) agg1, sum(val1) agg2, last(val1) agg3\n" +
+                            "FROM trades t\n" +
+                            "WINDOW JOIN prices p\n" +
+                            "RANGE BETWEEN 773 microseconds PRECEDING AND 773 microseconds FOLLOWING\n" +
+                            "ORDER BY t.ts, t.sym",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryAndPlan(
+                    "ts\tsym\tprice\tagg0\tagg1\tagg2\tagg3\n",
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [ts,sym,price,agg0,agg1,agg2,agg1]\n" +
+                            "        Async Window Join workers: 1\n" +
+                            "          vectorized: true\n" +
+                            "          window lo: 773 preceding\n" +
+                            "          window hi: 773 following\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: prices\n",
+                    "SELECT t.ts, t.sym, t.price, first(val0) agg0, last(val1) agg1, sum(val1) agg2, last(val1) agg3\n" +
+                            "FROM trades t\n" +
+                            "WINDOW JOIN prices p\n" +
+                            "RANGE BETWEEN 773 microseconds PRECEDING AND 773 microseconds FOLLOWING\n" +
+                            "ORDER BY ts, sym;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryAndPlan(
+                    "ts\tsym\tprice\tagg1\tagg2\n",
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [ts,sym,price,first-last,sum-last1]\n" +
+                            "        Async Window Join workers: 1\n" +
+                            "          vectorized: true\n" +
+                            "          window lo: 773 preceding\n" +
+                            "          window hi: 773 following\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: prices\n",
+                    "SELECT t.ts, t.sym, t.price, first(val0 + 1) - last(val1 + 1) agg1, sum(val1 + 2) - last(val1 + 2) agg2\n" +
+                            "FROM trades t\n" +
+                            "WINDOW JOIN prices p\n" +
+                            "RANGE BETWEEN 773 microseconds PRECEDING AND 773 microseconds FOLLOWING\n" +
+                            "ORDER BY ts, sym;",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinWithConstantFilter() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);

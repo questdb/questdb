@@ -50,12 +50,7 @@ public class IntConstant extends IntFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean isNullConstant() {
-        return value == Numbers.INT_NULL;
-    }
-
-    @Override
-    public boolean matches(Function obj) {
+    public boolean isEquivalentTo(Function obj) {
         if (this == obj) {
             return true;
         }
@@ -63,6 +58,11 @@ public class IntConstant extends IntFunction implements ConstantFunction {
             return this.value == that.value;
         }
         return false;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return value == Numbers.INT_NULL;
     }
 
     @Override

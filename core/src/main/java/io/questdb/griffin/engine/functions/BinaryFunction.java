@@ -67,6 +67,17 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
+    default boolean isEquivalentTo(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof BinaryFunction that) {
+            return getLeft().isEquivalentTo(that.getLeft()) && getRight().isEquivalentTo(that.getRight());
+        }
+        return false;
+    }
+
+    @Override
     default boolean isNonDeterministic() {
         return getLeft().isNonDeterministic() || getRight().isNonDeterministic();
     }
@@ -91,17 +102,6 @@ public interface BinaryFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return getLeft().isThreadSafe() && getRight().isThreadSafe();
-    }
-
-    @Override
-    default boolean matches(Function other) {
-        if (other == this) {
-            return true;
-        }
-        if (other instanceof BinaryFunction that) {
-            return getLeft().matches(that.getLeft()) && getRight().matches(that.getRight());
-        }
-        return false;
     }
 
     @Override

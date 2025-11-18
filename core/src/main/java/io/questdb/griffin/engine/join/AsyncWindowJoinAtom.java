@@ -626,7 +626,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             }
         } else {
             for (int i = 0, n = lists.size(); i < n; i++) {
-                if (target.matches(lists.getQuick(i))) {
+                if (target.isEquivalentTo(lists.getQuick(i))) {
                     return i;
                 }
             }

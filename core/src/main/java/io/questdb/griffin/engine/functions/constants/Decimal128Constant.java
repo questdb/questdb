@@ -53,12 +53,7 @@ public class Decimal128Constant extends Decimal128Function implements ConstantFu
     }
 
     @Override
-    public boolean isNullConstant() {
-        return Decimal128.isNull(hi, lo);
-    }
-
-    @Override
-    public boolean matches(Function obj) {
+    public boolean isEquivalentTo(Function obj) {
         if (this == obj) {
             return true;
         }
@@ -66,6 +61,11 @@ public class Decimal128Constant extends Decimal128Function implements ConstantFu
             return this.lo == that.lo && this.hi == that.hi && this.type == that.type;
         }
         return false;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return Decimal128.isNull(hi, lo);
     }
 
     @Override

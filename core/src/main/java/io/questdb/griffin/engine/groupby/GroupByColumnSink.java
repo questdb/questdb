@@ -63,12 +63,6 @@ public class GroupByColumnSink {
         }
     }
 
-    public void clear() {
-        if (ptr != 0) {
-            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
-        }
-    }
-
     public GroupByColumnSink of(long ptr) {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + initialCapacity);
