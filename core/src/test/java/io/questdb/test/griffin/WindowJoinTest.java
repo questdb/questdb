@@ -375,6 +375,47 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountOnlyWindowJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareTable();
+            String expect = "count\n" +
+                    "3\n" +
+                    "2\n" +
+                    "1\n" +
+                    "2\n" +
+                    "1\n" +
+                    "2\n" +
+                    "1\n" +
+                    "1\n" +
+                    "1\n" +
+                    "1\n";
+            assertQueryAndPlan(
+                    expect,
+
+                    "Async Window Fast Join workers: 1\n" +
+                            "  vectorized: false\n" +
+                            "  symbol: sym=sym\n" +
+                            "  window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "  window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: prices\n",
+                    "select count() " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following",
+                    null,
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFastJoinWithJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
