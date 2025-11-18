@@ -236,7 +236,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                     final var func = ownerGroupByFunctions.getQuick(i);
                     final var funcArg = func instanceof UnaryFunction ? ((UnaryFunction) func).getArg() : null;
                     final var funcArgType = ColumnType.tagOf(func.getComputeBatchArgType());
-                    final int index = findFunctionIndex(ownerGroupByFunctionArgs, groupByFunctionTypes, funcArg, funcArgType);
+                    final int index = findFunctionWithSameArg(ownerGroupByFunctionArgs, groupByFunctionTypes, funcArg, funcArgType);
                     if (index < 0) {
                         groupByFunctionTypes.add(funcArgType);
                         ownerGroupByFunctionArgs.add(funcArg);
@@ -267,7 +267,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                             if (func instanceof UnaryFunction) {
                                 final var funcArg = ((UnaryFunction) func).getArg();
                                 final var funcArgType = ColumnType.tagOf(func.getComputeBatchArgType());
-                                final int index = findFunctionIndex(workerFunctionArgs, workerFunctionArgTypes, funcArg, funcArgType);
+                                final int index = findFunctionWithSameArg(workerFunctionArgs, workerFunctionArgTypes, funcArg, funcArgType);
                                 if (index < 0) {
                                     workerFunctionArgs.add(funcArg);
                                     workerFunctionArgTypes.add(funcArgType);
@@ -622,7 +622,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
     }
 
-    static int findFunctionIndex(ObjList<Function> functions, IntList functionTypes, Function target, int targetType) {
+    static int findFunctionWithSameArg(ObjList<Function> functions, IntList functionTypes, Function target, int targetType) {
         if (target == null) {
             for (int i = 0, n = functions.size(); i < n; i++) {
                 if (functions.getQuick(i) == null) {
