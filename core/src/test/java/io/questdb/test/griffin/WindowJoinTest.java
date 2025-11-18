@@ -794,6 +794,88 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMasterFilterLimit() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table trades (" +
+                            "  sym symbol," +
+                            "  price double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table prices (" +
+                            "  sym symbol," +
+                            "  bid double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into trades values " +
+                            "('sym0', 1.0, '2023-01-01T08:59:56.000000Z')," +
+                            "('sym0', 2.0, '2023-01-01T08:59:57.000000Z')," +
+                            "('sym0', 3.0, '2023-01-01T08:59:58.000000Z')," +
+                            "('sym0', 4.0, '2023-01-01T08:59:59.000000Z')," +
+                            "('sym0', 5.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('sym0', 6.0, '2023-01-01T09:00:01.000000Z')," +
+                            "('sym0', 7.0, '2023-01-01T09:00:02.000000Z')," +
+                            "('sym0', 8.0, '2023-01-01T09:00:03.000000Z')," +
+                            "('sym0', 9.0, '2023-01-01T09:00:04.000000Z');"
+            );
+
+            execute(
+                    "insert into prices values " +
+                            "('sym0', 1.0, '2023-01-01T08:59:56.000000Z')," +
+                            "('sym0', 2.0, '2023-01-01T08:59:57.000000Z')," +
+                            "('sym0', 3.0, '2023-01-01T08:59:58.000000Z')," +
+                            "('sym0', 4.0, '2023-01-01T08:59:59.000000Z')," +
+                            "('sym0', 5.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('sym0', 6.0, '2023-01-01T09:00:01.000000Z')," +
+                            "('sym0', 7.0, '2023-01-01T09:00:02.000000Z')," +
+                            "('sym0', 8.0, '2023-01-01T09:00:03.000000Z')," +
+                            "('sym0', 9.0, '2023-01-01T09:00:04.000000Z');"
+            );
+
+            assertQueryAndPlan(
+                    """
+                            sym\tprice\tts\tfirst\tavg
+                            """,
+                    """
+                            Sort
+                              keys: [ts, sym]
+                                Window Fast Join
+                                  symbol: sym=sym
+                                  window lo: 60000000 preceding
+                                  window hi: 60000000 following
+                                    Limit lo: 5 hi: 9 skip-over-rows: 5 limit: 4
+                                        Async JIT Filter workers: 1
+                                          filter: 5<price
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: prices
+                            """,
+                    "select t.*, first(p.bid) as first, avg(p.bid) as avg " +
+                            "from (trades where price > 5 limit 5, 9) t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+
+    }
+
+    @Test
     public void testMasterHasIntervalFilter() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -991,7 +1073,6 @@ public class WindowJoinTest extends AbstractCairoTest {
                     false
             );
         });
-
     }
 
     @Test
