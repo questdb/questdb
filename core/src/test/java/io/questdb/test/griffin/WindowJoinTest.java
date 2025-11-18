@@ -928,6 +928,73 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMixedColumnReused() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x (" +
+                            "  s symbol," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table y (" +
+                            "  s symbol," +
+                            "  x float," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into x values " +
+                            "('sym0', '2023-01-01T09:00:00.000000Z');"
+            );
+            execute(
+                    "insert into y values " +
+                            "('sym0', 1.0f, '2023-01-01T08:59:58.000000Z')," +
+                            "('sym0', 2.0f, '2023-01-01T08:59:59.000000Z')," +
+                            "('sym0', 3.0f, '2023-01-01T09:00:00.000000Z')," +
+                            "('sym0', 4.0f, '2023-01-01T09:00:01.000000Z')," +
+                            "('sym0', 5.0f, '2023-01-01T09:00:02.000000Z');"
+            );
+
+            assertQueryAndPlan(
+                    """
+                            s\tts\tfirst\tavg
+                            sym0\t2023-01-01T09:00:00.000000Z\t1.0\t3.0
+                            """,
+                    """
+                            Sort
+                              keys: [ts, s]
+                                Async Window Fast Join workers: 1
+                                  vectorized: true
+                                  symbol: s=s
+                                  window lo: 60000000 preceding
+                                  window hi: 60000000 following
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
+                            """,
+                    "select x.*, first(y.x) as first, avg(y.x) as avg " +
+                            "from x " +
+                            "window join y " +
+                            "on (x.s = y.s) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "order by x.ts, x.s;",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+
+    }
+
+    @Test
     public void testMultiAggregateColumns() throws Exception {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(leftTableTimestampType.getTimestampType() == rightTableTimestampType.getTimestampType());
