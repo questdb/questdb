@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordArray;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableToken;
@@ -620,8 +621,21 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             slaveRecordArray.reopen();
             slaveRecordArray.clear();
             slaveRecordOffsets.clear();
+            if (slaveCursor.size() > Integer.MAX_VALUE) {
+                throw CairoException.critical(-1)
+                        .put("markout horizon offset count too large [offsetCount=").put(slaveCursor.size())
+                        .put(", maxCount=").put(Integer.MAX_VALUE)
+                        .put(']');
+            }
             final Record slaveRecord = slaveCursor.getRecord();
+            int offsetCount = 0;
             while (slaveCursor.hasNext()) {
+                if (offsetCount == Integer.MAX_VALUE) {
+                    throw CairoException.critical(-1)
+                            .put("markout horizon: reached the offset count limit without exhausting cursor [countLimit=")
+                            .put(Integer.MAX_VALUE).put(']');
+                }
+                offsetCount++;
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 long offset = slaveRecordArray.put(slaveRecord);
                 slaveRecordOffsets.add(offset);
