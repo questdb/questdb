@@ -50,13 +50,7 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean isNullConstant() {
-        // NaN is used as a marker for NULL
-        return Numbers.isNull(value);
-    }
-
-    @Override
-    public boolean matches(Function obj) {
+    public boolean isEquivalentTo(Function obj) {
         if (this == obj) {
             return true;
         }
@@ -64,6 +58,12 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
             return this.value == that.value;
         }
         return false;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        // NaN is used as a marker for NULL
+        return Numbers.isNull(value);
     }
 
     @Override

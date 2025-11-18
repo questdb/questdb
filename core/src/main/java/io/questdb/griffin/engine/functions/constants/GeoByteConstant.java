@@ -47,12 +47,7 @@ public class GeoByteConstant extends GeoByteFunction implements ConstantFunction
     }
 
     @Override
-    public boolean isNullConstant() {
-        return hash == GeoHashes.BYTE_NULL;
-    }
-
-    @Override
-    public boolean matches(Function obj) {
+    public boolean isEquivalentTo(Function obj) {
         if (this == obj) {
             return true;
         }
@@ -60,6 +55,11 @@ public class GeoByteConstant extends GeoByteFunction implements ConstantFunction
             return this.hash == that.hash;
         }
         return false;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return hash == GeoHashes.BYTE_NULL;
     }
 
     @Override

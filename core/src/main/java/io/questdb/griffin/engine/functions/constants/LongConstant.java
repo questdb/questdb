@@ -58,12 +58,7 @@ public class LongConstant extends LongFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean isNullConstant() {
-        return value == Numbers.LONG_NULL;
-    }
-
-    @Override
-    public boolean matches(Function obj) {
+    public boolean isEquivalentTo(Function obj) {
         if (this == obj) {
             return true;
         }
@@ -71,6 +66,11 @@ public class LongConstant extends LongFunction implements ConstantFunction {
             return this.value == that.value;
         }
         return false;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return value == Numbers.LONG_NULL;
     }
 
     public void toPlan(PlanSink sink) {

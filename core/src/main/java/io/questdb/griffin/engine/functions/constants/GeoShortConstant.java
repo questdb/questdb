@@ -48,12 +48,7 @@ public class GeoShortConstant extends GeoShortFunction implements ConstantFuncti
     }
 
     @Override
-    public boolean isNullConstant() {
-        return hash == GeoHashes.SHORT_NULL;
-    }
-
-    @Override
-    public boolean matches(Function obj) {
+    public boolean isEquivalentTo(Function obj) {
         if (this == obj) {
             return true;
         }
@@ -61,6 +56,11 @@ public class GeoShortConstant extends GeoShortFunction implements ConstantFuncti
             return this.hash == that.hash;
         }
         return false;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return hash == GeoHashes.SHORT_NULL;
     }
 
     @Override

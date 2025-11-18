@@ -51,12 +51,7 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
     }
 
     @Override
-    public boolean isNullConstant() {
-        return value == Numbers.LONG_NULL;
-    }
-
-    @Override
-    public boolean matches(Function obj) {
+    public boolean isEquivalentTo(Function obj) {
         if (this == obj) {
             return true;
         }
@@ -64,6 +59,11 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
             return this.value == that.value;
         }
         return false;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return value == Numbers.LONG_NULL;
     }
 
     @Override

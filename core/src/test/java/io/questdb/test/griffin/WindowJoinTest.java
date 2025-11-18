@@ -1854,7 +1854,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
-        
+
         assertMemoryLeak(() -> {
             execute(
                     """

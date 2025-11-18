@@ -233,6 +233,19 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return isConstant() || isRuntimeConstant();
     }
 
+    /**
+     * Performs a best-effort comparison to check if two functions are equivalent.
+     * This is used for optimization purposes to identify duplicate or equivalent expressions.
+     *
+     * @param obj the function to compare with
+     * @return true if the functions are definitely equivalent, false if they may or may not be equivalent.
+     * Note: A false result does not guarantee the functions are different - it just means
+     * equivalence could not be determined through this best-effort comparison.
+     */
+    default boolean isEquivalentTo(Function obj) {
+        return this == obj;
+    }
+
     default boolean isNonDeterministic() {
         return false;
     }
@@ -288,13 +301,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     default boolean isUndefined() {
         return getType() == ColumnType.UNDEFINED;
-    }
-
-    /**
-     * Performs a best-effort comparison between functions.
-     */
-    default boolean matches(Function obj) {
-        return this == obj;
     }
 
     /**

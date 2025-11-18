@@ -48,13 +48,7 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean isNullConstant() {
-        // NaN is used as a marker for NULL
-        return Numbers.isNull(value);
-    }
-
-    @Override
-    public boolean matches(Function obj) {
+    public boolean isEquivalentTo(Function obj) {
         if (this == obj) {
             return true;
         }
@@ -62,6 +56,12 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
             return this.value == that.value;
         }
         return false;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        // NaN is used as a marker for NULL
+        return Numbers.isNull(value);
     }
 
     @Override

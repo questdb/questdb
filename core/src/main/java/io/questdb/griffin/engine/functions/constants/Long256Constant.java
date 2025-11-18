@@ -84,12 +84,7 @@ public class Long256Constant extends Long256Function implements Long256, Constan
     }
 
     @Override
-    public boolean isNullConstant() {
-        return Long256Impl.NULL_LONG256.equals(value);
-    }
-
-    @Override
-    public boolean matches(Function obj) {
+    public boolean isEquivalentTo(Function obj) {
         if (this == obj) {
             return true;
         }
@@ -97,6 +92,11 @@ public class Long256Constant extends Long256Function implements Long256, Constan
             return this.value.equals(that.value);
         }
         return false;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return Long256Impl.NULL_LONG256.equals(value);
     }
 
     @Override
