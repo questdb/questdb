@@ -5639,7 +5639,6 @@ public class SqlOptimiser implements Mutable {
                 ref = ensureAliasUniqueness(outerVirtualModel, ref);
                 outerVirtualModel.addBottomUpColumn(ref);
                 distinctModel.addBottomUpColumn(ref);
-                emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, true, baseModel, false);
                 return null;
             }
             QueryModel aggModel = isWindowJoin ? windowJoinModel : groupByModel;
@@ -6278,7 +6277,7 @@ public class SqlOptimiser implements Mutable {
                             windowModel,
                             outerVirtualModel,
                             distinctModel,
-                            translatingModel,
+                            isWindowJoin ? windowJoinModel : translatingModel,
                             innerVirtualModel,
                             baseModel,
                             (rewriteStatus & REWRITE_STATUS_USE_OUTER_MODEL) != 0,
@@ -6305,7 +6304,7 @@ public class SqlOptimiser implements Mutable {
                             innerVirtualModel,
                             i,
                             cursorModel,
-                            translatingModel,
+                            isWindowJoin ? windowJoinModel : translatingModel,
                             windowJoinModel,
                             sampleBy,
                             windowModel,
@@ -6523,6 +6522,8 @@ public class SqlOptimiser implements Mutable {
                     jm.getWindowJoinContext().setParentModel(windowJoinModel);
                 }
             }
+            // Window join model takes over the role of translation model
+            assert translationIsRedundant : "Window join must not have translation model";
             windowJoinModel.setNestedModel(root);
             windowJoinModel.moveLimitFrom(limitSource);
             windowJoinModel.moveJoinAliasFrom(limitSource);
