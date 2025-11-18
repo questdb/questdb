@@ -1669,9 +1669,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (lastSeenOrderByModel.getOrderBy().size() != 1) {
             return null;
         }
-        ExpressionNode orderByNode = lastSeenOrderByModel.getOrderBy().getQuick(0);
+        // Ensure sort direction is ascending
+        IntList dirs = lastSeenOrderByModel.getOrderByDirectionAdvice();
+        int dir = (dirs.size() > 0) ? dirs.getQuick(0) : ORDER_DIRECTION_ASCENDING;
+        if (dir != ORDER_DIRECTION_ASCENDING) {
+            return null;
+        }
 
         // The ORDER BY node may be a column alias (LITERAL) - resolve it to the actual expression
+        ExpressionNode orderByNode = lastSeenOrderByModel.getOrderBy().getQuick(0);
         ExpressionNode orderByExpr = orderByNode;
         if (orderByNode.type == ExpressionNode.LITERAL) {
             QueryColumn queryColumn = lastSeenOrderByModel.getAliasToColumnMap().get(orderByNode.token);
@@ -1720,7 +1726,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return null; // Slave column not found
         }
         // Return the info needed to create the optimized factory.
-        // resultTimestampColumnIndex will be -1 if no SELECT column matches the ORDER BY expression.
+        // timestampColumnIndex will be -1 if no SELECT column matches the ORDER BY expression.
         return new MarkoutHorizonInfo(timestampColumnIndex, slaveColumnIndex);
     }
 
