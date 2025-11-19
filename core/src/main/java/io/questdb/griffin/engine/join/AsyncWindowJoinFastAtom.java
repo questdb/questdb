@@ -119,7 +119,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                     SLAVE_MAP_INITIAL_CAPACITY,
                     SLAVE_MAP_LOAD_FACTOR,
                     0,
-                    StaticSymbolTable.VALUE_IS_NULL,
+                    StaticSymbolTable.VALUE_NOT_FOUND,
                     MemoryTag.NATIVE_UNORDERED_MAP
             );
             final int slaveDataLen = isVectorized() ? 2 + ownerGroupByFunctionArgs.size() : 3;

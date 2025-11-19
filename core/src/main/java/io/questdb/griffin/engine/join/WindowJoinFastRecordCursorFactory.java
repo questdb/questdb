@@ -268,7 +268,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                         SLAVE_MAP_INITIAL_CAPACITY,
                         SLAVE_MAP_LOAD_FACTOR,
                         0,
-                        StaticSymbolTable.VALUE_IS_NULL,
+                        StaticSymbolTable.VALUE_NOT_FOUND,
                         MemoryTag.NATIVE_UNORDERED_MAP
                 );
                 this.slaveData = new DirectIntMultiLongHashMap(
