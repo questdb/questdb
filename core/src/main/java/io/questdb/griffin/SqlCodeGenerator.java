@@ -426,6 +426,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
+    private final MarkoutHorizonInfo markoutHorizonInfo = new MarkoutHorizonInfo();
     private final LongList prefixes = new LongList();
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
@@ -1727,7 +1728,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         // Return the info needed to create the optimized factory.
         // timestampColumnIndex will be -1 if no SELECT column matches the ORDER BY expression.
-        return new MarkoutHorizonInfo(timestampColumnIndex, slaveColumnIndex);
+        return markoutHorizonInfo.of(timestampColumnIndex, slaveColumnIndex);
     }
 
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
@@ -7334,9 +7335,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         int masterTimestampColumnIndex;
         int slaveSequenceColumnIndex;
 
-        MarkoutHorizonInfo(int masterTimestampColumnIndex, int slaveSequenceColumnIndex) {
-            this.masterTimestampColumnIndex = masterTimestampColumnIndex;
-            this.slaveSequenceColumnIndex = slaveSequenceColumnIndex;
+        MarkoutHorizonInfo of(int timestampColumnIndex, int slaveColumnIndex) {
+            this.masterTimestampColumnIndex = timestampColumnIndex;
+            this.slaveSequenceColumnIndex = slaveColumnIndex;
+            return this;
         }
     }
 
