@@ -129,21 +129,20 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testLargeNanoIntervalSampleBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table large_ns as (" +
-                    "select timestamp_sequence_ns(0, 1000000000L) ts " +
-                    "from long_sequence(5)" +
-                    ") timestamp(ts) partition by NONE", sqlExecutionContext);
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                try (RecordCursorFactory factory = compiler.compile("select ts, count() cnt from large_ns sample by 3000000000n", sqlExecutionContext).getRecordCursorFactory();
-                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    while (cursor.hasNext()) {
-                        cursor.getRecord();
-                    }
-                }
-            }
-        });
+        assertQuery(
+                """
+                        ts\tcnt
+                        1970-01-01T00:00:00.000000000Z\t3
+                        1970-01-01T00:00:03.000000000Z\t2
+                        """,
+                "select ts, count() cnt from large_ns sample by 3000000000n",
+                "create table large_ns as (" +
+                        "select timestamp_sequence_ns(0, 1000000000L) ts " +
+                        "from long_sequence(5)" +
+                        ") timestamp(ts) partition by NONE",
+                "ts",
+                false
+        );
     }
 
     @Test
