@@ -781,7 +781,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     int mapIndex = groupByFunctionToColumnIndex.getQuick(i);
                     final long ptr = slaveData.get(idx, 2 + mapIndex);
                     if (ptr != 0) {
-                        final long typeSize = ColumnType.sizeOfTag(ColumnType.tagOf(groupByFunctionArgs.getQuick(mapIndex).getType()));
+                        final long typeSize = ColumnType.sizeOfTag((short) groupByFunctionTypes.getQuick(mapIndex));
                         groupByFunctions.getQuick(i).computeBatch(simpleMapValue, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
                     } else { // no-arg function, e.g. count()
                         groupByFunctions.getQuick(i).computeBatch(simpleMapValue, 0, (int) (rowHi - rowLo));
