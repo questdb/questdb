@@ -6,8 +6,10 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpRequestValidator;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.griffin.JsonSink;
@@ -26,6 +28,7 @@ import io.questdb.std.LongStack;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
@@ -37,6 +40,8 @@ import io.questdb.std.str.Utf8s;
 import java.io.Closeable;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
+import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_GET;
+import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_HEAD;
 import static java.net.HttpURLConnection.HTTP_OK;
 
 public class FileGetProcessor implements HttpRequestProcessor {
@@ -63,6 +68,11 @@ public class FileGetProcessor implements HttpRequestProcessor {
     }
 
     @Override
+    public short getSupportedRequestTypes() {
+        return METHOD_GET | METHOD_HEAD;
+    }
+
+    @Override
     public void onRequestComplete(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
@@ -80,6 +90,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
         }
 
         HttpRequestHeader request = context.getRequestHeader();
+        state.isHeadRequest = HttpKeywords.isHEAD(request.getMethod());
         final DirectUtf8Sequence file = extractFilePathFromUrl(request);
         if (file == null || file.size() == 0) {
             // No file in path - list all files in root directory
@@ -266,7 +277,14 @@ public class FileGetProcessor implements HttpRequestProcessor {
             State state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         response.status(200, state.contentType);
-        response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.file).putAscii("\"").putEOL();
+        response.headers()
+                .putAscii("Content-Disposition: attachment; filename=\"").put(state.file).putAscii("\"").putEOL()
+                .putAscii("Content-Length: ").put(state.fileSize).putEOL()
+                .putAscii("Last-Modified: ");
+
+        // Format Last-Modified as RFC 2822 date
+        DateFormatUtils.formatHTTP(response.headers(), state.lastModified);
+        response.headers().putEOL();
         response.sendHeader();
     }
 
@@ -296,6 +314,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
         }
 
         state.fileSize = state.ff.length(state.fd);
+        state.lastModified = state.ff.getLastModified(path.$());
         if (state.fileSize > 0) {
             state.fileAddress = TableUtils.mapRO(state.ff, state.fd, state.fileSize, MemoryTag.MMAP_DEFAULT);
             if (state.fileAddress == 0) {
@@ -306,7 +325,11 @@ public class FileGetProcessor implements HttpRequestProcessor {
         }
 
         header(response, state);
-        state.state = FILE_SEND_CHUNK;
+        if (state.isHeadRequest) {
+            state.state = FILE_SEND_COMPLETED;
+        } else {
+            state.state = FILE_SEND_CHUNK;
+        }
     }
 
     // todo: probably replace this with the griffin factories that handle files/globs, so we can support glob filters
@@ -579,6 +602,8 @@ public class FileGetProcessor implements HttpRequestProcessor {
         long fileSize;
         boolean firstFile = true;
         boolean paused;
+        boolean isHeadRequest;
+        long lastModified;
         Utf8StringSink sink = new Utf8StringSink();
         int state;
         // Pagination fields
@@ -613,6 +638,8 @@ public class FileGetProcessor implements HttpRequestProcessor {
             }
 
             paused = false;
+            isHeadRequest = false;
+            lastModified = 0;
             fileSize = 0;
             fileOffset = 0;
             state = FILE_SEND_INIT;

@@ -66,6 +66,8 @@ public interface HttpRequestHeader {
 
     boolean isGetRequest();
 
+    boolean isHeadRequest();
+
     boolean isPostRequest();
 
     boolean isPutRequest();

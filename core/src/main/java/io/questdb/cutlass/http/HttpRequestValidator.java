@@ -10,7 +10,7 @@ import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 
 // request type is encoded in a short
 // bits of the lower byte correspond to HTTP methods:
-// 0 bit: GET (1), 1 bit: POST (2), 2 bit: PUT (4)
+// 0 bit: GET (1), 1 bit: HEAD (2), 2 bit: POST (4), 3 bit: PUT (8), 4 bit: DELETE (16)
 // we can assign more method types in the future, if necessary
 // bits of the higher byte correspond to multipart/non-multipart content types:
 // 0 bit: non-multipart (256), 1 bit: multipart (512)
@@ -21,7 +21,8 @@ public class HttpRequestValidator {
     public static final short ALL = ALL_METHODS | ALL_CONTENT_TYPES;
     public static final short INVALID = Short.MIN_VALUE;
     public static final short METHOD_GET = 0x0001;
-    public static final short METHOD_POST = METHOD_GET << 1;
+    public static final short METHOD_HEAD = METHOD_GET << 1;
+    public static final short METHOD_POST = METHOD_HEAD << 1;
     public static final short METHOD_PUT = METHOD_POST << 1;
     public static final short METHOD_DELETE = METHOD_PUT << 1;
     public static final short NON_MULTIPART_REQUEST = 0x0100;
@@ -64,6 +65,12 @@ public class HttpRequestValidator {
                 return;
             }
             requestType = METHOD_GET;
+        } else if (requestHeader.isHeadRequest()) {
+            if (chunked || multipart || contentLength > 0) {
+                rejectProcessor.reject(HTTP_BAD_REQUEST, "HEAD request method cannot have content");
+                return;
+            }
+            requestType = METHOD_HEAD;
         } else if (requestHeader.isPostRequest() || requestHeader.isPutRequest()) {
             if (chunked && contentLength > 0) {
                 rejectProcessor.reject(HTTP_BAD_REQUEST, "Invalid chunked request; content-length specified");

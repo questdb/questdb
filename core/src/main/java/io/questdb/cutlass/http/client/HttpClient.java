@@ -294,6 +294,12 @@ public abstract class HttpClient implements QuietCloseable {
             return putAscii("GET ");
         }
 
+        public Request HEAD() {
+            assert state == STATE_REQUEST;
+            state = STATE_URL;
+            return putAscii("HEAD ");
+        }
+
         public Request POST() {
             assert state == STATE_REQUEST;
             state = STATE_URL;

@@ -58,7 +58,7 @@ public class ImportsRouter implements HttpRequestHandler {
         DirectUtf8Sequence method = requestHeader.getMethod();
         if (HttpKeywords.isPOST(method)) {
             return postProcessor;
-        } else if (HttpKeywords.isGET(method)) {
+        } else if (HttpKeywords.isGET(method) || HttpKeywords.isHEAD(method)) {
             return getProcessor;
         } else if (HttpKeywords.isDELETE(method)) {
             return deleteProcessor;

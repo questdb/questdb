@@ -53,7 +53,7 @@ public class ExportsRouter implements HttpRequestHandler {
     @Override
     public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
         DirectUtf8Sequence method = requestHeader.getMethod();
-        if (HttpKeywords.isGET(method)) {
+        if (HttpKeywords.isGET(method) || HttpKeywords.isHEAD(method)) {
             return getProcessor;
         } else if (HttpKeywords.isDELETE(method)) {
             return deleteProcessor;

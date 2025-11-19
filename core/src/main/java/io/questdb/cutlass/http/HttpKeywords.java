@@ -133,6 +133,14 @@ public class HttpKeywords {
                 && (tok.byteAt(2)) == 'T';
     }
 
+    public static boolean isHEAD(@Nullable Utf8Sequence tok) {
+        return tok != null && tok.size() == 4
+                && (tok.byteAt(0)) == 'H'
+                && (tok.byteAt(1)) == 'E'
+                && (tok.byteAt(2)) == 'A'
+                && (tok.byteAt(3)) == 'D';
+    }
+
     public static boolean isHeaderSetCookie(@Nullable Utf8Sequence tok) {
         return tok != null && tok.size() == 10
                 && (tok.byteAt(0) | 32) == 's'

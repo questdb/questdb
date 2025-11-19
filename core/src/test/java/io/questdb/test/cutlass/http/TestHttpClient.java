@@ -456,6 +456,20 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
+    public String headRequest(CharSequence url, CharSequence expectedStatus) {
+        try {
+            HttpClient.Request req = httpClient.newRequest("localhost", port);
+            req.HEAD().url(url);
+            String repStatus = reqToSink(req, sink, null, null, null, null);
+            TestUtils.assertEquals(expectedStatus, repStatus);
+            return sink.toString();
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
     public Utf8StringSink getSink() {
         return sink;
     }
