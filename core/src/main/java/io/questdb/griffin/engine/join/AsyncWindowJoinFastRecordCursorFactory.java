@@ -468,7 +468,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             var funcArg = groupByFuncArgs.getQuick(i);
                             if (funcArg != null) {
                                 columnSink.of(slaveData.get(idx, 2 + i)).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
-                                slaveData.put(idx, 2 + i, columnSink.ptr());
+                                slaveData.put(idx, i + 2, columnSink.ptr());
                             }
                         }
                     }
@@ -768,7 +768,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                                 if (funcArg != null) {
                                     long ptr = slaveData.get(idx, 2 + i);
                                     columnSink.of(ptr).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
-                                    slaveData.put(idx, 2 + i, columnSink.ptr());
+                                    slaveData.put(idx, i + 2, columnSink.ptr());
                                 }
                             }
                         }

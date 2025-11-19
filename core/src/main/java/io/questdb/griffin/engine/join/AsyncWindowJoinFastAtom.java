@@ -112,13 +112,30 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         try {
             this.masterSymbolIndex = masterSymbolIndex;
             this.slaveSymbolIndex = slaveSymbolIndex;
-            this.slaveSymbolLookupTable = new DirectIntIntHashMap(SLAVE_MAP_INITIAL_CAPACITY, SLAVE_MAP_LOAD_FACTOR, StaticSymbolTable.VALUE_NOT_FOUND, MemoryTag.NATIVE_UNORDERED_MAP);
+            this.slaveSymbolLookupTable = new DirectIntIntHashMap(
+                    SLAVE_MAP_INITIAL_CAPACITY,
+                    SLAVE_MAP_LOAD_FACTOR,
+                    StaticSymbolTable.VALUE_NOT_FOUND,
+                    MemoryTag.NATIVE_UNORDERED_MAP
+            );
             final int slaveDataLen = isVectorized() ? 2 + ownerGroupByFunctionArgs.size() : 3;
             // Combined storage with 4 values: rowIds ptr, timestamps ptr, rowLos value, columnSink ptr
-            this.ownerSlaveData = new DirectIntMultiLongHashMap(SLAVE_MAP_INITIAL_CAPACITY, SLAVE_MAP_LOAD_FACTOR, 0, slaveDataLen, MemoryTag.NATIVE_UNORDERED_MAP);
+            this.ownerSlaveData = new DirectIntMultiLongHashMap(
+                    SLAVE_MAP_INITIAL_CAPACITY,
+                    SLAVE_MAP_LOAD_FACTOR,
+                    StaticSymbolTable.VALUE_NOT_FOUND,
+                    slaveDataLen,
+                    MemoryTag.NATIVE_UNORDERED_MAP
+            );
             this.perWorkerSlaveData = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerSlaveData.extendAndSet(i, new DirectIntMultiLongHashMap(SLAVE_MAP_INITIAL_CAPACITY, SLAVE_MAP_LOAD_FACTOR, 0, slaveDataLen, MemoryTag.NATIVE_UNORDERED_MAP));
+                perWorkerSlaveData.extendAndSet(i, new DirectIntMultiLongHashMap(
+                        SLAVE_MAP_INITIAL_CAPACITY,
+                        SLAVE_MAP_LOAD_FACTOR,
+                        StaticSymbolTable.VALUE_NOT_FOUND,
+                        slaveDataLen,
+                        MemoryTag.NATIVE_UNORDERED_MAP
+                ));
             }
         } catch (Throwable th) {
             close();
@@ -170,16 +187,6 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         return slaveSymbolLookupTable;
     }
 
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        super.init(symbolTableSource, executionContext);
-        slaveSymbolLookupTable.reopen();
-        ownerSlaveData.reopen();
-        for (int i = 0, n = perWorkerSlaveData.size(); i < n; i++) {
-            perWorkerSlaveData.getQuick(i).reopen();
-        }
-    }
-
     public void initTimeFrameCursors(
             SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
@@ -200,10 +207,16 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                 partitionTimestamps,
                 frameCount
         );
+
+        slaveSymbolLookupTable.reopen();
+        ownerSlaveData.reopen();
+        for (int i = 0, n = perWorkerSlaveData.size(); i < n; i++) {
+            perWorkerSlaveData.getQuick(i).reopen();
+        }
+
         final SymbolTableSource slaveSymbolTableSource = ownerSlaveTimeFrameHelper.getSymbolTableSource();
         StaticSymbolTable masterSymbolTable = (StaticSymbolTable) masterSymbolTableSource.getSymbolTable(masterSymbolIndex);
         StaticSymbolTable slaveSymbolTable = (StaticSymbolTable) slaveSymbolTableSource.getSymbolTable(slaveSymbolIndex);
-        slaveSymbolLookupTable.clear();
         for (int masterKey = 0, n = masterSymbolTable.getSymbolCount(); masterKey < n; masterKey++) {
             final CharSequence masterSym = masterSymbolTable.valueOf(masterKey);
             final int slaveKey = slaveSymbolTable.keyOf(masterSym);

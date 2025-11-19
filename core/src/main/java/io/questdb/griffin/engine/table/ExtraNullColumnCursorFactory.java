@@ -67,6 +67,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
+    public void changePageFrameSizes(int minRows, int maxRows) {
+        base.changePageFrameSizes(minRows, maxRows);
+    }
+
+    @Override
     public boolean followedLimitAdvice() {
         return base.followedLimitAdvice();
     }
@@ -159,11 +164,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
-    }
-
-    @Override
-    public void setSmalePageFrameRows(int min, int max) {
-        base.setSmalePageFrameRows(min, max);
     }
 
     @Override

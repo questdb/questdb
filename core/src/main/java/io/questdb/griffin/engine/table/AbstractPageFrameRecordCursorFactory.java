@@ -65,6 +65,12 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
+    public void changePageFrameSizes(int minRows, int maxRows) {
+        this.pageFrameMinRows = minRows;
+        this.pageFrameMaxRows = maxRows;
+    }
+
+    @Override
     public String getBaseColumnName(int columnIndex) {
         return partitionFrameCursorFactory.getMetadata().getColumnName(columnIndexes.getQuick(columnIndex));
     }
@@ -83,12 +89,6 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
     @Override
     public TableToken getTableToken() {
         return partitionFrameCursorFactory.getTableToken();
-    }
-
-    @Override
-    public void setSmalePageFrameRows(int min, int max) {
-        this.pageFrameMinRows = min;
-        this.pageFrameMaxRows = max;
     }
 
     @Override

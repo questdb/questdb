@@ -236,6 +236,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
     @Override
+    public void changePageFrameSizes(int minRows, int maxRows) {
+        base.changePageFrameSizes(minRows, maxRows);
+    }
+
+    @Override
     public PageFrameSequence<?> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return base.execute(executionContext, collectSubSeq, order);
     }
@@ -346,11 +351,6 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
-    }
-
-    @Override
-    public void setSmalePageFrameRows(int min, int max) {
-        base.setSmalePageFrameRows(min, max);
     }
 
     @Override

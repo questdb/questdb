@@ -72,6 +72,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     int SCAN_DIRECTION_FORWARD = 1;
     int SCAN_DIRECTION_OTHER = 0;
 
+    default void changePageFrameSizes(int minRows, int maxRows) {
+    }
+
     @Override
     default void close() {
     }
@@ -270,9 +273,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     boolean recordCursorSupportsRandomAccess();
 
     default void revertFromSampleByIndexPageFrameCursorFactory() {
-    }
-
-    default void setSmalePageFrameRows(int min, int max) {
     }
 
     /**
