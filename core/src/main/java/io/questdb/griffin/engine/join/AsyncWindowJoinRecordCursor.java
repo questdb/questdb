@@ -146,10 +146,6 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                     masterFrameSequence.await();
                 }
                 masterFrameSequence.clear();
-                AsyncWindowJoinAtom atom = masterFrameSequence.getAtom();
-                if (atom instanceof AsyncWindowJoinFastAtom fastAtom) {
-                    fastAtom.getSlaveSymbolLookupTable().restoreInitialCapacity();
-                }
             }
         }
     }

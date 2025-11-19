@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.Reopenable;
 
 /**
  * Specialized off-heap hash table that stores int keys and multiple long values.
@@ -41,7 +42,7 @@ import io.questdb.cairo.CairoException;
  * This allows storing multiple related long values (e.g., rowIds pointer, timestamps pointer,
  * rowLos value) for each int key, optimized for GROUP BY operations with GroupByAllocator.
  */
-public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable {
+public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reopenable {
     private static final int MIN_INITIAL_CAPACITY = 4;
     private final long entrySize; // 4 bytes (key) + valueCount * 8 bytes (values)
     private final int initialCapacity;
@@ -211,6 +212,13 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable {
             if (--free == 0) {
                 rehash(capacity() << 1);
             }
+        }
+    }
+
+    @Override
+    public void reopen() {
+        if (ptr == 0) {
+            restoreInitialCapacity();
         }
     }
 
