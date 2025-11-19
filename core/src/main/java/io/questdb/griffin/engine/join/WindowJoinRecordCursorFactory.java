@@ -265,11 +265,11 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void close() {
             if (isOpen) {
-                isOpen = false;
                 Misc.free(allocator);
                 Misc.clearObjList(groupByFunctions);
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
+                isOpen = false;
             }
         }
 

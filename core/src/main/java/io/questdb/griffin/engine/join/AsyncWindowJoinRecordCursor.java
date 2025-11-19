@@ -128,10 +128,8 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            isOpen = false;
             Misc.free(slaveFrameCursor);
             slaveTimeFrameAddressCache.clear();
-
             if (masterFrameSequence != null) {
                 LOG.debug()
                         .$("closing [shard=").$(masterFrameSequence.getShard())
@@ -151,6 +149,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                     fastAtom.getSlaveSymbolLookupTable().restoreInitialCapacity();
                 }
             }
+            isOpen = false;
         }
     }
 

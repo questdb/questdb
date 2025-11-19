@@ -369,7 +369,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public void close() {
             if (isOpen) {
-                isOpen = false;
                 Misc.free(allocator);
                 Misc.clearObjList(groupByFunctions);
                 masterCursor = Misc.free(masterCursor);
@@ -379,6 +378,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 timestamps.resetPtr();
                 rowIDs.resetPtr();
                 slaveSymbolLookupTable.restoreInitialCapacity();
+                isOpen = false;
             }
         }
 
