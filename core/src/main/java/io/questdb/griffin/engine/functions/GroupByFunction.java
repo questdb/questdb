@@ -112,11 +112,29 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
+     * Returns the compute batch argument function for this group by function.
+     */
+    default Function getComputeBatchArg() {
+        if (this instanceof UnaryFunction thisUnary) {
+            // for unary functions, default to the function's argument.
+            return thisUnary.getArg();
+        }
+        return null;
+    }
+
+    /**
      * Returns the compute batch argument type for this group by function.
-     * For unary functions, default returns the function's output type.
+     * <p>
+     * Note: the returned type may not match the type of the function returned by
+     * {@link #getComputeBatchArg()}. Example: in case of avg(long_col) the type of
+     * the argument function is LONG, but the aggregate function's argument type is
+     * DOUBLE. This means that the input values need to be materialized in
+     * an intermediate buffer via getDouble calls before to calling
+     * {@link #computeBatch(MapValue, long, int)}.
      */
     default int getComputeBatchArgType() {
         if (this instanceof UnaryFunction) {
+            // for unary functions, default to the function's output type.
             return getType();
         }
         return ColumnType.UNDEFINED;
@@ -239,10 +257,10 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
-     * Indicates whether {@link #computeBatch(MapValue, long, int)} and {@link #getComputeBatchArgType()}
-     * are implemented for this function. When {@code true}, the engine may materialise the argument
-     * column into native memory buffers and invoke {@code computeBatch} instead of per-row aggregation
-     * for compatible execution paths.
+     * Indicates whether {@link #computeBatch(MapValue, long, int)}, {@link #getComputeBatchArg()},
+     * and {@link #getComputeBatchArgType()} are implemented for this function. When {@code true},
+     * the engine may materialise the argument column into native memory buffers and invoke
+     * {@code computeBatch} instead of per-row aggregation for compatible execution paths.
      *
      * @return {@code true} if the function can consume batches via {@code computeBatch}, {@code false} otherwise
      */

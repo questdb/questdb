@@ -73,7 +73,6 @@ import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
@@ -3575,7 +3574,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         for (int j = 0, m = groupByFunctions.size(); j < m; j++) {
                                             // Copying to column sink relies on UnaryFunction cast, hence the extra instanceof check.
                                             var func = groupByFunctions.getQuick(j);
-                                            if (!func.supportsBatchComputation() || (!(func instanceof UnaryFunction) && func.getComputeBatchArgType() != UNDEFINED)) {
+                                            if (!func.supportsBatchComputation()) {
                                                 allVectorized = false;
                                                 break;
                                             }

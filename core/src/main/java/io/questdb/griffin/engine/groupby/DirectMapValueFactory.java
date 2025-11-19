@@ -36,18 +36,17 @@ public class DirectMapValueFactory {
     }
 
     public static DirectMapValue createDirectMapValue(ColumnTypes valueTypes, boolean useCompactDirectMap) {
-        boolean compact = useCompactDirectMap;
-        if (compact) {
+        if (useCompactDirectMap) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 final int size = ColumnType.sizeOf(valueTypes.getColumnType(i));
                 assert size > 0;
                 if (size > Long.BYTES) {
-                    compact = false;
+                    useCompactDirectMap = false;
                     break;
                 }
             }
         }
-        if (compact) {
+        if (useCompactDirectMap) {
             return new DirectCompactMapValue(valueTypes.getColumnCount());
         }
         return new DirectMapValueImpl(valueTypes.getColumnCount());

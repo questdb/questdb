@@ -40,7 +40,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.DirectMapValue;
 import io.questdb.griffin.engine.groupby.DirectMapValueFactory;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
@@ -67,6 +66,7 @@ import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactor
 public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int INITIAL_LIST_CAPACITY = 16;
+    // kept public for tests
     public static boolean GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP = true;
     protected final ObjList<Function> ownerGroupByFunctionArgs;
     protected final TimeFrameHelper ownerSlaveTimeFrameHelper;
@@ -249,7 +249,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 this.groupByFunctionTypes = new IntList(groupByFunctionSize);
                 for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
                     final var func = ownerGroupByFunctions.getQuick(i);
-                    final var funcArg = func instanceof UnaryFunction ? ((UnaryFunction) func).getArg() : null;
+                    final var funcArg = func.getComputeBatchArg();
                     final var funcArgType = ColumnType.tagOf(func.getComputeBatchArgType());
                     final int index = findFunctionWithSameArg(ownerGroupByFunctionArgs, groupByFunctionTypes, funcArg, funcArgType);
                     if (index < 0) {
@@ -261,7 +261,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                             for (int j = 0; j < slotCount; j++) {
                                 final ObjList<GroupByFunction> workerGroupByFunctions = perWorkerGroupByFunctions.getQuick(j);
                                 final var workerFunc = workerGroupByFunctions.getQuick(i);
-                                final var workerFuncArg = workerFunc instanceof UnaryFunction ? ((UnaryFunction) workerFunc).getArg() : null;
+                                final var workerFuncArg = workerFunc.getComputeBatchArg();
                                 perWorkerGroupByFunctionArgs.getQuick(j).add(workerFuncArg);
                             }
                         }

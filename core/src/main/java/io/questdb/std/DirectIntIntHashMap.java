@@ -25,9 +25,10 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.Reopenable;
 
 
-public class DirectIntIntHashMap implements Mutable, QuietCloseable {
+public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable {
     private static final int MIN_INITIAL_CAPACITY = 4;
     private final int initialCapacity;
     private final double loadFactor;
@@ -113,6 +114,13 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable {
             if (--free == 0) {
                 rehash(capacity() << 1);
             }
+        }
+    }
+
+    @Override
+    public void reopen() {
+        if (ptr == 0) {
+            restoreInitialCapacity();
         }
     }
 
