@@ -573,6 +573,39 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);
+
+            // check JIT uses both hi and lo for comparison
+            // use a dummy lo
+            bindVariableService.clear();
+            bindVariableService.setUuid(0, 0, uuid.getHi());
+            String expectedEmpty = """
+                    u	ts
+                    """;
+            assertSql(expectedEmpty, query);
+            assertSqlRunWithJit(query);
+
+            // use a dummy hi
+            bindVariableService.clear();
+            bindVariableService.setUuid(0, uuid.getLo(), 0);
+            assertSql(expectedEmpty, query);
+            assertSqlRunWithJit(query);
+
+            // switch hi and lo
+            bindVariableService.clear();
+            bindVariableService.setUuid(0, uuid.getHi(), uuid.getLo());
+            assertSql(expectedEmpty, query);
+            assertSqlRunWithJit(query);
+
+            // null uuid
+            execute("insert into x values (null, '2020')");
+            bindVariableService.clear();
+            bindVariableService.setUuid(0, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            String expectedWithNull = """
+                    u	ts
+                    	2020-01-01T00:00:00.000000Z
+                    """;
+            assertSql(expectedWithNull, query);
+            assertSqlRunWithJit(query);
         });
     }
 
