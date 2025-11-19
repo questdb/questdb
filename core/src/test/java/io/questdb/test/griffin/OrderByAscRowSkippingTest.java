@@ -32,8 +32,8 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -488,6 +488,14 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
             prepareNormalTable();
 
             assertQueryExpectSize("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from tab order by ts");
+        });
+    }
+
+    @Test
+    public void testNormalTableSelectEithLimitOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
+            assertQuery("l\n8\n9\n10\n", "select l from tab where l > 5 order by ts limit 2, 10", true);
         });
     }
 
