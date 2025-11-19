@@ -492,14 +492,6 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNormalTableSelectEithLimitOffset() throws Exception {
-        assertMemoryLeak(() -> {
-            prepareNormalTable();
-            assertQuery("l\n8\n9\n10\n", "select l from tab where l > 5 order by ts limit 2, 10", true);
-        });
-    }
-
-    @Test
     public void testNormalTableSelectFirstN() throws Exception {
         assertMemoryLeak(() -> {
             prepareNormalTable();
@@ -595,6 +587,14 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
             prepareNormalTable();
 
             assertQuery("l\n1\n2\n", "select l from tab order by ts limit -12,-8", true);
+        });
+    }
+
+    @Test
+    public void testNormalTableSelectWithLimitOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
+            assertQuery("l\n8\n9\n10\n", "select l from tab where l > 5 order by ts limit 2, 10", true);
         });
     }
 
