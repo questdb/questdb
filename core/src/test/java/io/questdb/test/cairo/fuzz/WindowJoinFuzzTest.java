@@ -69,7 +69,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
     @Test
     public void testFuzz() throws Exception {
         assertMemoryLeak(() -> {
-            CharSequence[] symbols = new CharSequence[rnd.nextInt(100) + 1];
+            CharSequence[] symbols = new CharSequence[rnd.nextInt(20) + 4];
             for (int i = 0; i < symbols.length; i++) {
                 symbols[i] = "sym" + i;
             }
@@ -157,7 +157,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
     ) throws SqlException {
         sink.clear();
         sink
-                .put("SELECT t.sym, t.price, t.ts, ")
+                .put("SELECT t.sym, t.price, t.ts, t.id, ")
                 .put(aggregates)
                 .put(" FROM ");
         var select = sink.toString();
@@ -175,7 +175,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 .put(preceding)
                 .put(" microseconds PRECEDING AND ")
                 .put(following)
-                .put(" microseconds FOLLOWING ORDER BY t.ts, t.sym");
+                .put(" microseconds FOLLOWING ORDER BY t.ts, t.sym, t.id");
 
         var windowQuery = sink.toString();
         // endregion
@@ -184,7 +184,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         sink.clear();
         sink.put(select);
         // We need to use a sub-query to ensure that slaves are processed in the correct order (timestamp)
-        sink.put("(SELECT t.sym, t.price, t.ts, ");
+        sink.put("(SELECT t.sym, t.price, t.ts, t.id, ");
         for (int i = 0, n = aggregatedColumns.length; i < n; i++) {
             sink.put(aggregatedColumns[i]).put(", ");
         }
@@ -199,7 +199,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         if (!joinFilter.isEmpty()) {
             sink.put(" AND (").put(joinFilter).put(')');
         }
-        sink.put(" ORDER BY t.ts, p.id) t ORDER BY t.ts, t.sym");
+        sink.put(" ORDER BY t.ts, p.id) t ORDER BY t.ts, t.sym, t.id");
 
         var leftJoinQuery = sink.toString();
         // endregion
@@ -319,6 +319,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         execute(
                 """
                         create table trades (
+                            id int,
                             sym symbol,
                             price double,
                             ts timestamp
@@ -369,8 +370,8 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 // Average
                 default -> 50 + rnd.nextPositiveInt() % 100;
             };
-            symbolFrequencies[i] = symbolFrequency;
             symbolFrequencySum += symbolFrequency;
+            symbolFrequencies[i] = symbolFrequencySum;
         }
 
         int[] priceFrequencies = new int[symbols.length];
@@ -385,8 +386,8 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 // Average
                 default -> 50 + rnd.nextPositiveInt() % 100;
             } * symbolFrequencies[i];
-            priceFrequencies[i] = priceFrequencySum;
             priceFrequencySum += priceFrequency;
+            priceFrequencies[i] = priceFrequencySum;
         }
 
         long tradeStart = MicrosTimestampDriver.INSTANCE.fromSeconds(rnd.nextLong(4000000000L));
@@ -407,8 +408,9 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 }
 
                 TableWriter.Row r = w.newRow(ts);
-                r.putSym(0, symbol);
-                r.putDouble(1, rnd.nextDouble() * 100);
+                r.putInt(0, i);
+                r.putSym(1, symbol);
+                r.putDouble(2, rnd.nextDouble() * 100);
                 r.append();
             }
             w.commit();
