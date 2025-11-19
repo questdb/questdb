@@ -111,8 +111,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
-    private final StringSink stringSink = new StringSink();
     private final long statementTimeout;
+    private final StringSink stringSink = new StringSink();
     private byte apiVersion = DEFAULT_API_VERSION;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
@@ -1201,9 +1201,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                         .putAscii('}');
             }
             response.putAscii('}');
+            response.sendChunk(true);
             count = -1;
             counter.set(-1);
-            response.sendChunk(true);
+            // important: reset the count/counter state only *after* non-exceptional return from sendChunk()
+            // why? if the response object does not have a large enough free space in its internal buffer,
+            // then sendChunk() throws and everything after the last bookmark is discarded. eventually, we are called
+            // again and then we have to write the suffix to the response again.
             return;
         }
         response.done();

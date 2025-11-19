@@ -441,7 +441,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             }
             if (addEofChunk) {
                 int len = EOF_CHUNK.length();
-                Utf8s.strCpyAscii(EOF_CHUNK, len, _wptr);
+                Utf8s.strCpyAscii(EOF_CHUNK, len, getWriteAddress(len));
                 _wptr += len;
                 LOG.debug().$("end chunk sent [fd=").$(getFd()).I$();
             }
