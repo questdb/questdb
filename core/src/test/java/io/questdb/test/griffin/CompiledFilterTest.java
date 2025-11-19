@@ -553,10 +553,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
     @Test
     public void testUuid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x as (select" +
-                    " rnd_uuid4() u," +
-                    " timestamp_sequence(400000000000, 500000000) ts" +
-                    " from long_sequence(100)) timestamp(ts) partition by day");
+            execute("""
+                    create table x as (select\
+                     rnd_uuid4() u,\
+                     timestamp_sequence(400000000000, 500000000) ts\
+                     from long_sequence(100)) timestamp(ts) partition by day""");
 
             Uuid uuid = new Uuid();
             uuid.of("10bb226e-b424-4e36-83b9-1ec970b04e78");
@@ -565,8 +566,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             bindVariableService.setUuid(0, uuid.getLo(), uuid.getHi());
 
             final String query = "select * from x where u = $1";
-            final String expected = "u\tts\n" +
-                    "10bb226e-b424-4e36-83b9-1ec970b04e78\t1970-01-05T19:25:00.000000Z\n";
+            final String expected = """
+                    u\tts
+                    10bb226e-b424-4e36-83b9-1ec970b04e78\t1970-01-05T19:25:00.000000Z
+                    """;
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);

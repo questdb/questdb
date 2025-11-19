@@ -902,8 +902,10 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
             sqlExecutionContext.getBindVariableService().getFunction(0);
             sqlExecutionContext.getBindVariableService().setUuid(0, uuid.getLo(), uuid.getHi());
             execute("insert into x(a) values($1)");
-            TestUtils.assertSql(engine, sqlExecutionContext, "x", sink, "a\n" +
-                    "75b30bf9-e4cc-48b9-9658-97d4a2307622\n");
+            TestUtils.assertSql(engine, sqlExecutionContext, "x", sink, """
+                    a
+                    75b30bf9-e4cc-48b9-9658-97d4a2307622
+                    """);
         });
     }
 
