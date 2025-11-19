@@ -72,8 +72,8 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
 
             long avgTradeSpread = generateTradeSpread(rnd);
             int tradeSize = rnd.nextInt(25) + 1;
-            var aggregatableColumns = prepareFuzzTables(rnd, tradeSize, avgTradeSpread, symbols);
-            var aggregates = prepareFuzzAggregations(rnd, aggregatableColumns);
+            var aggregatedColumns = prepareFuzzTables(rnd, tradeSize, avgTradeSpread, symbols);
+            var aggregates = prepareFuzzAggregations(rnd, aggregatedColumns);
 
             final Object[][] allOpts = new Object[][]{
                     // left table - ts filter
@@ -125,13 +125,13 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                                 sink.put(" OR ");
                             }
                         }
-                        var col = aggregatableColumns[rnd.nextInt(aggregatableColumns.length)];
+                        var col = aggregatedColumns[rnd.nextInt(aggregatedColumns.length)];
                         sink.put("t.price").put(EQ_OPERATORS[rnd.nextInt(EQ_OPERATORS.length)]).put(col);
                     }
                 }
                 var joinFilter = sink.toString();
 
-                assertFuzzExecute(leftTable, joinFilter, preceding, following, aggregates, aggregatableColumns);
+                assertFuzzExecute(leftTable, joinFilter, preceding, following, aggregates, aggregatedColumns);
             }
         });
     }
@@ -142,7 +142,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             long preceding,
             long following,
             CharSequence aggregates,
-            CharSequence[] aggregateColumns
+            CharSequence[] aggregatedColumns
     ) throws SqlException {
         sink.clear();
         sink
@@ -174,8 +174,8 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         sink.put(select);
         // We need to use a sub-query to ensure that slaves are processed in the correct order (timestamp)
         sink.put("(SELECT t.sym, t.price, t.ts, ");
-        for (int i = 0, n = aggregateColumns.length; i < n; i++) {
-            sink.put(aggregateColumns[i]).put(", ");
+        for (int i = 0, n = aggregatedColumns.length; i < n; i++) {
+            sink.put(aggregatedColumns[i]).put(", ");
         }
         sink
                 .put("p.ts FROM ")
@@ -281,7 +281,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         };
     }
 
-    private CharSequence prepareFuzzAggregations(Rnd rnd, CharSequence[] aggregatableColumns) {
+    private CharSequence prepareFuzzAggregations(Rnd rnd, CharSequence[] aggregatedColumns) {
         var aggregates = new StringBuilder();
         for (int i = 0, n = 1 + rnd.nextInt(6); i < n; i++) {
             if (i > 0) {
@@ -290,7 +290,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             final CharSequence func = AGGREGATE_FUNCTIONS[rnd.nextInt(AGGREGATE_FUNCTIONS.length)];
             aggregates.append(func)
                     .append('(')
-                    .append(aggregatableColumns[rnd.nextInt(aggregatableColumns.length)])
+                    .append(aggregatedColumns[rnd.nextInt(aggregatedColumns.length)])
                     .append(") agg")
                     .append(i);
         }
@@ -314,16 +314,16 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                         """
         );
 
-        var nAggregatableColumns = rnd.nextPositiveInt() % 3 + 1;
-        var aggregatableColumns = new CharSequence[nAggregatableColumns];
-        var aggregatedColumnTypes = new int[nAggregatableColumns];
+        var nAggregatedColumns = rnd.nextPositiveInt() % 3 + 1;
+        var aggregatedColumns = new CharSequence[nAggregatedColumns];
+        var aggregatedColumnTypes = new int[nAggregatedColumns];
         StringBuilder columnsCreation = new StringBuilder();
-        for (int i = 0; i < aggregatableColumns.length; i++) {
-            aggregatableColumns[i] = "val" + i;
+        for (int i = 0; i < aggregatedColumns.length; i++) {
+            aggregatedColumns[i] = "val" + i;
             var columnType = rnd.nextPositiveInt() % columnTypes.length;
             aggregatedColumnTypes[i] = columnType;
             columnsCreation
-                    .append(aggregatableColumns[i])
+                    .append(aggregatedColumns[i])
                     .append(" ")
                     .append(columnTypes[columnType])
                     .append(",\n");
@@ -422,7 +422,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
 
                 TableWriter.Row r = w.newRow(ts);
                 r.putSym(0, symbol);
-                for (int j = 0; j < nAggregatableColumns; j++) {
+                for (int j = 0; j < nAggregatedColumns; j++) {
                     switch (aggregatedColumnTypes[j]) {
                         case 0 -> r.putDouble(j + 1, rnd.nextLong(100));
                         case 1 -> r.putFloat(j + 1, rnd.nextLong(100));
@@ -435,6 +435,6 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             w.commit();
         }
 
-        return aggregatableColumns;
+        return aggregatedColumns;
     }
 }
