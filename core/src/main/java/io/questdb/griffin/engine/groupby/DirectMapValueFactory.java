@@ -35,14 +35,16 @@ public class DirectMapValueFactory {
     private DirectMapValueFactory() {
     }
 
-    public static DirectMapValue createDirectMapValue(ColumnTypes valueTypes) {
-        boolean compact = true;
-        for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
-            final int size = ColumnType.sizeOf(valueTypes.getColumnType(i));
-            assert size > 0;
-            if (size > Long.BYTES) {
-                compact = false;
-                break;
+    public static DirectMapValue createDirectMapValue(ColumnTypes valueTypes, boolean useCompactDirectMap) {
+        boolean compact = useCompactDirectMap;
+        if (compact) {
+            for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
+                final int size = ColumnType.sizeOf(valueTypes.getColumnType(i));
+                assert size > 0;
+                if (size > Long.BYTES) {
+                    compact = false;
+                    break;
+                }
             }
         }
         if (compact) {

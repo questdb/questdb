@@ -67,6 +67,7 @@ import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactor
 public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int INITIAL_LIST_CAPACITY = 16;
+    public static boolean GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP = true;
     protected final ObjList<Function> ownerGroupByFunctionArgs;
     protected final TimeFrameHelper ownerSlaveTimeFrameHelper;
     private final ObjList<Function> bindVarFunctions;
@@ -222,11 +223,11 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 perWorkerTimestampLists.extendAndSet(i, workerTimestamps);
             }
 
-            ownerGroupByValue = DirectMapValueFactory.createDirectMapValue(valueTypes);
+            ownerGroupByValue = DirectMapValueFactory.createDirectMapValue(valueTypes, GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP);
             valueSizeInBytes = ownerGroupByValue.getSizeInBytes();
             perWorkerGroupByValues = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerGroupByValues.extendAndSet(i, DirectMapValueFactory.createDirectMapValue(valueTypes));
+                perWorkerGroupByValues.extendAndSet(i, DirectMapValueFactory.createDirectMapValue(valueTypes, GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP));
             }
 
             if (vectorized) {
@@ -260,8 +261,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                             for (int j = 0; j < slotCount; j++) {
                                 final ObjList<GroupByFunction> workerGroupByFunctions = perWorkerGroupByFunctions.getQuick(j);
                                 final var workerFunc = workerGroupByFunctions.getQuick(i);
-                                assert workerFunc instanceof UnaryFunction;
-                                final var workerFuncArg = ((UnaryFunction) workerFunc).getArg();
+                                final var workerFuncArg = workerFunc instanceof UnaryFunction ? ((UnaryFunction) workerFunc).getArg() : null;
                                 perWorkerGroupByFunctionArgs.getQuick(j).add(workerFuncArg);
                             }
                         }

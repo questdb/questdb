@@ -91,6 +91,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     private final RecordCursorFactory slaveFactory;
     private final int slaveSymbolIndex;
     private final DirectIntIntHashMap slaveSymbolLookupTable;
+    private final boolean vectorized;
     private final long windowHi;
     private final long windowLo;
 
@@ -122,6 +123,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         final int columnSplit = masterFactory.getMetadata().getColumnCount();
         var masterMetadata = masterFactory.getMetadata();
         var slaveMetadata = slaveFactory.getMetadata();
+        this.vectorized = vectorized;
 
         this.slaveSymbolLookupTable = new DirectIntIntHashMap(16, 0.5, StaticSymbolTable.VALUE_NOT_FOUND, MemoryTag.NATIVE_UNORDERED_MAP);
         if (vectorized) {
@@ -213,6 +215,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     public void toPlan(PlanSink sink) {
         sink.type("Window Fast Join");
 
+        sink.attr("vectorized").val(vectorized);
         sink.attr("symbol")
                 .val(masterFactory.getMetadata().getColumnName(masterSymbolIndex))
                 .val("=")

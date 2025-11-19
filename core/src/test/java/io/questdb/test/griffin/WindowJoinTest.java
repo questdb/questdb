@@ -29,8 +29,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.join.AsyncWindowJoinAtom;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -65,6 +67,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         super.setUp();
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 4);
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 8);
+        AsyncWindowJoinAtom.GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP = TestUtils.generateRandom(LOG).nextBoolean();
     }
 
     @Test
@@ -848,6 +851,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             Sort
                               keys: [ts, sym]
                                 Window Fast Join
+                                  vectorized: true
                                   symbol: sym=sym
                                   window lo: 60000000 preceding
                                   window hi: 60000000 following
@@ -1217,6 +1221,77 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotThreadSafeFunction() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            String expect = replaceTimestampSuffix("price\tmax_price\tcnt\n" +
+                    "100.0\t100.5\t1\n" +
+                    "101.0\t101.5\t1\n" +
+                    "102.0\tnull\t0\n" +
+                    "200.0\t200.5\t1\n" +
+                    "201.0\tnull\t0\n" +
+                    "300.0\t300.5\t1\n" +
+                    "301.0\tnull\t0\n" +
+                    "103.0\tnull\t0\n" +
+                    "202.0\tnull\t0\n" +
+                    "302.0\tnull\t0\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Async Window Fast Join workers: 1\n" +
+                            "  vectorized: true\n" +
+                            "  symbol: sym=sym\n" +
+                            "  window lo: 1000000 preceding\n" +
+                            "  window hi: 1000000 following\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: prices\n",
+                    "  SELECT t.price price, max(cast(concat(p.price, '0') as double)) max_price, count() cnt " +
+                            "  FROM trades t " +
+                            "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                            "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING ",
+                    null,
+                    false,
+                    false
+            );
+
+            assertQueryAndPlan(
+                    "price\tmax_price\tcnt\n" +
+                            "200.0\t200.52\t1\n" +
+                            "201.0\tnull\t0\n" +
+                            "300.0\t300.52\t1\n" +
+                            "301.0\tnull\t0\n" +
+                            "202.0\tnull\t0\n" +
+                            "302.0\tnull\t0\n",
+                    "Async Window Fast Join workers: 1\n" +
+                            "  vectorized: true\n" +
+                            "  symbol: sym=sym\n" +
+                            "  window lo: 1000000 preceding\n" +
+                            "  window hi: 1000000 following\n" +
+                            "  master filter: 200<concat([price,'2'])::double\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: prices\n",
+                    "  SELECT t.price price, max(cast(concat(p.price, '2') as double)) max_price, count() cnt " +
+                            "  FROM trades t " +
+                            "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                            "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
+                            "  WHERE cast(concat(t.price, '2') as double) > 200",
+                    null,
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testVectorizedWindowJoin() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -1412,6 +1487,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Window Fast Join\n" +
+                            "      vectorized: true\n" +
                             "      symbol: t.sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
@@ -1459,6 +1535,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Window Fast Join\n" +
+                            "      vectorized: true\n" +
                             "      symbol: t.sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
@@ -1588,6 +1665,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Window Fast Join\n" +
+                            "      vectorized: true\n" +
                             "      symbol: t.sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
@@ -2237,6 +2315,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Window Fast Join\n" +
+                            "      vectorized: true\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -2288,6 +2367,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Window Fast Join\n" +
+                            "      vectorized: false\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -2336,6 +2416,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "Sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Window Fast Join\n" +
+                            "      vectorized: true\n" +
                             "      symbol: sym=sym\n" +
                             "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
                             "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
@@ -2676,6 +2757,141 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "ts",
                     true,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testWithSymbolEqualConditionInSameTable() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x (" +
+                            "  s symbol," +
+                            "  s1 symbol," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table y (" +
+                            "  s symbol," +
+                            "  s1 symbol," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into x values " +
+                            "('sym0', 'sym1', '2023-01-01T09:00:00.000000Z'), ('sym2', 'sym2', '2023-01-01T09:00:00.000000Z');"
+            );
+            execute(
+                    "insert into y values " +
+                            "('sym0', 'sym0', '2023-01-01T08:59:58.000000Z')," +
+                            "('sym1', 'sym1', '2023-01-01T08:59:59.000000Z')," +
+                            "('sym2', 'sym2', '2023-01-01T09:00:00.000000Z')," +
+                            "('sym3', 'sym33', '2023-01-01T09:00:01.000000Z')," +
+                            "('sym4', 'sym44', '2023-01-01T09:00:02.000000Z');"
+            );
+
+            assertQueryAndPlan(
+                    """
+                            s	s1	ts	count
+                            sym0	sym1	2023-01-01T09:00:00.000000Z	0
+                            sym2	sym2	2023-01-01T09:00:00.000000Z	1
+                            """,
+                    """
+                            Sort
+                              keys: [ts, s]
+                                Async Window Fast Join workers: 1
+                                  vectorized: false
+                                  symbol: s=s
+                                  join filter: x.s=x.s1
+                                  window lo: 1000000 preceding
+                                  window hi: 1000000 following
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
+                            """,
+                    "select x.*, count() " +
+                            "from x " +
+                            "window join y " +
+                            "on (x.s = x.s1 and x.s = y.s) " +
+                            " range between 1 second preceding and 1 second following " +
+                            "order by x.ts, x.s;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryAndPlan(
+                    """
+                            s	s1	ts	count
+                            sym0	sym1	2023-01-01T09:00:00.000000Z	0
+                            sym2	sym2	2023-01-01T09:00:00.000000Z	1
+                            """,
+                    """
+                            Sort
+                              keys: [ts, s]
+                                Async Window Fast Join workers: 1
+                                  vectorized: false
+                                  symbol: s=s1
+                                  join filter: y.s=y.s1
+                                  window lo: 1000000 preceding
+                                  window hi: 1000000 following
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
+                            """,
+                    "select x.*, count() " +
+                            "from x " +
+                            "window join y " +
+                            "on (x.s = y.s1 and y.s = y.s1) " +
+                            " range between 1 second preceding and 1 second following " +
+                            "order by x.ts, x.s;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryAndPlan(
+                    """
+                            s	s1	ts	count
+                            sym0	sym1	2023-01-01T09:00:00.000000Z	0
+                            sym2	sym2	2023-01-01T09:00:00.000000Z	1
+                            """,
+                    """
+                            Sort
+                              keys: [ts, s]
+                                Async Window Fast Join workers: 1
+                                  vectorized: false
+                                  symbol: s=s1
+                                  join filter: (x.s1=y.s1 and x.s1=y.s and x.s=y.s)
+                                  window lo: 1000000 preceding
+                                  window hi: 1000000 following
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
+                            """,
+                    "select x.*, count() " +
+                            "from x " +
+                            "window join y " +
+                            "on (x.s = y.s1 and x.s1 = y.s1 and x.s1 = y.s and x.s = y.s) " +
+                            " range between 1 second preceding and 1 second following " +
+                            "order by x.ts, x.s;",
+                    "ts",
+                    true,
+                    false
             );
         });
     }
