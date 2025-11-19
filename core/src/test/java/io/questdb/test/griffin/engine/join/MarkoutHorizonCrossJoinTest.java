@@ -28,11 +28,9 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -835,29 +833,11 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
 
     private void assertHintUsedAndResultSameAsWithoutHint(String sqlWithHint) throws Exception {
         assertMarkoutHorizonJoinUsed(sqlWithHint);
-        String sqlWithoutHint = sqlWithHint.replace("markout_horizon", "XXX");
-        final StringSink sinkWithHint = new StringSink();
-        final StringSink sinkWithoutHint = new StringSink();
-        try (
-                RecordCursorFactory facWithHint = select(sqlWithHint, sqlExecutionContext);
-                RecordCursor cursorWithHint = facWithHint.getCursor(sqlExecutionContext);
-                RecordCursorFactory facWithoutHint = select(sqlWithoutHint, sqlExecutionContext);
-                RecordCursor cursorWithoutHint = facWithoutHint.getCursor(sqlExecutionContext)
-        ) {
-            RecordMetadata metaWithHint = facWithHint.getMetadata();
-            RecordMetadata metaWithoutHint = facWithoutHint.getMetadata();
-            var recWithHint = cursorWithHint.getRecord();
-            var recWithoutHint = cursorWithoutHint.getRecord();
-            while (cursorWithHint.hasNext()) {
-                Assert.assertTrue("SQL with hint has more rows", cursorWithoutHint.hasNext());
-                sinkWithHint.clear();
-                sinkWithoutHint.clear();
-                CursorPrinter.println(recWithHint, metaWithHint, sinkWithHint, false);
-                CursorPrinter.println(recWithoutHint, metaWithoutHint, sinkWithoutHint, false);
-                TestUtils.assertEquals(sinkWithHint, sinkWithoutHint);
-            }
-            Assert.assertFalse("SQL with hint has less rows", cursorWithoutHint.hasNext());
-        }
+        final StringSink resultWithHint = new StringSink();
+        final StringSink resultWithoutHint = new StringSink();
+        printSql(sqlWithHint, resultWithHint);
+        printSql(sqlWithHint.replace("markout_horizon", "XXX"), resultWithoutHint);
+        TestUtils.assertEquals(resultWithoutHint, resultWithHint);
     }
 
     private void assertMarkoutHorizonJoinNotUsed(String query) throws Exception {
