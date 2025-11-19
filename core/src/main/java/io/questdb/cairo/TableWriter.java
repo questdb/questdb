@@ -1292,15 +1292,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int transactionBlock;
         transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
 
-//        while (true) {
-//            transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
-//            if (canSkipTransactions(seqTxn, transactionBlock)) {
-//                seqTxn += transactionBlock;
-//            } else {
-//                break;
-//            }
-//        }
-
         boolean committed;
         final long initialCommittedRowCount = txWriter.getRowCount();
         walRowsProcessed = 0;
