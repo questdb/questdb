@@ -61,6 +61,8 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         LOG.info().$("parallel window join enabled: ").$(enableParallelWindowJoin).$();
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, String.valueOf(enableParallelWindowJoin));
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        // async window join use small page frames
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100);
         setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 5);
         super.setUp();
     }
