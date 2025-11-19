@@ -75,7 +75,6 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     private final CharSequence keepAliveHeader;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
-    public boolean fucked;
     private byte apiVersion = DEFAULT_API_VERSION;
     private int columnCount;
     private int columnIndex;
@@ -380,13 +379,15 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     }
 
     void onResumeError() throws PeerIsSlowToReadException, PeerDisconnectedException {
-        JsonQueryProcessorState.prepareExceptionJson(
-                getHttpConnectionContext().getChunkedResponse(),
-                errorPosition,
-                errorMessage,
-                query
-        );
+        HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
+        response.bookmark();
+        response.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(errorMessage).putQuote().putAscii(',')
+                .putAsciiQuoted("position").putAscii(':').put(errorPosition)
+                .putAscii('}');
         queryState = QUERY_DONE;
+        response.sendChunk(true);
     }
 
     void querySuffixWithError(

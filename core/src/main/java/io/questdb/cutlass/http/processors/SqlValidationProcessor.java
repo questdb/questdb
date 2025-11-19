@@ -185,11 +185,6 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         final SqlValidationProcessorState state = LV.get(context);
         if (state != null) {
-//            if (state.fucked) {
-//                context.resumeResponseSend();
-//                state.clear();
-//                return;
-//            }
             // we are resuming request execution, we need to copy random to execution context
             sqlExecutionContext.with(context.getSecurityContext(), null, state.getRnd(), context.getFd(), circuitBreaker.of(context.getFd()));
             context.resumeResponseSend();
@@ -211,7 +206,6 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             // new query
             compileAndValidate(state);
         } catch (SqlException | ImplicitCastException e) {
-            state.fucked = true;
             sendException(
                     state,
                     e.getPosition(),
