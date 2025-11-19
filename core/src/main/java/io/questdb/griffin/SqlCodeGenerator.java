@@ -3083,6 +3083,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                     writeSymbolAsString.unset(slaveSymbolColumnIndex);
                     SymbolJoinKeyMapping joinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
+                    keyTypes.clear();
+                    keyTypes.add(ColumnType.INT);
                     return new AsOfJoinLightRecordCursorFactory(
                             configuration,
                             joinMetadata,
