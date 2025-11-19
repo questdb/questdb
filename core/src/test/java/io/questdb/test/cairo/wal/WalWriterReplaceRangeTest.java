@@ -756,7 +756,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             long lastMinuteStart = MicrosTimestampDriver.floor("2022-02-24T23:59");
             long lastMinuteEnd = lastMinuteStart + 60 * 1_000_000; // 1 minute in microseconds
 
-            // Perform 1M replace commits, each replacing the last minute with a new value
+            // Perform 1,000 replace commits, each replacing the last minute with a new value
             long replaceValue = 1000L;
             long lastValue = 0;
             for (int i = 0; i < 1_000; i++) {
@@ -779,11 +779,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             // Verify the final state
             assertSql("count\n100001\n", "select count(*) from stress");
 
-            // Check the results of the last 5 minutes
-            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:55' and ts < '2022-02-25T00:00'");
+            // Check the results of the last minute
+            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:59' and ts < '2022-02-25T00:00'");
 
             // Verify the value is from the last replace operation
-            assertSql("value\n" + lastValue + "\n", "select value from stress where ts >= '2022-02-24T23:55' and ts < '2022-02-25T00:00'");
+            assertSql("value\n" + lastValue + "\n", "select value from stress where ts >= '2022-02-24T23:59' and ts < '2022-02-25T00:00'");
         });
     }
 }
