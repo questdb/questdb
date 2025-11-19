@@ -52,7 +52,7 @@ import java.util.concurrent.TimeUnit;
 public class IntIntHashMapBenchmark {
     private static final double loadFactor = 0.5;
     private static final Rnd rnd = new Rnd();
-    private final DirectIntIntHashMap directHashMap = new DirectIntIntHashMap(64, loadFactor, 0, MemoryTag.NATIVE_DEFAULT);
+    private final DirectIntIntHashMap directHashMap = new DirectIntIntHashMap(64, loadFactor, 0, 0, MemoryTag.NATIVE_DEFAULT);
     @Param({"5000", "50000", "500000", "5000000"})
     public int size;
     private IntIntHashMap hashMap = new IntIntHashMap(64, loadFactor);

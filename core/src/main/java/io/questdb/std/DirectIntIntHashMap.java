@@ -33,18 +33,20 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     private final int initialCapacity;
     private final double loadFactor;
     private final int memoryTag;
-    private final int noKeyValue;
+    private final int noEntryKey;
+    private final int noEntryValue;
     private int capacity;
     private int free;
     private long mask;
     private long ptr;
     private int size;
 
-    public DirectIntIntHashMap(int initialCapacity, double loadFactor, int noKeyValue, int memoryTag) {
+    public DirectIntIntHashMap(int initialCapacity, double loadFactor, int noEntryKey, int noEntryValue, int memoryTag) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
-        this.noKeyValue = noKeyValue;
+        this.noEntryKey = noEntryKey;
+        this.noEntryValue = noEntryValue;
         this.loadFactor = loadFactor;
         this.memoryTag = memoryTag;
         this.initialCapacity = this.capacity = Numbers.ceilPow2((int) (Math.max(initialCapacity, MIN_INITIAL_CAPACITY) / loadFactor));
@@ -92,7 +94,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         long hashCode = Hash.fastHashInt64(key);
         long index = hashCode & mask;
         int k = keyAt(index);
-        if (k == noKeyValue) {
+        if (k == noEntryKey) {
             return index;
         }
         if (key == k) {
@@ -144,7 +146,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     }
 
     public int valueAt(long index) {
-        return index < 0 ? Unsafe.getUnsafe().getInt(ptr + ((-index - 1) << 3) + 4) : noKeyValue;
+        return index < 0 ? Unsafe.getUnsafe().getInt(ptr + ((-index - 1) << 3) + 4) : noEntryValue;
     }
 
     private long probe(int key, long index) {
@@ -152,7 +154,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         do {
             index = (index + 1) & mask;
             int k = keyAt(index);
-            if (k == noKeyValue) {
+            if (k == noEntryKey) {
                 return index;
             }
             if (key == k) {
@@ -185,10 +187,10 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
 
         for (long p = oldPtr, lim = oldPtr + 8L * oldCapacity; p < lim; p += 8L) {
             int key = Unsafe.getUnsafe().getInt(p);
-            if (key != noKeyValue) {
+            if (key != noEntryKey) {
                 long hashCode = Hash.fastHashInt64(key);
                 long index = hashCode & mask;
-                while (keyAt(index) != noKeyValue) {
+                while (keyAt(index) != noEntryKey) {
                     index = (index + 1) & mask;
                 }
 
@@ -201,13 +203,13 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     }
 
     private void zero() {
-        if (noKeyValue == 0) {
+        if (noEntryKey == 0) {
             // Vectorized fast path for zero default value.
             Vect.memset(ptr, 8L * capacity, 0);
         } else {
             // Otherwise, clean up only keys.
             for (long p = ptr, lim = ptr + 8L * capacity; p < lim; p += 8L) {
-                Unsafe.getUnsafe().putInt(p, noKeyValue);
+                Unsafe.getUnsafe().putInt(p, noEntryKey);
             }
         }
     }

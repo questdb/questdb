@@ -119,6 +119,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                     SLAVE_MAP_INITIAL_CAPACITY,
                     SLAVE_MAP_LOAD_FACTOR,
                     0,
+                    StaticSymbolTable.VALUE_IS_NULL,
                     MemoryTag.NATIVE_UNORDERED_MAP
             );
             final int slaveDataLen = isVectorized() ? 2 + ownerGroupByFunctionArgs.size() : 3;
@@ -126,6 +127,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             this.ownerSlaveData = new DirectIntMultiLongHashMap(
                     SLAVE_MAP_INITIAL_CAPACITY,
                     SLAVE_MAP_LOAD_FACTOR,
+                    0,
                     0,
                     slaveDataLen,
                     MemoryTag.NATIVE_UNORDERED_MAP
@@ -135,6 +137,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                 perWorkerSlaveData.extendAndSet(i, new DirectIntMultiLongHashMap(
                         SLAVE_MAP_INITIAL_CAPACITY,
                         SLAVE_MAP_LOAD_FACTOR,
+                        0,
                         0,
                         slaveDataLen,
                         MemoryTag.NATIVE_UNORDERED_MAP

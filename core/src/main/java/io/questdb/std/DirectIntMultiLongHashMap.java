@@ -48,7 +48,8 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
     private final int initialCapacity;
     private final double loadFactor;
     private final int memoryTag;
-    private final int noKeyValue;
+    private final int noEntryKey;
+    private final long noEntryValue;
     private final int valueCount;
     private int capacity;
     private int free;
@@ -61,18 +62,20 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
      *
      * @param initialCapacity initial capacity of the hash table
      * @param loadFactor      load factor for the hash table (should be between 0 and 1)
-     * @param noKeyValue      value representing an empty key slot
+     * @param noEntryKey      value representing an empty key
+     * @param noEntryValue    value representing an empty value
      * @param valueCount      number of long values to store per key
      * @param memoryTag       memory tag for tracking allocations
      */
-    public DirectIntMultiLongHashMap(int initialCapacity, double loadFactor, int noKeyValue, int valueCount, int memoryTag) {
+    public DirectIntMultiLongHashMap(int initialCapacity, double loadFactor, int noEntryKey, long noEntryValue, int valueCount, int memoryTag) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
         if (valueCount <= 0) {
             throw new IllegalArgumentException("valueCount must be positive");
         }
-        this.noKeyValue = noKeyValue;
+        this.noEntryKey = noEntryKey;
+        this.noEntryValue = noEntryValue;
         this.valueCount = valueCount;
         this.entrySize = 4 + (long) valueCount * 8;
         this.loadFactor = loadFactor;
@@ -140,7 +143,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         long hashCode = Hash.fastHashInt64(key);
         long index = hashCode & mask;
         int k = keyAt(index);
-        if (k == noKeyValue) {
+        if (k == noEntryKey) {
             return index;
         }
         if (key == k) {
@@ -245,7 +248,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         if (valueIndex < 0 || valueIndex >= valueCount) {
             throw new IllegalArgumentException("valueIndex out of bounds: " + valueIndex);
         }
-        return index < 0 ? Unsafe.getUnsafe().getLong(ptr + (-index - 1) * entrySize + 4 + (long) valueIndex * 8) : 0L;
+        return index < 0 ? Unsafe.getUnsafe().getLong(ptr + (-index - 1) * entrySize + 4 + (long) valueIndex * 8) : noEntryValue;
     }
 
     private long probe(int key, long index) {
@@ -253,7 +256,7 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
         do {
             index = (index + 1) & mask;
             int k = keyAt(index);
-            if (k == noKeyValue) {
+            if (k == noEntryKey) {
                 return index;
             }
             if (key == k) {
@@ -288,10 +291,10 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
 
         for (long p = oldPtr, lim = oldPtr + entrySize * oldCapacity; p < lim; p += entrySize) {
             int key = Unsafe.getUnsafe().getInt(p);
-            if (key != noKeyValue) {
+            if (key != noEntryKey) {
                 long hashCode = Hash.fastHashInt64(key);
                 long index = hashCode & mask;
-                while (keyAt(index) != noKeyValue) {
+                while (keyAt(index) != noEntryKey) {
                     index = (index + 1) & mask;
                 }
 
@@ -309,11 +312,11 @@ public class DirectIntMultiLongHashMap implements Mutable, QuietCloseable, Reope
     }
 
     private void zero() {
-        if (noKeyValue == 0) {
+        if (noEntryKey == 0) {
             Vect.memset(ptr, entrySize * capacity, 0);
         } else {
             for (long p = ptr, lim = ptr + entrySize * capacity; p < lim; p += entrySize) {
-                Unsafe.getUnsafe().putInt(p, noKeyValue);
+                Unsafe.getUnsafe().putInt(p, noEntryKey);
             }
         }
     }

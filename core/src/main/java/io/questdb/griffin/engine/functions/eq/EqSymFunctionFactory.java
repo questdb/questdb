@@ -82,7 +82,7 @@ public class EqSymFunctionFactory implements FunctionFactory {
         public Func(Function left, Function right) {
             super(left, right);
             // use zero as the no-key value to speed up zeroing the hash table
-            this.lookupCache = new DirectIntIntHashMap(16, 0.5, 0, MemoryTag.NATIVE_UNORDERED_MAP);
+            this.lookupCache = new DirectIntIntHashMap(16, 0.5, 0, StaticSymbolTable.VALUE_IS_NULL, MemoryTag.NATIVE_UNORDERED_MAP);
         }
 
         @Override

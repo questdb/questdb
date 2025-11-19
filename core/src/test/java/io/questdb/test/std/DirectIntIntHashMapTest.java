@@ -36,7 +36,7 @@ public class DirectIntIntHashMapTest {
     public void testAll() {
         Rnd rnd = new Rnd();
         // populate map
-        try (DirectIntIntHashMap map = new DirectIntIntHashMap(4, 0.5, Integer.MIN_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+        try (DirectIntIntHashMap map = new DirectIntIntHashMap(4, 0.5, Integer.MIN_VALUE, Integer.MIN_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             final int N = 1000;
             for (int i = 0; i < N; i++) {
                 int value = i + 1;

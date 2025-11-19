@@ -34,7 +34,7 @@ public class DirectIntMultiLongHashMapTest {
 
     @Test
     public void testBasicOperations() {
-        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 3, MemoryTag.NATIVE_DEFAULT)) {
+        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 0, 3, MemoryTag.NATIVE_DEFAULT)) {
             Assert.assertEquals(3, map.getValueCount());
             Assert.assertEquals(0, map.size());
             Assert.assertTrue(map.excludes(1));
@@ -57,7 +57,7 @@ public class DirectIntMultiLongHashMapTest {
 
     @Test
     public void testClearAndRestore() {
-        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 2, MemoryTag.NATIVE_DEFAULT)) {
+        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 0, 2, MemoryTag.NATIVE_DEFAULT)) {
             map.put(1, 0, 100L);
             map.put(2, 1, 200L);
             Assert.assertEquals(2, map.size());
@@ -76,7 +76,7 @@ public class DirectIntMultiLongHashMapTest {
 
     @Test
     public void testMultipleKeys() {
-        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 2, MemoryTag.NATIVE_DEFAULT)) {
+        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 0, 2, MemoryTag.NATIVE_DEFAULT)) {
             final int N = 100;
 
             for (int i = 0; i < N; i++) {
@@ -96,7 +96,7 @@ public class DirectIntMultiLongHashMapTest {
 
     @Test
     public void testPartialUpdates() {
-        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 3, MemoryTag.NATIVE_DEFAULT)) {
+        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 0, 3, MemoryTag.NATIVE_DEFAULT)) {
             map.put(10, 1, 500L);  // Only set middle value
             Assert.assertEquals(1, map.size());
             Assert.assertEquals(0L, map.get(10, 0));    // Should be 0 (default)
@@ -114,7 +114,7 @@ public class DirectIntMultiLongHashMapTest {
 
     @Test
     public void testPutAll() {
-        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 2, MemoryTag.NATIVE_DEFAULT)) {
+        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 0, 2, MemoryTag.NATIVE_DEFAULT)) {
             long[] values = {1000L, 2000L};
             map.putAll(5, values);
             Assert.assertEquals(1, map.size());
@@ -133,7 +133,7 @@ public class DirectIntMultiLongHashMapTest {
     @Test
     public void testRandomOperations() {
         Rnd rnd = new Rnd();
-        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 3, MemoryTag.NATIVE_DEFAULT)) {
+        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 0, 3, MemoryTag.NATIVE_DEFAULT)) {
             final int N = 1000;
             long[] expectedValues = new long[N * 3]; // Store expected values
 
@@ -166,7 +166,7 @@ public class DirectIntMultiLongHashMapTest {
 
     @Test
     public void testRehashing() {
-        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 2, MemoryTag.NATIVE_DEFAULT)) {
+        try (DirectIntMultiLongHashMap map = new DirectIntMultiLongHashMap(4, 0.5, Integer.MIN_VALUE, 0, 2, MemoryTag.NATIVE_DEFAULT)) {
             final int initialCapacity = map.capacity();
             final int N = initialCapacity * 2;
 
