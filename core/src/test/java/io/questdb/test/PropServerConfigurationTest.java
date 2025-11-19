@@ -1739,6 +1739,7 @@ public class PropServerConfigurationTest {
                 new FuzzItem(
                         "http.context.api.v1",
                         "/api/v1",
+                        HttpFullFatServerConfiguration.CONTEXT_PATH_API_V1,
                         HttpFullFatServerConfiguration::getContextPathApiV1
                 )
         );

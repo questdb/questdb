@@ -31,7 +31,7 @@ import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public class ImportsRouter implements HttpRequestHandler {
@@ -45,10 +45,10 @@ public class ImportsRouter implements HttpRequestHandler {
         deleteProcessor = new FileDeleteProcessor(cairoEngine, configuration, FilesRootDir.IMPORTS);
     }
 
-    public static ObjList<String> getRoutes(ObjList<String> parentRoutes) {
-        ObjList<String> out = new ObjList<>(parentRoutes.size());
+    public static ObjHashSet<String> getRoutes(ObjHashSet<String> parentRoutes) {
+        ObjHashSet<String> out = new ObjHashSet<>(parentRoutes.size());
         for (int i = 0; i < parentRoutes.size(); i++) {
-            out.extendAndSet(i, parentRoutes.get(i) + "/imports");
+            out.add(parentRoutes.get(i) + "/imports");
         }
         return out;
     }

@@ -82,7 +82,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
-import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;

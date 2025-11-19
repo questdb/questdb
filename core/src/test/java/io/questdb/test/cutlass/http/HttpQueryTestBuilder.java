@@ -223,7 +223,7 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return ImportsRouter.getRoutes(httpConfiguration.getContextPathApiV1());
                 }
 
@@ -235,7 +235,7 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return ExportsRouter.getRoutes(httpConfiguration.getContextPathApiV1());
                 }
 

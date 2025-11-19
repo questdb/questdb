@@ -27,7 +27,7 @@ package io.questdb.cutlass.http.processors.v1;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 
 /**
  * Routes OpenAPI specification requests to the OpenApiProcessor.
@@ -40,11 +40,11 @@ public class OpenApiRouter implements HttpRequestHandler {
         processor = new OpenApiProcessor();
     }
 
-    public static ObjList<String> getRoutes(ObjList<String> parentRoutes) {
-        ObjList<String> out = new ObjList<>(parentRoutes.size());
+    public static ObjHashSet<String> getRoutes(ObjHashSet<String> parentRoutes) {
+        ObjHashSet<String> out = new ObjHashSet<>(parentRoutes.size());
         for (int i = 0; i < parentRoutes.size(); i++) {
             String parentRoute = parentRoutes.get(i);
-            out.extendAndSet(i, parentRoute);
+            out.add(parentRoute);
         }
         return out;
     }

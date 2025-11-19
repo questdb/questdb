@@ -265,7 +265,7 @@ public class HttpServer implements Closeable {
 
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return ImportsRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
             }
 
@@ -277,7 +277,7 @@ public class HttpServer implements Closeable {
 
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return ExportsRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
             }
 
@@ -289,7 +289,7 @@ public class HttpServer implements Closeable {
 
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return OpenApiRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
             }
 

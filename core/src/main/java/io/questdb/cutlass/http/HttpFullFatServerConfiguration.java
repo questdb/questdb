@@ -29,9 +29,11 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.ObjHashSet;
-import io.questdb.std.ObjList;
 
 public interface HttpFullFatServerConfiguration extends HttpServerConfiguration {
+    ObjHashSet<String> CONTEXT_PATH_API_V1 = new ObjHashSet<>() {{
+        add("/api/v1");
+    }};
     ObjHashSet<String> CONTEXT_PATH_EXEC = new ObjHashSet<>() {{
         add("/exec");
         add("/api/v1/sql/execute");
@@ -62,8 +64,8 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
 
     ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
 
-    default ObjList<String> getContextPathApiV1() {
-        return new ObjList<>("/api/v1");
+    default ObjHashSet<String> getContextPathApiV1() {
+        return CONTEXT_PATH_API_V1;
     }
 
     default ObjHashSet<String> getContextPathDefault() {
