@@ -744,8 +744,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("stress");
 
-            // Insert 100k rows spanning 1 day with minute-level timestamps
-            // ~69 rows per minute (100k / 1440 minutes)
+            // Insert 100k rows spanning 1 day, so that partition is reasonably big to rewrite
             execute("insert into stress select x, cast('2022-02-24T00:00' as timestamp) + (x / 60) * 840000 * 60, x * 10 from long_sequence(100000)");
             drainWalQueue();
 
