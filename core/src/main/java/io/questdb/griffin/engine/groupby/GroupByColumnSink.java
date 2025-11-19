@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.engine.join.JoinRecord;
+import io.questdb.cairo.sql.Record;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Unsafe;
@@ -78,7 +78,7 @@ public class GroupByColumnSink {
         return ptr;
     }
 
-    public void put(JoinRecord record, Function function, short argType) {
+    public void put(Record record, Function function, short argType) {
         switch (argType) {
             case ColumnType.BYTE:
                 putByte(function.getByte(record));
