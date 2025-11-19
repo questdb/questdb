@@ -1671,7 +1671,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return null;
         }
         // Ensure sort direction is ascending
-        IntList dirs = lastSeenOrderByModel.getOrderByDirectionAdvice();
+        IntList dirs = lastSeenOrderByModel.getOrderByDirection();
         int dir = (dirs.size() > 0) ? dirs.getQuick(0) : ORDER_DIRECTION_ASCENDING;
         if (dir != ORDER_DIRECTION_ASCENDING) {
             return null;
