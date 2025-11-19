@@ -43,7 +43,7 @@ import java.util.List;
 // in CI frequently along with other fuzz tests.
 public class WindowJoinFuzzTest extends AbstractCairoTest {
     private static final CharSequence[] AGGREGATE_FUNCTIONS = new CharSequence[]{
-//            "first", "last" - uncomment when https://github.com/questdb/questdb/issues/6405 is solved
+            // "first", "last", - uncomment when https://github.com/questdb/questdb/pull/6414 is merged
             "count", "max", "min", "avg", "sum"
     };
     private static final CharSequence[] EQ_OPERATORS = new CharSequence[]{
@@ -189,7 +189,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             sink.put(aggregatedColumns[i]).put(", ");
         }
         sink
-                .put("p.ts FROM ")
+                .put("p.ts, p.id FROM ")
                 .put(leftTable)
                 .put(" LEFT JOIN prices p ON p.ts >= dateadd('u', -")
                 .put(preceding)
@@ -199,7 +199,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         if (!joinFilter.isEmpty()) {
             sink.put(" AND (").put(joinFilter).put(')');
         }
-        sink.put(" ORDER BY t.ts, p.ts) t ORDER BY t.ts, t.sym");
+        sink.put(" ORDER BY t.ts, p.id) t ORDER BY t.ts, t.sym");
 
         var leftJoinQuery = sink.toString();
         // endregion
@@ -344,6 +344,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         execute(
                 """
                         create table prices (
+                            id int,
                             sym symbol,
                         """ + columnsCreation + """
                             ts timestamp
@@ -437,12 +438,13 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 }
 
                 TableWriter.Row r = w.newRow(ts);
-                r.putSym(0, symbol);
+                r.putInt(0, i);
+                r.putSym(1, symbol);
                 for (int j = 0; j < nAggregatedColumns; j++) {
                     switch (aggregatedColumnTypes[j]) {
-                        case 0 -> r.putDouble(j + 1, rnd.nextLong(100));
-                        case 1 -> r.putFloat(j + 1, rnd.nextLong(100));
-                        case 2 -> r.putLong(j + 1, rnd.nextLong(100));
+                        case 0 -> r.putDouble(j + 2, rnd.nextLong(100));
+                        case 1 -> r.putFloat(j + 2, rnd.nextLong(100));
+                        case 2 -> r.putLong(j + 2, rnd.nextLong(100));
                         default -> throw new IllegalStateException("Unexpected value: " + aggregatedColumnTypes[j]);
                     }
                 }
