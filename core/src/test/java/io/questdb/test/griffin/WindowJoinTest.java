@@ -857,7 +857,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                   symbol: sym=sym
                                   window lo: 60000000 preceding
                                   window hi: 60000000 following
-                                    Limit lo: 5 hi: 9 skip-over-rows: 5 limit: 4
+                                    Limit lo: 5 hi: 9 skip-over-rows: 0 limit: 0
                                         Async JIT Filter workers: 1
                                           filter: 5<price
                                             PageFrame
