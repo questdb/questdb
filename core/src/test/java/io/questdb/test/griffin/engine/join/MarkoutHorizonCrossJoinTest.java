@@ -148,6 +148,42 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEligibleQueriesDetected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+            assertHintUsedAndResultSameAsWithoutHint("""
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)) offsets
+                    ORDER BY order_ts + usec_offs
+                    """);
+            assertHintUsedAndResultSameAsWithoutHint("""
+                    WITH offsets AS (
+                        SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
+                    )
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """);
+            assertHintUsedAndResultSameAsWithoutHint("""
+                    WITH offsets AS (
+                        SELECT x AS offs, 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
+                    )
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """);
+            assertHintUsedAndResultSameAsWithoutHint("""
+                    WITH offsets AS (
+                        SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
+                    )
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY usec_offs + order_ts
+                    """);
+        });
+    }
+
+    @Test
     public void testEmptyMasterCursor() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
@@ -196,6 +232,68 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIneligibleQueriesRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE orders (
+                        id INT,
+                        order_ts TIMESTAMP
+                    ) TIMESTAMP(order_ts)
+                    """);
+            execute("CREATE TABLE offsets (usec_offs LONG)");
+
+            // rootFac is not LongSequence
+            assertMarkoutHorizonJoinNotUsed("""
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs""");
+
+            // masterMetadata.getTimestampIndex() == -1
+            assertMarkoutHorizonJoinNotUsed("""
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM (SELECT id, '2025-01-01'::TIMESTAMP order_ts FROM orders) orders
+                    CROSS JOIN (SELECT x usec_offs from long_sequence(2)) offsets
+                    ORDER BY order_ts + usec_offs""");
+
+            // no ORDER BY
+            assertMarkoutHorizonJoinNotUsed("""
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN (SELECT x usec_offs from long_sequence(2)) offsets
+                    """);
+
+            // too much ORDER BY
+            assertMarkoutHorizonJoinNotUsed("""
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN (SELECT x usec_offs from long_sequence(2)) offsets
+                    ORDER BY order_ts + usec_offs, id""");
+
+            // ORDER BY DESC
+            assertMarkoutHorizonJoinNotUsed("""
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN (SELECT x usec_offs from long_sequence(2)) offsets
+                    ORDER BY order_ts + usec_offs DESC""");
+
+            // ORDER BY not an expression
+            assertMarkoutHorizonJoinNotUsed("""
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN (SELECT x usec_offs from long_sequence(2)) offsets
+                    ORDER BY usec_offs""");
+
+            // ORDER BY expression not an addition
+            assertMarkoutHorizonJoinNotUsed("""
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN (SELECT x usec_offs from long_sequence(2)) offsets
+                    ORDER BY order_ts - usec_offs""");
+
+            // ORDER BY addition operands not literals
+            assertMarkoutHorizonJoinNotUsed("""
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN (SELECT x usec_offs from long_sequence(2)) offsets
+                    ORDER BY order_ts + usec_offs + 1""");
+        });
+    }
+
+    @Test
     public void testIteratorBlockFreelist() throws Exception {
         // This test exercises the different code paths around iterator block allocation in
         // MarkoutHorizonRecordCursor.
@@ -232,42 +330,6 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     false,
                     true
             );
-        });
-    }
-
-    @Test
-    public void testMarkoutHorizonDetection() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            assertHintUsedAndResultSameAsWithoutHint("""
-                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
-                    FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)) offsets
-                    ORDER BY order_ts + usec_offs
-                    """);
-            assertHintUsedAndResultSameAsWithoutHint("""
-                    WITH offsets AS (
-                        SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
-                    )
-                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
-                    FROM orders CROSS JOIN offsets
-                    ORDER BY order_ts + usec_offs
-                    """);
-            assertHintUsedAndResultSameAsWithoutHint("""
-                    WITH offsets AS (
-                        SELECT x AS offs, 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
-                    )
-                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
-                    FROM orders CROSS JOIN offsets
-                    ORDER BY order_ts + usec_offs
-                    """);
-            assertHintUsedAndResultSameAsWithoutHint("""
-                    WITH offsets AS (
-                        SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
-                    )
-                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
-                    FROM orders CROSS JOIN offsets
-                    ORDER BY usec_offs + order_ts
-                    """);
         });
     }
 
