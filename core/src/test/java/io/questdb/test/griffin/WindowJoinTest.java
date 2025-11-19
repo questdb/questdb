@@ -754,32 +754,32 @@ public class WindowJoinTest extends AbstractCairoTest {
                     true
             );
 
-            expect = replaceTimestampSuffix("ts\tcount\tmax\n" +
-                    "2023-01-01T09:00:00.000000Z\t3\t2023-01-01T09:01:00.000000Z\n" +
-                    "2023-01-01T09:01:00.000000Z\t3\t2023-01-01T09:01:00.000000Z\n" +
-                    "2023-01-01T09:02:00.000000Z\t3\t2023-01-01T09:02:00.000000Z\n" +
-                    "2023-01-01T09:03:00.000000Z\t2\t2023-01-01T09:03:00.000000Z\n" +
-                    "2023-01-01T09:04:00.000000Z\t2\t2023-01-01T09:03:00.000000Z\n" +
-                    "2023-01-01T09:07:00.000000Z\t1\t2023-01-01T09:06:00.000000Z\n" +
-                    "2023-01-01T09:08:00.000000Z\t1\t2023-01-01T09:07:00.000000Z\n", leftTableTimestampType.getTypeName());
+            expect = replaceTimestampSuffix("sym\tts\tcount\tmax\n" +
+                    "AAPL\t2023-01-01T09:00:00.000000Z\t3\t2023-01-01T09:01:00.000000Z\n" +
+                    "AAPL\t2023-01-01T09:01:00.000000Z\t3\t2023-01-01T09:01:00.000000Z\n" +
+                    "\t2023-01-01T09:02:00.000000Z\t1\t2023-01-01T09:02:00.000000Z\n" +
+                    "AAPL\t2023-01-01T09:02:00.000000Z\t2\t2023-01-01T09:01:00.000000Z\n" +
+                    "MSFT\t2023-01-01T09:03:00.000000Z\t2\t2023-01-01T09:03:00.000000Z\n" +
+                    "MSFT\t2023-01-01T09:04:00.000000Z\t2\t2023-01-01T09:03:00.000000Z\n" +
+                    "AAPL\t2023-01-01T09:07:00.000000Z\t1\t2023-01-01T09:06:00.000000Z\n" +
+                    "MSFT\t2023-01-01T09:08:00.000000Z\t1\t2023-01-01T09:07:00.000000Z\n", leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
-                    "SelectedRecord\n" +
-                            "    Sort\n" +
-                            "      keys: [ts, sym]\n" +
-                            "        Async Window Fast Join workers: 1\n" +
-                            "          vectorized: true\n" +
-                            "          symbol: sym=sym\n" +
-                            "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
-                            "          window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
-                            "          master filter: price<300\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: trades\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: prices\n",
-                    "select t.ts, count(), max(p.ts) " +
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Async Window Fast Join workers: 1\n" +
+                            "      vectorized: true\n" +
+                            "      symbol: sym=sym\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
+                            "      master filter: price<300\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.sym, t.ts, count(), max(p.ts) " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -794,7 +794,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             // verify result
             assertQuery(
                     expect,
-                    "select t.ts, count(), max(p.ts) " +
+                    "select t.sym, t.ts, count(), max(p.ts) " +
                             "from (select * from trades where price < 300) t " +
                             "left join prices p " +
                             "on (t.sym = p.sym) " +
