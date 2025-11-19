@@ -367,7 +367,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                     case CompiledQuery.DEALLOCATE ->
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "DEALLOCATE");
                     case CompiledQuery.EXPLAIN ->
-                            sendConfirmation(state, configuration.getKeepAliveHeader(), "ECXPLAIN");
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "EXPLAIN");
                     case CompiledQuery.TABLE_RESUME ->
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "TABLE RESUME");
                     case CompiledQuery.TABLE_SUSPEND ->

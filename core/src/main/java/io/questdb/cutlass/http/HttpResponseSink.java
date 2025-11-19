@@ -115,7 +115,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         headersSent = false;
         chunkedRequestDone = false;
         simpleResponse.clear();
-        chunkedResponse.clear();
         resetZip();
     }
 
@@ -441,9 +440,8 @@ public class HttpResponseSink implements Closeable, Mutable {
                 _wptr = tmp;
             }
             if (addEofChunk) {
-                // todo: this can blow up
                 int len = EOF_CHUNK.length();
-                Utf8s.strCpyAscii(EOF_CHUNK, len, getWriteAddress(len));
+                Utf8s.strCpyAscii(EOF_CHUNK, len, _wptr);
                 _wptr += len;
                 LOG.debug().$("end chunk sent [fd=").$(getFd()).I$();
             }
@@ -455,17 +453,12 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    private class ChunkedResponseImpl extends ResponseSinkImpl implements HttpChunkedResponse, Mutable {
+    private class ChunkedResponseImpl extends ResponseSinkImpl implements HttpChunkedResponse {
         private long bookmark = 0L;
 
         @Override
         public void bookmark() {
             bookmark = buffer._wptr;
-        }
-
-        @Override
-        public void clear() {
-            this.bookmark = 0;
         }
 
         @Override
