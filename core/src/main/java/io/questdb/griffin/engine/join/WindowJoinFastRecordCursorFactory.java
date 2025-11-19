@@ -44,7 +44,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByColumnSink;
@@ -128,7 +127,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 IntList groupByFunctionTypes = new IntList(groupByCount);
                 for (int i = 0; i < groupByCount; i++) {
                     var func = groupByFunctions.getQuick(i);
-                    var funcArg = func instanceof UnaryFunction ? ((UnaryFunction) func).getArg() : null;
+                    var funcArg = func.getComputeBatchArg();
                     var funcArgType = ColumnType.tagOf(func.getComputeBatchArgType());
                     int index = findFunctionWithSameArg(groupByFunctionArgs, groupByFunctionTypes, funcArg, funcArgType);
                     if (index == -1) {
