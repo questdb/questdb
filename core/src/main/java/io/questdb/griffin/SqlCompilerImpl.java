@@ -166,8 +166,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return true;
         }
     };
-    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
+    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
@@ -1680,13 +1680,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileAlterMatView(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok = expectToken(lexer, "'view'");
-        if (!isViewKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'view' expected'");
-        }
-
+        expectKeyword(lexer, "view");
         final int matViewNamePosition = lexer.getPosition();
-        tok = expectToken(lexer, "materialized view name");
+        CharSequence tok = expectToken(lexer, "materialized view name");
         assertNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
         final TableToken matViewToken = tableExistsOrFail(matViewNamePosition, unquote(tok), executionContext);
         if (!matViewToken.isMatView()) {
@@ -1791,7 +1787,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'symbol capacity', 'add index' or 'drop index' expected");
                 }
             } else if (isSetKeyword(tok)) {
-                tok = expectToken(lexer, "'ttl' or 'refresh'");
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || (!isTtlKeyword(tok) && !isRefreshKeyword(tok))) {
+                    compileAlterMatViewSetExt(tok, matViewToken, matViewNamePosition);
+                    return;
+                }
                 if (isTtlKeyword(tok)) {
                     final int ttlValuePos = lexer.getPosition();
                     final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
@@ -2155,7 +2155,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                 }
             } else if (isSetKeyword(tok)) {
-                tok = expectToken(lexer, "'param', 'ttl' or 'type'");
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok))) {
+                    compileAlterTableSetExt(tok, tableToken, tableNamePosition);
+                    return;
+                }
                 if (isParamKeyword(tok)) {
                     final int paramNamePosition = lexer.getPosition();
                     tok = expectToken(lexer, "param name");
@@ -2196,8 +2200,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'bypass' or 'wal' expected");
                     }
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'param' or 'type' expected");
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(tableToken, tableNamePosition, executionContext);
@@ -2371,7 +2373,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 model
         );
     }
-
 
     private RecordCursorFactory compileCopyTo(SecurityContext securityContext, ExportModel model, CharSequence sqlText) throws SqlException {
         assert !model.isCancel();
@@ -4289,6 +4290,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' expected");
         }
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' expected");
+    }
+
+    protected void compileAlterMatViewSetExt(CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'ttl' or 'refresh' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
+    }
+
+    protected void compileAlterTableSetExt(CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'param', 'ttl' or 'type' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'param', 'ttl' or 'type' expected");
     }
 
     protected void compileDropExt(

@@ -310,7 +310,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             if (!exceptions.isEmpty()) {
                 for (Throwable ex : exceptions) {
-                    ex.printStackTrace();
+                    ex.printStackTrace(System.out);
                 }
                 Assert.fail();
             }
@@ -445,7 +445,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnHavingTroubleCreatingMetaSwap() throws Exception {
+    public void testAddColumnHavingTroubleCreatingMetaSwap() {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         FilesFacade ff = new TestFilesFacadeImpl() {
@@ -2039,7 +2039,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonStandardPageSize() throws Exception {
+    public void testNonStandardPageSize() {
         populateTable(new TestFilesFacadeImpl() {
             @Override
             public long getPageSize() {
@@ -2049,7 +2049,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonStandardPageSize2() throws Exception {
+    public void testNonStandardPageSize2() {
         populateTable(new TestFilesFacadeImpl() {
             @Override
             public long getPageSize() {
@@ -3020,7 +3020,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUncommittedEnforceTtl() throws Exception {
+    public void testUncommittedPartitionLifecycle() throws Exception {
         String tango = "tango";
         TableModel model = new TableModel(configuration, tango, PartitionBy.HOUR)
                 .timestamp("ts", timestampType)
@@ -3038,7 +3038,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 """, ColumnType.nameOf(timestampType)), "tango");
         try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
             writer.newRow(timestampDriver.fromHours(2) + 1).append();
-            writer.enforceTtl();
+            writer.enforceStoragePolicy();
             writer.commit();
         }
         assertSql(replaceTimestampSuffix("""

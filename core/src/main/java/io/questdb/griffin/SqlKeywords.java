@@ -1133,6 +1133,15 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 't';
     }
 
+    public static boolean isLocalKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'l'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'c'
+                && (tok.charAt(3) | 32) == 'a'
+                && (tok.charAt(4) | 32) == 'l';
+    }
+
     public static boolean isLockKeyword(CharSequence tok) {
         return tok.length() == 4
                 && (tok.charAt(0) | 32) == 'l'
@@ -1618,6 +1627,16 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 'd';
     }
 
+    public static boolean isPolicyKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'p'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'l'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'c'
+                && (tok.charAt(5) | 32) == 'y';
+    }
+
     public static boolean isPrecedingKeyword(CharSequence tok) {
         return tok.length() == 9
                 && (tok.charAt(0) | 32) == 'p'
@@ -1715,6 +1734,16 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'e'
                 && (tok.charAt(5) | 32) == 's'
                 && (tok.charAt(6) | 32) == 'h';
+    }
+
+    public static boolean isRemoteKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'r'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'm'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 't'
+                && (tok.charAt(5) | 32) == 'e';
     }
 
     public static boolean isRenameKeyword(CharSequence tok) {
@@ -1940,6 +1969,17 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'a'
                 && (tok.charAt(3) | 32) == 'r'
                 && (tok.charAt(4) | 32) == 't';
+    }
+
+    public static boolean isStorageKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 's'
+                && (tok.charAt(1) | 32) == 't'
+                && (tok.charAt(2) | 32) == 'o'
+                && (tok.charAt(3) | 32) == 'r'
+                && (tok.charAt(4) | 32) == 'a'
+                && (tok.charAt(5) | 32) == 'g'
+                && (tok.charAt(6) | 32) == 'e';
     }
 
     public static boolean isSumKeyword(CharSequence tok) {

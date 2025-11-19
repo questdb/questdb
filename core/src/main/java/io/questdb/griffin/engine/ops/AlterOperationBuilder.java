@@ -295,6 +295,26 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofSetStoragePolicy(
+            int tableNamePosition,
+            TableToken tableToken,
+            int tableId,
+            int toParquetHoursOrMonths,
+            int dropNativeHoursOrMonths,
+            int dropLocalHoursOrMonths,
+            int dropRemoteHoursOrMonths
+    ) {
+        this.command = SET_STORAGE_POLICY;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.extraInfo.add(toParquetHoursOrMonths);
+        this.extraInfo.add(dropNativeHoursOrMonths);
+        this.extraInfo.add(dropLocalHoursOrMonths);
+        this.extraInfo.add(dropRemoteHoursOrMonths);
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofSetTtl(int tableNamePosition, TableToken tableToken, int tableId, int ttlHoursOrMonths) {
         this.command = SET_TTL;
         this.tableNamePosition = tableNamePosition;

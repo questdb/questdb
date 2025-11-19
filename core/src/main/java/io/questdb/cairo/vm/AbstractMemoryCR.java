@@ -60,7 +60,7 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     @Override
     public long addressOf(long offset) {
         offset -= shiftAddressRight;
-        assert checkOffsetMapped(offset);
+        assert checkOffsetMapped(offset) : "offset=" + offset + ", size=" + size();
         return pageAddress + offset;
     }
 

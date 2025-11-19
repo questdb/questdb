@@ -199,6 +199,16 @@ public class TxReader implements Closeable, Mutable {
         return dataVersion;
     }
 
+    public long getFirstNativePartitionTimestamp() {
+        int index;
+        for (index = 0; index < getPartitionCount(); index++) {
+            if (!isPartitionParquet(index)) {
+                break;
+            }
+        }
+        return attachedPartitions.getQuick(index * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
+    }
+
     public long getFixedRowCount() {
         return fixedRowCount;
     }
@@ -240,6 +250,16 @@ public class TxReader implements Closeable, Mutable {
 
     public long getMinTimestamp() {
         return minTimestamp;
+    }
+
+    public int getNativePartitionCount() {
+        int count = 0;
+        for (int i = 0; i < getPartitionCount(); i++) {
+            if (!isPartitionParquet(i)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     public long getNextExistingPartitionTimestamp(long timestamp) {

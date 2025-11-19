@@ -210,6 +210,13 @@ public interface MetadataService {
      */
     void setMetaTtl(int ttlHoursOrMonths);
 
+    void setStoragePolicy(
+            int toParquetHoursOrMonths,
+            int dropNativeHoursOrMonths,
+            int dropLocalHoursOrMonths,
+            int dropRemoteHoursOrMonths
+    );
+
     void squashPartitions();
 
     void tick();

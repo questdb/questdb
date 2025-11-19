@@ -200,6 +200,10 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
+            table.setToParquetHoursOrMonths(TableUtils.getToParquetHoursOrMonths(metaMem));
+            table.setDropNativeHoursOrMonths(TableUtils.getDropNativeHoursOrMonths(metaMem));
+            table.setDropLocalHoursOrMonths(TableUtils.getDropLocalHoursOrMonths(metaMem));
+            table.setDropRemoteHoursOrMonths(TableUtils.getDropRemoteHoursOrMonths(metaMem));
             table.setSoftLinkFlag(isSoftLink);
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
@@ -547,6 +551,10 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
+            table.setToParquetHoursOrMonths(tableMetadata.getToParquetHoursOrMonths());
+            table.setDropNativeHoursOrMonths(tableMetadata.getDropNativeHoursOrMonths());
+            table.setDropLocalHoursOrMonths(tableMetadata.getDropLocalHoursOrMonths());
+            table.setDropRemoteHoursOrMonths(tableMetadata.getDropRemoteHoursOrMonths());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 
