@@ -355,7 +355,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                 new TestCase(
                         "Q17",
                         "SELECT UserID, SearchPhrase, COUNT(*) FROM hits GROUP BY UserID, SearchPhrase LIMIT 10;",
-                        "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
+                        "Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                                 "    Async Group By workers: 1\n" +
                                 "      keys: [UserID,SearchPhrase]\n" +
                                 "      values: [count(*)]\n" +
