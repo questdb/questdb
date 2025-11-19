@@ -735,4 +735,55 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             insertRowWithReplaceRange("2022-02-21,2022-02-21T01", "2022-02-21", "2022-02-27", tableToken, false, false, "rg", "expected", true, generateNoRowsCommit);
         });
     }
+
+    @Test
+    public void testStressReplaceLastMinuteRepeatedly() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
+
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("stress");
+
+            // Insert 100k rows spanning 1 day with minute-level timestamps
+            // ~69 rows per minute (100k / 1440 minutes)
+            execute("insert into stress select x, cast('2022-02-24T00:00' as timestamp) + (x / 60) * 840000 * 60, x * 10 from long_sequence(100000)");
+            drainWalQueue();
+
+            // Verify initial state
+            assertSql("count\n100000\n", "select count(*) from stress");
+
+            // Get the timestamp of the last minute (last row timestamp)
+            long lastMinuteStart = MicrosTimestampDriver.floor("2022-02-24T23:59");
+            long lastMinuteEnd = lastMinuteStart + 60 * 1_000_000; // 1 minute in microseconds
+
+            // Perform 1M replace commits, each replacing the last minute with a new value
+            long replaceValue = 1000L;
+            long lastValue = 0;
+            for (int i = 0; i < 1_000; i++) {
+                try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                    // Add a new row with the current replace value
+                    TableWriter.Row row = ww.newRow(lastMinuteStart + 30_000_000); // Middle of the last minute
+                    row.putLong(0, replaceValue + i);
+                    row.putLong(2, (replaceValue + i) * 100);
+                    row.append();
+
+                    // Commit with replace range for the last minute
+                    ww.commitWithParams(lastMinuteStart, lastMinuteEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
+                    lastValue = (replaceValue + i) * 100;
+                }
+            }
+
+            // Apply WAL
+            drainWalQueue();
+
+            // Verify the final state
+            assertSql("count\n100001\n", "select count(*) from stress");
+
+            // Check the results of the last 5 minutes
+            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:55' and ts < '2022-02-25T00:00'");
+
+            // Verify the value is from the last replace operation
+            assertSql("value\n" + lastValue + "\n", "select value from stress where ts >= '2022-02-24T23:55' and ts < '2022-02-25T00:00'");
+        });
+    }
 }

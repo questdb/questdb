@@ -1289,7 +1289,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         physicallyWrittenRowsSinceLastCommit.set(0);
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
-        int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
+        int transactionBlock;
+        transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
+
+//        while (true) {
+//            transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
+//            if (canSkipTransactions(seqTxn, transactionBlock)) {
+//                seqTxn += transactionBlock;
+//            } else {
+//                break;
+//            }
+//        }
 
         boolean committed;
         final long initialCommittedRowCount = txWriter.getRowCount();
@@ -7759,6 +7769,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean isReplaceRangeCoveredByFutureTransactions(long seqTxn, long replaceRangeTsLo, long replaceRangeTsHi) {
+        final long lastSeqTxn = walTxnDetails.getLastSeqTxn();
+
+        // Check all future transactions to see if any fully replace this transaction's range
+        for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
+            byte futureDedupMode = walTxnDetails.getDedupMode(futureSeqTxn);
+
+            // If the future transaction is a replace range operation
+            if (futureDedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+                long futureRangeTsLo = walTxnDetails.getReplaceRangeTsLow(futureSeqTxn);
+                long futureRangeTsHi = walTxnDetails.getReplaceRangeTsHi(futureSeqTxn);
+
+                // If the future replace range fully covers this transaction's range, it will replace it
+                if (futureRangeTsLo <= replaceRangeTsLo && futureRangeTsHi >= replaceRangeTsHi) {
+                    LOG.info().$("skipping replace range transaction [seqTxn=").$(seqTxn)
+                            .$(", rangeLo=").$ts(timestampDriver, replaceRangeTsLo)
+                            .$(", rangeHi=").$ts(timestampDriver, replaceRangeTsHi)
+                            .$("] as it is fully covered by future transaction [futureSeqTxn=").$(futureSeqTxn)
+                            .$(", futureRangeLo=").$ts(timestampDriver, futureRangeTsLo)
+                            .$(", futureRangeHi=").$ts(timestampDriver, futureRangeTsHi)
+                            .I$();
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private boolean processWalCommit(Path walPath, long seqTxn, TableWriterPressureControl pressureControl, long commitToTimestamp) {
         int walId = walTxnDetails.getWalId(seqTxn);
         long txnMinTs = walTxnDetails.getMinTimestamp(seqTxn);
@@ -7792,6 +7830,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         walRowsProcessed = rowHi - rowLo;
 
         if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            // Check if this replace range transaction is fully covered by future transactions
+            if (isReplaceRangeCoveredByFutureTransactions(seqTxn, replaceRangeTsLo, replaceRangeTsHi)) {
+                // Skip processing this transaction as it will be fully replaced by a future transaction
+                return true;
+            }
+
             processWalCommitDedupReplace(
                     walPath,
                     inOrder,
