@@ -31,11 +31,13 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
@@ -152,6 +154,44 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                 );
                     });
         });
+    }
+
+    @Test
+    public void testFullFuzz() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        getSimpleTester()
+                .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+                            engine.execute("create table xyz as (select rnd_int() a, rnd_double() b, timestamp_sequence(0,1000) ts from long_sequence(1000)) timestamp(ts) partition by hour");
+
+                            var requestResponse = new String[][]{
+                                    {"select count() from xyz", "{\"query\":\"select count() from xyz\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1}"},
+                                    {"select a from xyz limit 1", "{\"query\":\"select a from xyz limit 1\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"}],\"timestamp\":-1}"},
+                                    {"select b from xyz limit 5", "{\"query\":\"select b from xyz limit 5\",\"columns\":[{\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestamp\":-1}"},
+                                    {"select ts, b from xyz limit 15", "{\"query\":\"select ts, b from xyz limit 15\",\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestamp\":0}"},
+                            };
+
+                            var candidateCount = requestResponse.length;
+                            try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                                testHttpClient.setKeepConnection(true);
+                                int iterCount = rnd.nextInt(10);
+                                for (int i = 0; i < iterCount; i++) {
+                                    int index = rnd.nextInt(candidateCount);
+                                    testHttpClient.assertGet(
+                                            "/api/v1/sql/validate",
+                                            requestResponse[index][1],
+                                            requestResponse[index][0],
+                                            "localhost",
+                                            9001,
+                                            null,
+                                            null,
+                                            null
+                                    );
+                                }
+                            }
+                        }
+                );
     }
 
     @Test

@@ -28,6 +28,7 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 
 public interface HttpFullFatServerConfiguration extends HttpServerConfiguration {
@@ -39,36 +40,36 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
         return new ObjList<>("/api/v1");
     }
 
-    default ObjList<String> getContextPathDefault() {
+    default ObjHashSet<String> getContextPathDefault() {
         return new ObjList<>(DEFAULT_PROCESSOR_URL);
     }
 
-    default ObjList<String> getContextPathExec() {
+    default ObjHashSet<String> getContextPathExec() {
         return new ObjList<>("/exec");
     }
 
-    default ObjList<String> getContextPathExport() {
+    default ObjHashSet<String> getContextPathExport() {
         return new ObjList<>("/exp");
     }
 
-    default ObjList<String> getContextPathILP() {
+    default ObjHashSet<String> getContextPathILP() {
         return new ObjList<>("/write", "/api/v2/write");
     }
 
-    default ObjList<String> getContextPathILPPing() {
+    default ObjHashSet<String> getContextPathILPPing() {
         return new ObjList<>("/ping");
     }
 
-    default ObjList<String> getContextPathImport() {
-        return new ObjList<>("/imp");
+    default ObjHashSet<String> getContextPathImport() {
+        return new ObjHashSet<>("/imp");
     }
 
-    default ObjList<String> getContextPathSettings() {
-        return new ObjList<>("/settings");
+    default ObjHashSet<String> getContextPathSettings() {
+        return new ObjHashSet<>("/settings");
     }
 
-    default ObjList<String> getContextPathTableStatus() {
-        return new ObjList<>("/chk");
+    default ObjHashSet<String> getContextPathTableStatus() {
+        return new ObjHashSet<>("/chk");
     }
 
     default ObjList<String> getContextPathWarnings() {

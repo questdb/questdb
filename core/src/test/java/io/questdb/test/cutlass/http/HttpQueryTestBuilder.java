@@ -43,8 +43,6 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.cutlass.http.processors.v1.ExportsRouter;
-import io.questdb.cutlass.http.processors.v1.ImportsRouter;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
@@ -58,6 +56,7 @@ import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
@@ -79,6 +78,8 @@ public class HttpQueryTestBuilder {
     private String copyInputRoot;
     private FactoryProvider factoryProvider;
     private FilesFacade filesFacade = new TestFilesFacadeImpl();
+    private int forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+    private int forceSendFragmentationChunkSize = Integer.MAX_VALUE;
     private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
@@ -114,6 +115,8 @@ public class HttpQueryTestBuilder {
                 .withStaticContentAuthRequired(httpStaticContentAuthType)
                 .withHealthCheckAuthRequired(httpHealthCheckAuthType)
                 .withNanosClock(nanosecondClock)
+                .withForceSendFragmentationChunkSize(forceSendFragmentationChunkSize)
+                .withForceRecvFragmentationChunkSize(forceRecvFragmentationChunkSize)
                 .build(configuration);
         final WorkerPool workerPool = new TestWorkerPool(workerCount, httpConfiguration.getMetrics());
 
@@ -203,8 +206,10 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
-                    return new ObjList<>("/upload");
+                public ObjHashSet<String> getUrls() {
+                    return new ObjHashSet<>() {{
+                        add("/upload");
+                    }};
                 }
 
                 @Override
@@ -213,36 +218,14 @@ public class HttpQueryTestBuilder {
                 }
             });
 
-            httpServer.bind(new HttpRequestHandlerFactory() {
-                @Override
-                public ObjList<String> getUrls() {
-                    return ImportsRouter.getRoutes(httpConfiguration.getContextPathApiV1());
-                }
-
-                @Override
-                public HttpRequestHandler newInstance() {
-                    return new ImportsRouter(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
-                }
-            });
-
-            httpServer.bind(new HttpRequestHandlerFactory() {
-                @Override
-                public ObjList<String> getUrls() {
-                    return ExportsRouter.getRoutes(httpConfiguration.getContextPathApiV1());
-                }
-
-                @Override
-                public HttpRequestHandler newInstance() {
-                    return new ExportsRouter(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
-                }
-            });
-
             this.sqlExecutionContexts = new ObjList<>();
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
-                    return new ObjList<>("/query");
+                public ObjHashSet<String> getUrls() {
+                    return new ObjHashSet<>() {{
+                        add("/query");
+                    }};
                 }
 
                 @Override
@@ -266,7 +249,7 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return httpConfiguration.getContextPathExport();
                 }
 
@@ -282,7 +265,7 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return httpConfiguration.getContextPathTableStatus();
                 }
 
@@ -294,7 +277,7 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return httpConfiguration.getContextPathExec();
                 }
 
@@ -306,8 +289,10 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
-                    return new ObjList<>("/status");
+                public ObjHashSet<String> getUrls() {
+                    return new ObjHashSet<>() {{
+                        add("/status");
+                    }};
                 }
 
                 @Override
@@ -357,6 +342,16 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withFilesFacade(FilesFacade ff) {
         this.filesFacade = ff;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withForceRecvFragmentationChunkSize(int forceRecvFragmentationChunkSize) {
+        this.forceRecvFragmentationChunkSize = forceRecvFragmentationChunkSize;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withForceSendFragmentationChunkSize(int forceSendFragmentationChunkSize) {
+        this.forceSendFragmentationChunkSize = forceSendFragmentationChunkSize;
         return this;
     }
 
