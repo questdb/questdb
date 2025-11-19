@@ -89,6 +89,7 @@ public class HttpQueryTestBuilder {
     private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private long queryTimeout = -1;
+    private int sendBufferSize = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
     private ObjList<SqlExecutionContextImpl> sqlExecutionContexts;
     private long startWriterWaitTimeout = 500;
@@ -110,15 +111,18 @@ public class HttpQueryTestBuilder {
 
     public void runNoLeakCheck(CairoConfiguration configuration, HttpClientCode code) throws Exception {
         final String baseDir = temp;
-        final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
+        serverConfigBuilder
                 .withBaseDir(baseDir)
                 .withFactoryProvider(factoryProvider)
                 .withStaticContentAuthRequired(httpStaticContentAuthType)
                 .withHealthCheckAuthRequired(httpHealthCheckAuthType)
                 .withNanosClock(nanosecondClock)
                 .withForceSendFragmentationChunkSize(forceSendFragmentationChunkSize)
-                .withForceRecvFragmentationChunkSize(forceRecvFragmentationChunkSize)
-                .build(configuration);
+                .withForceRecvFragmentationChunkSize(forceRecvFragmentationChunkSize);
+        if (sendBufferSize != -1) {
+            serverConfigBuilder.withSendBufferSize(sendBufferSize);
+        }
+        final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder.build(configuration);
         final WorkerPool workerPool = new TestWorkerPool(workerCount, httpConfiguration.getMetrics());
 
         CairoConfiguration cairoConfiguration = configuration;
@@ -401,6 +405,11 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withQueryTimeout(long queryTimeout) {
         this.queryTimeout = queryTimeout;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withSendBufferSize(int sendBufferSize) {
+        this.sendBufferSize = sendBufferSize;
         return this;
     }
 

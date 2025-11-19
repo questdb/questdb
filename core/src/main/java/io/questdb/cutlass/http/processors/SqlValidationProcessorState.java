@@ -48,23 +48,27 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_NM;
-import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_VERSION;
+import static io.questdb.cutlass.http.HttpConstants.*;
+import static io.questdb.cutlass.http.processors.SqlValidationProcessor.readyForNextRequest;
 
 public class SqlValidationProcessorState implements Mutable, Closeable {
     public static final String HIDDEN = "hidden";
-    static final int QUERY_DONE = 5;
-    static final int QUERY_ERROR = 6;
-    static final int QUERY_METADATA = 2;
-    static final int QUERY_METADATA_SUFFIX = 3;
-    static final int QUERY_PREFIX = 1;
-    static final int QUERY_SETUP_FIRST_RECORD = 0;
-    static final int QUERY_SUFFIX = 4;
+    static final int VALIDATION_BAD_UTF8 = 8;
+    static final int VALIDATION_CONFIRMATION = 7;
+    static final int VALIDATION_DONE = 5;
+    static final int VALIDATION_EMPTY_QUERY = 9;
+    static final int VALIDATION_ERROR = 6;
+    static final int VALIDATION_METADATA = 2;
+    static final int VALIDATION_METADATA_SUFFIX = 3;
+    static final int VALIDATION_PREFIX = 1;
+    static final int VALIDATION_RESPONSE_BEGIN = 0;
+    static final int VALIDATION_SUFFIX = 4;
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(SqlValidationProcessorState.class);
     private final ObjList<String> columnNames = new ObjList<>();
@@ -82,23 +86,27 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     private boolean containsSecret;
     private int errorPosition;
     private boolean noMeta = false;
-    private int queryState = QUERY_SETUP_FIRST_RECORD;
     private int queryTimestampIndex;
     private short queryType;
+    private String queryTypeStringConfirmation = null;
     private Rnd rnd;
+    private int validationState = VALIDATION_RESPONSE_BEGIN;
 
     public SqlValidationProcessorState(
             HttpConnectionContext httpConnectionContext,
             CharSequence keepAliveHeader
     ) {
         this.httpConnectionContext = httpConnectionContext;
-        resumeActions.extendAndSet(QUERY_SETUP_FIRST_RECORD, this::onSetupFirstRecord);
-        resumeActions.extendAndSet(QUERY_PREFIX, this::onQueryPrefix);
-        resumeActions.extendAndSet(QUERY_METADATA, this::onQueryMetadata);
-        resumeActions.extendAndSet(QUERY_METADATA_SUFFIX, this::onQueryMetadataSuffix);
-        resumeActions.extendAndSet(QUERY_SUFFIX, (response, columnCount1) -> querySuffixWithError(response, 0, null, 0));
-        resumeActions.extendAndSet(QUERY_DONE, (response, columnCount) -> response.done());
-        resumeActions.extendAndSet(QUERY_ERROR, (response, columnCount) -> onResumeError());
+        resumeActions.extendAndSet(VALIDATION_RESPONSE_BEGIN, this::onSetupFirstRecord);
+        resumeActions.extendAndSet(VALIDATION_PREFIX, this::onResumePrefix);
+        resumeActions.extendAndSet(VALIDATION_METADATA, this::onResumeMetadata);
+        resumeActions.extendAndSet(VALIDATION_METADATA_SUFFIX, this::onResumeMetadataSuffix);
+        resumeActions.extendAndSet(VALIDATION_SUFFIX, (response, columnCount) -> resumeValidationSuffix(response));
+        resumeActions.extendAndSet(VALIDATION_DONE, (response, columnCount) -> response.done());
+        resumeActions.extendAndSet(VALIDATION_ERROR, (response, columnCount) -> onResumeError(response));
+        resumeActions.extendAndSet(VALIDATION_CONFIRMATION, (response, columnCount) -> onResumeSendConfirmation(response));
+        resumeActions.extendAndSet(VALIDATION_BAD_UTF8, (response, columnCount) -> onResumeBadUtf8(response));
+        resumeActions.extendAndSet(VALIDATION_EMPTY_QUERY, (response, columnCount) -> onResumeEmptyQuery(response));
         this.keepAliveHeader = keepAliveHeader;
     }
 
@@ -111,7 +119,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         columnNames.clear();
         queryTimestampIndex = -1;
         query.clear();
-        queryState = QUERY_SETUP_FIRST_RECORD;
+        validationState = VALIDATION_RESPONSE_BEGIN;
         columnIndex = 0;
         noMeta = false;
         containsSecret = false;
@@ -189,7 +197,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     }
 
     public void logBufferTooSmall() {
-        info().$("response buffer is too small, state=").$(queryState).$();
+        info().$("response buffer is too small, state=").$(validationState).$();
     }
 
     public void logTimings() {
@@ -216,10 +224,15 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     }
 
     public void storeError(int errorPosition, CharSequence errorMessage) {
-        this.queryState = QUERY_ERROR;
+        this.validationState = VALIDATION_ERROR;
         this.errorPosition = errorPosition;
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
+    }
+
+    public void storeQueryTypeStringConfirmation(String queryTypeString) {
+        this.validationState = VALIDATION_CONFIRMATION;
+        this.queryTypeStringConfirmation = queryTypeString;
     }
 
     private static byte parseApiVersion(HttpRequestHeader header) {
@@ -281,7 +294,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     }
 
     private void doQueryMetadata(HttpChunkedResponse response, int columnCount) {
-        queryState = QUERY_METADATA;
+        validationState = VALIDATION_METADATA;
         for (; columnIndex < columnCount; columnIndex++) {
             response.bookmark();
             if (columnIndex > 0) {
@@ -302,7 +315,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     }
 
     private void doQueryMetadataSuffix(HttpChunkedResponse response) {
-        queryState = QUERY_METADATA_SUFFIX;
+        validationState = VALIDATION_METADATA_SUFFIX;
         response.bookmark();
         response.putAscii("],\"timestamp\":").put(queryTimestampIndex);
     }
@@ -325,20 +338,20 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         return httpConnectionContext.getFd();
     }
 
-    private void onQueryMetadata(HttpChunkedResponse response, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void onResumeMetadata(HttpChunkedResponse response, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryMetadata(response, columnCount);
-        onQueryMetadataSuffix(response, columnCount);
+        onResumeMetadataSuffix(response, columnCount);
     }
 
-    private void onQueryMetadataSuffix(
+    private void onResumeMetadataSuffix(
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryMetadataSuffix(response);
-        querySuffixWithError(response, 0, null, 0);
+        resumeValidationSuffix(response);
     }
 
-    private void onQueryPrefix(
+    private void onResumePrefix(
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -346,7 +359,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
             doQueryMetadata(response, columnCount);
             doQueryMetadataSuffix(response);
         }
-        querySuffixWithError(response, 0, null, 0);
+        resumeValidationSuffix(response, 0, null, 0);
     }
 
     private void onSetupFirstRecord(
@@ -354,9 +367,9 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
             int columnCount
     ) throws PeerIsSlowToReadException, PeerDisconnectedException {
         columnIndex = 0;
-        queryState = QUERY_PREFIX;
+        validationState = VALIDATION_PREFIX;
         JsonQueryProcessor.header(response, getHttpConnectionContext(), keepAliveHeader, 200);
-        onQueryPrefix(response, columnCount);
+        onResumePrefix(response, columnCount);
     }
 
     boolean of(RecordCursorFactory factory) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
@@ -378,25 +391,71 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         }
     }
 
-    void onResumeError() throws PeerIsSlowToReadException, PeerDisconnectedException {
-        HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
+    void onResumeBadUtf8(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        Utf8Sequence query = getHttpConnectionContext().getRequestHeader().getUrlParam(URL_PARAM_QUERY);
+        response.bookmark();
+        response.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuoted(query.asAsciiCharSequence()).putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuoted("Bad UTF8 encoding in query text").putAscii(',')
+                .putAsciiQuoted("position").putAscii(':').put(0)
+                .putAscii('}');
+        validationState = VALIDATION_DONE;
+        readyForNextRequest(getHttpConnectionContext());
+        response.sendChunk(true);
+    }
+
+    void onResumeEmptyQuery(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        response.bookmark();
+        String noticeOrError = getApiVersion() >= 2 ? "notice" : "error";
+        response.put('{')
+                .putAsciiQuoted(noticeOrError).putAscii(':').putAsciiQuoted("empty query")
+                .putAscii(",")
+                .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(getQuery()).putQuote()
+                .putAscii(",")
+                .putAsciiQuoted("position").putAscii(':').putAsciiQuoted("0")
+                .putAscii('}');
+        validationState = VALIDATION_DONE;
+        readyForNextRequest(getHttpConnectionContext());
+        response.sendChunk(true);
+    }
+
+    void onResumeError(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
         response.bookmark();
         response.putAscii('{')
                 .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
                 .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(errorMessage).putQuote().putAscii(',')
                 .putAsciiQuoted("position").putAscii(':').put(errorPosition)
                 .putAscii('}');
-        queryState = QUERY_DONE;
+        validationState = VALIDATION_DONE;
+        readyForNextRequest(getHttpConnectionContext());
         response.sendChunk(true);
     }
 
-    void querySuffixWithError(
+    void onResumeSendConfirmation(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        response.bookmark();
+        response.put('{')
+                .putAsciiQuoted("queryType").putAscii(':').putAsciiQuoted(queryTypeStringConfirmation)
+                .putAscii('}');
+        validationState = VALIDATION_DONE;
+        response.sendChunk(true);
+    }
+
+    void resume(HttpChunkedResponse response)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        resumeActions.getQuick(validationState).onResume(response, columnCount);
+    }
+
+    void resumeValidationSuffix(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        resumeValidationSuffix(response, 0, null, 0);
+    }
+
+    void resumeValidationSuffix(
             HttpChunkedResponse response,
             int code,
             @Nullable CharSequence message,
             int messagePosition
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        queryState = QUERY_SUFFIX;
+        validationState = VALIDATION_SUFFIX;
         logTimings();
         response.bookmark();
         if (code > 0) {
@@ -406,13 +465,16 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
                     .putAscii(", \"errorPos\"").putAscii(':').put(messagePosition);
         }
         response.putAscii('}');
-        queryState = QUERY_DONE;
+        validationState = VALIDATION_DONE;
         response.sendChunk(true);
     }
 
-    void resume(HttpChunkedResponse response)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        resumeActions.getQuick(queryState).onResume(response, columnCount);
+    void storeBadUtf8() {
+        validationState = VALIDATION_BAD_UTF8;
+    }
+
+    void storeEmptyQuery() {
+        validationState = VALIDATION_EMPTY_QUERY;
     }
 
     @FunctionalInterface

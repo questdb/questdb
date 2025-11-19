@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
@@ -184,6 +185,43 @@ public class TestHttpClient implements QuietCloseable {
     ) {
         try {
             toSink0(host, port, url, sql, sink, username, password, token, null, null);
+            TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
+    public void assertGet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            Utf8Sequence sql
+    ) {
+        assertGet(
+                url,
+                expectedResponse,
+                sql,
+                "127.0.0.1",
+                9001,
+                null,
+                null,
+                null
+        );
+    }
+
+    public void assertGet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            Utf8Sequence sql,
+            String host,
+            int port,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            @Nullable CharSequence token
+    ) {
+        try {
+            toSink0(host, port, url, sql, sink, username, password, token);
             TestUtils.assertEquals(expectedResponse, sink);
         } finally {
             if (!keepConnection) {
@@ -455,6 +493,21 @@ public class TestHttpClient implements QuietCloseable {
                 Assert.fail("expected response code " + expectedStatus + " but got " + respCode);
             }
         }
+    }
+
+    protected void toSink0(
+            String host,
+            int port,
+            CharSequence url,
+            Utf8Sequence sql,
+            Utf8StringSink sink,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            @Nullable CharSequence token
+    ) {
+        HttpClient.Request req = httpClient.newRequest(host, port);
+        req.GET().url(url).query("query", sql);
+        reqToSink(req, sink, username, password, token, null);
     }
 
     static {

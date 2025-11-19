@@ -273,45 +273,16 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
         }
     }
 
-    private static void readyForNextRequest(HttpConnectionContext context) {
-        LOG.debug().$("all sent [fd=").$(context.getFd())
-                .$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent())
-                .$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
-                .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
-    }
-
     private static void sendConfirmation(
             SqlValidationProcessorState state,
             CharSequence keepAliveHeader,
-            String queryType
+            String queryTypeStringConfirmation
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponse response = context.getChunkedResponse();
+        state.storeQueryTypeStringConfirmation(queryTypeStringConfirmation);
         JsonQueryProcessor.header(response, context, keepAliveHeader, 200);
-        response.put('{')
-                .putAsciiQuoted("queryType").putAscii(':').putAsciiQuoted(queryType)
-                .putAscii('}');
-        response.sendChunk(true);
-        readyForNextRequest(context);
-    }
-
-    private static void sendEmptyQueryNotice(
-            SqlValidationProcessorState state,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final HttpConnectionContext context = state.getHttpConnectionContext();
-        final HttpChunkedResponse response = context.getChunkedResponse();
-        JsonQueryProcessor.header(response, context, keepAliveHeader, 200);
-        String noticeOrError = state.getApiVersion() >= 2 ? "notice" : "error";
-        response.put('{')
-                .putAsciiQuoted(noticeOrError).putAscii(':').putAsciiQuoted("empty query")
-                .putAscii(",")
-                .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(state.getQuery()).putQuote()
-                .putAscii(",")
-                .putAsciiQuoted("position").putAscii(':').putAsciiQuoted("0")
-                .putAscii('}');
-        response.sendChunk(true);
-        readyForNextRequest(context);
+        state.onResumeSendConfirmation(response);
     }
 
     private void compileAndValidate(
@@ -460,7 +431,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             errorMessage = e.getMessage();
         }
         if (context.getTotalBytesSent() > 0) {
-            state.querySuffixWithError(context.getChunkedResponse(), httpStatusCode, errorMessage, errorMessagePosition);
+            state.resumeValidationSuffix(context.getChunkedResponse(), httpStatusCode, errorMessage, errorMessagePosition);
         } else {
             sendException(
                     state,
@@ -487,7 +458,10 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                 // Since we are not parsing query text, we should not have any encoding issues.
             }
             state.info().$("Empty query header received. Sending empty reply.").$();
-            sendEmptyQueryNotice(state, keepAliveHeader);
+            final HttpChunkedResponse response = context.getChunkedResponse();
+            state.storeEmptyQuery();
+            JsonQueryProcessor.header(response, context, keepAliveHeader, 200);
+            state.onResumeEmptyQuery(response);
             return false;
         }
 
@@ -495,7 +469,10 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             state.configure(header, query);
         } catch (Utf8Exception e) {
             state.info().$("Bad UTF8 encoding").$();
-            sendBadUtf8EncodingInRequestResponse(context.getChunkedResponse(), context, query, keepAliveHeader);
+            HttpChunkedResponse response = context.getChunkedResponse();
+            state.storeBadUtf8();
+            JsonQueryProcessor.header(response, context, keepAliveHeader, HTTP_BAD_REQUEST);
+            state.onResumeBadUtf8(response);
             return false;
         }
         return true;
@@ -511,30 +488,13 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
         final HttpChunkedResponse response = context.getChunkedResponse();
         state.storeError(errorPosition, errorMessage);
         JsonQueryProcessor.header(response, context, configuration.getKeepAliveHeader(), httpStatusCode);
-        state.onResumeError();
+        state.onResumeError(response);
     }
 
-    static void sendBadUtf8EncodingInRequestResponse(
-            HttpChunkedResponse response,
-            HttpConnectionContext context,
-            DirectUtf8Sequence query,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        JsonQueryProcessor.header(response, context, keepAliveHeader, HTTP_BAD_REQUEST);
-        response.putAscii('{')
-                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query.asAsciiCharSequence()).putAscii(',')
-                .putAsciiQuoted("error").putAscii(':').putQuoted("Bad UTF8 encoding in query text").putAscii(',')
-                .putAsciiQuoted("position").putAscii(':').put(0)
-                .putAscii('}');
-        response.sendChunk(true);
-    }
-
-    @FunctionalInterface
-    public interface QueryExecutor {
-        void execute(
-                SqlValidationProcessorState state,
-                CompiledQuery cc,
-                CharSequence keepAliveHeader
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException;
+    static void readyForNextRequest(HttpConnectionContext context) {
+        LOG.debug().$("all sent [fd=").$(context.getFd())
+                .$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent())
+                .$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
+                .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 }

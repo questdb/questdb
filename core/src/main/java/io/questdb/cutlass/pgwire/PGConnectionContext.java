@@ -1633,7 +1633,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (sendBufferPtr + size < sendBufferLimit) {
                 return;
             }
-            throw NoSpaceLeftInResponseBufferException.instance(size);
+            throw NoSpaceLeftInResponseBufferException.instance(size, sendBufferLimit - sendBufferPtr, sendBufferSize);
         }
 
         @Override
@@ -1844,7 +1844,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (address + size < sendBufferLimit) {
                 return;
             }
-            throw NoSpaceLeftInResponseBufferException.instance(size);
+            throw NoSpaceLeftInResponseBufferException.instance(size, sendBufferLimit - address, sendBufferSize);
         }
     }
 }

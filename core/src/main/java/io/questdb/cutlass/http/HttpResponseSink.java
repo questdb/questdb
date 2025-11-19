@@ -408,10 +408,11 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         long getWriteAddress(long size) {
             assert _wptr != 0;
-            if (getWriteNAvailable() >= size) {
+            long available = getWriteNAvailable();
+            if (available >= size) {
                 return _wptr;
             }
-            throw NoSpaceLeftInResponseBufferException.instance(size);
+            throw NoSpaceLeftInResponseBufferException.instance(size, available, bufSize);
         }
 
         long getWriteNAvailable() {

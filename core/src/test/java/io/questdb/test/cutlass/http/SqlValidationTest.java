@@ -25,6 +25,8 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -37,15 +39,22 @@ public class SqlValidationTest extends AbstractCairoTest {
         getSimpleTester()
                 .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
                 .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                // send buffer has to be large enough for the error message and the http header (maybe we should truncate the message if it doesn't fit?)
+                .withSendBufferSize(Math.max(1024, rnd.nextInt(4099)))
                 .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
                             engine.execute("create table xyz as (select rnd_int() a, rnd_double() b, timestamp_sequence(0,1000) ts from long_sequence(1000)) timestamp(ts) partition by hour");
 
-                            var requestResponse = new String[][]{
+                            var requestResponse = new Object[][]{
                                     {"select count() from xyz", "{\"query\":\"select count() from xyz\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1}"},
                                     {"select a from xyz limit 1", "{\"query\":\"select a from xyz limit 1\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"}],\"timestamp\":-1}"},
                                     {"select b from xyz limit 5", "{\"query\":\"select b from xyz limit 5\",\"columns\":[{\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestamp\":-1}"},
                                     {"select ts, b from xyz limit 15", "{\"query\":\"select ts, b from xyz limit 15\",\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestamp\":0}"},
-                                    {"select a, z from xyz", "{\"query\":\"select a, z from xyz\",\"error\":\"Invalid column: z\",\"position\":10}"}
+                                    {"select a, z from xyz", "{\"query\":\"select a, z from xyz\",\"error\":\"Invalid column: z\",\"position\":10}"},
+                                    {"create table abc(x int)", "{\"queryType\":\"CREATE TABLE\"}"},
+                                    {"select \"µ\" from xyz", "{\"query\":\"select \\\"µ\\\" from xyz\",\"error\":\"Invalid column: µ\",\"position\":7}"},
+                                    {new Utf8StringSink().put("select").putAny((byte)0xC3).putAny((byte)0x28), "{\"query\":\"selectￃ(\",\"error\":\"Bad UTF8 encoding in query text\",\"position\":0}"},
+                                    // empty query
+                                    {"", "{\"error\":\"empty query\",\"query\":\"\",\"position\":\"0\"}"}
                             };
 
                             var candidateCount = requestResponse.length;
@@ -54,16 +63,24 @@ public class SqlValidationTest extends AbstractCairoTest {
                                 int iterCount = rnd.nextInt(10);
                                 for (int i = 0; i < iterCount; i++) {
                                     int index = rnd.nextInt(candidateCount);
-                                    testHttpClient.assertGet(
-                                            "/api/v1/sql/validate",
-                                            requestResponse[index][1],
-                                            requestResponse[index][0],
-                                            "localhost",
-                                            9001,
-                                            null,
-                                            null,
-                                            null
-                                    );
+                                    if (requestResponse[index][0] instanceof Utf8Sequence utf8Sql) {
+                                        testHttpClient.assertGet(
+                                                "/api/v1/sql/validate",
+                                                requestResponse[index][1].toString(),
+                                                utf8Sql
+                                        );
+                                    } else {
+                                        testHttpClient.assertGet(
+                                                "/api/v1/sql/validate",
+                                                requestResponse[index][1].toString(),
+                                                requestResponse[index][0].toString(),
+                                                "localhost",
+                                                9001,
+                                                null,
+                                                null,
+                                                null
+                                        );
+                                    }
                                 }
                             }
                         }

@@ -473,6 +473,23 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public Request query(CharSequence name, Utf8Sequence value) {
+            assert state == STATE_URL_DONE || state == STATE_QUERY;
+            if (state == STATE_URL_DONE) {
+                putAsciiInternal('?');
+            } else {
+                putAsciiInternal('&');
+            }
+            state = STATE_QUERY;
+            urlEncode = true;
+            try {
+                put(name).putAsciiInternal('=').put(value);
+            } finally {
+                urlEncode = false;
+            }
+            return this;
+        }
+
         public ResponseHeaders send() {
             return send(defaultTimeout);
         }
