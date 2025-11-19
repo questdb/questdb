@@ -134,8 +134,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                     columnSplit,
                     masterColumnIndex,
                     slaveColumnIndex,
-                    slaveRecordArray,
-                    configuration.getSqlMarkoutJoinFreelistMaxLength()
+                    slaveRecordArray
             );
         } catch (Throwable th) {
             Misc.free(slaveRecordArray);
@@ -216,10 +215,8 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         private static final int ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START = 36; // int (4 bytes)
         private static final int ITERATOR_SIZE = 40;
         private static final long BLOCK_SIZE = BLOCK_HEADER_SIZE + (ITERATORS_PER_BLOCK * ITERATOR_SIZE);
-        private final LongList iteratorBlockFreeList = new LongList();
         private final JoinRecord joinRecord;
         private final int masterTimestampColumnIndex;
-        private final int maxFreelistLength;
         private final RecordArray slaveRecordArray;
         private final LongList slaveRecordOffsets = new LongList();
         private final int slaveSequenceColumnIndex;
@@ -241,15 +238,13 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 int columnSplit,
                 int masterTimestampColumnIndex,
                 int slaveSequenceColumnIndex,
-                RecordArray slaveRecordArray,
-                int maxFreelistLength
+                RecordArray slaveRecordArray
         ) {
             super(columnSplit);
             this.joinRecord = new JoinRecord(columnSplit);
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.slaveSequenceColumnIndex = slaveSequenceColumnIndex;
             this.slaveRecordArray = slaveRecordArray;
-            this.maxFreelistLength = maxFreelistLength;
         }
 
         @Override
@@ -457,24 +452,13 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         }
 
         private long block_alloc() {
-            long blockAddr;
-            int indexOfLastFreeBlock = iteratorBlockFreeList.size() - 1;
-            if (indexOfLastFreeBlock >= 0) {
-                blockAddr = iteratorBlockFreeList.getQuick(indexOfLastFreeBlock);
-                iteratorBlockFreeList.removeIndex(indexOfLastFreeBlock);
-            } else {
-                blockAddr = Unsafe.malloc(BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
-            }
+            long blockAddr = Unsafe.malloc(BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
             Unsafe.getUnsafe().setMemory(blockAddr, BLOCK_HEADER_SIZE, (byte) 0);
             return blockAddr;
         }
 
         private void block_free(long blockAddr) {
-            if (iteratorBlockFreeList.size() < maxFreelistLength) {
-                iteratorBlockFreeList.add(blockAddr);
-            } else {
-                Unsafe.free(blockAddr, BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
-            }
+            Unsafe.free(blockAddr, BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
 
         private long createIterator(Record masterRecord) {
@@ -548,11 +532,6 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 Unsafe.free(blockAddr, BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
                 blockAddr = nextBlockAddr;
             }
-            for (int n = iteratorBlockFreeList.size(), i = 0; i < n; i++) {
-                blockAddr = iteratorBlockFreeList.getQuick(i);
-                Unsafe.free(blockAddr, BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
-            }
-            iteratorBlockFreeList.clear();
             firstIteratorBlockAddr = 0;
             lastIteratorBlockAddr = 0;
             currentIterAddr = 0;
