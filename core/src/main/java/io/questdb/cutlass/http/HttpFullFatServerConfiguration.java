@@ -28,9 +28,36 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 
 public interface HttpFullFatServerConfiguration extends HttpServerConfiguration {
+    ObjHashSet<String> CONTEXT_PATH_EXEC = new ObjHashSet<>() {{
+        add("/exec");
+        add("/api/v1/sql/execute");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_EXPORT = new ObjHashSet<>() {{
+        add("/exp");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_ILP = new ObjHashSet<>() {{
+        add("/write");
+        add("/api/v2/write");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_IMPORT = new ObjHashSet<>() {{
+        add("/imp");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_SETTINGS = new ObjHashSet<>() {{
+        add("/settings");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_TABLE_STATUS = new ObjHashSet<>() {{
+        add("/chk");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_VALIDATE = new ObjHashSet<>() {{
+        add("/api/v1/sql/validate");
+    }};
+    ObjHashSet<String> CONTEXT_PATH_WARNINGS = new ObjHashSet<>() {{
+        add("/warnings");
+    }};
     String DEFAULT_PROCESSOR_URL = "*";
 
     ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
@@ -39,40 +66,48 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
         return new ObjList<>("/api/v1");
     }
 
-    default ObjList<String> getContextPathDefault() {
-        return new ObjList<>(DEFAULT_PROCESSOR_URL);
+    default ObjHashSet<String> getContextPathDefault() {
+        return new ObjHashSet<>() {{
+            add(DEFAULT_PROCESSOR_URL);
+        }};
     }
 
-    default ObjList<String> getContextPathExec() {
-        return new ObjList<>("/exec");
+    default ObjHashSet<String> getContextPathExec() {
+        return CONTEXT_PATH_EXEC;
     }
 
-    default ObjList<String> getContextPathExport() {
-        return new ObjList<>("/exp");
+    default ObjHashSet<String> getContextPathExport() {
+        return CONTEXT_PATH_EXPORT;
     }
 
-    default ObjList<String> getContextPathILP() {
-        return new ObjList<>("/write", "/api/v2/write");
+    default ObjHashSet<String> getContextPathILP() {
+        return CONTEXT_PATH_ILP;
     }
 
-    default ObjList<String> getContextPathILPPing() {
-        return new ObjList<>("/ping");
+    default ObjHashSet<String> getContextPathILPPing() {
+        return new ObjHashSet<>() {{
+            add("/ping");
+        }};
     }
 
-    default ObjList<String> getContextPathImport() {
-        return new ObjList<>("/imp");
+    default ObjHashSet<String> getContextPathImport() {
+        return CONTEXT_PATH_IMPORT;
     }
 
-    default ObjList<String> getContextPathSettings() {
-        return new ObjList<>("/settings");
+    default ObjHashSet<String> getContextPathSettings() {
+        return CONTEXT_PATH_SETTINGS;
     }
 
-    default ObjList<String> getContextPathTableStatus() {
-        return new ObjList<>("/chk");
+    default ObjHashSet<String> getContextPathSqlValidation() {
+        return CONTEXT_PATH_VALIDATE;
     }
 
-    default ObjList<String> getContextPathWarnings() {
-        return new ObjList<>("/warnings");
+    default ObjHashSet<String> getContextPathTableStatus() {
+        return CONTEXT_PATH_TABLE_STATUS;
+    }
+
+    default ObjHashSet<String> getContextPathWarnings() {
+        return CONTEXT_PATH_WARNINGS;
     }
 
     default String getContextPathWebConsole() {
