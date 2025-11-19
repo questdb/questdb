@@ -27,9 +27,11 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
@@ -101,19 +103,15 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCountLargishCrossJoin() throws Exception {
+    public void testCountLargeCrossJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            // Insert 10 master rows with 1-second spacing
-            for (int i = 1; i <= 10; i++) {
-                execute("INSERT INTO orders VALUES (" + i + ", " + (i * 1_000_000_000L) + ")");
-            }
+            execute("INSERT INTO orders SELECT x, (x * 1_000)::TIMESTAMP FROM long_sequence(300_000)");
 
-            // 100-row sequence of offsets creates 1000 total rows
             String sql = """
                     WITH offsets AS (
-                        SELECT 1_000_000 * (x-1) usec_offs
-                        FROM long_sequence(100)
+                        SELECT 10_000_000 * (x-1) usec_offs
+                        FROM long_sequence(5)
                     )
                     SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
@@ -123,7 +121,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             count
-                            1000
+                            500000000
                             """,
                     "SELECT count(*) FROM (" + sql + ")",
                     null,
@@ -830,11 +828,29 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
 
     private void assertHintUsedAndResultSameAsWithoutHint(String sqlWithHint) throws Exception {
         assertMarkoutHorizonJoinUsed(sqlWithHint);
-        final StringSink resultWithHint = new StringSink();
-        final StringSink resultWithoutHint = new StringSink();
-        printSql(sqlWithHint, resultWithHint);
-        printSql(sqlWithHint.replace("markout_horizon", "XXX"), resultWithoutHint);
-        TestUtils.assertEquals(resultWithoutHint, resultWithHint);
+        String sqlWithoutHint = sqlWithHint.replace("markout_horizon", "XXX");
+        final StringSink sinkWithHint = new StringSink();
+        final StringSink sinkWithoutHint = new StringSink();
+        try (
+                RecordCursorFactory facWithHint = select(sqlWithHint, sqlExecutionContext);
+                RecordCursor cursorWithHint = facWithHint.getCursor(sqlExecutionContext);
+                RecordCursorFactory facWithoutHint = select(sqlWithoutHint, sqlExecutionContext);
+                RecordCursor cursorWithoutHint = facWithoutHint.getCursor(sqlExecutionContext)
+        ) {
+            RecordMetadata metaWithHint = facWithHint.getMetadata();
+            RecordMetadata metaWithoutHint = facWithoutHint.getMetadata();
+            var recWithHint = cursorWithHint.getRecord();
+            var recWithoutHint = cursorWithoutHint.getRecord();
+            while (cursorWithHint.hasNext()) {
+                Assert.assertTrue("SQL with hint has more rows", cursorWithoutHint.hasNext());
+                sinkWithHint.clear();
+                sinkWithoutHint.clear();
+                CursorPrinter.println(recWithHint, metaWithHint, sinkWithHint, false);
+                CursorPrinter.println(recWithoutHint, metaWithoutHint, sinkWithoutHint, false);
+                TestUtils.assertEquals(sinkWithHint, sinkWithoutHint);
+            }
+            Assert.assertFalse("SQL with hint has less rows", cursorWithoutHint.hasNext());
+        }
     }
 
     private void assertMarkoutHorizonJoinNotUsed(String query) throws Exception {
