@@ -4266,18 +4266,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         Interval forward scan on: fromto
                                           intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                         Hash
-                            Fill Range
-                              range: ('2017-12-20','2018-01-31')
-                              stride: '5d'
-                              values: [null,null]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  values: [avg(x),sum(x)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: fromto2
-                                          intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                            Sort
+                              keys: [ts]
+                                Fill Range
+                                  range: ('2017-12-20','2018-01-31')
+                                  stride: '5d'
+                                  values: [null,null]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [avg(x),sum(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto2
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                     """);
 
             assertSql("ts\tavg\tsum\n", exceptAllQuery);
@@ -4299,18 +4301,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         Interval forward scan on: fromto
                                           intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                         Hash
-                            Fill Range
-                              range: ('2017-12-20','2018-01-31')
-                              stride: '5d'
-                              values: [null,null]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  values: [avg(x),sum(x)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: fromto2
-                                          intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                            Sort
+                              keys: [ts]
+                                Fill Range
+                                  range: ('2017-12-20','2018-01-31')
+                                  stride: '5d'
+                                  values: [null,null]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [avg(x),sum(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto2
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                     """);
 
             assertSql("ts\tavg\tsum\n", exceptQuery);
@@ -4348,18 +4352,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         Interval forward scan on: fromto
                                           intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                         Hash
-                            Fill Range
-                              range: ('2017-12-20','2018-01-31')
-                              stride: '5d'
-                              values: [null,null]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  values: [avg(x),sum(x)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: fromto2
-                                          intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                            Sort
+                              keys: [ts]
+                                Fill Range
+                                  range: ('2017-12-20','2018-01-31')
+                                  stride: '5d'
+                                  values: [null,null]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [avg(x),sum(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto2
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                     """);
 
             assertSql("""
@@ -4392,18 +4398,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         Interval forward scan on: fromto
                                           intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                         Hash
-                            Fill Range
-                              range: ('2017-12-20','2018-01-31')
-                              stride: '5d'
-                              values: [null,null]
-                                Async Group By workers: 1
-                                  keys: [ts]
-                                  values: [avg(x),sum(x)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: fromto2
-                                          intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                            Sort
+                              keys: [ts]
+                                Fill Range
+                                  range: ('2017-12-20','2018-01-31')
+                                  stride: '5d'
+                                  values: [null,null]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [avg(x),sum(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto2
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                     """);
 
             assertSql("""
@@ -4639,18 +4647,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Interval forward scan on: fromto
                                                   intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
-                                    Fill Range
-                                      range: ('2017-12-20','2018-01-31')
-                                      stride: '5d'
-                                      values: [null,null]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          values: [avg(x),sum(x)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: fromto2
-                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                    Sort
+                                      keys: [ts]
+                                        Fill Range
+                                          range: ('2017-12-20','2018-01-31')
+                                          stride: '5d'
+                                          values: [null,null]
+                                            Async Group By workers: 1
+                                              keys: [ts]
+                                              values: [avg(x),sum(x)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Interval forward scan on: fromto2
+                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """
             );
 
@@ -4700,18 +4710,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Interval forward scan on: fromto
                                                   intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
-                                    Fill Range
-                                      range: ('2017-12-20','2018-01-31')
-                                      stride: '5d'
-                                      values: [null,null]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          values: [avg(x),sum(x)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: fromto2
-                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                    Sort
+                                      keys: [ts]
+                                        Fill Range
+                                          range: ('2017-12-20','2018-01-31')
+                                          stride: '5d'
+                                          values: [null,null]
+                                            Async Group By workers: 1
+                                              keys: [ts]
+                                              values: [avg(x),sum(x)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Interval forward scan on: fromto2
+                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """
             );
 

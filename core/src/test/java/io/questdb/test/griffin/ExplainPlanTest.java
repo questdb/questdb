@@ -2201,9 +2201,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 GroupBy vectorized: false
                                   keys: [s]
                                   values: [count(*)]
-                                    FilterOnExcludedValues symbolOrder: desc
+                                    FilterOnExcludedValues
                                       symbolFilter: s not in [null]
-                                        Cursor-order scan
+                                        Table-order scan
                                         Frame forward scan on: trips
                             """
             );
@@ -2546,8 +2546,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     GroupBy vectorized: false
                       keys: [referencePriceType]
                       values: [count(*)]
-                        FilterOnValues symbolOrder: desc
-                            Cursor-order scan
+                        FilterOnValues
+                            Table-order scan
                                 Index forward scan on: venue
                                   filter: venue=3 and not (referencePriceType in [TYPE1])
                                 Index forward scan on: venue
@@ -3779,11 +3779,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (i int, d double)",
                 "select max(i) from (select * from a order by d)",
                 """
-                        GroupBy vectorized: true workers: 1
+                        GroupBy vectorized: false
                           values: [max(i)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
+                            Sort light
+                              keys: [d]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
                         """
         );
     }
@@ -12947,13 +12949,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               keys: [sum desc]
                                 GroupBy vectorized: false
                                   values: [sum(avg),sum(sum),first(first_value)]
-                                    CachedWindow
-                                      orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                                    Window
+                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
                             sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
+                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
                                         PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: cpu_ts
+                                            Row backward scan
+                                            Frame backward scan on: cpu_ts
                             """
             );
         });
