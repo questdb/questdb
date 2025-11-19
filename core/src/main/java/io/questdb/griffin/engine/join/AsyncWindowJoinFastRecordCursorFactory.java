@@ -72,6 +72,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom.toSymbolMapKey;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
@@ -312,9 +313,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         break;
                     }
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                    final int matchingMasterKey = slaveSymbolLookupTable.get(Math.max(slaveKey + 1, 0));
+                    final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
                     if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
-                        final int idx = Math.max(matchingMasterKey + 1, 0);
+                        final int idx = toSymbolMapKey(matchingMasterKey);
                         rowIds.of(slaveData.get(idx, 0));
                         timestamps.of(slaveData.get(idx, 1));
                         rowIds.add(baseSlaveRowId + slaveRowId);
@@ -348,7 +349,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
-                final int idx = Math.max(masterKey + 1, 0);
+                final int idx = toSymbolMapKey(masterKey);
                 long rowIdsPtr = slaveData.get(idx, 0);
                 long timestampsPtr = slaveData.get(idx, 1);
                 long rowLo = slaveData.get(idx, 2);
@@ -455,9 +456,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         break;
                     }
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                    final int matchingMasterKey = slaveSymbolLookupTable.get(Math.max(slaveKey + 1, 0));
+                    final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
                     if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
-                        final int idx = Math.max(matchingMasterKey + 1, 0);
+                        final int idx = toSymbolMapKey(matchingMasterKey);
                         long timestampsPtr = slaveData.get(idx, 0);
                         timestamps.of(timestampsPtr);
                         timestamps.add(slaveTimestamp);
@@ -497,7 +498,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
-                final int idx = Math.max(masterKey + 1, 0);
+                final int idx = toSymbolMapKey(masterKey);
                 long timestampsPtr = slaveData.get(idx, 0);
                 long rowLo = slaveData.get(idx, 1);
                 timestamps.of(timestampsPtr);
@@ -602,9 +603,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             break;
                         }
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                        final int matchingMasterKey = slaveSymbolLookupTable.get(Math.max(slaveKey + 1, 0));
+                        final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
-                            final int idx = Math.max(matchingMasterKey + 1, 0);
+                            final int idx = toSymbolMapKey(matchingMasterKey);
                             rowIds.of(slaveData.get(idx, 0));
                             timestamps.of(slaveData.get(idx, 1));
                             rowIds.add(baseSlaveRowId + slaveRowId);
@@ -639,7 +640,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
 
                     final int masterKey = record.getInt(masterSymbolIndex);
-                    final int idx = Math.max(masterKey + 1, 0);
+                    final int idx = toSymbolMapKey(masterKey);
                     long rowIdsPtr = slaveData.get(idx, 0);
                     long timestampsPtr = slaveData.get(idx, 1);
                     long rowLo = slaveData.get(idx, 2);
@@ -755,9 +756,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             break;
                         }
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                        final int matchingMasterKey = slaveSymbolLookupTable.get(Math.max(slaveKey + 1, 0));
+                        final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
-                            final int idx = Math.max(matchingMasterKey + 1, 0);
+                            final int idx = toSymbolMapKey(matchingMasterKey);
                             timestamps.of(slaveData.get(idx, 0));
                             timestamps.add(slaveTimestamp);
                             slaveData.put(idx, 0, timestamps.ptr());
@@ -797,7 +798,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
 
                     final int masterKey = record.getInt(masterSymbolIndex);
-                    final int idx = Math.max(masterKey + 1, 0);
+                    final int idx = toSymbolMapKey(masterKey);
                     long timestampsPtr = slaveData.get(idx, 0);
                     long rowLo = slaveData.get(idx, 1);
                     timestamps.of(timestampsPtr);

@@ -50,6 +50,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
+    // +1 symbol keys to use zero as the noKeyValue
+    static final int KEY_SHIFT = 2;
+    static final int NULL_KEY = 1;
     static final int SLAVE_MAP_INITIAL_CAPACITY = 16;
     static final double SLAVE_MAP_LOAD_FACTOR = 0.5;
     private final int masterSymbolIndex;
@@ -115,7 +118,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             this.slaveSymbolLookupTable = new DirectIntIntHashMap(
                     SLAVE_MAP_INITIAL_CAPACITY,
                     SLAVE_MAP_LOAD_FACTOR,
-                    StaticSymbolTable.VALUE_NOT_FOUND,
+                    0,
                     MemoryTag.NATIVE_UNORDERED_MAP
             );
             final int slaveDataLen = isVectorized() ? 2 + ownerGroupByFunctionArgs.size() : 3;
@@ -123,7 +126,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             this.ownerSlaveData = new DirectIntMultiLongHashMap(
                     SLAVE_MAP_INITIAL_CAPACITY,
                     SLAVE_MAP_LOAD_FACTOR,
-                    StaticSymbolTable.VALUE_NOT_FOUND,
+                    0,
                     slaveDataLen,
                     MemoryTag.NATIVE_UNORDERED_MAP
             );
@@ -132,7 +135,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                 perWorkerSlaveData.extendAndSet(i, new DirectIntMultiLongHashMap(
                         SLAVE_MAP_INITIAL_CAPACITY,
                         SLAVE_MAP_LOAD_FACTOR,
-                        StaticSymbolTable.VALUE_NOT_FOUND,
+                        0,
                         slaveDataLen,
                         MemoryTag.NATIVE_UNORDERED_MAP
                 ));
@@ -221,11 +224,15 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             final CharSequence masterSym = masterSymbolTable.valueOf(masterKey);
             final int slaveKey = slaveSymbolTable.keyOf(masterSym);
             if (slaveKey != StaticSymbolTable.VALUE_NOT_FOUND) {
-                slaveSymbolLookupTable.put(slaveKey + 1, masterKey);
+                slaveSymbolLookupTable.put(slaveKey + KEY_SHIFT, masterKey);
             }
         }
         if (masterSymbolTable.containsNullValue() && slaveSymbolTable.containsNullValue()) {
-            slaveSymbolLookupTable.put(0, StaticSymbolTable.VALUE_IS_NULL);
+            slaveSymbolLookupTable.put(NULL_KEY, StaticSymbolTable.VALUE_IS_NULL);
         }
+    }
+
+    static int toSymbolMapKey(int key) {
+        return Math.max(key + KEY_SHIFT, NULL_KEY);
     }
 }

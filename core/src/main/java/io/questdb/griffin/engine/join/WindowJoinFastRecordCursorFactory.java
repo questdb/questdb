@@ -68,8 +68,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinAtom.findFunctionWithSameArg;
-import static io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom.SLAVE_MAP_INITIAL_CAPACITY;
-import static io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom.SLAVE_MAP_LOAD_FACTOR;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom.*;
 
 /**
  * Single-threaded WINDOW JOIN factory which supports an equal symbol comparison between master and slave
@@ -268,13 +267,13 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 this.slaveSymbolLookupTable = new DirectIntIntHashMap(
                         SLAVE_MAP_INITIAL_CAPACITY,
                         SLAVE_MAP_LOAD_FACTOR,
-                        StaticSymbolTable.VALUE_NOT_FOUND,
+                        0,
                         MemoryTag.NATIVE_UNORDERED_MAP
                 );
                 this.slaveData = new DirectIntMultiLongHashMap(
                         SLAVE_MAP_INITIAL_CAPACITY,
                         SLAVE_MAP_LOAD_FACTOR,
-                        StaticSymbolTable.VALUE_NOT_FOUND,
+                        0,
                         valueCount,
                         MemoryTag.NATIVE_UNORDERED_MAP
                 );
@@ -304,11 +303,11 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 final CharSequence masterSym = masterSymbolTable.valueOf(masterKey);
                 final int slaveKey = slaveSymbolTable.keyOf(masterSym);
                 if (slaveKey != StaticSymbolTable.VALUE_NOT_FOUND) {
-                    slaveSymbolLookupTable.put(slaveKey + 1, masterKey);
+                    slaveSymbolLookupTable.put(slaveKey + KEY_SHIFT, masterKey);
                 }
             }
             if (masterSymbolTable.containsNullValue() && slaveSymbolTable.containsNullValue()) {
-                slaveSymbolLookupTable.put(0, StaticSymbolTable.VALUE_IS_NULL);
+                slaveSymbolLookupTable.put(NULL_KEY, StaticSymbolTable.VALUE_IS_NULL);
             }
         }
     }
@@ -461,9 +460,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
                         lastSlaveTimestamp = slaveTimestamp;
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                        final int matchingMasterKey = slaveSymbolLookupTable.get(Math.max(slaveKey + 1, 0));
+                        final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
-                            final int idx = Math.max(matchingMasterKey + 1, 0);
+                            final int idx = toSymbolMapKey(matchingMasterKey);
                             timestamps.of(slaveData.get(idx, 0));
                             rowIDs.of(slaveData.get(idx, 1));
                             timestamps.add(slaveTimestamp);
@@ -488,7 +487,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             groupByFunctionsUpdater.updateEmpty(simpleMapValue);
 
             final int masterKey = internalJoinRecord.getInt(masterSymbolIndex);
-            final int idx = Math.max(masterKey + 1, 0);
+            final int idx = toSymbolMapKey(masterKey);
             timestamps.of(slaveData.get(idx, 0));
             rowIDs.of(slaveData.get(idx, 1));
             timestamps.of(slaveData.get(idx, 0));
@@ -731,9 +730,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
                         lastSlaveTimestamp = slaveTimestamp;
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                        final int matchingMasterKey = slaveSymbolLookupTable.get(Math.max(slaveKey + 1, 0));
+                        final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
-                            final int idx = Math.max(matchingMasterKey + 1, 0);
+                            final int idx = toSymbolMapKey(matchingMasterKey);
                             timestamps.of(slaveData.get(idx, 0));
                             timestamps.add(slaveTimestamp);
                             slaveData.put(idx, 0, timestamps.ptr());
@@ -767,7 +766,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             }
 
             final int masterKey = internalJoinRecord.getInt(masterSymbolIndex);
-            final int idx = Math.max(masterKey + 1, 0);
+            final int idx = toSymbolMapKey(masterKey);
             timestamps.of(slaveData.get(idx, 0));
             if (timestamps.size() > 0) {
                 long rowLo = slaveData.get(idx, 1);
