@@ -24,14 +24,12 @@
 
 package io.questdb.test.griffin.engine.join;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Before;
 import org.junit.Test;
 
 public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
@@ -39,12 +37,6 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     // Used to easily switch to "ts" while making changes in SqlCodeGenerator
     // Safe to remove when code is stabilized
     private static final String EXPECTED_TS = null;
-
-    @Before
-    public void setUp() {
-        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_SQL_MARKOUT_JOIN_FREELIST_MAX_LENGTH, 2);
-        super.setUp();
-    }
 
     @Test
     public void testAggregation() throws Exception {

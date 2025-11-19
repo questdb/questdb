@@ -411,19 +411,19 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
+    int getParquetExportCopyReportFrequencyLines();
+
     int getParquetExportCompressionCodec();
 
     int getParquetExportCompressionLevel();
-
-    int getParquetExportCopyReportFrequencyLines();
 
     int getParquetExportDataPageSize();
 
     int getParquetExportRowGroupSize();
 
-    CharSequence getParquetExportTableNamePrefix();
-
     int getParquetExportVersion();
+
+    CharSequence getParquetExportTableNamePrefix();
 
     int getPartitionEncoderParquetCompressionCodec();
 
@@ -571,8 +571,6 @@ public interface CairoConfiguration {
     int getSqlMapMaxPages();
 
     int getSqlMapMaxResizes();
-
-    int getSqlMarkoutJoinFreelistMaxLength();
 
     int getSqlMaxNegativeLimit();
 
