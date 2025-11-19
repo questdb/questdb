@@ -43,6 +43,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_SQL_MARKOUT_JOIN_FREELIST_MAX_LENGTH, 2);
+        super.setUp();
     }
 
     @Test
@@ -102,35 +103,6 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     sql,
                     EXPECTED_TS,
                     true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testCountLargeCrossJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            execute("INSERT INTO orders SELECT x, (x * 1_000)::TIMESTAMP FROM long_sequence(300_000)");
-
-            String sql = """
-                    WITH offsets AS (
-                        SELECT 10_000_000 * (x-1) usec_offs
-                        FROM long_sequence(5)
-                    )
-                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
-                    FROM orders CROSS JOIN offsets
-                    ORDER BY order_ts + usec_offs
-                    """;
-            assertHintUsedAndResultSameAsWithoutHint(sql);
-            assertQueryNoLeakCheck(
-                    """
-                            count
-                            500000000
-                            """,
-                    "SELECT count(*) FROM (" + sql + ")",
-                    null,
-                    false,
                     true
             );
         });
@@ -217,6 +189,46 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     "id\tts\n",
                     sql,
                     EXPECTED_TS,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testIteratorBlockFreelist() throws Exception {
+        // This test exercises the different code paths around iterator block allocation in
+        // MarkoutHorizonRecordCursor.
+        // It's set up so that first, lots of iterators are active at the same time. They also churn,
+        // iterators being discarded as new ones are created. This creates a pattern where several
+        // iterator blocks are allocated, freed, and reused through the freelist.
+        //
+        // Then a gap in the master table's timestamps occurs. All iterators get discarded,
+        // and the block freelist grows. There are more blocks than freelist max length, so
+        // some blocks must be deallocated.
+        // Then the surviving blocks get used again in the second "burst" in the master table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+            execute("INSERT INTO orders SELECT x, (x * 1_000)::TIMESTAMP FROM long_sequence(10_000)");
+            execute("INSERT INTO orders SELECT x, (20_000_000 + x * 1_000)::TIMESTAMP FROM long_sequence(10_000)");
+
+            String sql = """
+                    WITH offsets AS (
+                        SELECT 1_000_000 * (x-1) usec_offs
+                        FROM long_sequence(5)
+                    )
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """;
+            assertHintUsedAndResultSameAsWithoutHint(sql);
+            assertQueryNoLeakCheck(
+                    """
+                            count
+                            100000
+                            """,
+                    "SELECT count(*) FROM (" + sql + ")",
+                    null,
                     false,
                     true
             );
