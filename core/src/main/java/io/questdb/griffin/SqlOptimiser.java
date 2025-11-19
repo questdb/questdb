@@ -3309,11 +3309,12 @@ public class SqlOptimiser implements Mutable {
         int orderByMnemonic;
         int n = columns.size();
 
-        //limit x,y forces order materialization; we can't push order by past it and need to discover actual nested ordering
+        // limit x,y forces order materialization; we can't push order by past it and need to discover actual nested ordering
         if (model.getLimitLo() != null) {
             topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
         }
-        //if model has explicit timestamp then we should detect and preserve actual order because it might be used for asof/lt/splice join
+
+        // if model has explicit timestamp then we should detect and preserve actual order because it might be used for asof/lt/splice join
         if (model.getTimestamp() != null) {
             topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
         }
@@ -3360,6 +3361,11 @@ public class SqlOptimiser implements Mutable {
                     orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
                 }
                 break;
+        }
+
+        // some aggregate functions (e.g. first()) relies on the rows being properly ordered to return the correct result
+        if (model.getSelectModelType() == SELECT_MODEL_GROUP_BY) {
+            orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
         }
 
         final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model, orderByMnemonic);
