@@ -164,32 +164,6 @@ public class LongList implements Mutable, LongVec, Sinkable {
                 : scanDown(value, low, high + 1);
     }
 
-    public int binarySearch(int low, int high, long value, int scanDir) {
-        // this is the same algorithm as implemented in C (util.h)
-        // template<class T, class V>
-        // inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir)
-        // please ensure these implementations are in sync
-
-        while (high - low > 65) {
-            final int mid = (low + high) >>> 1;
-            final long midVal = data[mid];
-
-            if (midVal < value) {
-                low = mid;
-            } else if (midVal > value) {
-                high = mid - 1;
-            } else {
-                // In case of multiple equal values, find the first
-                return scanDir == Vect.BIN_SEARCH_SCAN_UP
-                        ? scrollUp(mid, midVal)
-                        : scrollDown(mid, high, midVal);
-            }
-        }
-        return scanDir == Vect.BIN_SEARCH_SCAN_UP
-                ? scanUp(value, low, high + 1)
-                : scanDown(value, low, high + 1);
-    }
-
     public int binarySearchBlock(int shl, long value, int scanDir) {
         // Binary searches using 2^shl blocks
         // e.g. when shl == 2

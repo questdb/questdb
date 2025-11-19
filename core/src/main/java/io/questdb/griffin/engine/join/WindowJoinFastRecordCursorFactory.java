@@ -378,7 +378,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 slaveData.clear();
                 timestamps.resetPtr();
                 rowIDs.resetPtr();
-                slaveSymbolLookupTable.clear();
+                slaveSymbolLookupTable.restoreInitialCapacity();
             }
         }
 
