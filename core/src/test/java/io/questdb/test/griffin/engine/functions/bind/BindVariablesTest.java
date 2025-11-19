@@ -59,6 +59,7 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import io.questdb.test.griffin.engine.TestBinarySequence;
@@ -888,6 +889,22 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("ABCDEFGHIJKLMNOPQRSTUVXZ", func.getStrA(builder.getRecord()));
+    }
+
+    @Test
+    public void testUuid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a uuid)");
+
+            Uuid uuid = new Uuid();
+            uuid.of("75b30bf9-e4cc-48b9-9658-97d4a2307622");
+
+            sqlExecutionContext.getBindVariableService().getFunction(0);
+            sqlExecutionContext.getBindVariableService().setUuid(0, uuid.getLo(), uuid.getHi());
+            execute("insert into x(a) values($1)");
+            TestUtils.assertSql(engine, sqlExecutionContext, "x", sink, "a\n" +
+                    "75b30bf9-e4cc-48b9-9658-97d4a2307622\n");
+        });
     }
 
     private FunctionBuilder expr(String expression) {

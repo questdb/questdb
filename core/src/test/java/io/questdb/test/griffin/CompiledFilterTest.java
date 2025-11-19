@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Numbers;
+import io.questdb.std.Uuid;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -546,6 +547,29 @@ public class CompiledFilterTest extends AbstractCairoTest {
             assertSql("s\n", "select s from test where s >= 'Z'");
 
             assertSql("s\n", "select s from test where s <  null");
+        });
+    }
+
+    @Test
+    public void testUuid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select" +
+                    " rnd_uuid4() u," +
+                    " timestamp_sequence(400000000000, 500000000) ts" +
+                    " from long_sequence(100)) timestamp(ts) partition by day");
+
+            Uuid uuid = new Uuid();
+            uuid.of("10bb226e-b424-4e36-83b9-1ec970b04e78");
+
+            bindVariableService.clear();
+            bindVariableService.setUuid(0, uuid.getLo(), uuid.getHi());
+
+            final String query = "select * from x where u = $1";
+            final String expected = "u\tts\n" +
+                    "10bb226e-b424-4e36-83b9-1ec970b04e78\t1970-01-05T19:25:00.000000Z\n";
+
+            assertSql(expected, query);
+            assertSqlRunWithJit(query);
         });
     }
 
