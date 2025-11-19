@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.fuzz;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlException;
@@ -31,6 +32,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -47,23 +49,24 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
     private static final CharSequence[] EQ_OPERATORS = new CharSequence[]{
             "<=", ">=", "<>", "!=", "<", ">",
     };
-    private static final int FUZZ_ITERATIONS = 1;
     private static final boolean RUN_ALL_PERMUTATIONS = true;
     private static final int RUN_N_PERMUTATIONS = 10;
+    private Rnd rnd;
+
+    @Override
+    @Before
+    public void setUp() {
+        rnd = TestUtils.generateRandom(LOG);
+        final boolean enableParallelWindowJoin = rnd.nextBoolean();
+        LOG.info().$("parallel window join enabled: ").$(enableParallelWindowJoin).$();
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, String.valueOf(enableParallelWindowJoin));
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 5);
+        super.setUp();
+    }
 
     @Test
     public void testFuzz() throws Exception {
-        for (int i = 0; i < FUZZ_ITERATIONS; i++) {
-            assertFuzz();
-
-            execute("DROP TABLE trades");
-            execute("DROP TABLE prices");
-        }
-    }
-
-    private void assertFuzz() throws Exception {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-
         assertMemoryLeak(() -> {
             CharSequence[] symbols = new CharSequence[rnd.nextInt(100) + 1];
             for (int i = 0; i < symbols.length; i++) {
@@ -71,8 +74,9 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             }
 
             long avgTradeSpread = generateTradeSpread(rnd);
-            int tradeSize = rnd.nextInt(25) + 1;
-            var aggregatedColumns = prepareFuzzTables(rnd, tradeSize, avgTradeSpread, symbols);
+            int tradeSize = rnd.nextInt(100) + 1;
+            int duplicatePercentage = 30 + rnd.nextInt(71);
+            var aggregatedColumns = prepareFuzzTables(rnd, tradeSize, avgTradeSpread, duplicatePercentage, symbols);
             var aggregates = prepareFuzzAggregations(rnd, aggregatedColumns);
 
             final Object[][] allOpts = new Object[][]{
@@ -109,8 +113,14 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 boolean joinFiltered = (boolean) permutation[5];
 
                 var leftTable = generateFuzzTradeTable(rnd, symbols, tradeSize, avgTradeSpread, filterTs, filterSymbol, filterValue, limit);
-                long preceding = rnd.nextInt(symbols.length * 2) * avgTradeSpread;
-                long following = rnd.nextInt(symbols.length * 2) * avgTradeSpread;
+                long preceding, following;
+                if (rnd.nextBoolean()) {
+                    preceding = rnd.nextLong(symbols.length * 2L) * avgTradeSpread;
+                    following = rnd.nextLong(symbols.length * 2L) * avgTradeSpread;
+                } else {
+                    preceding = rnd.nextLong(avgTradeSpread);
+                    following = rnd.nextLong(avgTradeSpread);
+                }
 
                 sink.clear();
                 if (symbolEq) {
@@ -301,6 +311,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             Rnd rnd,
             int tradeSize,
             long avgTradeSpread,
+            int duplicatePercentage,
             CharSequence[] symbols
     ) throws SqlException {
         final CharSequence[] columnTypes = new CharSequence[]{"double", "float", "long"};
@@ -348,22 +359,23 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         int symbolFrequencySum = 0;
         for (int i = 0; i < symbolFrequencies.length; i++) {
             int c = rnd.nextPositiveInt() % 100;
-            switch (c <= 2 ? 0 : c <= 4 ? 1 : 2) {
+            int symbolFrequency = switch (c <= 2 ? 0 : c <= 4 ? 1 : 2) {
                 // Very rare
-                case 0 -> symbolFrequencySum += rnd.nextPositiveInt() % 5;
+                case 0 -> rnd.nextPositiveInt() % 5;
                 // A lot
-                case 1 -> symbolFrequencySum += 100 + rnd.nextPositiveInt() % 5000;
+                case 1 -> 100 + rnd.nextPositiveInt() % 5000;
                 // Average
-                case 2 -> symbolFrequencySum += 50 + rnd.nextPositiveInt() % 100;
-            }
-            symbolFrequencies[i] = symbolFrequencySum;
+                default -> 50 + rnd.nextPositiveInt() % 100;
+            };
+            symbolFrequencies[i] = symbolFrequency;
+            symbolFrequencySum += symbolFrequency;
         }
 
         int[] priceFrequencies = new int[symbols.length];
         int priceFrequencySum = 0;
         for (int i = 0; i < priceFrequencies.length; i++) {
             int c = rnd.nextPositiveInt() % 100;
-            priceFrequencySum += switch (c <= 2 ? 0 : c <= 4 ? 1 : 2) {
+            int priceFrequency = switch (c <= 2 ? 0 : c <= 4 ? 1 : 2) {
                 // Very rare
                 case 0 -> rnd.nextPositiveInt() % 5;
                 // A lot
@@ -372,20 +384,23 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 default -> 50 + rnd.nextPositiveInt() % 100;
             } * symbolFrequencies[i];
             priceFrequencies[i] = priceFrequencySum;
+            priceFrequencySum += priceFrequency;
         }
 
         long tradeStart = MicrosTimestampDriver.INSTANCE.fromSeconds(rnd.nextLong(4000000000L));
 
         long ts = tradeStart;
         try (TableWriter w = newOffPoolWriter("trades")) {
+            CharSequence symbol = null;
             for (int i = 0; i < tradeSize; i++) {
-                ts += rnd.nextPositiveLong() % (avgTradeSpread << 1);
-                CharSequence symbol = null;
-                int symbolIdx = rnd.nextInt(symbolFrequencySum);
-                for (int j = 0; j < symbolFrequencies.length; j++) {
-                    if (symbolIdx < symbolFrequencies[j]) {
-                        symbol = symbols[j];
-                        break;
+                if (i == 0 || rnd.nextInt(100) < 100 - duplicatePercentage) {
+                    ts += rnd.nextPositiveLong() % (avgTradeSpread << 1);
+                    int symbolIdx = rnd.nextInt(symbolFrequencySum);
+                    for (int j = 0; j < symbolFrequencies.length; j++) {
+                        if (symbolIdx < symbolFrequencies[j]) {
+                            symbol = symbols[j];
+                            break;
+                        }
                     }
                 }
 
@@ -402,15 +417,15 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             symbols[rnd.nextPositiveInt() % symbols.length] = "sym_no_price";
         }
 
-        int avgPricePerTradeRatio = Math.max(priceFrequencySum / (symbolFrequencySum * symbols.length), 1);
+        int avgPricePerTradeRatio = Math.min(Math.max(priceFrequencySum / (symbolFrequencySum * symbols.length), 1), 50);
         int priceSize = tradeSize * avgPricePerTradeRatio;
         long avgPriceSpread = avgTradeSpread / avgPricePerTradeRatio;
-        ts = tradeStart - avgPriceSpread * rnd.nextInt(symbols.length * 10);
+        ts = tradeStart - avgPriceSpread * rnd.nextLong(symbols.length * 10L);
         try (TableWriter w = newOffPoolWriter("prices")) {
             CharSequence symbol = null;
             for (int i = 0; i < priceSize; i++) {
-                if (i == 0 || rnd.nextInt(100) <= 98) {
-                    ts += rnd.nextLong(Math.max(avgPriceSpread << 1, 1));
+                if (i == 0 || rnd.nextInt(100) < 100 - duplicatePercentage) {
+                    ts += (avgPriceSpread / symbols.length) + rnd.nextLong(1000);
                     int symbolIdx = rnd.nextInt(priceFrequencySum);
                     for (int j = 0; j < priceFrequencies.length; j++) {
                         if (symbolIdx < priceFrequencies[j]) {

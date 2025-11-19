@@ -67,6 +67,7 @@ import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactor
 public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int INITIAL_LIST_CAPACITY = 16;
+    // kept public for tests
     public static boolean GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP = true;
     protected final ObjList<Function> ownerGroupByFunctionArgs;
     protected final TimeFrameHelper ownerSlaveTimeFrameHelper;
