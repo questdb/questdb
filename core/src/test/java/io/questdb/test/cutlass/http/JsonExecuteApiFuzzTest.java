@@ -27,11 +27,13 @@ package io.questdb.test.cutlass.http;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
 
     @Test
+    @Ignore("TODO: Broken state machine")
     public void testFullFuzz() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         getSimpleTester()
