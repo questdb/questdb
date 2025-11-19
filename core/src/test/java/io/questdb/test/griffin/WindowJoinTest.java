@@ -1833,6 +1833,24 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinFailsOnSlaveColumnsInFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareTable();
+            assertExceptionNoLeakCheck(
+                    "select t.*, sum(p.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "where p.price > 10 " +
+                            "order by t.ts, t.sym;",
+                    158,
+                    "Invalid column: p.price"
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinFailsWhenSlaveDoesNotSupportTimeFrames() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
