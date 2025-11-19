@@ -166,8 +166,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     public void onRequestRetry(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
-        SqlValidationProcessorState state = LV.get(context);
-        validate0(state);
+        validate0(LV.get(context));
     }
 
     @Override
@@ -201,7 +200,6 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     public void validate0(SqlValidationProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         circuitBreaker.resetTimer();
-
         try {
             // new query
             compileAndValidate(state);
@@ -290,6 +288,8 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final long compilationStart = nanosecondClock.getTicks();
+            HttpConnectionContext context = state.getHttpConnectionContext();
+            sqlExecutionContext.with(context.getSecurityContext(), null, null, context.getFd(), circuitBreaker.of(context.getFd()));
             final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
             sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
             state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);

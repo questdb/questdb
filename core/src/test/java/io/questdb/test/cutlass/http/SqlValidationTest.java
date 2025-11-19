@@ -52,7 +52,7 @@ public class SqlValidationTest extends AbstractCairoTest {
                                     {"select a, z from xyz", "{\"query\":\"select a, z from xyz\",\"error\":\"Invalid column: z\",\"position\":10}"},
                                     {"create table abc(x int)", "{\"queryType\":\"CREATE TABLE\"}"},
                                     {"select \"µ\" from xyz", "{\"query\":\"select \\\"µ\\\" from xyz\",\"error\":\"Invalid column: µ\",\"position\":7}"},
-                                    {new Utf8StringSink().put("select").putAny((byte)0xC3).putAny((byte)0x28), "{\"query\":\"selectￃ(\",\"error\":\"Bad UTF8 encoding in query text\",\"position\":0}"},
+                                    {new Utf8StringSink().put("select").putAny((byte) 0xC3).putAny((byte) 0x28), "{\"query\":\"selectￃ(\",\"error\":\"Bad UTF8 encoding in query text\",\"position\":0}"},
                                     // empty query
                                     {"", "{\"error\":\"empty query\",\"query\":\"\",\"position\":\"0\"}"}
                             };

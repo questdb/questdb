@@ -1047,7 +1047,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_SETTINGS, this.httpContextPathSettings, httpContextWebConsole + "/settings");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_TABLE_STATUS, this.httpContextPathTableStatus, httpContextWebConsole + "/chk");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathSqlExecute, httpContextWebConsole + "/exec", httpContextWebConsole + "/api/v1/sql/execute");
-            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathSqlValidate, httpContextWebConsole + "/api/v1/sql/validate");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
 
             // If any REST services that the Web Console depends on are overridden,
