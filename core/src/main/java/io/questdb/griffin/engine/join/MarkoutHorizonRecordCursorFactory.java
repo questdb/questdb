@@ -602,7 +602,6 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             this.circuitBreaker = circuitBreaker;
 
             // Materialize the slave cursor into RecordArray to enable random access
-            slaveRecordArray.reopen();
             slaveRecordArray.clear();
             slaveRecordOffsets.clear();
             if (slaveCursor.size() > Integer.MAX_VALUE) {
