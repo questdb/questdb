@@ -55,6 +55,56 @@ public class TestRunner
                 await RunTest(test, globalVariables);
             }
         }
+
+        await RunExtras();
+    }
+
+    public async Task RunExtras() {
+        await ExtrasCheckBindVarsInBatchedQueriesAreConsistent();
+    }
+
+    public async Task ExtrasCheckBindVarsInBatchedQueriesAreConsistent() {
+        var port = int.Parse(Environment.GetEnvironmentVariable("PGPORT") ?? "8812");
+        await using var dataSource = new NpgsqlDataSourceBuilder(
+            $"Host=localhost;Port={port};Username=admin;Password=quest;Database=qdb;ServerCompatibilityMode=NoTypeLoading;"
+        ).Build();
+
+        const int BatchSize = 5;
+        await using var connection = await dataSource.OpenConnectionAsync();
+
+        await using var batch = new NpgsqlBatch(connection);
+        for (var i = 0; i < BatchSize; i++)
+        {
+            var cmd = new NpgsqlBatchCommand($"SELECT {i} AS UnboundIndex, @index AS BoundIndex");
+            cmd.Parameters.AddWithValue("index", i);
+            batch.BatchCommands.Add(cmd);
+        }
+
+        await using var reader = await batch.ExecuteReaderAsync();
+
+        var first = true;
+        for (var i = 0; i < batch.BatchCommands.Count; i++)
+        {
+            if (!first)
+            {
+                await reader.NextResultAsync();
+            }
+            first = false;
+
+            if (!await reader.ReadAsync())
+            {
+                throw new InvalidOperationException("No rows returned");
+            }
+
+            var unboundIndex = reader.GetInt32(0);
+            var boundIndex   = reader.GetInt32(1);
+            if (unboundIndex != boundIndex)
+            {
+                throw new InvalidOperationException(
+                    $"Invalid index: {boundIndex}, expected: {unboundIndex}"
+                );
+            }
+        }
     }
 
     private TestData LoadYaml(string filePath)

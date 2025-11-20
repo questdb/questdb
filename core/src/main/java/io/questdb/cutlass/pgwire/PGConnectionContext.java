@@ -733,6 +733,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         pipelineCurrentEntry.setStateBind(true);
+        setSecurityContextOnEntry(pipelineCurrentEntry);
 
         // "bind" is asking us to create portal. We take the conservative approach and assume
         // that the prepared statement and the portal can be interleaved in the pipeline. For that
@@ -751,7 +752,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 if (pipelineCurrentEntry.isPreparedStatement()) {
                     // the pipeline is named, and we must not attempt to reuse it
                     // as the portal, so we are making a new entry
-                    PGPipelineEntry pe = entryPool.next();
+                    PGPipelineEntry pe = getAcquiredPipelineEntry();
+                    setSecurityContextOnEntry(pe);
                     // the parameter types have to be copied from the parent
                     pe.msgParseCopyParameterTypesFrom(pipelineCurrentEntry);
 
@@ -774,7 +776,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         pe.compileNewSQL(
                                 pipelineCurrentEntry.getSqlText(),
                                 engine,
-                                sqlExecutionContext,
                                 taiPool,
                                 false
                         );
@@ -866,7 +867,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         if (lookedUpPipelineEntry == null) {
             if (pipelineCurrentEntry == null) {
-                pipelineCurrentEntry = entryPool.next();
+                pipelineCurrentEntry = getAcquiredPipelineEntry();
             }
             // we are liable to look up the current entry, depending on how protocol is used
             // if this the case, we should not attempt to save the current entry prematurely
@@ -926,9 +927,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         lo = hi + 1;
         pipelineCurrentEntry.setReturnRowCountLimit(pipelineCurrentEntry.getInt(lo, msgLimit, "could not read max rows value"));
         pipelineCurrentEntry.setStateExec(true);
-        sqlExecutionContext.initNow();
+        setSecurityContextOnEntry(pipelineCurrentEntry);
+        pipelineCurrentEntry.getEntryExecutionContext().initNow();
         transactionState = pipelineCurrentEntry.msgExecute(
-                sqlExecutionContext,
                 transactionState,
                 taiPool,
                 pendingWriters,
@@ -965,7 +966,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // To do that, we store message on the pipeline entry, if it exists and
         // make sure this entry is added to the pipeline (eventually)
         if (pipelineCurrentEntry == null) {
-            pipelineCurrentEntry = entryPool.next();
+            pipelineCurrentEntry = getAcquiredPipelineEntry();
         }
         return PGMessageProcessingException.instance(pipelineCurrentEntry);
     }
@@ -979,7 +980,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // we have to add it to the pipeline
         addPipelineEntry();
 
-        pipelineCurrentEntry = entryPool.next();
+        pipelineCurrentEntry = getAcquiredPipelineEntry();
 
         // when processing the "parse" message we use BindVariableService to exchange bind variable types
         // between SQL compiler and the PG "parse" message processing logic. BindVariableService must not
@@ -989,6 +990,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // mark the pipeline entry as received "parse" message
         pipelineCurrentEntry.setStateParse(true);
+        setSecurityContextOnEntry(pipelineCurrentEntry);
 
         // 'Parse'
         // "statement name" length
@@ -1062,6 +1064,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     pipelineCurrentEntry.ofCachedSelect(utf16SqlText, tas);
                     cachedStatus = CACHE_HIT_SELECT_VALID;
                     sqlExecutionContext.resetFlags();
+                    pipelineCurrentEntry.getEntryExecutionContext().resetFlags();
                 } else {
                     tas.close();
                     cachedStatus = CACHE_HIT_SELECT_INVALID;
@@ -1069,11 +1072,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
 
+
         if (cachedStatus != CACHE_HIT_INSERT_VALID && cachedStatus != CACHE_HIT_SELECT_VALID) {
             // When parameter types are not supplied we will assume that the types are STRING
             // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
             // compiling the SQL from scratch.
-            pipelineCurrentEntry.compileNewSQL(utf16SqlText, engine, sqlExecutionContext, taiPool, false);
+            pipelineCurrentEntry.compileNewSQL(utf16SqlText, engine, taiPool, false);
         }
         msgParseCreateNamedStatement(namedStatement);
     }
@@ -1110,12 +1114,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         sqlExecutionContext.initNow();
         CharSequence activeSqlText = sqlTextCharacterStore.toImmutable();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
             if (pipelineCurrentEntry == null) {
-                pipelineCurrentEntry = entryPool.next();
+                pipelineCurrentEntry = getAcquiredPipelineEntry();
                 pipelineCurrentEntry.ofEmpty(activeSqlText);
                 pipelineCurrentEntry.setStateExec(true);
+                setSecurityContextOnEntry(pipelineCurrentEntry);
             }
+            pipelineCurrentEntry.getEntryExecutionContext().initNow();
+            compiler.compileBatch(activeSqlText, pipelineCurrentEntry.getEntryExecutionContext(), batchCallback);
         } catch (Throwable ex) {
             if (transactionState == IN_TRANSACTION) {
                 transactionState = ERROR_TRANSACTION;
@@ -1131,7 +1137,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // implicit transactions must be committed on SYNC
             try {
                 if (pipelineCurrentEntry == null) {
-                    pipelineCurrentEntry = entryPool.next();
+                    pipelineCurrentEntry = getAcquiredPipelineEntry();
                 }
                 pipelineCurrentEntry.commit(pendingWriters);
             } catch (PGMessageProcessingException ignore) {
@@ -1287,6 +1293,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         entryPool.release(pe);
     }
 
+    private PGPipelineEntry getAcquiredPipelineEntry() {
+        return entryPool.next();
+    }
+
+    private void setSecurityContextOnEntry(PGPipelineEntry entry) {
+        final SecurityContext securityContext = sqlExecutionContext.getSecurityContext();
+        if (securityContext != null) {
+            entry.setSecurityContext(securityContext);
+        }
+    }
+
     private PGPipelineEntry removeNamedPortalFromCache(Utf8Sequence portalName) {
         if (portalName != null) {
             final int index = namedPortals.keyIndex(portalName);
@@ -1395,7 +1412,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             while (true) {
                 try {
                     pipelineCurrentEntry.msgSync(
-                            sqlExecutionContext,
+                            pipelineCurrentEntry.getEntryExecutionContext(),
                             pendingWriters,
                             responseUtf8Sink
                     );
@@ -1410,7 +1427,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                                 .put(", requiredSize=").put(Math.max(e.getBytesRequired(), 2 * responseUtf8Sink.getSendBufferSize()))
                                 .put(']');
                         pipelineCurrentEntry.msgSync(
-                                sqlExecutionContext,
+                                pipelineCurrentEntry.getEntryExecutionContext(),
                                 pendingWriters,
                                 responseUtf8Sink
                         );
@@ -1548,6 +1565,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) throws Exception {
+            setSecurityContextOnEntry(pipelineCurrentEntry);
             CharacterStoreEntry entry = sqlTextCharacterStore.newEntry();
             entry.put(queryText);
             pipelineCurrentEntry.ofSimpleQuery(
@@ -1557,7 +1575,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     taiPool
             );
             transactionState = pipelineCurrentEntry.msgExecute(
-                    sqlExecutionContext,
                     transactionState,
                     taiPool,
                     pendingWriters,
@@ -1574,7 +1591,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         @Override
         public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
             addPipelineEntry();
-            pipelineCurrentEntry = entryPool.next();
+            pipelineCurrentEntry = getAcquiredPipelineEntry();
+            setSecurityContextOnEntry(pipelineCurrentEntry);
 
             final TypesAndSelect tas = tasCache.poll(sqlText);
             if (tas == null) {
@@ -1593,7 +1611,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             CharacterStoreEntry entry = sqlTextCharacterStore.newEntry();
             entry.put(sqlText);
             try {
-                pipelineCurrentEntry.ofSimpleCachedSelect(entry.toImmutable(), sqlExecutionContext, tas);
+                pipelineCurrentEntry.ofSimpleCachedSelect(entry.toImmutable(), tas);
                 return false; // we will not compile the query
             } catch (Throwable e) {
                 // a bad thing happened while we tried to use cached query
