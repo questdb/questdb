@@ -33,7 +33,7 @@ import java.util.function.LongSupplier;
 import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON_API;
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_OVERWRITE;
 import static io.questdb.cutlass.http.HttpResponseSink.HTTP_MULTI_STATUS;
-import static io.questdb.cutlass.http.processors.v1.FileGetProcessor.containsAbsOrRelativePath;
+import static io.questdb.cutlass.http.processors.v1.FileGetProcessorHelper.containsAbsOrRelativePath;
 
 /**
  * multiple form/data requests can come in to upload multiple files at once

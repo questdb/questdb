@@ -67,7 +67,7 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
             return;
         }
 
-        if (FileGetProcessor.containsAbsOrRelativePath(path)) {
+        if (FileGetProcessorHelper.containsAbsOrRelativePath(path)) {
             sendException(context, 403, "traversal not allowed in file");
             return;
         }

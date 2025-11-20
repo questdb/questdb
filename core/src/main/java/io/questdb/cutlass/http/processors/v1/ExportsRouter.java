@@ -34,12 +34,16 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public class ExportsRouter implements HttpRequestHandler {
-    private final HttpRequestProcessor deleteProcessor;
-    private final HttpRequestProcessor getProcessor;
+    private final HttpRequestProcessor fileDeleteProcessor;
+    private final HttpRequestProcessor fileDownloadProcessor;
+    private final HttpRequestProcessor fileListProcessor;
+    private final HttpRequestProcessor fileMetadataProcessor;
 
     public ExportsRouter(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
-        getProcessor = new FileGetProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
-        deleteProcessor = new FileDeleteProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
+        fileListProcessor = new FileListProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
+        fileDownloadProcessor = new FileDownloadProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
+        fileMetadataProcessor = new FileMetadataProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
+        fileDeleteProcessor = new FileDeleteProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
     }
 
     public static ObjHashSet<String> getRoutes(ObjHashSet<String> parentRoutes) {
@@ -53,10 +57,21 @@ public class ExportsRouter implements HttpRequestHandler {
     @Override
     public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
         DirectUtf8Sequence method = requestHeader.getMethod();
-        if (HttpKeywords.isGET(method) || HttpKeywords.isHEAD(method)) {
-            return getProcessor;
+        if (HttpKeywords.isGET(method)) {
+            // Check if a file is specified in the URL
+            DirectUtf8Sequence file = FileGetProcessorHelper.extractFilePathFromUrl(requestHeader, FilesRootDir.EXPORTS);
+            if (file == null || file.size() == 0) {
+                // No file specified - list files
+                return fileListProcessor;
+            } else {
+                // File specified - download file
+                return fileDownloadProcessor;
+            }
+        } else if (HttpKeywords.isHEAD(method)) {
+            // HEAD requests always target a specific file and return metadata
+            return fileMetadataProcessor;
         } else if (HttpKeywords.isDELETE(method)) {
-            return deleteProcessor;
+            return fileDeleteProcessor;
         }
         return null;
     }

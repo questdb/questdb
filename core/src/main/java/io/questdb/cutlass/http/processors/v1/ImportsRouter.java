@@ -35,14 +35,18 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public class ImportsRouter implements HttpRequestHandler {
-    private final HttpRequestProcessor deleteProcessor;
-    private final HttpRequestProcessor getProcessor;
-    private final HttpMultipartContentProcessor postProcessor;
+    private final HttpRequestProcessor fileDeleteProcessor;
+    private final HttpRequestProcessor fileDownloadProcessor;
+    private final HttpRequestProcessor fileListProcessor;
+    private final HttpRequestProcessor fileMetadataProcessor;
+    private final HttpMultipartContentProcessor fileUploadProcessor;
 
     public ImportsRouter(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
-        postProcessor = new FileUploadProcessor(cairoEngine, configuration, FilesRootDir.IMPORTS);
-        getProcessor = new FileGetProcessor(cairoEngine, configuration, FilesRootDir.IMPORTS);
-        deleteProcessor = new FileDeleteProcessor(cairoEngine, configuration, FilesRootDir.IMPORTS);
+        fileUploadProcessor = new FileUploadProcessor(cairoEngine, configuration, FilesRootDir.IMPORTS);
+        fileListProcessor = new FileListProcessor(cairoEngine, configuration, FilesRootDir.IMPORTS);
+        fileDownloadProcessor = new FileDownloadProcessor(cairoEngine, configuration, FilesRootDir.IMPORTS);
+        fileMetadataProcessor = new FileMetadataProcessor(cairoEngine, configuration, FilesRootDir.IMPORTS);
+        fileDeleteProcessor = new FileDeleteProcessor(cairoEngine, configuration, FilesRootDir.IMPORTS);
     }
 
     public static ObjHashSet<String> getRoutes(ObjHashSet<String> parentRoutes) {
@@ -57,11 +61,22 @@ public class ImportsRouter implements HttpRequestHandler {
     public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
         DirectUtf8Sequence method = requestHeader.getMethod();
         if (HttpKeywords.isPOST(method)) {
-            return postProcessor;
-        } else if (HttpKeywords.isGET(method) || HttpKeywords.isHEAD(method)) {
-            return getProcessor;
+            return fileUploadProcessor;
+        } else if (HttpKeywords.isGET(method)) {
+            // Check if a file is specified in the URL
+            DirectUtf8Sequence file = FileGetProcessorHelper.extractFilePathFromUrl(requestHeader, FilesRootDir.IMPORTS);
+            if (file == null || file.size() == 0) {
+                // No file specified - list files
+                return fileListProcessor;
+            } else {
+                // File specified - download file
+                return fileDownloadProcessor;
+            }
+        } else if (HttpKeywords.isHEAD(method)) {
+            // HEAD requests always target a specific file and return metadata
+            return fileMetadataProcessor;
         } else if (HttpKeywords.isDELETE(method)) {
-            return deleteProcessor;
+            return fileDeleteProcessor;
         }
         return null;
     }
