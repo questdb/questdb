@@ -28,11 +28,14 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExportModel;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -73,6 +76,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long stop;
     boolean waitingForCopy;
     private CreateTableOperation createParquetOp;
+    private CharSequence errorMessage;
+    private int errorPosition;
     private String parquetExportTableName;
     private boolean queryCacheable = false;
 
@@ -119,6 +124,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         exportModel.clear();
         cleanupParquetState();
         copyExportResult.clear();
+        errorMessage = null;
+        errorPosition = 0;
     }
 
     @Override
@@ -168,7 +175,25 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         copyExportResult.cleanUpTempPath(filesFacade);
     }
 
+    void resumeError(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        response.bookmark();
+        response.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(sqlText).putQuote().putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(errorMessage != null ? errorMessage : "").putQuote().putAscii(',')
+                .putAsciiQuoted("position").putAscii(':').put(errorPosition)
+                .putAscii('}');
+        queryState = ExportQueryProcessor.QUERY_DONE;
+        response.sendChunk(true);
+
+    }
+
     void setQueryCacheable(boolean queryCacheable) {
         this.queryCacheable = queryCacheable;
+    }
+
+    void storeError(CharSequence errorMessage, int errorPosition) {
+        this.queryState = ExportQueryProcessor.QUERY_SEND_ERROR;
+        this.errorMessage = errorMessage;
+        this.errorPosition = errorPosition;
     }
 }

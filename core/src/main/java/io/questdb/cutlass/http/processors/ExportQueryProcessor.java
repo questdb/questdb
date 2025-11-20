@@ -93,6 +93,20 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.griffin.model.ExportModel.COPY_FORMAT_PARQUET;
 
 public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
+    static final int QUERY_DONE = 1;
+    static final int QUERY_METADATA = 2;
+    static final int QUERY_PARQUET_EXPORT_INIT = 10;
+    static final int QUERY_PARQUET_FILE_SEND_CHUNK = 15;
+    static final int QUERY_PARQUET_FILE_SEND_COMPLETE = 16;
+    static final int QUERY_PARQUET_FILE_SEND_INIT = 14;
+    static final int QUERY_PARQUET_SEND_HEADER = 12;
+    static final int QUERY_PARQUET_TO_PARQUET_FILE = 13;
+    static final int QUERY_RECORD = 5;
+    static final int QUERY_RECORD_START = 4;
+    static final int QUERY_RECORD_SUFFIX = 6;
+    static final int QUERY_SEND_ERROR = 3;
+    static final int QUERY_SETUP_FIRST_RECORD = 0;
+    static final int QUERY_SUFFIX = 7;
     private static final String FILE_EXTENSION_CSV = ".csv";
     private static final String FILE_EXTENSION_PARQUET = ".parquet";
     private static final Log LOG = LogFactory.getLog(ExportQueryProcessor.class);
@@ -623,9 +637,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         while (true) {
             try {
                 switch (state.queryState) {
-                    case JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD:
-                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT;
-                    case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT:
+                    case QUERY_SETUP_FIRST_RECORD:
+                        state.queryState = QUERY_PARQUET_EXPORT_INIT;
+                    case QUERY_PARQUET_EXPORT_INIT:
                         try {
                             compileParquetExport(context, state);
                         } catch (SqlException | CairoException e) {
@@ -635,10 +649,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             sendException(response, 0, e.getMessage(), state);
                             break OUT;
                         }
-                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_SEND_HEADER;
+                        state.queryState = QUERY_PARQUET_SEND_HEADER;
                         // fall through
 
-                    case JsonQueryProcessorState.QUERY_PARQUET_SEND_HEADER:
+                    case QUERY_PARQUET_SEND_HEADER:
                         if (state.getExportModel().isNoDelay()) {
                             try {
                                 sendParquetHeader(response, state);
@@ -647,10 +661,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 break OUT;
                             }
                         }
-                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_TO_PARQUET_FILE;
+                        state.queryState = QUERY_PARQUET_TO_PARQUET_FILE;
                         // fall through
 
-                    case JsonQueryProcessorState.QUERY_PARQUET_TO_PARQUET_FILE:
+                    case QUERY_PARQUET_TO_PARQUET_FILE:
                         try {
                             copyQueryToParquetFile(state);
                         } catch (SqlException | CairoException e) {
@@ -660,27 +674,33 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             sendException(response, 0, e.getMessage(), state);
                             break OUT;
                         }
-                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT;
+                        state.queryState = QUERY_PARQUET_FILE_SEND_INIT;
                         // fall through
 
-                    case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT:
+                    case QUERY_PARQUET_FILE_SEND_INIT:
                         try {
                             initParquetFileSending(context, state);
                         } catch (CairoException e) {
                             sendException(response, 0, e.getFlyweightMessage(), state);
                             break OUT;
                         }
-                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_CHUNK;
+                        state.queryState = QUERY_PARQUET_FILE_SEND_CHUNK;
                         // fall through
 
-                    case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_CHUNK:
+                    case QUERY_PARQUET_FILE_SEND_CHUNK:
                         sendParquetFileChunk(response, state);
                         if (state.parquetFileOffset >= state.parquetFileSize) {
-                            state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_COMPLETE;
+                            state.queryState = QUERY_PARQUET_FILE_SEND_COMPLETE;
                         }
                         break;
-                    case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_COMPLETE:
+                    case QUERY_PARQUET_FILE_SEND_COMPLETE:
                         sendDone(response, state);
+                        break OUT;
+                    case QUERY_SEND_ERROR:
+                        state.resumeError(response);
+                        break OUT;
+                    case QUERY_DONE:
+                        response.done();
                         break OUT;
                     default:
                         break OUT;
@@ -734,13 +754,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             try {
                 SWITCH:
                 switch (state.queryState) {
-                    case JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD:
+                    case QUERY_SETUP_FIRST_RECORD:
                         state.hasNext = state.cursor.hasNext();
                         header(response, state, 200);
-                        state.queryState = JsonQueryProcessorState.QUERY_METADATA;
+                        state.queryState = QUERY_METADATA;
                         // fall through
 
-                    case JsonQueryProcessorState.QUERY_METADATA:
+                    case QUERY_METADATA:
                         if (!state.noMeta) {
                             state.columnIndex = 0;
                             while (state.columnIndex < columnCount) {
@@ -753,10 +773,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             }
                             response.putEOL();
                         }
-                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
+                        state.queryState = QUERY_RECORD_START;
                         response.bookmark();
                         // fall through
-                    case JsonQueryProcessorState.QUERY_RECORD_START:
+                    case QUERY_RECORD_START:
                         if (state.record == null) {
                             // check if cursor has any records
                             Record record = state.cursor.getRecord();
@@ -774,21 +794,21 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                         break;
                                     }
                                 } else {
-                                    state.queryState = JsonQueryProcessorState.QUERY_SUFFIX;
+                                    state.queryState = QUERY_SUFFIX;
                                     break SWITCH;
                                 }
                             }
                         }
 
                         if (state.count > state.stop) {
-                            state.queryState = JsonQueryProcessorState.QUERY_SUFFIX;
+                            state.queryState = QUERY_SUFFIX;
                             break;
                         }
 
-                        state.queryState = JsonQueryProcessorState.QUERY_RECORD;
+                        state.queryState = QUERY_RECORD;
                         state.columnIndex = 0;
                         // fall through
-                    case JsonQueryProcessorState.QUERY_RECORD:
+                    case QUERY_RECORD:
                         while (state.columnIndex < columnCount) {
                             if (state.columnIndex > 0 && state.columnValueFullySent) {
                                 response.putAscii(state.delimiter);
@@ -798,15 +818,15 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             response.bookmark();
                         }
 
-                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_SUFFIX;
+                        state.queryState = QUERY_RECORD_SUFFIX;
                         // fall through
-                    case JsonQueryProcessorState.QUERY_RECORD_SUFFIX:
+                    case QUERY_RECORD_SUFFIX:
                         response.putEOL();
                         state.record = null;
-                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
+                        state.queryState = QUERY_RECORD_START;
                         response.bookmark();
                         break;
-                    case JsonQueryProcessorState.QUERY_SUFFIX:
+                    case QUERY_SUFFIX:
                         // close cursor before returning complete response
                         // this will guarantee that by the time client reads the response fully the table will be released
                         state.cursor = Misc.free(state.cursor);
@@ -1187,8 +1207,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
     private void sendException(
             HttpChunkedResponse response,
-            int position,
-            CharSequence message,
+            int errorPosition,
+            CharSequence errorMessage,
             ExportQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (state.parquetFileOffset > 0) {
@@ -1196,12 +1216,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             // Give up and close the connection.
             LOG.error().$("partial parquet response sent, closing connection on error [fd=").$(state.getFd())
                     .$(", parquetFileOffset=").$(state.parquetFileOffset)
-                    .$(", errorMessage=").$safe(message)
+                    .$(", errorMessage=").$safe(errorMessage)
                     .I$();
             throw PeerDisconnectedException.INSTANCE;
         }
-        headerJsonError(response);
-        JsonQueryProcessorState.prepareExceptionJson(response, position, message, state.sqlText);
+
+        state.storeError(errorMessage, errorPosition);
+        response.status(400, CONTENT_TYPE_JSON);
+        response.headers().setKeepAlive(configuration.getKeepAliveHeader());
+        response.sendHeader();
+        state.resumeError(response);
     }
 
     private void sendParquetFileChunk(HttpChunkedResponse response, ExportQueryProcessorState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
@@ -1255,12 +1279,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         } else {
             response.headers().putAscii("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).putAscii(fileExtension).putAscii("\"").putEOL();
         }
-        response.headers().setKeepAlive(configuration.getKeepAliveHeader());
-        response.sendHeader();
-    }
-
-    protected void headerJsonError(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        response.status(400, CONTENT_TYPE_JSON);
         response.headers().setKeepAlive(configuration.getKeepAliveHeader());
         response.sendHeader();
     }
