@@ -184,8 +184,6 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         final SqlValidationProcessorState state = LV.get(context);
         if (state != null) {
-            // we are resuming request execution, we need to copy random to execution context
-            sqlExecutionContext.with(context.getSecurityContext(), null, state.getRnd(), context.getFd(), circuitBreaker.of(context.getFd()));
             context.resumeResponseSend();
             try {
                 doResumeSend(state, context);
@@ -289,7 +287,14 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final long compilationStart = nanosecondClock.getTicks();
             HttpConnectionContext context = state.getHttpConnectionContext();
-            sqlExecutionContext.with(context.getSecurityContext(), null, null, context.getFd(), circuitBreaker.of(context.getFd()));
+            sqlExecutionContext.with(
+                    context.getSecurityContext(),
+                    null,
+                    state.getRnd(),
+                    context.getFd(),
+                    circuitBreaker.of(context.getFd())
+            );
+            sqlExecutionContext.setValidationOnly(true);
             final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
             sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
             state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
@@ -430,16 +435,12 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             errorMessagePosition = 0;
             errorMessage = e.getMessage();
         }
-        if (context.getTotalBytesSent() > 0) {
-            state.resumeValidationSuffix(context.getChunkedResponse(), httpStatusCode, errorMessage, errorMessagePosition);
-        } else {
-            sendException(
-                    state,
-                    errorMessagePosition,
-                    errorMessage,
-                    httpStatusCode
-            );
-        }
+        sendException(
+                state,
+                errorMessagePosition,
+                errorMessage,
+                httpStatusCode
+        );
     }
 
     private boolean parseUrl(
