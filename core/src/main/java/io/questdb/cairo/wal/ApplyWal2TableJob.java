@@ -124,16 +124,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         Misc.free(mvStateWriter);
     }
 
-    private static long calculateSkipTransactionCount(long seqTxn, WalTxnDetails walTxnDetails) {
+    private static long calculateSkipTransactionCount(long initialSeqTxn, WalTxnDetails walTxnDetails) {
         // Check all future transactions to see if any fully replace this transaction's range or table is truncated
-        final long initialSeqTxn = seqTxn;
         final long lastSeqTxn = walTxnDetails.getLastSeqTxn();
 
-        boolean keepSkipping = true;
-        seqTxn--;
+        // Initial loop condition, as if the previous transaction was skipped
+        long seqTxn = initialSeqTxn - 1;
+        boolean seqTxnCanBeSkipped = true;
 
-        while (keepSkipping && seqTxn < lastSeqTxn) {
+        while (seqTxnCanBeSkipped && seqTxn < lastSeqTxn) {
             seqTxn++;
+            seqTxnCanBeSkipped = false;
+
             int walId = walTxnDetails.getWalId(seqTxn);
             if (walId < 1 || !isDataType(walTxnDetails.getWalTxnType(seqTxn))) {
                 // This is not a data transaction
@@ -147,7 +149,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 txnTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
             }
 
-            keepSkipping = false;
             long firstNonSkippableTxn = Long.MAX_VALUE;
             for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
                 int futureWalId = walTxnDetails.getWalId(futureSeqTxn);
@@ -156,8 +157,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     if (walTxnType == TRUNCATE) {
                         // Truncate fully removes any prior data, no point doing any data apply
                         // We can skip straight to the truncate operation or the first non-skippable operation before it
-                        seqTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
-                        return seqTxn - initialSeqTxn;
+                        return Math.min(firstNonSkippableTxn, futureSeqTxn) - initialSeqTxn;
                     }
 
                     if (walTxnType == SQL) {
@@ -184,7 +184,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     if (futureRangeTsLo <= txnTsLo && futureRangeTsHi >= txnTsHi) {
                         // Found that seqTxn is fully replaced by a future transaction
                         // Skip it and continue checking further transactions
-                        keepSkipping = true;
+                        seqTxnCanBeSkipped = true;
                         break;
                     }
                 }
