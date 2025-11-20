@@ -1726,8 +1726,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (slaveColumnIndex == -1) {
             return null; // Slave column not found
         }
-        // Return the info needed to create the optimized factory.
-        // timestampColumnIndex will be -1 if no SELECT column matches the ORDER BY expression.
         return markoutHorizonInfo.of(timestampColumnIndex, slaveColumnIndex);
     }
 
