@@ -40,6 +40,7 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
         getSimpleTester()
                 .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
                 .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                .withSendBufferSize(Math.max(1024, rnd.nextInt(4099)))
                 .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
                             engine.execute("create table xyz as (select rnd_int() a, rnd_double() b, timestamp_sequence(0,1000) ts from long_sequence(1000)) timestamp(ts) partition by hour");
 
