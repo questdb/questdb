@@ -313,6 +313,12 @@ public class RecordSinkFactory {
                     case ColumnType.LONG -> {
                         return SingleLongColumnSink.class;
                     }
+                    case ColumnType.TIMESTAMP -> {
+                        return SingleTimestampColumnSink.class;
+                    }
+                    case ColumnType.DATE -> {
+                        return SingleDateColumnSink.class;
+                    }
                     case ColumnType.VARCHAR -> {
                         return SingleVarcharColumnSink.class;
                     }
@@ -1169,6 +1175,29 @@ public class RecordSinkFactory {
         return Numbers.encodeLowHighInts(decimal128FieldIndex, decimal256FieldIndex);
     }
 
+    public static class SingleDateColumnSink implements RecordSink {
+        private int columnIndex = -1;
+
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            w.putDate(r.getDate(columnIndex));
+        }
+
+        public int getColumnIndex() {
+            return 0;
+        }
+
+        @Override
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+            // no-op
+        }
+    }
+
     public static class SingleIntColumnSink implements RecordSink {
         private int columnIndex = -1;
 
@@ -1221,6 +1250,29 @@ public class RecordSinkFactory {
         @Override
         public void copy(Record r, RecordSinkSPI w) {
             w.putShort(r.getShort(columnIndex));
+        }
+
+        public int getColumnIndex() {
+            return 0;
+        }
+
+        @Override
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+            // no-op
+        }
+    }
+
+    public static class SingleTimestampColumnSink implements RecordSink {
+        private int columnIndex = -1;
+
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            w.putTimestamp(r.getTimestamp(columnIndex));
         }
 
         public int getColumnIndex() {

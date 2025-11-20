@@ -196,6 +196,10 @@ public class Unordered4Map implements Map, Reopenable {
         }
     }
 
+    public static long hashKey(int key) {
+        return Hash.hashInt64(key);
+    }
+
     @Override
     public void clear() {
         free = (int) (keyCapacity * loadFactor);
@@ -219,13 +223,15 @@ public class Unordered4Map implements Map, Reopenable {
         }
     }
 
+    // Fast-path method to create a key without involving the Key object
     public MapValue createValueWithKey(int key) {
         if (key != 0) {
-            return createNonZeroKeyValue(key, Hash.hashInt64(key));
+            return createNonZeroKeyValue(key, hashKey(key));
         }
         return createZeroKeyValue();
     }
 
+    // Fast-path method to create a key without involving the Key object
     public MapValue createValueWithKey(int key, long hashCode) {
         if (key != 0) {
             return createNonZeroKeyValue(key, hashCode);
@@ -290,7 +296,7 @@ public class Unordered4Map implements Map, Reopenable {
                 continue;
             }
 
-            long destAddr = getStartAddress(Hash.hashInt64(key) & mask);
+            long destAddr = getStartAddress(hashKey(key) & mask);
             for (; ; ) {
                 int k = Unsafe.getUnsafe().getInt(destAddr);
                 if (k == 0) {
@@ -486,7 +492,7 @@ public class Unordered4Map implements Map, Reopenable {
                 continue;
             }
 
-            long newAddr = getStartAddress(newMemStart, Hash.hashInt64(key) & newMask);
+            long newAddr = getStartAddress(newMemStart, hashKey(key) & newMask);
             while (Unsafe.getUnsafe().getInt(newAddr) != 0) {
                 newAddr += entrySize;
                 if (newAddr >= newMemLimit) {
@@ -539,7 +545,7 @@ public class Unordered4Map implements Map, Reopenable {
             if (key == 0) {
                 return createZeroKeyValue();
             }
-            return createNonZeroKeyValue(key, Hash.hashInt64(key));
+            return createNonZeroKeyValue(key, hashKey(key));
         }
 
         @Override
@@ -568,7 +574,7 @@ public class Unordered4Map implements Map, Reopenable {
 
         @Override
         public long hash() {
-            return Hash.hashInt64(Unsafe.getUnsafe().getInt(keyMemStart));
+            return hashKey(Unsafe.getUnsafe().getInt(keyMemStart));
         }
 
         public Key init() {
@@ -713,7 +719,7 @@ public class Unordered4Map implements Map, Reopenable {
                 return hasZero ? valueOf(zeroMemStart, false, value) : null;
             }
 
-            long hashCode = Hash.hashInt64(key);
+            long hashCode = hashKey(key);
             long index = hashCode & mask;
             long startAddress = getStartAddress(index);
             int k = Unsafe.getUnsafe().getInt(startAddress);

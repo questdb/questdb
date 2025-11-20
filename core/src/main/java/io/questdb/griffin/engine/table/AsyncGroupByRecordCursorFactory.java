@@ -62,7 +62,6 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.Hash;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -434,7 +433,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             final long r = rows.get(i);
             final long p = startPtr + (r << 2);
             final int key = Unsafe.getUnsafe().getInt(p);
-            final long hashCode = Hash.hashInt64(key);
+            final long hashCode = Unordered4Map.hashKey(key);
             final Unordered4Map shard = (Unordered4Map) fragment.getShardMap(hashCode);
 
             MapValue shardValue = shard.createValueWithKey(key, hashCode);
@@ -460,7 +459,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             final long r = rows.get(i);
             final long p = startPtr + (r << 3);
             final long key = Unsafe.getUnsafe().getLong(p);
-            final long hashCode = Hash.hashLong64(key);
+            final long hashCode = Unordered8Map.hashKey(key);
             final Unordered8Map shard = (Unordered8Map) fragment.getShardMap(hashCode);
 
             MapValue shardValue = shard.createValueWithKey(key, hashCode);
@@ -663,7 +662,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     ) {
         for (long r = 0, p = record.getPageAddress(columnIndex); r < frameRowCount; r++, p += 4) {
             final int key = Unsafe.getUnsafe().getInt(p);
-            final long hashCode = Hash.hashInt64(key);
+            final long hashCode = Unordered4Map.hashKey(key);
             final Unordered4Map shard = (Unordered4Map) fragment.getShardMap(hashCode);
 
             MapValue shardValue = shard.createValueWithKey(key, hashCode);
@@ -686,7 +685,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     ) {
         for (long r = 0, p = record.getPageAddress(columnIndex); r < frameRowCount; r++, p += 8) {
             final long key = Unsafe.getUnsafe().getLong(p);
-            final long hashCode = Hash.hashLong64(key);
+            final long hashCode = Unordered8Map.hashKey(key);
             final Unordered8Map shard = (Unordered8Map) fragment.getShardMap(hashCode);
 
             MapValue shardValue = shard.createValueWithKey(key, hashCode);

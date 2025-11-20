@@ -102,12 +102,14 @@ public class MapFactory {
     ) {
         final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
 
-        final int keySize = totalSize(keyTypes);
         final int valueSize = totalSize(valueTypes);
-        if (keySize > 0) {
-            if (keySize == Short.BYTES && valueSize <= maxEntrySize) {
+        // Check if we can use faster hash tables for single column case.
+        if (keyTypes.getColumnCount() == 1) {
+            final int keyType = keyTypes.getColumnType(0);
+            if (keyType == ColumnType.SHORT && valueSize <= maxEntrySize) {
                 return new Unordered2Map(keyTypes, valueTypes);
-            } else if (keySize == Integer.BYTES && Integer.BYTES + valueSize <= maxEntrySize) {
+            } else if (keyType == ColumnType.INT && Integer.BYTES + valueSize <= maxEntrySize) {
+                // TODO(puzpuzpuz): can we use symbol and ipv4 here???
                 return new Unordered4Map(
                         keyTypes,
                         valueTypes,
@@ -115,7 +117,10 @@ public class MapFactory {
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes()
                 );
-            } else if (keySize == Long.BYTES && Long.BYTES + valueSize <= maxEntrySize) {
+            } else if (
+                    (keyType == ColumnType.LONG || keyType == ColumnType.TIMESTAMP || keyType == ColumnType.DATE)
+                            && Long.BYTES + valueSize <= maxEntrySize
+            ) {
                 return new Unordered8Map(
                         keyTypes,
                         valueTypes,
@@ -123,20 +128,16 @@ public class MapFactory {
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes()
                 );
+            } else if (keyType == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
+                return new UnorderedVarcharMap(
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes(),
+                        configuration.getGroupByAllocatorDefaultChunkSize(),
+                        configuration.getGroupByAllocatorMaxChunkSize()
+                );
             }
-        }
-
-        if (keyTypes.getColumnCount() == 1
-                && keyTypes.getColumnType(0) == ColumnType.VARCHAR
-                && 2 * Long.BYTES + valueSize <= maxEntrySize) {
-            return new UnorderedVarcharMap(
-                    valueTypes,
-                    keyCapacity,
-                    configuration.getSqlFastMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes(),
-                    configuration.getGroupByAllocatorDefaultChunkSize(),
-                    configuration.getGroupByAllocatorMaxChunkSize()
-            );
         }
 
         return new OrderedMap(

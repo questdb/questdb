@@ -167,6 +167,7 @@ public class Unordered2Map implements Map, Reopenable {
         }
     }
 
+    // Fast-path method to create a key without involving the Key object
     public MapValue createValueWithKey(short key) {
         if (key != 0) {
             long startAddress = getStartAddress(key);
