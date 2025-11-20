@@ -232,6 +232,11 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
+            public FactoryProvider getFactoryProvider() {
+                return factoryProvider != null ? factoryProvider : super.getFactoryProvider();
+            }
+
+            @Override
             public WaitProcessorConfiguration getWaitProcessorConfiguration() {
                 return new WaitProcessorConfiguration() {
                     @Override
