@@ -3,16 +3,25 @@ package io.questdb.cutlass.http.processors.v1;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.HttpRequestValidator;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.JsonSink;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.functions.catalogue.FilesRecordCursor;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -28,11 +37,13 @@ import io.questdb.std.LongStack;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -44,22 +55,26 @@ import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_GET;
 import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_HEAD;
 import static java.net.HttpURLConnection.HTTP_OK;
 
+
 public class FileGetProcessor implements HttpRequestProcessor {
     static final int FILE_SEND_INIT = 0;
     static final int FILE_SEND_CHUNK = FILE_SEND_INIT + 1;
     static final int FILE_SEND_COMPLETED = FILE_SEND_CHUNK + 1;
     private static final Log LOG = LogFactory.getLog(FileGetProcessor.class);
     private static final LocalValue<State> LV = new LocalValue<>();
-    private static final Utf8String URL_PARAM_CURSOR = new Utf8String("page[cursor]");
     private static final Utf8String URL_PARAM_LIMIT = new Utf8String("page[limit]");
+    private static final Utf8String URL_PARAM_OFFSET = new Utf8String("page[offset]");
     private final CairoEngine engine;
     private final FilesRootDir filesRoot;
+    private final CharSequence queryTemplate;
     private final byte requiredAuthType;
 
     public FileGetProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration, FilesRootDir root) {
         engine = cairoEngine;
         requiredAuthType = configuration.getRequiredAuthType();
         this.filesRoot = root;
+        CharSequence rootPath = FilesRootDir.getRootPath(root, engine.getConfiguration());
+        this.queryTemplate = "SELECT * FROM files('" + rootPath + "') LIMIT :lo, :hi;";
     }
 
     @Override
@@ -335,147 +350,59 @@ public class FileGetProcessor implements HttpRequestProcessor {
     // todo: probably replace this with the griffin factories that handle files/globs, so we can support glob filters
     // they are TBA in read_parquet upgrades
     private void scanDirectory(
-            CharSequence rootPath,
             JsonSink jsonSink,
-            State state
+            State state,
+            SecurityContext securityContext
     ) {
-        int rootLen = rootPath.length();
-        Path path = Path.getThreadLocal(rootPath);
-        Utf8StringSink tempSink = Misc.getThreadLocalUtf8Sink();
-        state.findStack.clear();
-        state.pathLenStack.clear();
-        long pFind = state.ff.findFirst(path.$());
-        if (pFind == -1) {
-            return;
-        }
+        // build query
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)) {
+                BindVariableService bindings = new BindVariableServiceImpl(engine.getConfiguration());
+                bindings.setInt("lo", state.offset);
+                bindings.setInt("hi", state.offset + state.limit);
+                executionContext.with(securityContext, bindings);
+                CompiledQuery cq = compiler.compile(queryTemplate, executionContext);
+                RecordCursorFactory rcf = cq.getRecordCursorFactory();
+                RecordCursor rc = rcf.getCursor(executionContext);
 
-        int returnedCount = 0; // count of items returned in this page
-        boolean foundCursor = state.cursor == null; // start returning if no cursor or cursor found
-
-        try {
-            while (true) {
-                while (pFind <= 0 && state.findStack.notEmpty()) {
-                    pFind = state.findStack.pop();
-                    int pathLen = state.pathLenStack.pop();
-                    path.trimTo(pathLen);
-                }
-                if (pFind <= 0) {
-                    break;
-                }
-
-                long pUtf8NameZ = state.ff.findName(pFind);
-                if (pUtf8NameZ == 0) {
-                    if (state.ff.findNext(pFind) <= 0) {
-                        state.ff.findClose(pFind);
-                        pFind = 0;
-                    }
-                    continue;
-                }
-
-                int type = state.ff.findType(pFind);
-                tempSink.clear();
-                Utf8s.utf8ZCopy(pUtf8NameZ, tempSink);
-
-                if (!Files.notDots(tempSink)) {
-                    if (state.ff.findNext(pFind) <= 0) {
-                        state.ff.findClose(pFind);
-                        pFind = 0;
-                    }
-                    continue;
-                }
-
-                if (type == Files.DT_DIR) {
-                    if (state.ff.findNext(pFind) > 0) {
-                        state.findStack.push(pFind);
-                        state.pathLenStack.push(path.size());
-                    } else {
-                        state.ff.findClose(pFind);
-                    }
-                    path.concat(tempSink).slash();
-                    pFind = state.ff.findFirst(path.$());
-                    continue;
-                } else if (type == Files.DT_FILE) {
-                    state.fileCount++;
-
-                    tempSink.clear();
-                    if (path.size() > rootLen) {
-                        Utf8s.utf8ZCopyEscaped(path.ptr() + rootLen + 1, path.end(), tempSink);
-                    }
-                    Utf8s.utf8ZCopyEscaped(pUtf8NameZ, tempSink);
-
-                    // Check if we've reached the cursor position
-                    if (!foundCursor) {
-                        String currentId = tempSink.toString();
-                        if (currentId.equals(state.cursor)) {
-                            foundCursor = true; // next item will be the start of our page
-                        }
-                        if (state.ff.findNext(pFind) <= 0) {
-                            state.ff.findClose(pFind);
-                            pFind = 0;
-                        }
-                        continue; // skip this item and continue looking for cursor
-                    }
-
-                    // We have found the cursor or there was no cursor, check if we've reached limit
-                    if (returnedCount >= state.limit) {
-                        // Stop scanning, we've reached our limit
-                        break;
-                    }
-
-                    state.firstFile = false;
-                    returnedCount++;
-
+                int counter = 0;
+                while (rc.hasNext()) {
+                    io.questdb.cairo.sql.Record record = rc.getRecord();
+                    Utf8Sequence path = record.getVarcharA(FilesRecordCursor.PATH_COLUMN);
+                    assert path != null;
                     jsonSink
                             .startObject()
                             .key("type").val("file")
-                            .key("id").val(tempSink)
+                            .key("id").val(path)
                             .key("attributes")
                             .startObject();
 
-                    int lastSlash = Utf8s.lastIndexOfAscii(tempSink, '/');
+                    int lastSlash = Utf8s.lastIndexOfAscii(path, '/');
                     if (lastSlash >= 0) {
-                        jsonSink.key("filename").val(tempSink, lastSlash + 1, tempSink.size());
+                        jsonSink.key("filename").val(path, lastSlash + 1, path.size());
                     } else {
-                        jsonSink.key("filename").val(tempSink);
+                        jsonSink.key("filename").val(path);
                     }
 
-                    int oldLen = path.size();
-                    path.trimTo(rootLen);
-                    path.concat(tempSink);
+                    jsonSink.key("path").val(path);
 
-                    // Store the relative path before tempSink is cleared
-                    String relativePath = tempSink.toString();
-                    jsonSink.key("path").val(relativePath);
+                    long fileSize = record.getLong(FilesRecordCursor.SIZE_COLUMN);
+                    long lastModified = record.getLong(FilesRecordCursor.MODIFIED_TIME_COLUMN);
 
-                    long fileSize = state.ff.length(path.$());
-                    long lastModified = state.ff.getLastModified(path.$());
-                    path.trimTo(oldLen);
-
-                    tempSink.clear();
-                    SizePrettyFunctionFactory.toSizePretty(tempSink, fileSize);
-
-                    jsonSink.key("size").val(fileSize)
-                            .key("sizePretty").val(tempSink)
-                            .key("lastModified").valMillis(lastModified)
+                    jsonSink.key("size").val(fileSize);
+                    jsonSink.key("sizePretty");
+                    SizePrettyFunctionFactory.toSizePretty(jsonSink, fileSize);
+                    jsonSink.key("lastModified").valMillis(lastModified)
                             .endObject()
                             .endObject();
 
                     // Store the last returned id as the cursor for the next page
-                    state.lastId = relativePath;
+                    state.lastId = path.toString();
+                    counter++;
                 }
-
-                if (state.ff.findNext(pFind) <= 0) {
-                    state.ff.findClose(pFind);
-                    pFind = 0;
-                }
-            }
-        } finally {
-            if (pFind > 0) {
-                state.ff.findClose(pFind);
-            }
-            while (state.findStack.notEmpty()) {
-                state.ff.findClose(state.findStack.pop());
-                state.pathLenStack.pop();
+                state.fileCount = state.offset + counter;
+            } catch (SqlException e) {
+                throw new RuntimeException(e); //todo: error handling
             }
         }
     }
@@ -525,11 +452,11 @@ public class FileGetProcessor implements HttpRequestProcessor {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Extract pagination parameters
         HttpRequestHeader request = context.getRequestHeader();
-        DirectUtf8Sequence cursorParam = request.getUrlParam(URL_PARAM_CURSOR);
+        DirectUtf8Sequence offsetParam = request.getUrlParam(URL_PARAM_OFFSET);
         DirectUtf8Sequence limitParam = request.getUrlParam(URL_PARAM_LIMIT);
 
-        if (cursorParam != null && cursorParam.size() > 0) {
-            state.cursor = cursorParam.toString();
+        if (offsetParam != null && offsetParam.size() > 0) {
+            state.offset = Numbers.parseInt(offsetParam.toString());
         }
         if (limitParam != null && limitParam.size() > 0) {
             try {
@@ -549,7 +476,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
         JsonSink jsonSink = Misc.getThreadLocalJsonSink();
         jsonSink.of(listSink).startObject().key("data").startArray();
         try {
-            scanDirectory(root, jsonSink, state); // acquires the sink
+            scanDirectory(jsonSink, state, context.getSecurityContext()); // acquires the sink
             jsonSink.endArray()
                     .key("meta").startObject()
                     .key("totalFiles").val(state.fileCount)
@@ -601,15 +528,15 @@ public class FileGetProcessor implements HttpRequestProcessor {
         long fileOffset;
         long fileSize;
         boolean firstFile = true;
-        boolean paused;
         boolean isHeadRequest;
+        CharSequence lastId; // last returned id for cursor-based pagination
         long lastModified;
+        int limit = 10; // default limit
+        // Pagination fields
+        int offset = 0;
+        boolean paused;
         Utf8StringSink sink = new Utf8StringSink();
         int state;
-        // Pagination fields
-        String cursor;
-        int limit = 10; // default limit
-        CharSequence lastId; // last returned id for cursor-based pagination
 
         State(FilesFacade ff) {
             this.ff = ff;
@@ -650,7 +577,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
             firstFile = true;
             fileCount = 0;
             sink.clear();
-            cursor = null;
+            offset = 0;
             limit = 10;
             lastId = null;
         }
