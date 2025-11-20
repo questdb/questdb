@@ -387,7 +387,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
                     jsonSink.key("path").val(path);
 
                     long fileSize = record.getLong(FilesRecordCursor.SIZE_COLUMN);
-                    long lastModified = record.getLong(FilesRecordCursor.MODIFIED_TIME_COLUMN);
+                    long lastModified = record.getDate(FilesRecordCursor.MODIFIED_TIME_COLUMN);
 
                     jsonSink.key("size").val(fileSize);
                     jsonSink.key("sizePretty");
@@ -456,7 +456,15 @@ public class FileGetProcessor implements HttpRequestProcessor {
         DirectUtf8Sequence limitParam = request.getUrlParam(URL_PARAM_LIMIT);
 
         if (offsetParam != null && offsetParam.size() > 0) {
-            state.offset = Numbers.parseInt(offsetParam.toString());
+            try {
+                int parsedOffset = Numbers.parseInt(offsetParam.toString());
+                // Ensure offset is non-negative
+                if (parsedOffset >= 0) {
+                    state.offset = parsedOffset;
+                }
+            } catch (NumberFormatException e) {
+                // Keep default offset of 0
+            }
         }
         if (limitParam != null && limitParam.size() > 0) {
             try {
