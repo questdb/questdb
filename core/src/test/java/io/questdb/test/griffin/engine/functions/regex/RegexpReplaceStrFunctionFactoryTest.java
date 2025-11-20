@@ -37,8 +37,10 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNullRegex() throws Exception {
         assertQuery(
-                "regexp_replace\n" +
-                        "\n",
+                """
+                        regexp_replace
+                        
+                        """,
                 "select regexp_replace('abc', null, 'def')",
                 true
         );
@@ -47,8 +49,10 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNullReplacement() throws Exception {
         assertQuery(
-                "regexp_replace\n" +
-                        "\n",
+                """
+                        regexp_replace
+                        
+                        """,
                 "select regexp_replace('abc', 'a', null)",
                 true
         );
@@ -65,12 +69,14 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "regexp_replace\n" +
-                    "example1.com\n" +
-                    "http://example3.com\n" +
-                    "example2.com\n" +
-                    "\n" +
-                    "example2.com\n";
+            final String expected = """
+                    regexp_replace
+                    example1.com
+                    http://example3.com
+                    example2.com
+                    
+                    example2.com
+                    """;
             execute("create table x as (select rnd_str('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))");
             assertSql(
                     expected,
