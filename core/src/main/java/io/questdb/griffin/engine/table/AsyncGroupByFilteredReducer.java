@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -95,31 +96,33 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
             }
 
             record.setRowIndex(0);
-            long baseRowId = record.getRowId();
-
+            final long baseRowId = record.getRowId();
+            final Map map = atom.getFragment(slotId).getMap();
             if (fragment.isNotSharded()) {
                 // Avoid Map megamorphism by having specialized methods for single column maps.
-                if (atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
-                    aggregateFilteredNonShardedVarcharKey(record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
-                } else if (atom.getFragment(slotId).getMap() instanceof Unordered2Map) {
-                    aggregateFilteredNonShardedShortKey(record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
-                } else if (atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
-                    aggregateFilteredNonShardedIntKey(record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
-                } else if (atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
-                    aggregateFilteredNonShardedLongKey(record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
+                if (map instanceof UnorderedVarcharMap) {
+                    aggregateNonShardedVarcharKey(record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
+                } else if (map instanceof Unordered2Map) {
+                    aggregateNonShardedShortKey(frameMemory, record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
+                } else if (map instanceof Unordered4Map) {
+                    aggregateNonShardedIntKey(frameMemory, record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
+                } else if (map instanceof Unordered8Map) {
+                    aggregateNonShardedLongKey(frameMemory, record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
                 } else {
-                    aggregateFilteredNonShardedGeneric(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                    // OrderedMap goes here
+                    aggregateNonShardedGeneric(record, rows, baseRowId, functionUpdater, fragment, mapSink);
                 }
             } else {
                 // single short key won't be sharded with the default threshold, so we don't need a special case here
-                if (atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
-                    aggregateFilteredShardedVarcharKey(record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
-                } else if (atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
-                    aggregateFilteredShardedIntKey(record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
-                } else if (atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
-                    aggregateFilteredShardedLongKey(record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
+                if (map instanceof UnorderedVarcharMap) {
+                    aggregateShardedVarcharKey(record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
+                } else if (map instanceof Unordered4Map) {
+                    aggregateShardedIntKey(frameMemory, record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
+                } else if (map instanceof Unordered8Map) {
+                    aggregateShardedLongKey(frameMemory, record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
                 } else {
-                    aggregateFilteredShardedGeneric(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                    // OrderedMap goes here
+                    aggregateShardedGeneric(record, rows, baseRowId, functionUpdater, fragment, mapSink);
                 }
             }
 
@@ -129,7 +132,7 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
         }
     }
 
-    private static void aggregateFilteredNonShardedGeneric(
+    private static void aggregateNonShardedGeneric(
             PageFrameMemoryRecord record,
             DirectLongList rows,
             long baseRowId,
@@ -145,15 +148,16 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
             final MapKey key = map.withKey();
             mapSink.copy(record, key);
             MapValue value = key.createValue();
-            if (value.isNew()) {
-                functionUpdater.updateNew(value, record, baseRowId + r);
-            } else {
+            if (!value.isNew()) {
                 functionUpdater.updateExisting(value, record, baseRowId + r);
+            } else {
+                functionUpdater.updateNew(value, record, baseRowId + r);
             }
         }
     }
 
-    private static void aggregateFilteredNonShardedIntKey(
+    private static void aggregateNonShardedIntKey(
+            PageFrameMemory frameMemory,
             PageFrameMemoryRecord record,
             DirectLongList rows,
             long baseRowId,
@@ -163,20 +167,41 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
     ) {
         assert columnIndex != -1;
         final Unordered4Map map = (Unordered4Map) fragment.reopenMap();
-        for (long i = 0, n = rows.size(); i < n; i++) {
-            final long r = rows.get(i);
-            record.setRowIndex(r);
-            final int key = record.getInt(columnIndex);
-            MapValue value = map.createValueWithKey(key);
-            if (value.isNew()) {
-                functionUpdater.updateNew(value, record, baseRowId + r);
-            } else {
-                functionUpdater.updateExisting(value, record, baseRowId + r);
+        final long addr = frameMemory.getPageAddress(columnIndex);
+        if (addr != 0) {
+            for (long i = 0, n = rows.size(); i < n; i++) {
+                final long r = rows.get(i);
+                final int key = Unsafe.getUnsafe().getInt(addr + (r << 2));
+                MapValue value = map.createValueWithKey(key);
+                record.setRowIndex(r);
+                if (!value.isNew()) {
+                    functionUpdater.updateExisting(value, record, baseRowId + r);
+                } else {
+                    functionUpdater.updateNew(value, record, baseRowId + r);
+                }
+            }
+        } else { // column top
+            if (rows.size() > 0) {
+                long r = rows.get(0);
+                record.setRowIndex(r);
+                final int key = record.getInt(columnIndex);
+                MapValue value = map.createValueWithKey(key);
+                if (!value.isNew()) {
+                    functionUpdater.updateExisting(value, record, baseRowId + r);
+                } else {
+                    functionUpdater.updateNew(value, record, baseRowId + r);
+                }
+                for (long i = 1, n = rows.size(); i < n; i++) {
+                    r = rows.get(i);
+                    record.setRowIndex(r);
+                    functionUpdater.updateExisting(value, record, baseRowId + r);
+                }
             }
         }
     }
 
-    private static void aggregateFilteredNonShardedLongKey(
+    private static void aggregateNonShardedLongKey(
+            PageFrameMemory frameMemory,
             PageFrameMemoryRecord record,
             DirectLongList rows,
             long baseRowId,
@@ -186,20 +211,41 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
     ) {
         assert columnIndex != -1;
         final Unordered8Map map = (Unordered8Map) fragment.reopenMap();
-        for (long i = 0, n = rows.size(); i < n; i++) {
-            final long r = rows.get(i);
-            record.setRowIndex(r);
-            final long key = record.getLong(columnIndex);
-            MapValue value = map.createValueWithKey(key);
-            if (value.isNew()) {
-                functionUpdater.updateNew(value, record, baseRowId + r);
-            } else {
-                functionUpdater.updateExisting(value, record, baseRowId + r);
+        final long addr = frameMemory.getPageAddress(columnIndex);
+        if (addr != 0) {
+            for (long i = 0, n = rows.size(); i < n; i++) {
+                final long r = rows.get(i);
+                final long key = Unsafe.getUnsafe().getLong(addr + (r << 3));
+                MapValue value = map.createValueWithKey(key);
+                record.setRowIndex(r);
+                if (!value.isNew()) {
+                    functionUpdater.updateExisting(value, record, baseRowId + r);
+                } else {
+                    functionUpdater.updateNew(value, record, baseRowId + r);
+                }
+            }
+        } else { // column top
+            if (rows.size() > 0) {
+                long r = rows.get(0);
+                record.setRowIndex(r);
+                final long key = record.getLong(columnIndex);
+                MapValue value = map.createValueWithKey(key);
+                if (!value.isNew()) {
+                    functionUpdater.updateExisting(value, record, baseRowId + r);
+                } else {
+                    functionUpdater.updateNew(value, record, baseRowId + r);
+                }
+                for (long i = 1, n = rows.size(); i < n; i++) {
+                    r = rows.get(i);
+                    record.setRowIndex(r);
+                    functionUpdater.updateExisting(value, record, baseRowId + r);
+                }
             }
         }
     }
 
-    private static void aggregateFilteredNonShardedShortKey(
+    private static void aggregateNonShardedShortKey(
+            PageFrameMemory frameMemory,
             PageFrameMemoryRecord record,
             DirectLongList rows,
             long baseRowId,
@@ -209,20 +255,40 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
     ) {
         assert columnIndex != -1;
         final Unordered2Map map = (Unordered2Map) fragment.reopenMap();
-        for (long i = 0, n = rows.size(); i < n; i++) {
-            final long r = rows.get(i);
-            record.setRowIndex(r);
-            final short key = record.getShort(columnIndex);
-            MapValue value = map.createValueWithKey(key);
-            if (value.isNew()) {
-                functionUpdater.updateNew(value, record, baseRowId + r);
-            } else {
-                functionUpdater.updateExisting(value, record, baseRowId + r);
+        final long addr = frameMemory.getPageAddress(columnIndex);
+        if (addr != 0) {
+            for (long i = 0, n = rows.size(); i < n; i++) {
+                final long r = rows.get(i);
+                final short key = Unsafe.getUnsafe().getShort(addr + (r << 1));
+                MapValue value = map.createValueWithKey(key);
+                record.setRowIndex(r);
+                if (!value.isNew()) {
+                    functionUpdater.updateExisting(value, record, baseRowId + r);
+                } else {
+                    functionUpdater.updateNew(value, record, baseRowId + r);
+                }
+            }
+        } else { // column top
+            if (rows.size() > 0) {
+                long r = rows.get(0);
+                record.setRowIndex(r);
+                final short key = record.getShort(columnIndex);
+                MapValue value = map.createValueWithKey(key);
+                if (!value.isNew()) {
+                    functionUpdater.updateExisting(value, record, baseRowId + r);
+                } else {
+                    functionUpdater.updateNew(value, record, baseRowId + r);
+                }
+                for (long i = 1, n = rows.size(); i < n; i++) {
+                    r = rows.get(i);
+                    record.setRowIndex(r);
+                    functionUpdater.updateExisting(value, record, baseRowId + r);
+                }
             }
         }
     }
 
-    private static void aggregateFilteredNonShardedVarcharKey(
+    private static void aggregateNonShardedVarcharKey(
             PageFrameMemoryRecord record,
             DirectLongList rows,
             long baseRowId,
@@ -238,15 +304,15 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
             final MapKey key = map.withKey();
             key.putVarchar(record.getVarcharA(columnIndex));
             MapValue value = key.createValue();
-            if (value.isNew()) {
-                functionUpdater.updateNew(value, record, baseRowId + r);
-            } else {
+            if (!value.isNew()) {
                 functionUpdater.updateExisting(value, record, baseRowId + r);
+            } else {
+                functionUpdater.updateNew(value, record, baseRowId + r);
             }
         }
     }
 
-    private static void aggregateFilteredShardedGeneric(
+    private static void aggregateShardedGeneric(
             PageFrameMemoryRecord record,
             DirectLongList rows,
             long baseRowId,
@@ -275,15 +341,16 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
             }
 
             MapValue shardValue = shardKey.createValue(hashCode);
-            if (shardValue.isNew()) {
-                functionUpdater.updateNew(shardValue, record, baseRowId + r);
-            } else {
+            if (!shardValue.isNew()) {
                 functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+            } else {
+                functionUpdater.updateNew(shardValue, record, baseRowId + r);
             }
         }
     }
 
-    private static void aggregateFilteredShardedIntKey(
+    private static void aggregateShardedIntKey(
+            PageFrameMemory frameMemory,
             PageFrameMemoryRecord record,
             DirectLongList rows,
             long baseRowId,
@@ -292,24 +359,47 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
             int columnIndex
     ) {
         assert columnIndex != -1;
-        for (long i = 0, n = rows.size(); i < n; i++) {
-            final long r = rows.get(i);
-            record.setRowIndex(r);
+        final long addr = frameMemory.getPageAddress(columnIndex);
+        if (addr != 0) {
+            for (long i = 0, n = rows.size(); i < n; i++) {
+                final long r = rows.get(i);
+                final int key = Unsafe.getUnsafe().getInt(addr + (r << 2));
+                final long hashCode = Unordered4Map.hashKey(key);
+                final Unordered4Map shard = (Unordered4Map) fragment.getShardMap(hashCode);
 
-            final int key = record.getInt(columnIndex);
-            final long hashCode = Unordered4Map.hashKey(key);
-            final Unordered4Map shard = (Unordered4Map) fragment.getShardMap(hashCode);
-
-            MapValue shardValue = shard.createValueWithKey(key, hashCode);
-            if (shardValue.isNew()) {
-                functionUpdater.updateNew(shardValue, record, baseRowId + r);
-            } else {
-                functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+                MapValue shardValue = shard.createValueWithKey(key, hashCode);
+                record.setRowIndex(r);
+                if (!shardValue.isNew()) {
+                    functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+                } else {
+                    functionUpdater.updateNew(shardValue, record, baseRowId + r);
+                }
+            }
+        } else { // column top
+            if (rows.size() > 0) {
+                long r = rows.get(0);
+                record.setRowIndex(r);
+                final int key = record.getInt(columnIndex);
+                final long hashCode = Unordered4Map.hashKey(key);
+                final Unordered4Map shard = (Unordered4Map) fragment.getShardMap(hashCode);
+                final MapValue shardValue = shard.createValueWithKey(key, hashCode);
+                record.setRowIndex(r);
+                if (!shardValue.isNew()) {
+                    functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+                } else {
+                    functionUpdater.updateNew(shardValue, record, baseRowId + r);
+                }
+                for (long i = 1, n = rows.size(); i < n; i++) {
+                    r = rows.get(i);
+                    record.setRowIndex(r);
+                    functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+                }
             }
         }
     }
 
-    private static void aggregateFilteredShardedLongKey(
+    private static void aggregateShardedLongKey(
+            PageFrameMemory frameMemory,
             PageFrameMemoryRecord record,
             DirectLongList rows,
             long baseRowId,
@@ -318,24 +408,46 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
             int columnIndex
     ) {
         assert columnIndex != -1;
-        for (long i = 0, n = rows.size(); i < n; i++) {
-            final long r = rows.get(i);
-            record.setRowIndex(r);
+        final long addr = frameMemory.getPageAddress(columnIndex);
+        if (addr != 0) {
+            for (long i = 0, n = rows.size(); i < n; i++) {
+                final long r = rows.get(i);
+                final long key = Unsafe.getUnsafe().getLong(addr + (r << 3));
+                final long hashCode = Unordered8Map.hashKey(key);
+                final Unordered8Map shard = (Unordered8Map) fragment.getShardMap(hashCode);
 
-            final long key = record.getLong(columnIndex);
-            final long hashCode = Unordered8Map.hashKey(key);
-            final Unordered8Map shard = (Unordered8Map) fragment.getShardMap(hashCode);
-
-            MapValue shardValue = shard.createValueWithKey(key, hashCode);
-            if (shardValue.isNew()) {
-                functionUpdater.updateNew(shardValue, record, baseRowId + r);
-            } else {
-                functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+                MapValue shardValue = shard.createValueWithKey(key, hashCode);
+                record.setRowIndex(r);
+                if (!shardValue.isNew()) {
+                    functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+                } else {
+                    functionUpdater.updateNew(shardValue, record, baseRowId + r);
+                }
+            }
+        } else { // column top
+            if (rows.size() > 0) {
+                long r = rows.get(0);
+                record.setRowIndex(r);
+                final long key = record.getLong(columnIndex);
+                final long hashCode = Unordered8Map.hashKey(key);
+                final Unordered8Map shard = (Unordered8Map) fragment.getShardMap(hashCode);
+                final MapValue shardValue = shard.createValueWithKey(key, hashCode);
+                record.setRowIndex(r);
+                if (!shardValue.isNew()) {
+                    functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+                } else {
+                    functionUpdater.updateNew(shardValue, record, baseRowId + r);
+                }
+                for (long i = 1, n = rows.size(); i < n; i++) {
+                    r = rows.get(i);
+                    record.setRowIndex(r);
+                    functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+                }
             }
         }
     }
 
-    private static void aggregateFilteredShardedVarcharKey(
+    private static void aggregateShardedVarcharKey(
             PageFrameMemoryRecord record,
             DirectLongList rows,
             long baseRowId,
@@ -365,10 +477,10 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
             }
 
             MapValue shardValue = shardKey.createValue(hashCode);
-            if (shardValue.isNew()) {
-                functionUpdater.updateNew(shardValue, record, baseRowId + r);
-            } else {
+            if (!shardValue.isNew()) {
                 functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+            } else {
+                functionUpdater.updateNew(shardValue, record, baseRowId + r);
             }
         }
     }
