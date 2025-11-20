@@ -426,6 +426,11 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             case ColumnType.DOUBLE:
                 bindVarMemory.putDouble(function.getDouble(null));
                 return;
+            case ColumnType.UUID:
+                long lo = function.getLong128Lo(null);
+                long hi = function.getLong128Hi(null);
+                bindVarMemory.putLong128(lo, hi);
+                return;
             default:
                 throw SqlException.position(0).put("unsupported bind variable type: ").put(ColumnType.nameOf(columnTypeTag));
         }
