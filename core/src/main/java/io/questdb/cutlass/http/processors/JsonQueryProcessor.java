@@ -299,6 +299,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             ));
         }
 
+        // todo: this is no good, it's likely hiding a problem
+        state.newRequest();
+
         // clear random for new request to avoid reusing random between requests
         state.setRnd(null);
 
@@ -792,7 +795,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 // Since we are not parsing query text, we should not have any encoding issues.
             }
             state.info().$("Empty query header received. Sending empty reply.").$();
-            sendEmptyQueryNotice(state, null, keepAliveHeader);
+            final HttpChunkedResponse response = context.getChunkedResponse();
+            state.storeEmptyQuery();
+            JsonQueryProcessor.header(response, context, keepAliveHeader, 200);
+            state.onResumeEmptyQuery(response);
             return false;
         }
 
@@ -832,7 +838,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             state.configure(header, query, skip, stop);
         } catch (Utf8Exception e) {
             state.info().$("Bad UTF8 encoding").$();
-            sendBadUtf8EncodingInRequestResponse(context.getChunkedResponse(), context, query, keepAliveHeader);
+            HttpChunkedResponse response = context.getChunkedResponse();
+            state.storeBadUtf8();
+            JsonQueryProcessor.header(response, context, keepAliveHeader, HTTP_BAD_REQUEST);
+            state.onResumeBadUtf8(response);
             return false;
         }
         return true;
