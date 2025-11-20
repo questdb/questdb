@@ -256,6 +256,9 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 freeAllIteratorBlocks();
                 counter.add(size - emittedRowCount);
             } else {
+                // Potential optimization: go through all the iterators, count their pending rows,
+                // and then add the pending master rows. Since we already know slaveRowCount, the rest
+                // is similar to the `if (size != -1)` branch.
                 super.calculateSize(circuitBreaker, counter);
             }
         }
@@ -629,6 +632,8 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 long firstSlaveRecordOffset = slaveRecordOffsets.getQuick(0);
                 Record firstSlaveRecord = slaveRecordArray.getRecordAt(firstSlaveRecordOffset);
                 firstSlaveTimeOffset = firstSlaveRecord.getLong(slaveSequenceColumnIndex);
+            } else {
+                firstSlaveTimeOffset = 0;
             }
 
             // Reset iterator state for new execution
