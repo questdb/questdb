@@ -746,8 +746,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             return;
         }
 
-        final RecordMetadata metadata = state.recordCursorFactory.getMetadata();
-        final int columnCount = metadata.getColumnCount();
+        RecordCursorFactory recFac = state.recordCursorFactory;
 
         OUT:
         while (true) {
@@ -763,7 +762,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     case QUERY_METADATA:
                         if (!state.noMeta) {
                             state.columnIndex = 0;
-                            while (state.columnIndex < columnCount) {
+                            RecordMetadata metadata = recFac.getMetadata();
+                            while (state.columnIndex < metadata.getColumnCount()) {
                                 if (state.columnIndex > 0) {
                                     response.putAscii(state.delimiter);
                                 }
@@ -809,7 +809,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.columnIndex = 0;
                         // fall through
                     case QUERY_RECORD:
-                        while (state.columnIndex < columnCount) {
+                        while (state.columnIndex < recFac.getMetadata().getColumnCount()) {
                             if (state.columnIndex > 0 && state.columnValueFullySent) {
                                 response.putAscii(state.delimiter);
                             }
@@ -817,7 +817,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             state.columnIndex++;
                             response.bookmark();
                         }
-
                         state.queryState = QUERY_RECORD_SUFFIX;
                         // fall through
                     case QUERY_RECORD_SUFFIX:
