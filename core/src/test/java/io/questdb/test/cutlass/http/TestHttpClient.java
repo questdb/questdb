@@ -235,7 +235,8 @@ public class TestHttpClient implements QuietCloseable {
             CharSequence expectedResponse,
             @Nullable CharSequenceObjHashMap<String> queryParams,
             @Nullable CharSequence username,
-            @Nullable CharSequence password
+            @Nullable CharSequence password,
+            int port
     ) {
         try {
             HttpClient.Request req = httpClient.newRequest("localhost", port);
