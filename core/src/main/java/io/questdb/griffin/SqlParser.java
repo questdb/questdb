@@ -1299,6 +1299,7 @@ public class SqlParser {
             tok = optTok(lexer);
         }
 
+        // todo: storage policy in ent create table/mat view sql commands
         if (tok != null && isTtlKeyword(tok)) {
             final int ttlValuePos = lexer.getPosition();
             final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);

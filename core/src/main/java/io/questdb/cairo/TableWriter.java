@@ -143,9 +143,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -250,6 +250,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final TableWriterSegmentCopyInfo segmentCopyInfo = new TableWriterSegmentCopyInfo();
     private final TableWriterSegmentFileCache segmentFileCache;
     private final TxReader slaveTxReader;
+    private final StoragePolicy storagePolicy;
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
     private final TimestampDriver timestampDriver;
@@ -524,6 +525,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // wal specific
             segmentFileCache = metadata.isWalEnabled() ? new TableWriterSegmentFileCache(tableToken, configuration) : null;
+
+            storagePolicy = configuration.getFactoryProvider().getPartitionLifecycleFactory().createStoragePolicy(this);
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -2060,6 +2063,89 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    public boolean dropPartitionByExactTimestamp(long timestamp) {
+        final long minTimestamp = txWriter.getMinTimestamp(); // table min timestamp
+        final long maxTimestamp = txWriter.getMaxTimestamp(); // table max timestamp
+
+        final int index = txWriter.getPartitionIndex(timestamp);
+        if (index < 0) {
+            LOG.error().$("partition is already removed [path=").$substr(pathRootSize, path).$(", partitionTimestamp=").$ts(timestampDriver, timestamp).I$();
+            return false;
+        }
+
+        final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
+
+        if (timestamp == txWriter.getPartitionTimestampByTimestamp(maxTimestamp)) {
+            // removing active partition
+
+            // calculate new transient row count, min/max timestamps and find the partition to open next
+            final long nextMaxTimestamp;
+            final long newTransientRowCount;
+            final long prevTimestamp;
+            if (index == 0) {
+                nextMaxTimestamp = Long.MIN_VALUE;
+                newTransientRowCount = 0L;
+                prevTimestamp = 0L; // meaningless
+            } else {
+                final int prevIndex = index - 1;
+                final long parquetSize = txWriter.getPartitionParquetFileSize(prevIndex);
+                prevTimestamp = txWriter.getPartitionTimestampByIndex(prevIndex);
+                newTransientRowCount = txWriter.getPartitionSize(prevIndex);
+                try {
+                    setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
+                    readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetSize, newTransientRowCount);
+                    nextMaxTimestamp = attachMaxTimestamp;
+                } finally {
+                    path.trimTo(pathSize);
+                }
+            }
+
+            // NOTE: this method should not commit to _txn file
+            // In case multiple partition parts are deleted, they should be deleted atomically
+            txWriter.beginPartitionSizeUpdate();
+            txWriter.removeAttachedPartitions(timestamp);
+            txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
+            txWriter.bumpTruncateVersion();
+            columnVersionWriter.removePartition(timestamp);
+            columnVersionWriter.replaceInitialPartitionRecords(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
+
+            // No need to truncate before, files to be deleted.
+            closeActivePartition(false);
+
+            if (index != 0) {
+                openPartition(prevTimestamp, newTransientRowCount);
+                setAppendPosition(newTransientRowCount, false);
+            } else {
+                rowAction = ROW_ACTION_OPEN_PARTITION;
+            }
+        } else {
+            // when we want to delete first partition we must find out minTimestamp from
+            // the next partition if it exists, or the next partition, and so on
+            //
+            // when somebody removed data directories manually and then attempts to tidy
+            // up metadata with logical partition delete, we have to uphold the effort and
+            // re-compute table size and its minTimestamp from what remains on disk
+
+            // find out if we are removing min partition
+            long nextMinTimestamp = minTimestamp;
+            if (timestamp == txWriter.getPartitionTimestampByIndex(0)) {
+                nextMinTimestamp = readMinTimestamp();
+            }
+
+            // NOTE: this method should not commit to _txn file
+            // In case multiple partition parts are deleted, they should be deleted atomically
+            txWriter.beginPartitionSizeUpdate();
+            txWriter.removeAttachedPartitions(timestamp);
+            txWriter.setMinTimestamp(nextMinTimestamp);
+            txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
+            txWriter.bumpTruncateVersion();
+            columnVersionWriter.removePartition(timestamp);
+        }
+
+        partitionRemoveCandidates.add(timestamp, partitionNameTxn);
+        return true;
+    }
+
     @Override
     public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
         assert txWriter.getLagRowCount() == 0;
@@ -2118,51 +2204,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return isSubsetOfOldKeys;
     }
 
-    public void enforceTtl() {
-        partitionRemoveCandidates.clear();
-        final int ttl = metadata.getTtlHoursOrMonths();
-        if (ttl == 0) {
-            return;
-        }
+    public void enforceStoragePolicy() {
         if (metadata.getPartitionBy() == PartitionBy.NONE) {
-            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
+            // non-partitioned table
             return;
         }
+
         if (getPartitionCount() < 2) {
+            // there is only a single partition, which is the active one
             return;
         }
-        long maxTimestamp = getMaxTimestamp();
-        long evictedPartitionTimestamp = -1;
-        boolean dropped = false;
-        do {
-            long partitionTimestamp = getPartitionTimestamp(0);
-            long floorTimestamp = txWriter.getPartitionFloor(partitionTimestamp);
-            if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
-                assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
-                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
-                continue;
-            }
 
+        boolean removePartitions = false;
+        partitionRemoveCandidates.clear();
 
-            long partitionCeiling = txWriter.getNextLogicalPartitionTimestamp(partitionTimestamp);
-            // TTL < 0 means it's in months
-            boolean shouldEvict = ttl > 0
-                    ? maxTimestamp - partitionCeiling >= timestampDriver.fromHours(ttl)
-                    : timestampDriver.monthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
-            if (shouldEvict) {
-                LOG.info()
-                        .$("Partition's TTL expired, evicting [table=").$(metadata.getTableToken())
-                        .$(", partitionTs=").microTime(partitionTimestamp)
-                        .I$();
-                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
-                evictedPartitionTimestamp = partitionTimestamp;
-            } else {
-                // Partitions are sorted by timestamp, no need to check the rest
-                break;
-            }
-        } while (getPartitionCount() > 1);
+        storagePolicy.convertPartitionsToParquet();
+        removePartitions |= storagePolicy.dropNativePartitions();
+        removePartitions |= storagePolicy.dropLocalPartitions();
+        removePartitions |= storagePolicy.enforceTtl();
+        storagePolicy.dropRemotePartitions();
 
-        if (dropped) {
+        if (removePartitions) {
             commitRemovePartitionOperation();
         }
     }
@@ -2416,7 +2478,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getTruncateVersion();
     }
 
-    @TestOnly
+    // public visibility because of tests
     public TxWriter getTxWriter() {
         return txWriter;
     }
@@ -2979,14 +3041,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void setMetaTtl(int ttlHoursOrMonths) {
+        if (TableUtils.hasStoragePolicy(metadata)) {
+            throw CairoException.nonCritical().put("cannot set TTL on a table with active storage policy");
+        }
+
         commit();
         metadata.setTtlHoursOrMonths(ttlHoursOrMonths);
         writeMetadataToDisk();
+        enforceStoragePolicy();
     }
 
     public void setSeqTxn(long seqTxn) {
         assert txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0;
         txWriter.setSeqTxn(seqTxn);
+    }
+
+    @Override
+    public void setStoragePolicy(
+            int toParquetHoursOrMonths,
+            int dropNativeHoursOrMonths,
+            int dropLocalHoursOrMonths,
+            int dropRemoteHoursOrMonths
+    ) {
+        commit();
+        metadata.setTtlHoursOrMonths(0);
+        metadata.setStoragePolicy(toParquetHoursOrMonths, dropNativeHoursOrMonths, dropLocalHoursOrMonths, dropRemoteHoursOrMonths);
+        writeMetadataToDisk();
+        enforceStoragePolicy();
     }
 
     public long size() {
@@ -5211,89 +5292,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private boolean dropPartitionByExactTimestamp(long timestamp) {
-        final long minTimestamp = txWriter.getMinTimestamp(); // table min timestamp
-        final long maxTimestamp = txWriter.getMaxTimestamp(); // table max timestamp
-
-        final int index = txWriter.getPartitionIndex(timestamp);
-        if (index < 0) {
-            LOG.error().$("partition is already removed [path=").$substr(pathRootSize, path).$(", partitionTimestamp=").$ts(timestampDriver, timestamp).I$();
-            return false;
-        }
-
-        final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
-
-        if (timestamp == txWriter.getPartitionTimestampByTimestamp(maxTimestamp)) {
-            // removing active partition
-
-            // calculate new transient row count, min/max timestamps and find the partition to open next
-            final long nextMaxTimestamp;
-            final long newTransientRowCount;
-            final long prevTimestamp;
-            if (index == 0) {
-                nextMaxTimestamp = Long.MIN_VALUE;
-                newTransientRowCount = 0L;
-                prevTimestamp = 0L; // meaningless
-            } else {
-                final int prevIndex = index - 1;
-                final long parquetSize = txWriter.getPartitionParquetFileSize(prevIndex);
-                prevTimestamp = txWriter.getPartitionTimestampByIndex(prevIndex);
-                newTransientRowCount = txWriter.getPartitionSize(prevIndex);
-                try {
-                    setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
-                    readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetSize, newTransientRowCount);
-                    nextMaxTimestamp = attachMaxTimestamp;
-                } finally {
-                    path.trimTo(pathSize);
-                }
-            }
-
-            // NOTE: this method should not commit to _txn file
-            // In case multiple partition parts are deleted, they should be deleted atomically
-            txWriter.beginPartitionSizeUpdate();
-            txWriter.removeAttachedPartitions(timestamp);
-            txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
-            txWriter.bumpTruncateVersion();
-            columnVersionWriter.removePartition(timestamp);
-            columnVersionWriter.replaceInitialPartitionRecords(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
-
-            // No need to truncate before, files to be deleted.
-            closeActivePartition(false);
-
-            if (index != 0) {
-                openPartition(prevTimestamp, newTransientRowCount);
-                setAppendPosition(newTransientRowCount, false);
-            } else {
-                rowAction = ROW_ACTION_OPEN_PARTITION;
-            }
-        } else {
-            // when we want to delete first partition we must find out minTimestamp from
-            // the next partition if it exists, or the next partition, and so on
-            //
-            // when somebody removed data directories manually and then attempts to tidy
-            // up metadata with logical partition delete, we have to uphold the effort and
-            // re-compute table size and its minTimestamp from what remains on disk
-
-            // find out if we are removing min partition
-            long nextMinTimestamp = minTimestamp;
-            if (timestamp == txWriter.getPartitionTimestampByIndex(0)) {
-                nextMinTimestamp = readMinTimestamp();
-            }
-
-            // NOTE: this method should not commit to _txn file
-            // In case multiple partition parts are deleted, they should be deleted atomically
-            txWriter.beginPartitionSizeUpdate();
-            txWriter.removeAttachedPartitions(timestamp);
-            txWriter.setMinTimestamp(nextMinTimestamp);
-            txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
-            txWriter.bumpTruncateVersion();
-            columnVersionWriter.removePartition(timestamp);
-        }
-
-        partitionRemoveCandidates.add(timestamp, partitionNameTxn);
-        return true;
-    }
-
     private long findMinSplitPartitionTimestamp() {
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
             long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
@@ -5706,7 +5704,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
             processPartitionRemoveCandidates();
             metrics.tableWriterMetrics().incrementCommits();
-            enforceTtl();
+            enforceStoragePolicy();
             scaleSymbolCapacities();
         } catch (Throwable e) {
             // Log the exception stack.
@@ -9517,6 +9515,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putBool(metadata.isWalEnabled());
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
+            ddlMem.putInt(metadata.getToParquetHoursOrMonths());
+            ddlMem.putInt(metadata.getDropNativeHoursOrMonths());
+            ddlMem.putInt(metadata.getDropLocalHoursOrMonths());
+            ddlMem.putInt(metadata.getDropRemoteHoursOrMonths());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {

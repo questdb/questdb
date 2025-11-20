@@ -149,6 +149,16 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default void setStoragePolicy(
+            int toParquetHoursOrMonths,
+            int dropNativeHoursOrMonths,
+            int dropLocalHoursOrMonths,
+            int dropRemoteHoursOrMonths
+    ) {
+        throw CairoException.critical(0).put("change of TTL does not update sequencer metadata");
+    }
+
+    @Override
     default void squashPartitions() {
         throw CairoException.critical(0).put("partition squash does not update sequencer metadata");
     }

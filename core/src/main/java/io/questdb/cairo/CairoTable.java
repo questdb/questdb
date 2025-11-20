@@ -36,6 +36,9 @@ public class CairoTable implements Sinkable {
     public final IntList columnOrderList;
     public final ObjList<CairoColumn> columns;
     private boolean dedup;
+    private int dropLocalHoursOrMonths;
+    private int dropNativeHoursOrMonths;
+    private int dropRemoteHoursOrMonths;
     private int matViewRefreshLimitHoursOrMonths;
     private int matViewTimerInterval;
     private long matViewTimerStart;
@@ -47,6 +50,7 @@ public class CairoTable implements Sinkable {
     private boolean softLink;
     private int timestampIndex;
     private int timestampType;
+    private int toParquetHoursOrMonths;
     private TableToken token;
     private int ttlHoursOrMonths;
 
@@ -72,6 +76,10 @@ public class CairoTable implements Sinkable {
         o3MaxLag = fromTab.getO3MaxLag();
         timestampIndex = fromTab.getTimestampIndex();
         ttlHoursOrMonths = fromTab.getTtlHoursOrMonths();
+        toParquetHoursOrMonths = fromTab.getToParquetHoursOrMonths();
+        dropNativeHoursOrMonths = fromTab.getDropNativeHoursOrMonths();
+        dropLocalHoursOrMonths = fromTab.getDropLocalHoursOrMonths();
+        dropRemoteHoursOrMonths = fromTab.getDropRemoteHoursOrMonths();
         softLink = fromTab.isSoftLink();
         dedup = fromTab.hasDedup();
         matViewRefreshLimitHoursOrMonths = fromTab.getMatViewRefreshLimitHoursOrMonths();
@@ -103,6 +111,18 @@ public class CairoTable implements Sinkable {
 
     public String getDirectoryName() {
         return token.getDirName();
+    }
+
+    public int getDropLocalHoursOrMonths() {
+        return dropLocalHoursOrMonths;
+    }
+
+    public int getDropNativeHoursOrMonths() {
+        return dropNativeHoursOrMonths;
+    }
+
+    public int getDropRemoteHoursOrMonths() {
+        return dropRemoteHoursOrMonths;
     }
 
     public int getId() {
@@ -171,6 +191,10 @@ public class CairoTable implements Sinkable {
         return timestampType;
     }
 
+    public int getToParquetHoursOrMonths() {
+        return toParquetHoursOrMonths;
+    }
+
     /**
      * Returns the time-to-live (TTL) of the data in this table: if positive,
      * it's in hours; if negative, it's in months (and the actual value is positive)
@@ -193,6 +217,18 @@ public class CairoTable implements Sinkable {
 
     public void setDedupFlag(boolean dedup) {
         this.dedup = dedup;
+    }
+
+    public void setDropLocalHoursOrMonths(int dropLocalHoursOrMonths) {
+        this.dropLocalHoursOrMonths = dropLocalHoursOrMonths;
+    }
+
+    public void setDropNativeHoursOrMonths(int dropNativeHoursOrMonths) {
+        this.dropNativeHoursOrMonths = dropNativeHoursOrMonths;
+    }
+
+    public void setDropRemoteHoursOrMonths(int dropRemoteHoursOrMonths) {
+        this.dropRemoteHoursOrMonths = dropRemoteHoursOrMonths;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {
@@ -227,6 +263,10 @@ public class CairoTable implements Sinkable {
         this.timestampType = timestampType;
     }
 
+    public void setToParquetHoursOrMonths(int toParquetHoursOrMonths) {
+        this.toParquetHoursOrMonths = toParquetHoursOrMonths;
+    }
+
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
         this.ttlHoursOrMonths = ttlHoursOrMonths;
     }
@@ -251,6 +291,30 @@ public class CairoTable implements Sinkable {
         } else {
             sink.put("ttlMonths=").put(-ttlHoursOrMonths).put(", ");
         }
+//        final int toParquetHoursOrMonths = getToParquetHoursOrMonths();
+//        if (toParquetHoursOrMonths >= 0) {
+//            sink.put("toParquetHours=").put(toParquetHoursOrMonths).put(", ");
+//        } else {
+//            sink.put("toParquetMonths=").put(-toParquetHoursOrMonths).put(", ");
+//        }
+//        final int dropNativeHoursOrMonths = getDropNativeHoursOrMonths();
+//        if (dropNativeHoursOrMonths >= 0) {
+//            sink.put("dropNativeHours=").put(dropNativeHoursOrMonths).put(", ");
+//        } else {
+//            sink.put("dropNativeMonths=").put(-dropNativeHoursOrMonths).put(", ");
+//        }
+//        final int dropLocalHoursOrMonths = getDropLocalHoursOrMonths();
+//        if (dropLocalHoursOrMonths >= 0) {
+//            sink.put("dropLocalHours=").put(dropLocalHoursOrMonths).put(", ");
+//        } else {
+//            sink.put("dropLocalMonths=").put(-dropLocalHoursOrMonths).put(", ");
+//        }
+//        final int dropRemoteHoursOrMonths = getDropRemoteHoursOrMonths();
+//        if (dropRemoteHoursOrMonths >= 0) {
+//            sink.put("dropRemoteHours=").put(dropRemoteHoursOrMonths).put(", ");
+//        } else {
+//            sink.put("dropRemoteMonths=").put(-dropRemoteHoursOrMonths).put(", ");
+//        }
         sink.put("walEnabled=").put(isWalEnabled()).put(", ");
         sink.put("columnCount=").put(getColumnCount()).put("]");
         sink.put('\n');

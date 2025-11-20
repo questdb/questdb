@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -74,6 +73,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
+    public final static short SET_STORAGE_POLICY = SET_MAT_VIEW_REFRESH + 1; // 26
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -197,6 +197,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case SET_TTL:
                     applyTtl(svc);
+                    break;
+                case SET_STORAGE_POLICY:
+                    applyStoragePolicy(svc);
                     break;
                 case RENAME_TABLE:
                     applyRenameTable(svc);
@@ -633,13 +636,23 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         );
     }
 
+    private void applyStoragePolicy(MetadataService svc) {
+        final int toParquetHoursOrMonths = (int) extraInfo.get(0);
+        final int dropNativeHoursOrMonths = (int) extraInfo.get(1);
+        final int dropLocalHoursOrMonths = (int) extraInfo.get(2);
+        final int dropRemoteHoursOrMonths = (int) extraInfo.get(3);
+        try {
+            svc.setStoragePolicy(toParquetHoursOrMonths, dropNativeHoursOrMonths, dropLocalHoursOrMonths, dropRemoteHoursOrMonths);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
     private void applyTtl(MetadataService svc) {
         final int ttlHoursOrMonths = (int) extraInfo.get(0);
         try {
             svc.setMetaTtl(ttlHoursOrMonths);
-            if (svc instanceof TableWriter) {
-                ((TableWriter) svc).enforceTtl();
-            }
         } catch (CairoException e) {
             e.position(tableNamePosition);
             throw e;

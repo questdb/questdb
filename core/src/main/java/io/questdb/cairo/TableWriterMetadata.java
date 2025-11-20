@@ -34,7 +34,10 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
-public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata, TableStructure {
+public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
+    private int dropLocalHoursOrMonths;
+    private int dropNativeHoursOrMonths;
+    private int dropRemoteHoursOrMonths;
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -42,6 +45,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private int symbolMapCount;
     private int tableId;
     private TableToken tableToken;
+    private int toParquetHoursOrMonths;
     private int ttlHoursOrMonths;
     private boolean walEnabled;
 
@@ -52,6 +56,21 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public void close() {
         // nothing to release
+    }
+
+    @Override
+    public int getDropLocalHoursOrMonths() {
+        return dropLocalHoursOrMonths;
+    }
+
+    @Override
+    public int getDropNativeHoursOrMonths() {
+        return dropNativeHoursOrMonths;
+    }
+
+    @Override
+    public int getDropRemoteHoursOrMonths() {
+        return dropRemoteHoursOrMonths;
     }
 
     @Override
@@ -113,6 +132,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public int getToParquetHoursOrMonths() {
+        return toParquetHoursOrMonths;
+    }
+
+    @Override
     public int getTtlHoursOrMonths() {
         return ttlHoursOrMonths;
     }
@@ -140,6 +164,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
+        this.dropNativeHoursOrMonths = TableUtils.getDropNativeHoursOrMonths(metaMem);
+        this.dropLocalHoursOrMonths = TableUtils.getDropLocalHoursOrMonths(metaMem);
+        this.dropRemoteHoursOrMonths = TableUtils.getDropRemoteHoursOrMonths(metaMem);
+        this.toParquetHoursOrMonths = TableUtils.getToParquetHoursOrMonths(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -185,6 +213,18 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     public void setO3MaxLag(long o3MaxLagUs) {
         this.o3MaxLag = o3MaxLagUs;
+    }
+
+    public void setStoragePolicy(
+            int toParquetHoursOrMonths,
+            int dropNativeHoursOrMonths,
+            int dropLocalHoursOrMonths,
+            int dropRemoteHoursOrMonths
+    ) {
+        this.toParquetHoursOrMonths = toParquetHoursOrMonths;
+        this.dropNativeHoursOrMonths = dropNativeHoursOrMonths;
+        this.dropLocalHoursOrMonths = dropLocalHoursOrMonths;
+        this.dropRemoteHoursOrMonths = dropRemoteHoursOrMonths;
     }
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {

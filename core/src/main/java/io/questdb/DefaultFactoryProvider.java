@@ -25,6 +25,8 @@
 package io.questdb;
 
 import io.questdb.cairo.DefaultWalJobFactory;
+import io.questdb.cairo.StoragePolicyFactory;
+import io.questdb.cairo.StoragePolicyFactoryImpl;
 import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
@@ -90,6 +92,11 @@ public class DefaultFactoryProvider implements FactoryProvider {
     @Override
     public @NotNull SocketFactory getPGWireSocketFactory() {
         return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull StoragePolicyFactory getPartitionLifecycleFactory() {
+        return StoragePolicyFactoryImpl.INSTANCE;
     }
 
     @Override
