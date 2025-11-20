@@ -27,10 +27,10 @@ package io.questdb.test.cutlass.http;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -352,10 +352,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("query", "SELECT * FROM codec_zstd_test where 1 = 2");
-
                     testHttpClient.assertGet(
                             "/exp",
-                            "{\"query\":\"SELECT * FROM codec_zstd_test where 1 = 2\",\"error\":\"empty table\",\"position\":0}",
+                            "PAR1\u0015\u0002\u0019,H\u0019zzz.copy.0000000000000000\u0015\u0002\u0000\u0015\u0004%\u0002\u0018\u0001xU\u0000\u0000\u0016\u0000\u0019\f\u0019\u001C\u0018\u0007questdb\u00189{\"version\":1,\"schema\":[{\"column_type\":6,\"column_top\":0}]}\u0000\u0018\u0013QuestDB version 9.0\u0000",
                             params,
                             null,
                             null
