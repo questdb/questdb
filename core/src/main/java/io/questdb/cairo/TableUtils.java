@@ -50,6 +50,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
@@ -1087,12 +1088,17 @@ public final class TableUtils {
         return columnValue != null ? columnValue.length() : NULL_LEN;
     }
 
-    public static long lock(FilesFacade ff, LPSZ path, boolean verbose) {
+    public static long lock(FilesFacade ff, LPSZ path, boolean logError) {
+        return lock(ff, path, logError, false);
+    }
+
+    public static long lock(FilesFacade ff, LPSZ path, boolean verbose, boolean logDebug) {
         // workaround for https://github.com/docker/for-mac/issues/7004
         if (Files.VIRTIO_FS_DETECTED) {
             if (!ff.touch(path)) {
-                if (verbose) {
-                    LOG.error().$("cannot touch '").$(path).$("' to lock [errno=").$(ff.errno()).I$();
+                if (verbose || logDebug) {
+                    LogRecord log = logDebug ? LOG.debug() : LOG.error();
+                    log.$("cannot touch '").$(path).$("' to lock [errno=").$(ff.errno()).I$();
                 }
                 return -1;
             }
@@ -1100,20 +1106,22 @@ public final class TableUtils {
 
         long fd = ff.openRWNoCache(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
-            if (verbose) {
-                LOG.error().$("cannot open '").$(path).$("' to lock [errno=").$(ff.errno()).I$();
+            if (verbose || logDebug) {
+                LogRecord log = logDebug ? LOG.debug() : LOG.error();
+                log.$("cannot open '").$(path).$("' to lock [errno=").$(ff.errno()).I$();
             }
             return -1;
         }
         if (ff.lock(fd) != 0) {
-            if (verbose) {
-                LOG.error().$("cannot lock '").$(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).I$();
+            if (verbose || logDebug) {
+                LogRecord log = logDebug ? LOG.debug() : LOG.error();
+                log.$("cannot lock '").$(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).I$();
             }
             ff.close(fd);
             return -1;
         }
 
-        if (verbose) {
+        if (verbose || logDebug) {
             LOG.debug().$("locked '").$(path).$("' [fd=").$(fd).I$();
         }
         return fd;
