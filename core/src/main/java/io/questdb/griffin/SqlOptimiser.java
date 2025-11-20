@@ -111,6 +111,12 @@ public class SqlOptimiser implements Mutable {
     private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_NOT_EQ = 9;
     private static final int NOT_OP_OR = 3;
+    private final static CharSequence[] ORDERED_GROUP_BY_FUNCTIONS = {
+            "first",
+            "first_not_null",
+            "last",
+            "last_not_null",
+    };
     // these are bit flags
     private static final int SAMPLE_BY_REWRITE_NO_WRAP = 0;
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
@@ -268,7 +274,7 @@ public class SqlOptimiser implements Mutable {
         return functionParser.getFunctionFactoryCache();
     }
 
-    public boolean hasAggregates(ExpressionNode node) {
+    public @Nullable ExpressionNode getGroupByFunc(ExpressionNode node) {
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
@@ -282,7 +288,7 @@ public class SqlOptimiser implements Mutable {
                         continue;
                     case FUNCTION:
                         if (functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
-                            return true;
+                            return node;
                         }
                         break;
                     default:
@@ -300,7 +306,7 @@ public class SqlOptimiser implements Mutable {
                 node = sqlNodeStack.poll();
             }
         }
-        return false;
+        return null;
     }
 
     private static boolean isOrderedByDesignatedTimestamp(QueryModel model) {
@@ -3336,7 +3342,7 @@ public class SqlOptimiser implements Mutable {
                 if (model.getSampleBy() == null && orderByMnemonic != OrderByMnemonic.ORDER_BY_INVARIANT) {
                     for (int i = 0; i < n; i++) {
                         QueryColumn col = columns.getQuick(i);
-                        if (hasAggregates(col.getAst())) {
+                        if (getGroupByFunc(col.getAst()) != null) {
                             orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
                             break;
                         }
@@ -3365,7 +3371,19 @@ public class SqlOptimiser implements Mutable {
 
         // some aggregate functions (e.g. first()) relies on the rows being properly ordered to return the correct result
         if (model.getSelectModelType() == SELECT_MODEL_GROUP_BY) {
-            orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+            for (int i = 0; i < n && orderByMnemonic != OrderByMnemonic.ORDER_BY_REQUIRED; i++) {
+                ExpressionNode agg;
+                if ((agg = getGroupByFunc(columns.getQuick(i).getAst())) == null) {
+                    continue;
+                }
+                final int length = agg.token.length();
+                for (int j = 0, o = ORDERED_GROUP_BY_FUNCTIONS.length; j < o; j++) {
+                    if (Chars.equalsLowerCaseAscii(ORDERED_GROUP_BY_FUNCTIONS[j], agg.token, 0, length)) {
+                        orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+                        break;
+                    }
+                }
+            }
         }
 
         final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model, orderByMnemonic);

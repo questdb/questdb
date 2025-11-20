@@ -8387,7 +8387,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByPropagation() throws SqlException {
         assertQuery(
-                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-choose [contactId] contactId from (select-group-by [contactId] contactId, count() count from (select-choose [contactId, groupId, timestamp] contactId, groupId, timestamp from (select [groupId, contactId, timestamp] from contact_events latest on timestamp partition by contactId) where groupId = 'qIqlX6qESMtTQXikQA46' order by timestamp) eventlist) eventlist except select-choose [_id contactId] _id contactId from (select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts latest on timestamp partition by _id) where notRealType = 'bot') contactlist) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts latest on timestamp partition by _id) order by timestamp) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
+                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-choose [contactId] contactId from (select-group-by [contactId] contactId, count() count from (select-choose [contactId, groupId] contactId, groupId, timestamp from (select [groupId, contactId] from contact_events latest on timestamp partition by contactId) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist) eventlist except select-choose [_id contactId] _id contactId from (select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts latest on timestamp partition by _id) where notRealType = 'bot') contactlist) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts latest on timestamp partition by _id) order by timestamp) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
                 """
                         WITH\s
                         contactlist AS (SELECT * FROM contacts LATEST ON timestamp PARTITION BY _id ORDER BY timestamp),
@@ -8560,7 +8560,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByWithSampleBy2() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) sample by 10m order by b) order by a",
+                "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) sample by 10m) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m align to first observation order by b) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -8569,7 +8569,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-group-by a, sum(b) sum from (select-choose [a, b] a, b from (select-group-by [a, sum(b) b, timestamp_floor('10m', t, null, '00:00', null) t] a, sum(b) b, timestamp_floor('10m', t, null, '00:00', null) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) order by b)) order by a",
+                "select-group-by a, sum(b) sum from (select-choose [a, b] a, b from (select-group-by [a, sum(b) b, timestamp_floor('10m', t, null, '00:00', null) t] a, sum(b) b, timestamp_floor('10m', t, null, '00:00', null) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t))) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m order by b) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -8578,7 +8578,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-group-by a, sum(b) sum from (select-choose [a, b] a, b from (select-group-by [a, sum(b) b, timestamp_floor('10m', t, null, '00:00', null) t] a, sum(b) b, timestamp_floor('10m', t, null, '00:00', null) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) order by b)) order by a",
+                "select-group-by a, sum(b) sum from (select-choose [a, b] a, b from (select-group-by [a, sum(b) b, timestamp_floor('10m', t, null, '00:00', null) t] a, sum(b) b, timestamp_floor('10m', t, null, '00:00', null) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t))) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m align to calendar order by b) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -8590,7 +8590,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByWithSampleBy3() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [a, b, t] a, b, t from (select [a, b, t] from tab timestamp (t)) order by t) sample by 10m order by b) order by a",
+                "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [a, b, t] a, b, t from (select [a, b, t] from tab timestamp (t)) order by t) sample by 10m) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) sample by 10m align to first observation order by b) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -8599,7 +8599,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [a, b, t] a, b, t from (select [a, b, t] from tab timestamp (t)) order by t) sample by 10m align to calendar with offset '00:00' order by b) order by a",
+                "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [a, b, t] a, b, t from (select [a, b, t] from tab timestamp (t)) order by t) sample by 10m align to calendar with offset '00:00') order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) sample by 10m order by b) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -8608,7 +8608,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [a, b, t] a, b, t from (select [a, b, t] from tab timestamp (t)) order by t) sample by 10m align to calendar with offset '00:00' order by b) order by a",
+                "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [a, b, t] a, b, t from (select [a, b, t] from tab timestamp (t)) order by t) sample by 10m align to calendar with offset '00:00') order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) sample by 10m align to calendar order by b) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)

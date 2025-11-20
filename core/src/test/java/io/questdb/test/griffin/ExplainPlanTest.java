@@ -2201,9 +2201,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 GroupBy vectorized: false
                                   keys: [s]
                                   values: [count(*)]
-                                    FilterOnExcludedValues
+                                    FilterOnExcludedValues symbolOrder: desc
                                       symbolFilter: s not in [null]
-                                        Table-order scan
+                                        Cursor-order scan
                                         Frame forward scan on: trips
                             """
             );
@@ -2546,8 +2546,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     GroupBy vectorized: false
                       keys: [referencePriceType]
                       values: [count(*)]
-                        FilterOnValues
-                            Table-order scan
+                        FilterOnValues symbolOrder: desc
+                            Cursor-order scan
                                 Index forward scan on: venue
                                   filter: venue=3 and not (referencePriceType in [TYPE1])
                                 Index forward scan on: venue
@@ -3779,13 +3779,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (i int, d double)",
                 "select max(i) from (select * from a order by d)",
                 """
-                        GroupBy vectorized: false
+                        GroupBy vectorized: true workers: 1
                           values: [max(i)]
-                            Sort light
-                              keys: [d]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
                         """
         );
     }
