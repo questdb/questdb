@@ -4924,6 +4924,36 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testScalarSubqueryDoesNotBreakJsonExtract() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(tradesDdl);
+            assertPlanNoLeakCheck("""
+                            SELECT * FROM trades
+                            WHERE timestamp = (SELECT max(timestamp) FROM "trades")
+                            ORDER BY timestamp DESC;""",
+                    """
+                            PageFrame
+                                Row backward scan
+                                Interval backward scan on: trades
+                                  intervals: []
+                            """);
+
+            assertException("""
+                            SELECT * FROM trades
+                            WHERE timestamp = CAST((SELECT max(timstamp) FROM "trades") AS LONG)
+                            ORDER BY timestamp DESC""",
+                    56,
+                    "Invalid column");
+
+            assertException("""
+                            SELECT * FROM trades
+                            WHERE timestamp = CAST((SELECT max(timestamp) FROM "trades") AS LONG)
+                            ORDER BY timestamp DESC;""",
+                    39, "there is no matching function");
+        });
+    }
+
+    @Test
     public void testSelectMultipleColumnsIncludingLastFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
