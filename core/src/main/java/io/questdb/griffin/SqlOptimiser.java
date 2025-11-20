@@ -274,7 +274,7 @@ public class SqlOptimiser implements Mutable {
         return functionParser.getFunctionFactoryCache();
     }
 
-    public @Nullable ExpressionNode getGroupByFunc(ExpressionNode node) {
+    public boolean hasGroupByFunc(ExpressionNode node) {
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
@@ -288,7 +288,7 @@ public class SqlOptimiser implements Mutable {
                         continue;
                     case FUNCTION:
                         if (functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
-                            return node;
+                            return true;
                         }
                         break;
                     default:
@@ -306,7 +306,42 @@ public class SqlOptimiser implements Mutable {
                 node = sqlNodeStack.poll();
             }
         }
-        return null;
+        return false;
+    }
+
+    public boolean hasOrderedGroupByFunc(ExpressionNode node) {
+        sqlNodeStack.clear();
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.type) {
+                    case LITERAL:
+                        node = null;
+                        continue;
+                    case FUNCTION:
+                        if (node.token != null && isOrderedGroupByFunc(node.token)) {
+                            return true;
+                        }
+                        break;
+                    default:
+                        for (int i = 0, n = node.args.size(); i < n; i++) {
+                            sqlNodeStack.add(node.args.getQuick(i));
+                        }
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        break;
+                }
+
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return false;
     }
 
     private static boolean isOrderedByDesignatedTimestamp(QueryModel model) {
@@ -2608,6 +2643,16 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private boolean isOrderedGroupByFunc(@NotNull CharSequence func) {
+        final int length = func.length();
+        for (int i = 0, n = ORDERED_GROUP_BY_FUNCTIONS.length; i < n; i++) {
+            if (Chars.equalsLowerCaseAscii(ORDERED_GROUP_BY_FUNCTIONS[i], func, 0, length)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
         return checkSimpleIntegerColumn(column, model) != null;
     }
@@ -3342,7 +3387,7 @@ public class SqlOptimiser implements Mutable {
                 if (model.getSampleBy() == null && orderByMnemonic != OrderByMnemonic.ORDER_BY_INVARIANT) {
                     for (int i = 0; i < n; i++) {
                         QueryColumn col = columns.getQuick(i);
-                        if (getGroupByFunc(col.getAst()) != null) {
+                        if (hasGroupByFunc(col.getAst())) {
                             orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
                             break;
                         }
@@ -3369,19 +3414,12 @@ public class SqlOptimiser implements Mutable {
                 break;
         }
 
-        // some aggregate functions (e.g. first()) relies on the rows being properly ordered to return the correct result
+        // some aggregate functions (e.g. first()) rely on the rows being properly ordered to return the correct result
         if (model.getSelectModelType() == SELECT_MODEL_GROUP_BY) {
             for (int i = 0; i < n && orderByMnemonic != OrderByMnemonic.ORDER_BY_REQUIRED; i++) {
-                ExpressionNode agg;
-                if ((agg = getGroupByFunc(columns.getQuick(i).getAst())) == null) {
-                    continue;
-                }
-                final int length = agg.token.length();
-                for (int j = 0, o = ORDERED_GROUP_BY_FUNCTIONS.length; j < o; j++) {
-                    if (Chars.equalsLowerCaseAscii(ORDERED_GROUP_BY_FUNCTIONS[j], agg.token, 0, length)) {
-                        orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-                        break;
-                    }
+                if (hasOrderedGroupByFunc(columns.getQuick(i).getAst())) {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+                    break;
                 }
             }
         }
