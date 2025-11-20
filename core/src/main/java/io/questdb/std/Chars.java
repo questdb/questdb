@@ -1409,6 +1409,20 @@ public final class Chars {
         }
     }
 
+    /**
+     * Converts forward slashes to backward slashes on Windows, returns unchanged on other OS.
+     * Useful for cross-platform path handling in tests and configuration.
+     *
+     * @param path path string with forward slashes (Unix style)
+     * @return path with backslashes on Windows, unchanged on other OS
+     */
+    public static String windowsSeparators(String path) {
+        if (Os.isWindows()) {
+            return path.replace('/', Files.SEPARATOR);
+        }
+        return path;
+    }
+
     private static int[] base64CreateInvertedAlphabet(char[] alphabet) {
         int[] inverted = new int[128]; // ASCII only
         Arrays.fill(inverted, (byte) -1);

@@ -126,17 +126,16 @@ public class FileListProcessor implements HttpRequestProcessor {
             JsonSink jsonSink,
             FileListState state,
             SecurityContext securityContext
-    ) {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            try (SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)) {
-                BindVariableService bindings = new BindVariableServiceImpl(engine.getConfiguration());
-                bindings.setInt("lo", state.offset);
-                bindings.setInt("hi", state.offset + state.limit);
-                executionContext.with(securityContext, bindings);
-                CompiledQuery cq = compiler.compile(queryTemplate, executionContext);
-                RecordCursorFactory rcf = cq.getRecordCursorFactory();
-                RecordCursor rc = rcf.getCursor(executionContext);
-
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)) {
+            BindVariableService bindings = new BindVariableServiceImpl(engine.getConfiguration());
+            bindings.setInt("lo", state.offset);
+            bindings.setInt("hi", state.offset + state.limit);
+            executionContext.with(securityContext, bindings);
+            CompiledQuery cq = compiler.compile(queryTemplate, executionContext);
+            try (RecordCursorFactory rcf = cq.getRecordCursorFactory();
+                 RecordCursor rc = rcf.getCursor(executionContext)) {
                 int counter = 0;
                 while (rc.hasNext()) {
                     io.questdb.cairo.sql.Record record = rc.getRecord();
@@ -172,8 +171,6 @@ public class FileListProcessor implements HttpRequestProcessor {
                     counter++;
                 }
                 state.fileCount = state.offset + counter;
-            } catch (SqlException e) {
-                throw new RuntimeException(e);
             }
         }
     }
@@ -243,7 +240,7 @@ public class FileListProcessor implements HttpRequestProcessor {
             jsonSink.endObject()
                     .endObject().endObject();
             context.simpleResponse().sendStatusJsonApiContent(HTTP_OK, listSink, false);
-        } catch (CairoException e) {
+        } catch (CairoException | SqlException e) {
             LOG.error().$("failed to list files: ").$(e.getFlyweightMessage()).I$();
             HttpChunkedResponse response = context.getChunkedResponse();
             StringSink sink = Misc.getThreadLocalSink();
@@ -260,8 +257,8 @@ public class FileListProcessor implements HttpRequestProcessor {
 
     public static class FileListState implements Closeable {
         int fileCount = 0;
-        int limit = 10;
         String lastId;
+        int limit = 10;
         int offset = 0;
         Utf8StringSink sink = new Utf8StringSink();
 

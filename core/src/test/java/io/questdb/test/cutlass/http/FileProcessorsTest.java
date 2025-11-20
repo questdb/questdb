@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.http;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -69,6 +70,139 @@ public class FileProcessorsTest extends AbstractCairoTest {
             ff.rmdir(path, false);
             Files.mkdirs(path, engine.getConfiguration().getMkDirMode());
         }
+    }
+
+    @Test
+    public void testDeleteExportWithoutRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withWorkerCount(1)
+                    // Don't set export root
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        testHttpClient.assertDelete(
+                                "/api/v1/exports/somefile.txt",
+                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"sql.copy.export.root is not configured\"}]}",
+                                "400"
+                        );
+                    });
+        });
+    }
+
+    @Test
+    public void testDeleteFileNotFound() throws Exception {
+        assertMemoryLeak(() -> {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withCopyExportRoot(exportRoot)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        testHttpClient.assertDelete(
+                                "/api/v1/exports/nonexistent_file.txt",
+                                "{\"errors\":[{\"status\":\"404\",\"detail\":\"file(s) not found\"}]}",
+                                "404"
+                        );
+                    });
+        });
+    }
+
+    @Test
+    public void testDeleteImportWithoutRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withWorkerCount(1)
+                    // Don't set import root
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        testHttpClient.assertDelete(
+                                "/api/v1/imports/somefile.txt",
+                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"sql.copy.input.root is not configured\"}]}",
+                                "400"
+                        );
+                    });
+        });
+    }
+
+    @Test
+    public void testDeleteMissingFilePathExport() throws Exception {
+        assertMemoryLeak(() -> {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withCopyExportRoot(exportRoot)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        testHttpClient.assertDelete(
+                                "/api/v1/exports",
+                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"missing required file path\"}]}",
+                                "400"
+                        );
+                    });
+        });
+    }
+
+    @Test
+    public void testDeleteMissingFilePathImport() throws Exception {
+        assertMemoryLeak(() -> {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withCopyInputRoot(inputRoot)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        testHttpClient.assertDelete(
+                                "/api/v1/imports",
+                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"missing required file path\"}]}",
+                                "400"
+                        );
+                    });
+        });
+    }
+
+    @Test
+    public void testDeletePathTraversalRelativePath() throws Exception {
+        assertMemoryLeak(() -> {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withCopyExportRoot(exportRoot)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        testHttpClient.assertDelete(
+                                "/api/v1/exports/.." + Files.SEPARATOR + "file.txt",
+                                "{\"errors\":[{\"status\":\"403\",\"detail\":\"traversal not allowed in file\"}]}",
+                                "403"
+                        );
+                    });
+        });
+    }
+
+    @Test
+    public void testDeletePathTraversalWithDots() throws Exception {
+        assertMemoryLeak(() -> {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withCopyExportRoot(exportRoot)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        testHttpClient.assertDelete(
+                                "/api/v1/exports/dir/../../sensitive.txt",
+                                "{\"errors\":[{\"status\":\"403\",\"detail\":\"traversal not allowed in file\"}]}",
+                                "403"
+                        );
+                    });
+        });
     }
 
     @Test
@@ -211,8 +345,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
     @Test
     public void testGetAndDeleteExportFiles() throws Exception {
         String file1 = "file1.csv";
-        String file2 = !Os.isWindows() ? "dir2/dir2/dir2/file2.txt" : "dir2\\dir2\\dir2\\file2.txt";
-        String file3 = !Os.isWindows() ? "dir2/dir3/file3" : "dir2\\dir3\\file3";
+        String file2 = Chars.windowsSeparators("dir2/dir2/dir2/file2.txt");
+        String file3 = Chars.windowsSeparators("dir2/dir3/file3");
         String dir1 = "dir2" + Files.SEPARATOR + "dir4";
         String dir2 = "dir5";
         createFile(exportRoot, file1, "file1 content".getBytes(), 1000);
@@ -279,7 +413,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         );
                         testHttpClient.assertDelete(
                                 "/api/v1/exports/" + file3,
-                                "{\"message\":\"file(s) deleted successfully\",\"path\":\"" + (Os.isWindows() ? "dir2\\\\dir3\\\\file3" : "dir2/dir3/file3") + "\"}",
+                                "{\"message\":\"file(s) deleted successfully\",\"path\":\"" + file3JsonPath + "\"}",
                                 "200"
                         );
                         String responseAfterDelete = testHttpClient.getResponse("/api/v1/exports", "200");
@@ -318,8 +452,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
     @Test
     public void testGetAndDeleteImportFiles() throws Exception {
         String file1 = "file1.csv";
-        String file2 = !Os.isWindows() ? "dir2/dir2/dir2/file2.txt" : "dir2\\dir2\\dir2\\file2.txt";
-        String file3 = !Os.isWindows() ? "dir2/dir3/file3" : "dir2\\dir3\\file3";
+        String file2 = Chars.windowsSeparators("dir2/dir2/dir2/file2.txt");
+        String file3 = Chars.windowsSeparators("dir2/dir3/file3");
         String dir1 = "dir2" + Files.SEPARATOR + "dir4";
         String dir2 = "dir5";
         createFile(inputRoot, file1, "file1 content".getBytes(), 1000);
@@ -340,8 +474,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                     .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                     .withTelemetry(false)
                     .run((engine, sqlExecutionContext) -> {
-                        String file2JsonPath = Os.isWindows() ? "dir2\\\\dir2\\\\dir2\\\\file2.txt" : "dir2/dir2/dir2/file2.txt";
-                        String file3JsonPath = Os.isWindows() ? "dir2\\\\dir3\\\\file3" : "dir2/dir3/file3";
+                        String file2JsonPath = Chars.windowsSeparators("dir2/dir2/dir2/file2.txt");
+                        String file3JsonPath = Chars.windowsSeparators("dir2/dir3/file3");
 
                         String response = testHttpClient.getResponse("/api/v1/imports", "200");
                         Assert.assertTrue("Response should contain file2.txt",
@@ -388,7 +522,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         );
                         testHttpClient.assertDelete(
                                 "/api/v1/imports/" + file3,
-                                "{\"message\":\"file(s) deleted successfully\",\"path\":\"" + (Os.isWindows() ? "dir2\\\\dir3\\\\file3" : "dir2/dir3/file3") + "\"}",
+                                "{\"message\":\"file(s) deleted successfully\",\"path\":\"" + file3JsonPath + "\"}",
                                 "200"
                         );
 
@@ -741,9 +875,14 @@ public class FileProcessorsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) id from long_sequence(10))");
             byte[] parquetData = createParquetFile("x");
-            String[] fileNames = Os.isWindows() ?
-                    new String[]{"x1.parquet", "x2.parquet", "dir1\\x3.parquet", "dir1\\dir2\\x4.parquet", "dir3\\special.parquet"} :
-                    new String[]{"x1.parquet", "x2.parquet", "dir1/x3.parquet", "dir1/dir2/x4.parquet", "dir3/abc.parquet"};
+            // Build file names with forward slashes and convert to OS-specific separator
+            String[] fileNames = {
+                    "x1.parquet",
+                    "x2.parquet",
+                    Chars.windowsSeparators("dir1/x3.parquet"),
+                    Chars.windowsSeparators("dir1/dir2/x4.parquet"),
+                    Chars.windowsSeparators(Os.isWindows() ? "dir3/special.parquet" : "dir3/abc.parquet")
+            };
             byte[] parquetImportRequest = createMultipleParquetImportRequest(fileNames, new byte[][]{parquetData, parquetData, parquetData, parquetData, parquetData}, false);
 
             new HttpQueryTestBuilder()
