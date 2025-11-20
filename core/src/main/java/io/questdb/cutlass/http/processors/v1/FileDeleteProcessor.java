@@ -22,7 +22,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 
-import static java.net.HttpURLConnection.HTTP_OK;
+import static java.net.HttpURLConnection.HTTP_NO_CONTENT;
 
 public class FileDeleteProcessor implements HttpRequestProcessor {
     private static final Log LOG = LogFactory.getLog(FileDeleteProcessor.class);
@@ -93,7 +93,7 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
             }
             LOG.info().$("deleted file [path=").$(filePath).I$();
         }
-        sendSuccess(context, path);
+        sendSuccess(context);
     }
 
     private DirectUtf8Sequence extractFilePathFromUrl(HttpRequestHeader request) {
@@ -190,16 +190,9 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
     }
 
     private void sendSuccess(
-            HttpConnectionContext context,
-            DirectUtf8Sequence path
+            HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
-        JsonSink json = Misc.getThreadLocalJsonSink();
-        json.of(sink, false)
-                .startObject()
-                .key("message").val("file(s) deleted successfully")
-                .key("path").val(path)
-                .endObject();
-        context.simpleResponse().sendStatusJsonApiContent(HTTP_OK, sink, false);
+        // 204 No Content - deletion successful, no response body
+        context.simpleResponse().sendStatusNoContent(HTTP_NO_CONTENT);
     }
 }

@@ -295,7 +295,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
         });
     }
 
-  
+
     public void testFullFuzz() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         getSimpleTester()
@@ -416,16 +416,20 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         );
                         testHttpClient.assertDelete(
                                 "/api/v1/exports/" + file3,
-                                "{\"message\":\"file(s) deleted successfully\",\"path\":\"" + file3JsonPath + "\"}",
-                                "200"
+                                "",
+                                "204"
                         );
                         String responseAfterDelete = testHttpClient.getResponse("/api/v1/exports", "200");
                         Assert.assertTrue("Response should contain file2.txt after deletion",
                                 responseAfterDelete.contains("\"path\":\"" + file2JsonPath + "\""));
                         Assert.assertTrue("Response should contain file1.csv after deletion",
                                 responseAfterDelete.contains("\"path\":\"" + file1 + "\""));
-                        Assert.assertFalse("Response should not contain deleted file3",
-                                responseAfterDelete.contains("\"path\":\"" + file3JsonPath + "\""));
+
+                        assertEventually(() ->
+                                Assert.assertFalse("Response should not contain deleted file3",
+                                        responseAfterDelete.contains("\"path\":\"" + file3JsonPath + "\"")
+                                ));
+
                         int fileCountAfterDelete = responseAfterDelete.split("\"path\":").length - 1;
                         Assert.assertEquals("Should have 2 files after deletion", 2, fileCountAfterDelete);
                         testHttpClient.assertDelete(
@@ -435,8 +439,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         );
                         testHttpClient.assertDelete(
                                 "/api/v1/exports/dir2",
-                                "{\"message\":\"file(s) deleted successfully\",\"path\":\"dir2\"}",
-                                "200"
+                                "",
+                                "204"
                         );
                         testHttpClient.assertDelete(
                                 "/api/v1/exports/dir2",
@@ -525,8 +529,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         );
                         testHttpClient.assertDelete(
                                 "/api/v1/imports/" + file3,
-                                "{\"message\":\"file(s) deleted successfully\",\"path\":\"" + file3JsonPath + "\"}",
-                                "200"
+                                "",
+                                "204"
                         );
 
                         String responseAfterDelete = testHttpClient.getResponse("/api/v1/imports", "200");
@@ -538,7 +542,11 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         // Instead of exact count, verify file3 is not listed
                         // The previous delete should have removed file3
                         int file3Count = responseAfterDelete.split("\"path\":\"" + file3JsonPath + "\"").length - 1;
-                        Assert.assertEquals("file3 should be deleted", 0, file3Count);
+
+                        assertEventually(() ->
+                                Assert.assertEquals("file3 should be deleted", 0, file3Count)
+                        );
+
                         testHttpClient.assertDelete(
                                 "/api/v1/imports/nonExists",
                                 "{\"errors\":[{\"status\":\"404\",\"detail\":\"file(s) not found\"}]}",
@@ -546,8 +554,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                         );
                         testHttpClient.assertDelete(
                                 "/api/v1/imports/dir2",
-                                "{\"message\":\"file(s) deleted successfully\",\"path\":\"dir2\"}",
-                                "200"
+                                "",
+                                "204"
                         );
                         testHttpClient.assertDelete(
                                 "/api/v1/imports/dir2",

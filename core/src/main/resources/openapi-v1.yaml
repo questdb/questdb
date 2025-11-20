@@ -381,15 +381,8 @@ paths:
           schema:
             type: string
       responses:
-        '200':
-          description: File or directory deleted successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DeleteResponse'
-              example:
-                message: "file(s) deleted successfully"
-                path: "data.parquet"
+        '204':
+          description: File or directory deleted successfully (no content)
         '400':
           description: Bad request - root not configured or filename missing
           content:
@@ -654,15 +647,8 @@ paths:
           schema:
             type: string
       responses:
-        '200':
-          description: File or directory deleted successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DeleteResponse'
-              example:
-                message: "file(s) deleted successfully"
-                path: "results.csv"
+        '204':
+          description: File or directory deleted successfully (no content)
         '400':
           description: Bad request - root not configured or filename missing
           content:
