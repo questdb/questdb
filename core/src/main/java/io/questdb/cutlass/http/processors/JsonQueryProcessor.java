@@ -184,8 +184,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         if (fut == null) {
             metrics.jsonQueryMetrics().markStart();
             state.startExecutionTimer();
-            // do not set random for new request to avoid copying random from previous request into next one
-            // the only time we need to copy random from state is when we resume request execution
+            // do not set random for a new request to avoid copying random from previous request into next one
+            // the only time we need to copy random from the state is when we resume request execution
             sqlExecutionContext.with(context.getSecurityContext(), null, null, context.getFd(), circuitBreaker.of(context.getFd()));
             sqlExecutionContext.initNow();
             if (state.getStatementTimeout() > 0L) {
@@ -302,7 +302,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         // todo: this is no good, it's likely hiding a problem
         state.newRequest();
 
-        // clear random for new request to avoid reusing random between requests
+        // clear random for a new request to avoid reusing random between requests
         state.setRnd(null);
 
         if (parseUrl(state, configuration.getKeepAliveHeader())) {
@@ -732,7 +732,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             metrics.jsonQueryMetrics().markComplete();
             sendUpdateConfirmation(state, keepAliveHeader, updatedCount);
         } catch (CairoException e) {
-            // close e.g., when the query has been cancelled, or we got an OOM
+            // close e.g., when the query has been canceled, or we got an OOM
             if (e.isInterruption() || e.isOutOfMemory()) {
                 Misc.free(cq.getUpdateOperation());
             }
@@ -819,7 +819,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     stop = Numbers.parseLong(limit);
                 }
             } catch (NumericException ex) {
-                // Skip or stop will have default value.
+                // Skip or stop will have the default value.
             }
         }
         if (stop < 0) {
@@ -904,21 +904,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             context.getCookieHandler().setSessionCookie(response.headers(), sessionId);
         }
         response.sendHeader();
-    }
-
-    static void sendBadUtf8EncodingInRequestResponse(
-            HttpChunkedResponse response,
-            HttpConnectionContext context,
-            DirectUtf8Sequence query,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(response, context, keepAliveHeader, HTTP_BAD_REQUEST);
-        response.putAscii('{')
-                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query.asAsciiCharSequence()).putAscii(',')
-                .putAsciiQuoted("error").putAscii(':').putQuoted("Bad UTF8 encoding in query text").putAscii(',')
-                .putAsciiQuoted("position").putAscii(':').put(0)
-                .putAscii('}');
-        response.sendChunk(true);
     }
 
     void sendException(
