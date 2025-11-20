@@ -48,10 +48,6 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
     private int numOfDropThreads;
     private int numOfDrops;
 
-    public LineTcpReceiverDropTableFuzzTest(WalMode walMode) {
-        super(walMode);
-    }
-
     @Test
     public void testInsertDropParallel() throws Exception {
         Assume.assumeTrue(walEnabled);

@@ -57,18 +57,31 @@ void qdbDispatchService(CONFIG *config) {
 HANDLE openLogFile(CONFIG *config) {
     // create log dir
     char log[MAX_PATH];
-    strcpy(log, config->dir);
-    strcat(log, "\\log");
+    int len = snprintf(log, MAX_PATH, "%s\\log", config->dir);
+
+    if (len < 0 || len >= MAX_PATH) {
+        return INVALID_HANDLE_VALUE;
+    }
 
     if (!makeDir(log)) {
-        return NULL;
+        return INVALID_HANDLE_VALUE;
     }
 
     time_t now = time(NULL);
     struct tm *t = localtime(&now);
-    strcat(log, "\\service-");
-    strftime(log + strlen(log), MAX_PATH - strlen(log) - 4, "%Y-%m-%dT%H-%M-%S", t);
-    strcat(log, ".txt");
+    if (t == NULL) {
+        return INVALID_HANDLE_VALUE;
+    }
+
+    len = snprintf(log, MAX_PATH, "%s\\log\\service-", config->dir);
+    if (len >= 0 && len < MAX_PATH) {
+        size_t written = strftime(log + len, MAX_PATH - len, "%Y-%m-%dT%H-%M-%S.txt", t);
+        if (written == 0) {
+            return INVALID_HANDLE_VALUE;
+        }
+    } else {
+        return INVALID_HANDLE_VALUE;
+    }
 
     FILE *stream;
     if ((stream = fopen(log, "w")) == NULL) {
@@ -148,7 +161,7 @@ VOID WINAPI qdbService(DWORD argc, LPSTR *argv) {
     si.dwFlags |= STARTF_USESTDHANDLES;
 
     char buf[2048];
-    sprintf(buf, "Starting %s %s", gConfig->javaExec, gConfig->javaArgs);
+    snprintf(buf, sizeof(buf), "Starting %s %s", gConfig->javaExec, gConfig->javaArgs);
     log_event(EVENTLOG_INFORMATION_TYPE, gConfig->serviceName, buf);
 
     if (!CreateProcess(gConfig->javaExec, gConfig->javaArgs, NULL, NULL, TRUE/*handles are inherited to redirect stdout/err*/, 0, NULL, NULL, &si, &pi)) {
@@ -157,7 +170,7 @@ VOID WINAPI qdbService(DWORD argc, LPSTR *argv) {
         return;
     }
 
-    sprintf(buf, "Started %s %s", gConfig->javaExec, gConfig->javaArgs);
+    snprintf(buf, sizeof(buf), "Started %s %s", gConfig->javaExec, gConfig->javaArgs);
     log_event(EVENTLOG_INFORMATION_TYPE, gConfig->serviceName, buf);
 
     // Report running status when initialization is complete.

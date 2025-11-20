@@ -31,8 +31,10 @@ public class CountDistinctIPv4GroupByFunctionFactoryTest extends AbstractCairoTe
 
     @Test
     public void testNonKeyedHappy() throws Exception {
-        String expected = "count_distinct\n" +
-                "20\n";
+        String expected = """
+                count_distinct
+                20
+                """;
         assertQuery(
                 expected,
                 "select count_distinct(a) from x",
@@ -48,9 +50,11 @@ public class CountDistinctIPv4GroupByFunctionFactoryTest extends AbstractCairoTe
         execute("create table x (ts timestamp, ip ipv4) timestamp(ts);");
         execute("insert into x values ('2000-01-01', '192.168.1.1'), ('2000-01-01T04:30', '192.168.1.2'), ('2000-01-01T05:30', '192.168.1.3'), ('2000-01-03', '192.168.1.1');");
 
-        String expectedDefault = "ts\tcount_distinct\n" +
-                "2000-01-01T00:00:00.000000Z\t3\n" +
-                "2000-01-03T00:00:00.000000Z\t1\n";
+        String expectedDefault = """
+                ts\tcount_distinct
+                2000-01-01T00:00:00.000000Z\t3
+                2000-01-03T00:00:00.000000Z\t1
+                """;
         assertQuery(
                 expectedDefault,
                 "select ts, count_distinct(ip) from x sample by 1d",
@@ -59,10 +63,12 @@ public class CountDistinctIPv4GroupByFunctionFactoryTest extends AbstractCairoTe
                 true
         );
 
-        String expectedInterpolated = "ts\tcount_distinct\n" +
-                "2000-01-01T00:00:00.000000Z\t3\n" +
-                "2000-01-02T00:00:00.000000Z\t2\n" +
-                "2000-01-03T00:00:00.000000Z\t1\n";
+        String expectedInterpolated = """
+                ts\tcount_distinct
+                2000-01-01T00:00:00.000000Z\t3
+                2000-01-02T00:00:00.000000Z\t2
+                2000-01-03T00:00:00.000000Z\t1
+                """;
         assertQuery(
                 expectedInterpolated,
                 "select ts, count_distinct(ip) from x sample by 1d fill(linear)",

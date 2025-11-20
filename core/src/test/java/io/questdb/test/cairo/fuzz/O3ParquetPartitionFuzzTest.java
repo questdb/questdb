@@ -44,7 +44,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.o3.AbstractO3Test;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
@@ -52,27 +51,11 @@ import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.io.FileInputStream;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.zip.CRC32;
 
-@RunWith(Parameterized.class)
 public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
-
-    public O3ParquetPartitionFuzzTest(TestTimestampType timestampType) {
-        super(timestampType);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
-        });
-    }
 
     @Test
     public void testFuzz() throws Exception {

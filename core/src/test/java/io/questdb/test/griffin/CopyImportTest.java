@@ -44,29 +44,16 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.junit.runners.Parameterized.Parameters;
 
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 
 import static org.junit.Assert.*;
 
-@RunWith(Parameterized.class)
 public class CopyImportTest extends AbstractCairoTest {
     private final boolean walEnabled;
 
-    public CopyImportTest(boolean walEnabled) {
-        this.walEnabled = walEnabled;
-    }
-
-    @Parameters
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {false}, {true}
-        });
+    public CopyImportTest() {
+        this.walEnabled = TestUtils.isWal();
     }
 
     @BeforeClass
@@ -195,8 +182,8 @@ public class CopyImportTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 ExportModel model = (ExportModel) compiler.testCompileModel("copy y from 'somefile.csv';", sqlExecutionContext);
 
-                assertEquals("y", model.getTableName().toString());
-                assertEquals("'somefile.csv'", model.getFileName().token.toString());
+                TestUtils.assertEquals("y", model.getTableName());
+                TestUtils.assertEquals("'somefile.csv'", model.getFileName().token);
                 assertFalse(model.isHeader());
                 assertEquals(-1, model.getPartitionBy());
                 assertNull(model.getTimestampColumnName());
@@ -1138,12 +1125,12 @@ public class CopyImportTest extends AbstractCairoTest {
                                     "partition by " + partitionBy[p] + " timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' on error " + onError[o] + ";'", sqlExecutionContext);
                         }
 
-                        assertEquals("x", model.getTableName().toString());
-                        assertEquals("'somefile.csv'", model.getFileName().token.toString());
+                        TestUtils.assertEquals("x", model.getTableName());
+                        TestUtils.assertEquals("'somefile.csv'", model.getFileName().token);
                         assertTrue(model.isHeader());
                         assertEquals(partitionBy[p + 1], model.getPartitionBy());
-                        assertEquals("ts1", model.getTimestampColumnName().toString());
-                        assertEquals("yyyy-MM-ddTHH:mm:ss", model.getTimestampFormat().toString());
+                        TestUtils.assertEquals("ts1", model.getTimestampColumnName());
+                        TestUtils.assertEquals("yyyy-MM-ddTHH:mm:ss", model.getTimestampFormat());
                         assertEquals(';', model.getDelimiter());
                         assertEquals(onError[o + 1], model.getAtomicity());
                     }

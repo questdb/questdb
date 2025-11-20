@@ -111,6 +111,36 @@ public class BooleanFunctionTest {
         Assert.assertEquals(0, functionA.getDate(null));
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal128() {
+        functionA.getDecimal128(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal16() {
+        functionA.getDecimal16(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256() {
+        functionA.getDecimal256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal32() {
+        functionA.getDecimal32(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal64() {
+        functionA.getDecimal64(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal8() {
+        functionA.getDecimal8(null);
+    }
+
     @Test
     public void testGetDouble() {
         Assert.assertEquals(1.0, functionB.getDouble(null), 0.000001);

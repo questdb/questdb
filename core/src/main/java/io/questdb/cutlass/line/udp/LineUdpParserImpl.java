@@ -55,6 +55,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+import static io.questdb.cutlass.line.LineUtils.from;
 
 public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final static Log LOG = LogFactory.getLog(LineUdpParserImpl.class);
@@ -270,7 +271,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             return writer.newRow(clock.getTicks());
         } else {
             try {
-                return writer.newRow(timestampDriver.from(Numbers.parseLong(cache.get(columnValues.getQuick(valueCount - 1))), timestampUnit));
+                return writer.newRow(from(timestampDriver, Numbers.parseLong(cache.get(columnValues.getQuick(valueCount - 1))), timestampUnit));
             } catch (NumericException e) {
                 LOG.error().$("invalid timestamp: ").$safe(cache.get(columnValues.getQuick(valueCount - 1))).$();
                 return null;

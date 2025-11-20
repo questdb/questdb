@@ -42,6 +42,8 @@ import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -66,7 +68,13 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 .col("bool", ColumnType.BOOLEAN)
                 .col("date", ColumnType.DATE)
                 .col("ts", ColumnType.TIMESTAMP)
-                .col("ipv4", ColumnType.IPv4);
+                .col("ipv4", ColumnType.IPv4)
+                .col("dec8", ColumnType.getDecimalType(2, 1))
+                .col("dec16", ColumnType.getDecimalType(4, 2))
+                .col("dec32", ColumnType.getDecimalType(8, 3))
+                .col("dec64", ColumnType.getDecimalType(18, 4))
+                .col("dec128", ColumnType.getDecimalType(38, 5))
+                .col("dec256", ColumnType.getDecimalType(76, 6));
         AbstractCairoTest.create(model);
 
         final int N = 1024;
@@ -85,6 +93,12 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 row.putDate(8, rnd.nextLong());
                 row.putTimestamp(9, rnd.nextLong());
                 row.putInt(10, rnd.nextInt());
+                row.putByte(11, rnd.nextByte((byte) 100));
+                row.putShort(12, rnd.nextShort((short) 10000));
+                row.putInt(13, rnd.nextInt(100000000));
+                row.putLong(14, rnd.nextLong(1_000_000_000_000_000_000L));
+                row.putDecimal128(15, rnd.nextLong(Decimal128.MAX_VALUE.getHigh()), rnd.nextLong());
+                row.putDecimal256(16, rnd.nextLong(Decimal256.MAX_VALUE.getHh()), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
                 row.append();
             }
             writer.commit();
@@ -132,6 +146,20 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextLong(), value.getDate(8));
                     Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
                     Assert.assertEquals(rnd.nextInt(), value.getIPv4(10));
+                    Assert.assertEquals(rnd.nextByte((byte) 100), value.getDecimal8(11));
+                    Assert.assertEquals(rnd.nextShort((short) 10000), value.getDecimal16(12));
+                    Assert.assertEquals(rnd.nextInt(100000000), value.getDecimal32(13));
+                    Assert.assertEquals(rnd.nextLong(1_000_000_000_000_000_000L), value.getDecimal64(14));
+                    Decimal128 decimal128 = new Decimal128();
+                    value.getDecimal128(15, decimal128);
+                    Assert.assertEquals(rnd.nextLong(Decimal128.MAX_VALUE.getHigh()), decimal128.getHigh());
+                    Assert.assertEquals(rnd.nextLong(), decimal128.getLow());
+                    Decimal256 decimal256 = new Decimal256();
+                    value.getDecimal256(16, decimal256);
+                    Assert.assertEquals(rnd.nextLong(Decimal256.MAX_VALUE.getHh()), decimal256.getHh());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getHl());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getLh());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getLl());
                 }
             }
         }

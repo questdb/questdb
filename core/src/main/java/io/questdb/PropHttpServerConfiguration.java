@@ -28,7 +28,7 @@ import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
@@ -48,6 +48,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     private final boolean httpReadOnlySecurityContext;
     private final boolean httpServerCookiesEnabled;
     private final boolean httpServerKeepAlive;
+    private final long httpSessionTimeout;
     private final String httpVersion;
     private final boolean isReadOnlyInstance;
     private final int multipartHeaderBufferSize;
@@ -65,6 +66,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             boolean httpFrozenClock,
             boolean httpReadOnlySecurityContext,
             boolean httpServerCookiesEnabled,
+            long httpSessionTimeout,
             boolean httpServerKeepAlive,
             String httpVersion,
             boolean isReadOnlyInstance,
@@ -82,6 +84,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
                 httpFrozenClock,
                 httpReadOnlySecurityContext,
                 httpServerCookiesEnabled,
+                httpSessionTimeout,
                 httpServerKeepAlive,
                 httpVersion,
                 isReadOnlyInstance,
@@ -104,6 +107,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             boolean httpFrozenClock,
             boolean httpReadOnlySecurityContext,
             boolean httpServerCookiesEnabled,
+            long httpSessionTimeout,
             boolean httpServerKeepAlive,
             String httpVersion,
             boolean isReadOnlyInstance,
@@ -123,6 +127,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
         this.httpFrozenClock = httpFrozenClock;
         this.httpReadOnlySecurityContext = httpReadOnlySecurityContext;
         this.httpServerCookiesEnabled = httpServerCookiesEnabled;
+        this.httpSessionTimeout = httpSessionTimeout;
         this.httpServerKeepAlive = httpServerKeepAlive;
         this.httpVersion = httpVersion;
         this.isReadOnlyInstance = isReadOnlyInstance;
@@ -215,7 +220,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     }
 
     @Override
-    public Clock getNanosecondClock() {
+    public NanosecondClock getNanosecondClock() {
         return httpFrozenClock ? StationaryNanosClock.INSTANCE : NanosecondClockImpl.INSTANCE;
     }
 
@@ -232,6 +237,11 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     @Override
     public boolean getServerKeepAlive() {
         return httpServerKeepAlive;
+    }
+
+    @Override
+    public long getSessionTimeout() {
+        return httpSessionTimeout;
     }
 
     @Override

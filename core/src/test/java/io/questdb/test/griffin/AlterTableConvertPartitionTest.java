@@ -41,27 +41,14 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
-import java.util.Arrays;
-import java.util.Collection;
 
 import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
 
-@RunWith(Parameterized.class)
 public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     private final TestTimestampType timestampType;
 
-    public AlterTableConvertPartitionTest(TestTimestampType timestampType) {
-        this.timestampType = timestampType;
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> testParams() {
-        return Arrays.asList(new Object[][]{
-                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
-        });
+    public AlterTableConvertPartitionTest() {
+        this.timestampType = TestUtils.getTimestampType();
     }
 
     @Test
@@ -92,7 +79,6 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = "testConvertAllPartitionsToParquetAndBack";
             createTableStr(
-                    tableName,
                     "insert into " + tableName + " values(1, 'abc', '2024-06-10T00:00:00.000000Z')",
                     "insert into " + tableName + " values(2, 'edf', '2024-06-11T00:00:00.000000Z')",
                     "insert into " + tableName + " values(3, 'abc', '2024-06-12T00:00:00.000000Z')",
@@ -112,13 +98,15 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertPartitionDoesNotExist(tableName, "2024-06-11.11");
             assertPartitionDoesNotExist(tableName, "2024-06-12.10");
             assertSql(
-                    replaceTimestampSuffix("id\tstr\ttimestamp\n" +
-                            "1\tabc\t2024-06-10T00:00:00.000000Z\n" +
-                            "2\tedf\t2024-06-11T00:00:00.000000Z\n" +
-                            "3\tabc\t2024-06-12T00:00:00.000000Z\n" +
-                            "4\tedf\t2024-06-12T00:00:01.000000Z\n" +
-                            "6\tedf\t2024-06-12T00:00:02.000000Z\n" +
-                            "5\tabc\t2024-06-15T00:00:00.000000Z\n", timestampType.getTypeName()),
+                    replaceTimestampSuffix("""
+                            id\tstr\ttimestamp
+                            1\tabc\t2024-06-10T00:00:00.000000Z
+                            2\tedf\t2024-06-11T00:00:00.000000Z
+                            3\tabc\t2024-06-12T00:00:00.000000Z
+                            4\tedf\t2024-06-12T00:00:01.000000Z
+                            6\tedf\t2024-06-12T00:00:02.000000Z
+                            5\tabc\t2024-06-15T00:00:00.000000Z
+                            """, timestampType.getTypeName()),
                     "select * from " + tableName
             );
         });
@@ -414,15 +402,17 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("alter table " + tableName + " convert partition to parquet where timestamp >= 0");
 
             assertQuery(
-                    replaceTimestampSuffix("id\ttimestamp\ta\n" +
-                            "1\t2024-11-01T00:00:00.000000Z\tnull\n" +
-                            "2\t2024-11-02T00:00:00.000000Z\tnull\n" +
-                            "3\t2024-11-03T00:00:00.000000Z\tnull\n" +
-                            "4\t2024-11-04T00:00:00.000000Z\tnull\n" +
-                            "5\t2024-11-05T00:00:00.000000Z\tnull\n" +
-                            "5\t2024-11-05T00:00:00.000000Z\t5\n" +
-                            "6\t2024-11-06T00:00:00.000000Z\t6\n" +
-                            "7\t2024-11-07T00:00:00.000000Z\t7\n", timestampType.getTypeName()),
+                    replaceTimestampSuffix("""
+                            id\ttimestamp\ta
+                            1\t2024-11-01T00:00:00.000000Z\tnull
+                            2\t2024-11-02T00:00:00.000000Z\tnull
+                            3\t2024-11-03T00:00:00.000000Z\tnull
+                            4\t2024-11-04T00:00:00.000000Z\tnull
+                            5\t2024-11-05T00:00:00.000000Z\tnull
+                            5\t2024-11-05T00:00:00.000000Z\t5
+                            6\t2024-11-06T00:00:00.000000Z\t6
+                            7\t2024-11-07T00:00:00.000000Z\t7
+                            """, timestampType.getTypeName()),
                     tableName,
                     "timestamp",
                     true,
@@ -466,11 +456,13 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "index\tname\treadOnly\tisParquet\tparquetFileSize\n" +
-                            "0\t2024-06-10\tfalse\tfalse\t-1\n" +
-                            "1\t2024-06-11\tfalse\tfalse\t-1\n" +
-                            "2\t2024-06-12\tfalse\tfalse\t-1\n" +
-                            "3\t2024-06-15\tfalse\tfalse\t-1\n",
+                    """
+                            index\tname\treadOnly\tisParquet\tparquetFileSize
+                            0\t2024-06-10\tfalse\tfalse\t-1
+                            1\t2024-06-11\tfalse\tfalse\t-1
+                            2\t2024-06-12\tfalse\tfalse\t-1
+                            3\t2024-06-15\tfalse\tfalse\t-1
+                            """,
                     "select index, name, readOnly, isParquet, parquetFileSize from table_partitions('" + tableName + "')",
                     null,
                     false,
@@ -481,11 +473,13 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     replaceTimestampSuffix(
-                            "index\tname\treadOnly\tisParquet\tisNonEmpty\tminTimestamp\tmaxTimestamp\n" +
-                                    "0\t2024-06-10\tfalse\tfalse\tfalse\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n" +
-                                    "1\t2024-06-11\tfalse\tfalse\tfalse\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z\n" +
-                                    "2\t2024-06-12\tfalse\ttrue\ttrue\t\t\n" +
-                                    "3\t2024-06-15\tfalse\tfalse\tfalse\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n",
+                            """
+                                    index\tname\treadOnly\tisParquet\tisNonEmpty\tminTimestamp\tmaxTimestamp
+                                    0\t2024-06-10\tfalse\tfalse\tfalse\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z
+                                    1\t2024-06-11\tfalse\tfalse\tfalse\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z
+                                    2\t2024-06-12\tfalse\ttrue\ttrue\t\t
+                                    3\t2024-06-15\tfalse\tfalse\tfalse\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z
+                                    """,
                             timestampType.getTypeName()
                     ),
                     "select index, name, readOnly, isParquet, parquetFileSize   > 0 isNonEmpty, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
@@ -531,8 +525,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         }
     }
 
-    private void createTableStr(String tableName, String... inserts) throws Exception {
-        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+    private void createTableStr(String... inserts) throws Exception {
+        TableModel model = new TableModel(configuration, "testConvertAllPartitionsToParquetAndBack", PartitionBy.DAY)
                 .col("id", ColumnType.INT)
                 .col("str", ColumnType.STRING)
                 .timestamp(timestampType.getTimestampType());

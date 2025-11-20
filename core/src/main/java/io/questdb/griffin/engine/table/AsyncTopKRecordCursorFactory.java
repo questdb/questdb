@@ -96,7 +96,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull @Transient RecordMetadata orderByMetadata,
             long lo,
             int workerCount
-    ) {
+    ) throws SqlException {
         super(metadata);
         assert !(base instanceof AsyncTopKRecordCursorFactory);
         try {
@@ -207,39 +207,37 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         final AsyncTopKAtom atom = frameSequence.getAtom();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final PageFrameMemoryPool frameMemoryPool = atom.getMemoryPool(slotId);
+        final PageFrameMemoryRecord recordB = atom.getRecordB(slotId);
+        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(task.getFrameIndex());
+        record.init(frameMemory);
+        final LimitedSizeLongTreeChain chain = atom.getTreeChain(slotId);
+        final RecordComparator comparator = atom.getComparator(slotId);
+        final CompiledFilter compiledFilter = atom.getCompiledFilter();
+        final Function filter = atom.getFilter(slotId);
         try {
-            final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-            final PageFrameMemoryPool frameMemoryPool = atom.getMemoryPool(slotId);
-            final PageFrameMemoryRecord recordB = atom.getRecordB(slotId);
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(task.getFrameIndex());
-            record.init(frameMemory);
-            final LimitedSizeLongTreeChain chain = atom.getTreeChain(slotId);
-            final RecordComparator comparator = atom.getComparator(slotId);
-            final CompiledFilter compiledFilter = atom.getCompiledFilter();
-            final Function filter = atom.getFilter(slotId);
-            try {
-                if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                    // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                    applyFilter(filter, rows, record, frameRowCount);
-                } else {
-                    applyCompiledFilter(frameMemory, compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-                }
+            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+                // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
+                applyFilter(filter, rows, record, frameRowCount);
+            } else {
+                applyCompiledFilter(frameMemory, compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
+            }
 
-                for (long p = 0, n = rows.size(); p < n; p++) {
-                    long r = rows.get(p);
-                    record.setRowIndex(r);
+            for (long p = 0, n = rows.size(); p < n; p++) {
+                long r = rows.get(p);
+                record.setRowIndex(r);
 
-                    // Tree chain is liable to re-position record to
-                    // other rows to do record comparison. We must use our
-                    // own record instance in case base cursor keeps
-                    // state in the record it returns.
-                    chain.put(record, frameMemoryPool, recordB, comparator);
-                }
-            } finally {
-                atom.release(slotId);
+                // Tree chain is liable to re-position record to
+                // other rows to do record comparison. We must use our
+                // own record instance in case base cursor keeps
+                // state in the record it returns.
+                chain.put(record, frameMemoryPool, recordB, comparator);
             }
         } finally {
-            task.releaseFrameMemory();
+            recordB.clear();
+            frameMemoryPool.releaseParquetBuffers();
+            atom.release(slotId);
         }
     }
 
@@ -255,29 +253,27 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         final AsyncTopKAtom atom = task.getFrameSequence(AsyncTopKAtom.class).getAtom();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final PageFrameMemoryPool frameMemoryPool = atom.getMemoryPool(slotId);
+        final PageFrameMemoryRecord recordB = atom.getRecordB(slotId);
+        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(task.getFrameIndex());
+        record.init(frameMemory);
+        final LimitedSizeLongTreeChain chain = atom.getTreeChain(slotId);
+        final RecordComparator comparator = atom.getComparator(slotId);
         try {
-            final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-            final PageFrameMemoryPool frameMemoryPool = atom.getMemoryPool(slotId);
-            final PageFrameMemoryRecord recordB = atom.getRecordB(slotId);
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(task.getFrameIndex());
-            record.init(frameMemory);
-            final LimitedSizeLongTreeChain chain = atom.getTreeChain(slotId);
-            final RecordComparator comparator = atom.getComparator(slotId);
-            try {
-                for (long r = 0; r < frameRowCount; r++) {
-                    record.setRowIndex(r);
+            for (long r = 0; r < frameRowCount; r++) {
+                record.setRowIndex(r);
 
-                    // Tree chain is liable to re-position record to
-                    // other rows to do record comparison. We must use our
-                    // own record instance in case base cursor keeps
-                    // state in the record it returns.
-                    chain.put(record, frameMemoryPool, recordB, comparator);
-                }
-            } finally {
-                atom.release(slotId);
+                // Tree chain is liable to re-position record to
+                // other rows to do record comparison. We must use our
+                // own record instance in case base cursor keeps
+                // state in the record it returns.
+                chain.put(record, frameMemoryPool, recordB, comparator);
             }
         } finally {
-            task.releaseFrameMemory();
+            recordB.clear();
+            frameMemoryPool.releaseParquetBuffers();
+            atom.release(slotId);
         }
     }
 

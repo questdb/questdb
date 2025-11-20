@@ -223,49 +223,45 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         record.init(frameMemory);
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+        final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
+        final RecordSink mapSink = atom.getMapSink(slotId);
         try {
-            final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-            final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
-            final RecordSink mapSink = atom.getMapSink(slotId);
-            try {
-                if (atom.isSharded()) {
-                    fragment.shard();
-                }
-
-                record.setRowIndex(0);
-                long baseRowId = record.getRowId();
-
-                if (fragment.isNotSharded()) {
-                    if (mapSink instanceof RecordSinkFactory.SingleVarcharColumnSink varcharColumnSink && atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
-                        aggregateNonShardedVarcharKey(record, frameRowCount, baseRowId, functionUpdater, fragment, varcharColumnSink.getColumnIndex());
-                    } else if (mapSink instanceof RecordSinkFactory.SingleShortColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered2Map) {
-                        aggregateNonShardedShortKey(record, frameRowCount, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
-                    } else if (mapSink instanceof RecordSinkFactory.SingleIntColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
-                        aggregateNonShardedIntKey(record, frameRowCount, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
-                    } else if (mapSink instanceof RecordSinkFactory.SingleLongColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
-                        aggregateNonShardedLongKey(record, frameRowCount, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
-                    } else {
-                        aggregateNonShardedGeneric(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
-                    }
-                } else {
-                    if (mapSink instanceof RecordSinkFactory.SingleVarcharColumnSink varcharColumnSink && atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
-                        aggregateShardedVarcharKey(record, frameRowCount, baseRowId, functionUpdater, fragment, varcharColumnSink.getColumnIndex());
-                    } else if (mapSink instanceof RecordSinkFactory.SingleIntColumnSink intColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
-                        aggregateShardedIntKey(record, frameRowCount, baseRowId, functionUpdater, fragment, intColumnSink.getColumnIndex());
-                    } else if (mapSink instanceof RecordSinkFactory.SingleLongColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
-                        aggregateShardedLongKey(record, frameRowCount, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
-                    } else {
-                        aggregateShardedGeneric(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
-                    }
-                }
-
-                atom.requestSharding(fragment);
-            } finally {
-                atom.release(slotId);
+            if (atom.isSharded()) {
+                fragment.shard();
             }
+
+            record.setRowIndex(0);
+            long baseRowId = record.getRowId();
+
+            if (fragment.isNotSharded()) {
+                if (mapSink instanceof RecordSinkFactory.SingleVarcharColumnSink varcharColumnSink && atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
+                    aggregateNonShardedVarcharKey(record, frameRowCount, baseRowId, functionUpdater, fragment, varcharColumnSink.getColumnIndex());
+                } else if (mapSink instanceof RecordSinkFactory.SingleShortColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered2Map) {
+                    aggregateNonShardedShortKey(record, frameRowCount, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
+                } else if (mapSink instanceof RecordSinkFactory.SingleIntColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
+                    aggregateNonShardedIntKey(record, frameRowCount, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
+                } else if (mapSink instanceof RecordSinkFactory.SingleLongColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
+                    aggregateNonShardedLongKey(record, frameRowCount, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
+                } else {
+                    aggregateNonShardedGeneric(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+                }
+            } else {
+                if (mapSink instanceof RecordSinkFactory.SingleVarcharColumnSink varcharColumnSink && atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
+                    aggregateShardedVarcharKey(record, frameRowCount, baseRowId, functionUpdater, fragment, varcharColumnSink.getColumnIndex());
+                } else if (mapSink instanceof RecordSinkFactory.SingleIntColumnSink intColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
+                    aggregateShardedIntKey(record, frameRowCount, baseRowId, functionUpdater, fragment, intColumnSink.getColumnIndex());
+                } else if (mapSink instanceof RecordSinkFactory.SingleLongColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
+                    aggregateShardedLongKey(record, frameRowCount, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
+                } else {
+                    aggregateShardedGeneric(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+                }
+            }
+
+            atom.requestSharding(fragment);
         } finally {
-            task.releaseFrameMemory();
+            atom.release(slotId);
         }
     }
 
@@ -759,58 +755,54 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final AsyncGroupByAtom atom = frameSequence.getAtom();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+        final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
+        final CompiledFilter compiledFilter = atom.getCompiledFilter();
+        final Function filter = atom.getFilter(slotId);
+        final RecordSink mapSink = atom.getMapSink(slotId);
         try {
-            final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-            final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
-            final CompiledFilter compiledFilter = atom.getCompiledFilter();
-            final Function filter = atom.getFilter(slotId);
-            final RecordSink mapSink = atom.getMapSink(slotId);
-            try {
-                if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                    // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                    applyFilter(filter, rows, record, frameRowCount);
-                } else {
-                    applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-                }
-
-                if (atom.isSharded()) {
-                    fragment.shard();
-                }
-
-                record.setRowIndex(0);
-                long baseRowId = record.getRowId();
-
-                if (fragment.isNotSharded()) {
-                    if (mapSink instanceof RecordSinkFactory.SingleVarcharColumnSink varcharColumnSink && atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
-                        aggregateFilteredNonShardedVarcharKey(record, rows, baseRowId, functionUpdater, fragment, varcharColumnSink.getColumnIndex());
-                    } else if (mapSink instanceof RecordSinkFactory.SingleShortColumnSink shortColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered2Map) {
-                        aggregateFilteredNonShardedShortKey(record, rows, baseRowId, functionUpdater, fragment, shortColumnSink.getColumnIndex());
-                    } else if (mapSink instanceof RecordSinkFactory.SingleIntColumnSink intColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
-                        aggregateFilteredNonShardedIntKey(record, rows, baseRowId, functionUpdater, fragment, intColumnSink.getColumnIndex());
-                    } else if (mapSink instanceof RecordSinkFactory.SingleLongColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
-                        aggregateFilteredNonShardedLongKey(record, rows, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
-                    } else {
-                        aggregateFilteredNonShardedGeneric(record, rows, baseRowId, functionUpdater, fragment, mapSink);
-                    }
-                } else {
-                    if (mapSink instanceof RecordSinkFactory.SingleVarcharColumnSink varcharColumnSink && atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
-                        aggregateFilteredShardedVarcharKey(record, rows, baseRowId, functionUpdater, fragment, varcharColumnSink.getColumnIndex());
-                    } else if (mapSink instanceof RecordSinkFactory.SingleIntColumnSink intColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
-                        aggregateFilteredShardedIntKey(record, rows, baseRowId, functionUpdater, fragment, intColumnSink.getColumnIndex());
-                    } else if (mapSink instanceof RecordSinkFactory.SingleLongColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
-                        aggregateFilteredShardedLongKey(record, rows, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
-                    } else {
-                        aggregateFilteredShardedGeneric(record, rows, baseRowId, functionUpdater, fragment, mapSink);
-                    }
-                }
-
-                atom.requestSharding(fragment);
-            } finally {
-                atom.release(slotId);
+            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+                // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
+                applyFilter(filter, rows, record, frameRowCount);
+            } else {
+                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
+
+            if (atom.isSharded()) {
+                fragment.shard();
+            }
+
+            record.setRowIndex(0);
+            long baseRowId = record.getRowId();
+
+            if (fragment.isNotSharded()) {
+                if (mapSink instanceof RecordSinkFactory.SingleVarcharColumnSink varcharColumnSink && atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
+                    aggregateFilteredNonShardedVarcharKey(record, rows, baseRowId, functionUpdater, fragment, varcharColumnSink.getColumnIndex());
+                } else if (mapSink instanceof RecordSinkFactory.SingleShortColumnSink shortColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered2Map) {
+                    aggregateFilteredNonShardedShortKey(record, rows, baseRowId, functionUpdater, fragment, shortColumnSink.getColumnIndex());
+                } else if (mapSink instanceof RecordSinkFactory.SingleIntColumnSink intColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
+                    aggregateFilteredNonShardedIntKey(record, rows, baseRowId, functionUpdater, fragment, intColumnSink.getColumnIndex());
+                } else if (mapSink instanceof RecordSinkFactory.SingleLongColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
+                    aggregateFilteredNonShardedLongKey(record, rows, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
+                } else {
+                    aggregateFilteredNonShardedGeneric(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                }
+            } else {
+                if (mapSink instanceof RecordSinkFactory.SingleVarcharColumnSink varcharColumnSink && atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
+                    aggregateFilteredShardedVarcharKey(record, rows, baseRowId, functionUpdater, fragment, varcharColumnSink.getColumnIndex());
+                } else if (mapSink instanceof RecordSinkFactory.SingleIntColumnSink intColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
+                    aggregateFilteredShardedIntKey(record, rows, baseRowId, functionUpdater, fragment, intColumnSink.getColumnIndex());
+                } else if (mapSink instanceof RecordSinkFactory.SingleLongColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
+                    aggregateFilteredShardedLongKey(record, rows, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
+                } else {
+                    aggregateFilteredShardedGeneric(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                }
+            }
+
+            atom.requestSharding(fragment);
         } finally {
-            task.releaseFrameMemory();
+            atom.release(slotId);
         }
     }
 

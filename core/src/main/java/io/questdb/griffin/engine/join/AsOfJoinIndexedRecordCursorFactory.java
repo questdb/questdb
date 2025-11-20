@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -39,7 +38,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
@@ -51,9 +49,8 @@ import io.questdb.std.Rows;
  */
 public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinIndexedRecordCursor cursor;
-    private final int masterSymbolColumnIndex;
     private final int slaveSymbolColumnIndex;
-    private final SymbolShortCircuit symbolShortCircuit;
+    private final SymbolJoinKeyMapping symbolJoinKeyMapping;
     private final long toleranceInterval;
 
     public AsOfJoinIndexedRecordCursorFactory(
@@ -62,18 +59,15 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             int columnSplit,
-            int masterSymbolColumnIndex,
             int slaveSymbolColumnIndex,
-            SymbolShortCircuit symbolShortCircuit,
+            SymbolJoinKeyMapping symbolJoinKeyMapping,
             JoinContext joinContext,
             long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        this.symbolShortCircuit = symbolShortCircuit;
         assert slaveFactory.supportsTimeFrameCursor();
-        this.masterSymbolColumnIndex = masterSymbolColumnIndex;
+        this.symbolJoinKeyMapping = symbolJoinKeyMapping;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
-        long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
         RecordMetadata masterMeta = masterFactory.getMetadata();
         RecordMetadata slaveMeta = slaveFactory.getMetadata();
         this.cursor = new AsOfJoinIndexedRecordCursor(
@@ -81,10 +75,8 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 NullRecordFactory.getInstance(slaveMeta),
                 masterMeta.getTimestampIndex(),
                 masterMeta.getTimestampType(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 slaveMeta.getTimestampIndex(),
                 slaveMeta.getTimestampType(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
         this.toleranceInterval = toleranceInterval;
@@ -142,27 +134,22 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 Record nullRecord,
                 int masterTimestampIndex,
                 int masterTimestampType,
-                SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
                 int slaveTimestampType,
-                SingleRecordSink slaveSinkTarget,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget,
-                    slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
         }
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
-            symbolShortCircuit.of(slaveCursor);
+            symbolJoinKeyMapping.of(slaveCursor);
         }
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            // determine the integer key of the symbol to find in the slave table
-            CharSequence masterSymbolValue = symbolShortCircuit.getMasterValue(masterRecord);
-            int symbolKey = TableUtils.toIndexKey(symbolShortCircuit.getSlaveSymbolTable().keyOf(masterSymbolValue));
+            int symbolKey = TableUtils.toIndexKey(symbolJoinKeyMapping.getSlaveKey(masterRecord));
             if (symbolKey < 0) {
                 record.hasSlave(false);
                 return;

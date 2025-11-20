@@ -61,6 +61,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private long reenterPartitionHi;
     private int reenterPartitionIndex;
     private long reenterPartitionLo;
+    private long remainingRowsInInterval;
 
     public BwdTableReaderPageFrameCursor(
             IntList columnIndexes,
@@ -90,6 +91,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     @Override
     public IntList getColumnIndexes() {
         return columnIndexes;
+    }
+
+    @Override
+    public long getRemainingRowsInInterval() {
+        return remainingRowsInInterval;
     }
 
     @Override
@@ -235,6 +241,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         } else {
             this.reenterPartitionFrame = false;
         }
+
+        // remaining rows in the partition = max row number in the frame - min row number of the partition 
+        remainingRowsInInterval = adjustedLo - partitionLo;
 
         frame.partitionLo = adjustedLo;
         frame.partitionHi = partitionHi;
