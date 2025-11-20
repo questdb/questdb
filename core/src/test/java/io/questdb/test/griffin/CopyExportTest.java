@@ -61,6 +61,18 @@ public class CopyExportTest extends AbstractCairoTest {
     public CopyExportTest() {
     }
 
+    // Helper methods for copy export operations
+    public static void runAndFetchCopyExportID(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        try (
+                RecordCursorFactory factory = select(copySql);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            CharSequence value = cursor.getRecord().getStrA(0);
+            Assert.assertNotNull(value);
+        }
+    }
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
         exportRoot = TestUtils.unchecked(() -> temp.newFolder("export").getAbsolutePath());
@@ -68,6 +80,22 @@ public class CopyExportTest extends AbstractCairoTest {
         staticOverrides.setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, exportRoot);
         staticOverrides.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, exportRoot);
         AbstractCairoTest.setUpStatic();
+    }
+
+    public synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test) throws Exception {
+        testCopyExport(statement, test, true, 1);
+    }
+
+    public void assertEventually(TestUtils.EventualCode assertion) throws Exception {
+        TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
+    }
+
+    public boolean exportFileExists(String fileName) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(exportRoot).concat(fileName).put(".parquet").$();
+            return ff.exists(path.$());
+        }
     }
 
     @Override
@@ -1778,18 +1806,6 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
-    // Helper methods for copy export operations
-    private static void runAndFetchCopyExportID(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        try (
-                RecordCursorFactory factory = select(copySql);
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            Assert.assertTrue(cursor.hasNext());
-            CharSequence value = cursor.getRecord().getStrA(0);
-            Assert.assertNotNull(value);
-        }
-    }
-
     private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test, boolean blocked, int waitCount) throws Exception {
         CountDownLatch processed = new CountDownLatch(waitCount);
         execute("truncate table if exists \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
@@ -1816,22 +1832,6 @@ public class CopyExportTest extends AbstractCairoTest {
                 threads.getQuick(i).join();
             }
             Misc.freeObjList(jobs);
-        }
-    }
-
-    private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test) throws Exception {
-        testCopyExport(statement, test, true, 1);
-    }
-
-    private void assertEventually(TestUtils.EventualCode assertion) throws Exception {
-        TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
-    }
-
-    private boolean exportFileExists(String fileName) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        try (Path path = new Path()) {
-            path.of(exportRoot).concat(fileName).put(".parquet").$();
-            return ff.exists(path.$());
         }
     }
 

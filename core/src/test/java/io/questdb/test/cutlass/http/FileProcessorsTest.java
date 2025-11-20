@@ -31,15 +31,22 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.griffin.CopyExportTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.io.File;
+
+import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class FileProcessorsTest extends AbstractCairoTest {
     private static final TestHttpClient testHttpClient = new TestHttpClient();
@@ -152,6 +159,53 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                 );
                     });
         });
+    }
+
+    @Test
+    public void testFullFuzz() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        getSimpleTester()
+                .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                .withCopyExportRoot(exportRoot)
+                .withCopyInputRoot(inputRoot)
+                .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+                            engine.execute("create table xyz as (select rnd_int() a, rnd_double() b, timestamp_sequence(0,1000) ts from long_sequence(1000)) timestamp(ts) partition by hour");
+
+
+                            var requestResponse = new String[][]{
+                                    {"/api/v1/exports", "{\"data\":[{\"type\":\"file\",\"id\":\"year_minutes.parquet\",\"attributes\":{\"filename\":\"year_minutes.parquet\",\"path\":\"year_minutes.parquet\",\"size\":1541193,\"sizePretty\":\"1.5 MiB\",\"lastModified\":\"2025-11-20T09:46:53.381Z\"}}],\"meta\":{\"totalFiles\":1,\"page\":{\"limit\":10,\"cursor\":\"year_minutes.parquet\"}}}"}
+//                                    "/api/v1/imports",
+//                                    "/api/v1/imports/file1.parquet",
+//                                    "/api/v1/imports/file2.parquet",
+//                                    "/api/v1/imports/nested/nested_fle.parquet",
+                            };
+
+                            CopyExportTest.testCopyExport(
+                                    () -> CopyExportTest.runAndFetchCopyExportID("copy (select * from generate_series('1970-01-01', '1971-01-01', '1m')) to 'year_minutes' WITH FORMAT PARQUET;", sqlExecutionContext),
+                                    () -> assertEventually(() ->
+                                            assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                                            exportRoot + File.separator + "year_minutes.parquet" + "\t1\tfinished\n",
+                                                    "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"))
+                            );
+//                            CopyExportTest.runAndFetchCopyExportID("copy (generate_series('1970-01-01', '1971-01-01', '1m')) to 'year_minutes' WITH FORMAT PARQUET", sqlExecutionContext);
+//
+//                            engine.execute("copy (generate_series('1970-01-01', '1971-01-01', '1h' to 'year_hours' WITH FORMAT PARQUET PARTITION_BY WEEK");
+//
+
+
+//                    public void assertGet(String host, int port, CharSequence expectedResponse, CharSequenceObjHashMap<String> params, CharSequence url, CharSequence expectedStatus) {
+
+                            try {
+                                int iterCount = rnd.nextInt(10);
+                                for (int i = 0; i < iterCount; i++) {
+                                    testHttpClient.assertGet("localhost", 9001, "abc", null, "/api/v1/exports", "200");
+                                }
+                            } finally {
+                                testHttpClient.disconnect();
+                            }
+                        }
+                );
     }
 
     @Test
@@ -367,6 +421,92 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                 "{\"errors\":[{\"status\":\"403\",\"detail\":\"traversal not allowed in file\"}]}",
                                 "403"
                         );
+                    });
+        });
+    }
+
+    @Test
+    public void testHeadRequest() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast(x as int) id from long_sequence(10))");
+            byte[] parquetData = createParquetFile("x");
+            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"test.parquet"}, new byte[][]{parquetData}, false);
+
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withCopyInputRoot(inputRoot)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        // Upload a file first
+                        new SendAndReceiveRequestBuilder()
+                                .execute(
+                                        parquetImportRequest,
+                                        "HTTP/1.1 201 Created\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: application/vnd.api+json\r\n" +
+                                                "\r\n"
+                                );
+
+                        // Test HEAD request returns headers without body
+                        String headResponse = testHttpClient.headRequest("/api/v1/imports/test.parquet", "200");
+
+                        // For HEAD request, body should be empty
+                        Assert.assertEquals("HEAD request should return empty body", "", headResponse);
+
+                        // Test GET request for comparison
+                        testHttpClient.assertGetBinary(
+                                "/api/v1/imports/test.parquet",
+                                parquetData,
+                                "200"
+                        );
+
+                        // Both HEAD and GET should have same Content-Length header
+                        // This is implicitly tested by the fact that both succeed and the file is retrieved correctly
+                    });
+        });
+    }
+
+    @Test
+    public void testHeadRequestDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast(x as int) id from long_sequence(10))");
+            byte[] parquetData = createParquetFile("x");
+            // Create a directory structure
+            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"dir/test.parquet"}, new byte[][]{parquetData}, false);
+
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withCopyInputRoot(inputRoot)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        // Upload a file in a subdirectory
+                        new SendAndReceiveRequestBuilder()
+                                .execute(parquetImportRequest, "HTTP/1.1 201 Created\r\n");
+
+                        // Test HEAD request for directory (should fail)
+                        testHttpClient.headRequest("/api/v1/imports/dir", "400");
+                    });
+        });
+    }
+
+    @Test
+    public void testHeadRequestNotFound() throws Exception {
+        assertMemoryLeak(() -> {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withCopyInputRoot(inputRoot)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        // Test HEAD request for non-existent file
+                        testHttpClient.headRequest("/api/v1/imports/nonexistent.parquet", "404");
                     });
         });
     }
@@ -749,92 +889,6 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
-                    });
-        });
-    }
-
-    @Test
-    public void testHeadRequest() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as (select cast(x as int) id from long_sequence(10))");
-            byte[] parquetData = createParquetFile("x");
-            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"test.parquet"}, new byte[][]{parquetData}, false);
-
-            new HttpQueryTestBuilder()
-                    .withTempFolder(root)
-                    .withCopyInputRoot(inputRoot)
-                    .withWorkerCount(1)
-                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                    .withTelemetry(false)
-                    .run((engine, sqlExecutionContext) -> {
-                        // Upload a file first
-                        new SendAndReceiveRequestBuilder()
-                                .execute(
-                                        parquetImportRequest,
-                                        "HTTP/1.1 201 Created\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: application/vnd.api+json\r\n" +
-                                                "\r\n"
-                                );
-
-                        // Test HEAD request returns headers without body
-                        String headResponse = testHttpClient.headRequest("/api/v1/imports/test.parquet", "200");
-
-                        // For HEAD request, body should be empty
-                        Assert.assertEquals("HEAD request should return empty body", "", headResponse);
-
-                        // Test GET request for comparison
-                        testHttpClient.assertGetBinary(
-                                "/api/v1/imports/test.parquet",
-                                parquetData,
-                                "200"
-                        );
-
-                        // Both HEAD and GET should have same Content-Length header
-                        // This is implicitly tested by the fact that both succeed and the file is retrieved correctly
-                    });
-        });
-    }
-
-    @Test
-    public void testHeadRequestNotFound() throws Exception {
-        assertMemoryLeak(() -> {
-            new HttpQueryTestBuilder()
-                    .withTempFolder(root)
-                    .withCopyInputRoot(inputRoot)
-                    .withWorkerCount(1)
-                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                    .withTelemetry(false)
-                    .run((engine, sqlExecutionContext) -> {
-                        // Test HEAD request for non-existent file
-                        testHttpClient.headRequest("/api/v1/imports/nonexistent.parquet", "404");
-                    });
-        });
-    }
-
-    @Test
-    public void testHeadRequestDirectory() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as (select cast(x as int) id from long_sequence(10))");
-            byte[] parquetData = createParquetFile("x");
-            // Create a directory structure
-            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"dir/test.parquet"}, new byte[][]{parquetData}, false);
-
-            new HttpQueryTestBuilder()
-                    .withTempFolder(root)
-                    .withCopyInputRoot(inputRoot)
-                    .withWorkerCount(1)
-                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                    .withTelemetry(false)
-                    .run((engine, sqlExecutionContext) -> {
-                        // Upload a file in a subdirectory
-                        new SendAndReceiveRequestBuilder()
-                                .execute(parquetImportRequest, "HTTP/1.1 201 Created\r\n");
-
-                        // Test HEAD request for directory (should fail)
-                        testHttpClient.headRequest("/api/v1/imports/dir", "400");
                     });
         });
     }
