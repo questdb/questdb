@@ -2289,10 +2289,11 @@ public class Decimal256Test {
                 originalBigDecimal = decimal.toBigDecimal();
             } catch (NumberFormatException e) {
                 String errorMsg = String.format(
-                        "Failed to convert original Decimal256 to BigDecimal at iteration %d:\n" +
-                                "Decimal256: hh=0x%016x, hl=0x%016x, lh=0x%016x, ll=0x%016x, scale=%d\n" +
-                                "toString()=%s\n" +
-                                "Error: %s",
+                        """
+                                Failed to convert original Decimal256 to BigDecimal at iteration %d:
+                                Decimal256: hh=0x%016x, hl=0x%016x, lh=0x%016x, ll=0x%016x, scale=%d
+                                toString()=%s
+                                Error: %s""",
                         i, decimal.getHh(), decimal.getHl(), decimal.getLh(), decimal.getLl(), decimal.getScale(),
                         decimal, e.getMessage()
                 );
@@ -2313,12 +2314,13 @@ public class Decimal256Test {
                     actualBigDecimal = testDecimal.toBigDecimal();
                 } catch (NumberFormatException e) {
                     String errorMsg = String.format(
-                            "Failed to convert result Decimal256 to BigDecimal at iteration %d:\n" +
-                                    "Original: %s (scale=%d)\n" +
-                                    "Target scale: %d, Mode: %s\n" +
-                                    "Result Decimal256: hh=0x%016x, hl=0x%016x, lh=0x%016x, ll=0x%016x, scale=%d\n" +
-                                    "toString()=%s\n" +
-                                    "Error: %s",
+                            """
+                                    Failed to convert result Decimal256 to BigDecimal at iteration %d:
+                                    Original: %s (scale=%d)
+                                    Target scale: %d, Mode: %s
+                                    Result Decimal256: hh=0x%016x, hl=0x%016x, lh=0x%016x, ll=0x%016x, scale=%d
+                                    toString()=%s
+                                    Error: %s""",
                             i,
                             originalBigDecimal.toPlainString(), decimal.getScale(),
                             targetScale, roundingMode,
@@ -2331,12 +2333,13 @@ public class Decimal256Test {
 
                 if (!expectedBigDecimal.equals(actualBigDecimal)) {
                     String errorMsg = String.format(
-                            "Rounding mismatch at iteration %d:\n" +
-                                    "Original: %s (scale=%d)\n" +
-                                    "Target scale: %d, Mode: %s\n" +
-                                    "Expected: %s\n" +
-                                    "Actual: %s\n" +
-                                    "Original Decimal256: hh=0x%016x, hl=0x%016x, lh=0x%016x, ll=0x%016x, scale=%d",
+                            """
+                                    Rounding mismatch at iteration %d:
+                                    Original: %s (scale=%d)
+                                    Target scale: %d, Mode: %s
+                                    Expected: %s
+                                    Actual: %s
+                                    Original Decimal256: hh=0x%016x, hl=0x%016x, lh=0x%016x, ll=0x%016x, scale=%d""",
                             i,
                             originalBigDecimal.toPlainString(), decimal.getScale(),
                             targetScale, roundingMode,
@@ -2364,10 +2367,11 @@ public class Decimal256Test {
 
                 if (!decimal256Threw) {
                     String errorMsg = String.format(
-                            "BigDecimal threw NumericException but Decimal256 didn't at iteration %d:\n" +
-                                    "Original: %s (scale=%d)\n" +
-                                    "Target scale: %d, Mode: %s\n" +
-                                    "BigDecimal error: %s",
+                            """
+                                    BigDecimal threw NumericException but Decimal256 didn't at iteration %d:
+                                    Original: %s (scale=%d)
+                                    Target scale: %d, Mode: %s
+                                    BigDecimal error: %s""",
                             i,
                             originalBigDecimal.toPlainString(), decimal.getScale(),
                             targetScale, roundingMode,

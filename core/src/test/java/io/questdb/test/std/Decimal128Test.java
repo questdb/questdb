@@ -63,7 +63,7 @@ public class Decimal128Test {
     public void testAddZeroMaxValue() {
         Decimal128 b = new Decimal128(0, 0, 0);
         b.add(Decimal128.MAX_VALUE);
-        Assert.assertEquals(b, Decimal128.MAX_VALUE);
+        Assert.assertEquals(Decimal128.MAX_VALUE, b);
     }
 
     @Test
@@ -1165,7 +1165,11 @@ public class Decimal128Test {
             try {
                 originalBigDecimal = decimal.toBigDecimal();
             } catch (NumberFormatException e) {
-                String errorMsg = String.format("Failed to convert original Decimal128 to BigDecimal at iteration %d:\n" + "Decimal128: high=0x%016x, low=0x%016x, scale=%d\n" + "toString()=%s\n" + "Error: %s", i, decimal.getHigh(), decimal.getLow(), decimal.getScale(), decimal, e.getMessage());
+                String errorMsg = String.format("""
+                        Failed to convert original Decimal128 to BigDecimal at iteration %d:
+                        Decimal128: high=0x%016x, low=0x%016x, scale=%d
+                        toString()=%s
+                        Error: %s""", i, decimal.getHigh(), decimal.getLow(), decimal.getScale(), decimal, e.getMessage());
                 Assert.fail(errorMsg);
                 return; // unreachable but makes compiler happy
             }
@@ -1182,13 +1186,25 @@ public class Decimal128Test {
                 try {
                     actualBigDecimal = testDecimal.toBigDecimal();
                 } catch (NumberFormatException e) {
-                    String errorMsg = String.format("Failed to convert result Decimal128 to BigDecimal at iteration %d:\n" + "Original: %s (scale=%d)\n" + "Target scale: %d, Mode: %s\n" + "Result Decimal128: high=0x%016x, low=0x%016x, scale=%d\n" + "toString()=%s\n" + "Error: %s", i, originalBigDecimal.toPlainString(), decimal.getScale(), targetScale, roundingMode, testDecimal.getHigh(), testDecimal.getLow(), testDecimal.getScale(), testDecimal, e.getMessage());
+                    String errorMsg = String.format("""
+                            Failed to convert result Decimal128 to BigDecimal at iteration %d:
+                            Original: %s (scale=%d)
+                            Target scale: %d, Mode: %s
+                            Result Decimal128: high=0x%016x, low=0x%016x, scale=%d
+                            toString()=%s
+                            Error: %s""", i, originalBigDecimal.toPlainString(), decimal.getScale(), targetScale, roundingMode, testDecimal.getHigh(), testDecimal.getLow(), testDecimal.getScale(), testDecimal, e.getMessage());
                     Assert.fail(errorMsg);
                     return; // unreachable but makes compiler happy
                 }
 
                 if (!expectedBigDecimal.equals(actualBigDecimal)) {
-                    String errorMsg = String.format("Rounding mismatch at iteration %d:\n" + "Original: %s (scale=%d)\n" + "Target scale: %d, Mode: %s\n" + "Expected: %s\n" + "Actual: %s\n" + "Original Decimal128: high=0x%016x, low=0x%016x, scale=%d", i, originalBigDecimal.toPlainString(), decimal.getScale(), targetScale, roundingMode, expectedBigDecimal.toPlainString(), actualBigDecimal.toPlainString(), decimal.getHigh(), decimal.getLow(), decimal.getScale());
+                    String errorMsg = String.format("""
+                            Rounding mismatch at iteration %d:
+                            Original: %s (scale=%d)
+                            Target scale: %d, Mode: %s
+                            Expected: %s
+                            Actual: %s
+                            Original Decimal128: high=0x%016x, low=0x%016x, scale=%d""", i, originalBigDecimal.toPlainString(), decimal.getScale(), targetScale, roundingMode, expectedBigDecimal.toPlainString(), actualBigDecimal.toPlainString(), decimal.getHigh(), decimal.getLow(), decimal.getScale());
                     Assert.fail(errorMsg);
                 }
 
@@ -1207,7 +1223,11 @@ public class Decimal128Test {
                 }
 
                 if (!decimal128Threw) {
-                    String errorMsg = String.format("BigDecimal threw NumericException but Decimal128 didn't at iteration %d:\n" + "Original: %s (scale=%d)\n" + "Target scale: %d, Mode: %s\n" + "BigDecimal error: %s", i, originalBigDecimal.toPlainString(), decimal.getScale(), targetScale, roundingMode, e.getMessage());
+                    String errorMsg = String.format("""
+                            BigDecimal threw NumericException but Decimal128 didn't at iteration %d:
+                            Original: %s (scale=%d)
+                            Target scale: %d, Mode: %s
+                            BigDecimal error: %s""", i, originalBigDecimal.toPlainString(), decimal.getScale(), targetScale, roundingMode, e.getMessage());
                     Assert.fail(errorMsg);
                 }
             }
@@ -1242,7 +1262,10 @@ public class Decimal128Test {
             java.math.BigDecimal resultBigDecimal = testDecimal.toBigDecimal();
 
             if (!originalBigDecimal.equals(resultBigDecimal)) {
-                String errorMsg = String.format("UNNECESSARY mode changed value when no rounding needed at iteration %d:\n" + "Original: %s (scale=%d)\n" + "Result: %s (scale=%d)", i, originalBigDecimal.toPlainString(), currentScale, resultBigDecimal.toPlainString(), testDecimal.getScale());
+                String errorMsg = String.format("""
+                        UNNECESSARY mode changed value when no rounding needed at iteration %d:
+                        Original: %s (scale=%d)
+                        Result: %s (scale=%d)""", i, originalBigDecimal.toPlainString(), currentScale, resultBigDecimal.toPlainString(), testDecimal.getScale());
                 Assert.fail(errorMsg);
             }
 
