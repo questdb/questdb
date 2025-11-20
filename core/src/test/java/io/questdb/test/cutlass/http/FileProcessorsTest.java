@@ -295,7 +295,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
         });
     }
 
-
+    @Test
     public void testFullFuzz() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         getSimpleTester()
@@ -306,15 +306,6 @@ public class FileProcessorsTest extends AbstractCairoTest {
                 .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
                             engine.execute("create table xyz as (select rnd_int() a, rnd_double() b, timestamp_sequence(0,1000) ts from long_sequence(1000)) timestamp(ts) partition by hour");
 
-
-                            var requestResponse = new String[][]{
-                                    {"/api/v1/exports", "{\"data\":[{\"type\":\"file\",\"id\":\"year_minutes.parquet\",\"attributes\":{\"filename\":\"year_minutes.parquet\",\"path\":\"year_minutes.parquet\",\"size\":1541193,\"sizePretty\":\"1.5 MiB\",\"lastModified\":\"2025-11-20T09:46:53.381Z\"}}],\"meta\":{\"totalFiles\":1,\"page\":{\"limit\":10,\"cursor\":\"year_minutes.parquet\"}}}"}
-//                                    "/api/v1/imports",
-//                                    "/api/v1/imports/file1.parquet",
-//                                    "/api/v1/imports/file2.parquet",
-//                                    "/api/v1/imports/nested/nested_fle.parquet",
-                            };
-
                             CopyExportTest.testCopyExport(
                                     () -> CopyExportTest.runAndFetchCopyExportID("copy (select * from generate_series('1970-01-01', '1971-01-01', '1m')) to 'year_minutes' WITH FORMAT PARQUET;", sqlExecutionContext),
                                     () -> assertEventually(() ->
@@ -322,27 +313,63 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                             exportRoot + File.separator + "year_minutes.parquet" + "\t1\tfinished\n",
                                                     "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"))
                             );
-//                            CopyExportTest.runAndFetchCopyExportID("copy (generate_series('1970-01-01', '1971-01-01', '1m')) to 'year_minutes' WITH FORMAT PARQUET", sqlExecutionContext);
-//
-//                            engine.execute("copy (generate_series('1970-01-01', '1971-01-01', '1h' to 'year_hours' WITH FORMAT PARQUET PARTITION_BY WEEK");
-//
-
-
-//                    public void assertGet(String host, int port, CharSequence expectedResponse, CharSequenceObjHashMap<String> params, CharSequence url, CharSequence expectedStatus) {
 
                             try {
                                 int iterCount = rnd.nextInt(10);
                                 for (int i = 0; i < iterCount; i++) {
-                                    // Verify that the exports API returns a valid JSON response with file listing
-                                    String response = testHttpClient.getResponse("/api/v1/exports", "200");
-                                    Assert.assertTrue("Response should contain 'data' field", response.contains("\"data\":["));
-                                    Assert.assertTrue("Response should contain 'meta' field", response.contains("\"meta\":{"));
+                                    // Test GET /api/v1/exports - list export files
+                                    String exportsListResponse = testHttpClient.getResponse("/api/v1/exports", "200");
+                                    assertPartialJsonResponse(exportsListResponse,
+                                            "\"data\":[",
+                                            "\"type\":\"file\"",
+                                            "\"filename\":\"year_minutes.parquet\"",
+                                            "\"meta\":{",
+                                            "\"totalFiles\":1"
+                                    );
+
+                                    // Test GET /api/v1/imports - list import files (empty initially)
+                                    String importsListResponse = testHttpClient.getResponse("/api/v1/imports", "200");
+                                    assertPartialJsonResponse(importsListResponse,
+                                            "\"data\":[",
+                                            "\"meta\":{"
+                                    );
+
+                                    // Test GET /api/v1/exports?page[limit]=5 - with pagination
+                                    String exportsPageResponse = testHttpClient.getResponse("/api/v1/exports?page[limit]=5", "200");
+                                    assertPartialJsonResponse(exportsPageResponse,
+                                            "\"data\":[",
+                                            "\"page\":{",
+                                            "\"limit\":5"
+                                    );
+
+                                    // Test GET /api/v1/imports?page[limit]=20 - with different limit
+                                    String importsPageResponse = testHttpClient.getResponse("/api/v1/imports?page[limit]=20", "200");
+                                    assertPartialJsonResponse(importsPageResponse,
+                                            "\"data\":[",
+                                            "\"meta\":{"
+                                    );
                                 }
                             } finally {
                                 testHttpClient.disconnect();
                             }
                         }
                 );
+    }
+
+    /**
+     * Helper method to verify JSON responses with partial matching.
+     * Useful for responses containing dynamic values like timestamps and file sizes.
+     *
+     * @param response The response string to verify
+     * @param expectedParts Variable number of partial strings that should be present in the response
+     */
+    private void assertPartialJsonResponse(String response, String... expectedParts) {
+        for (String part : expectedParts) {
+            Assert.assertTrue(
+                    "Response should contain: " + part + "\n\nActual response: " + response,
+                    response.contains(part)
+            );
+        }
     }
 
     @Test
