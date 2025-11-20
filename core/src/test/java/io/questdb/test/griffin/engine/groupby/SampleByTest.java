@@ -7092,13 +7092,15 @@ public class SampleByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                                Async Group By workers: 1
-                                  keys: [tstmp,sym]
-                                  values: [first(val),avg(val),last(val),max(val)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
+                                Radix sort light
+                                  keys: [tstmp]
+                                    Async Group By workers: 1
+                                      keys: [tstmp,sym]
+                                      values: [first(val),avg(val),last(val),max(val)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """
             );
         });
