@@ -32,6 +32,7 @@ import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -39,7 +40,6 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SimpleWaitingLock;
@@ -172,7 +172,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
-    private void checkpointCreate(SqlExecutionContext executionContext, CharSequence checkpointRoot) throws SqlException {
+    private void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, CharSequence checkpointRoot, boolean isIncrementalBackup) throws SqlException {
         try {
             final long startedAt = microClock.getTicks();
             if (!startedAtTimestamp.compareAndSet(Numbers.LONG_NULL, startedAt)) {
@@ -199,9 +199,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 if (walPurgeJobRunLock != null) {
                     final long timeout = configuration.getCircuitBreakerConfiguration().getQueryTimeout();
                     while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
-                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     }
                 }
+
+                TableToken tableToken = null;
 
                 try {
                     // Prepare table name registry for copying.
@@ -223,7 +225,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
                         // Copy metadata files for all tables.
                         for (int t = 0, n = ordered.size(); t < n; t++) {
-                            TableToken tableToken = ordered.get(t);
+                            tableToken = ordered.get(t);
                             if (engine.isTableDropped(tableToken)) {
                                 LOG.info().$("skipping, table is dropped [table=").$(tableToken).I$();
                                 continue;
@@ -288,7 +290,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         reader = engine.getReaderWithRepair(tableToken);
                                     } catch (EntryLockedException e) {
                                         LOG.info().$("waiting for locked table [table=").$(tableToken).I$();
-                                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                                         continue;
                                     } catch (CairoException e) {
                                         if (engine.isTableDropped(tableToken)) {
@@ -298,7 +300,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         throw e;
                                     } catch (TableReferenceOutOfDateException e) {
                                         LOG.info().$("retrying, table reference is out of date [table=").$(tableToken).I$();
-                                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                                         continue;
                                     }
 
@@ -366,11 +368,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         mem.close();
 
                         // Flush dirty pages and filesystem metadata to disk
-                        if (ff.sync() != 0) {
+                        if (!isIncrementalBackup && ff.sync() != 0) {
                             throw CairoException.critical(ff.errno()).put("Could not sync");
                         }
 
-                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                         LOG.info().$("checkpoint created").$();
                     }
                 } catch (Throwable e) {
@@ -378,7 +380,21 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     if (walPurgeJobRunLock != null) {
                         walPurgeJobRunLock.unlock();
                     }
-                    LOG.error().$("checkpoint error [e=").$(e).I$();
+                    var log = LOG.error().$("cannot create checkpoint [e=").$(e);
+                    if (tableToken != null) {
+                        log.$(", table=").$(tableToken);
+                    }
+                    log.I$();
+                    if (e instanceof CairoException && tableToken != null) {
+                        CairoException ex = (CairoException) e;
+                        // Copy exception message in case the exception instance is re-used
+                        StringSink ss = Misc.getThreadLocalSink();
+                        ss.put(ex.getFlyweightMessage());
+
+                        throw CairoException.critical(ex.errno).put("error creating checkpoint [table=")
+                                .put(tableToken).put(", error=").put(ss)
+                                .put(']');
+                    }
                     throw e;
                 } finally {
                     tableNameRegistryStore.close();
@@ -531,9 +547,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
-    void checkpointCreate(SqlExecutionContext executionContext, boolean isLegacy) throws SqlException {
+    void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isLegacy, boolean incrementalBackup) throws SqlException {
         // Windows doesn't support sync() system call.
-        if (Os.isWindows()) {
+        if (!incrementalBackup && Os.isWindows()) {
             if (isLegacy) {
                 throw SqlException.position(0).put("Snapshot is not supported on Windows");
             }
@@ -555,7 +571,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 ff.rmdir(path);
             }
         }
-        checkpointCreate(executionContext, checkpointRoot);
+        checkpointCreate(circuitBreaker, checkpointRoot, incrementalBackup);
     }
 
     void checkpointRelease() throws SqlException {

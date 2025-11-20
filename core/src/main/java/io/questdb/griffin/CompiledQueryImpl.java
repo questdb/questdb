@@ -215,7 +215,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     public void ofBackupTable() {
-        of(BACKUP_TABLE);
+        of(BACKUP_DATABASE);
         this.isExecutedAtParseTime = true;
     }
 
