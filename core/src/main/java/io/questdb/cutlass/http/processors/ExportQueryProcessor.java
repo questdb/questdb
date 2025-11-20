@@ -38,6 +38,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
@@ -758,11 +759,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         break;
 
                     case QUERY_SETUP_FIRST_RECORD:
+                        state.queryState = QUERY_METADATA;
                         state.hasNext = state.cursor.hasNext();
                         header(response, state, 200);
-                        state.queryState = QUERY_METADATA;
                         // fall through
-
                     case QUERY_METADATA:
                         if (!state.noMeta) {
                             state.columnIndex = 0;
