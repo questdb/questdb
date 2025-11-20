@@ -548,14 +548,27 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             case DATA:
             case MAT_VIEW_DATA:
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
-                writer.commitWalInsertTransactions(
-                        walPath,
-                        seqTxn,
-                        pressureControl
-                );
+                long skipTxnCount = skipOverwrittenWalTransactions(seqTxn, txnDetails);
+
+                // Ask TableWriter to skip applying transactions entirely when possible
+                boolean skipped = false;
+                if (skipTxnCount > 0) {
+                    skipped = writer.skipWalTransactions(seqTxn, skipTxnCount);
+                }
+
+                // Cannot skip, possible there are rows in LAG that need to be committed
+                if (!skipped) {
+                    writer.commitWalInsertTransactions(
+                            walPath,
+                            seqTxn,
+                            pressureControl
+                    );
+                }
+
                 final long latency = microClock.getTicks() - start;
                 long totalPhysicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
                 long lastCommittedSeqTxn = writer.getAppliedSeqTxn();
+
                 lastCommittedRows = 0;
                 for (long s = seqTxn; s <= lastCommittedSeqTxn; s++) {
                     long walRowCount = txnDetails.getSegmentRowHi(s) - txnDetails.getSegmentRowLo(s);
@@ -595,7 +608,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                 }
 
-                return (int) (writer.getAppliedSeqTxn() - seqTxn + 1);
+                return (int) (lastCommittedSeqTxn - seqTxn + 1);
             case SQL:
                 try (WalEventReader eventReader = walEventReader) {
                     final WalEventCursor walEventCursor = eventReader.of(walPath, segmentTxn);
@@ -653,6 +666,59 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             default:
                 throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
         }
+    }
+
+    private long skipOverwrittenWalTransactions(long seqTxn, WalTxnDetails walTxnDetails) {
+        // Check all future transactions to see if any fully replace this transaction's range
+        final long initialSeqTxn = seqTxn;
+        final long lastSeqTxn = walTxnDetails.getLastSeqTxn();
+        boolean replaced;
+
+        for (; seqTxn < lastSeqTxn; seqTxn++) {
+            int walId = walTxnDetails.getWalId(seqTxn);
+            if (walId < 1) {
+                // This is not a data transaction
+                break;
+            }
+
+            long txnTsLo = walTxnDetails.getMinTimestamp(seqTxn);
+            long txnTsHi = walTxnDetails.getMaxTimestamp(seqTxn) + 1;
+            if (walTxnDetails.getDedupMode(seqTxn) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+                txnTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
+                txnTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
+            }
+
+            replaced = false;
+            for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
+                byte futureDedupMode = walTxnDetails.getDedupMode(futureSeqTxn);
+                int futureWalId = walTxnDetails.getWalId(futureSeqTxn);
+                if (futureWalId < 1) {
+                    // This is not a data transaction.
+                    // Potentially it can be an update that uses existing data
+                    // so the transactions cannot be skipped even if the data is fully replaces after the update.
+                    break;
+                }
+
+                // If the future transaction is a replace range operation
+                if (futureDedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+                    long futureRangeTsLo = walTxnDetails.getReplaceRangeTsLow(futureSeqTxn);
+                    long futureRangeTsHi = walTxnDetails.getReplaceRangeTsHi(futureSeqTxn);
+
+                    // Check if the future transaction's replace range fully covers
+                    if (futureRangeTsLo <= txnTsLo && futureRangeTsHi >= txnTsHi) {
+                        replaced = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!replaced) {
+                // Do not continue the loop, do not increment seqTxn
+                break;
+            }
+        }
+
+        return seqTxn - initialSeqTxn;
     }
 
     private void processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, OperationExecutor operationExecutor, long seqTxn) {

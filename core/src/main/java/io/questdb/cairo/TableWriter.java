@@ -1289,9 +1289,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         physicallyWrittenRowsSinceLastCommit.set(0);
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
-
-        // Try to skip transactions where if the transaction data is going to be overwritten or deleted.
-        seqTxn = commitWalInsertTransactions_skipOverwrittenWalTransactions(seqTxn);
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
 
         boolean committed;
@@ -2997,6 +2994,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getRowCount() + getO3RowCount();
     }
 
+    public boolean skipWalTransactions(long seqTxn, long skipTxnCount) {
+        boolean txnAfterSkipIsData = seqTxn + skipTxnCount <= walTxnDetails.getLastSeqTxn() && walTxnDetails.getWalId(seqTxn + skipTxnCount) > 0;
+        if (txnAfterSkipIsData || txWriter.getLagRowCount() == 0) {
+            LOG.info().$("skipping replaced WAL transactions [table=").$(tableToken)
+                    .$(", fromSeqTxn=").$(seqTxn)
+                    .$(", toSeqTxn=").$(seqTxn + skipTxnCount)
+                    .I$();
+            commitSeqTxn(seqTxn + skipTxnCount - 1);
+            return true;
+        }
+        return false;
+    }
+
     @TestOnly
     public void squashAllPartitionsIntoOne() {
         squashSplitPartitions(0, txWriter.getPartitionCount(), 1, false);
@@ -4059,50 +4069,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.commit(denseSymbolMapWriters);
         processPartitionRemoveCandidates();
-    }
-
-    private long commitWalInsertTransactions_skipOverwrittenWalTransactions(long seqTxn) {
-        // Check all future transactions to see if any fully replace this transaction's range
-        final long initialSeqTxn = seqTxn;
-        final long lastSeqTxn = walTxnDetails.getLastSeqTxn();
-
-        for (; seqTxn < lastSeqTxn; seqTxn++) {
-            long txnTsLo = walTxnDetails.getMinTimestamp(seqTxn);
-            long txnTsHi = walTxnDetails.getMaxTimestamp(seqTxn) + 1;
-            if (walTxnDetails.getDedupMode(seqTxn) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
-                txnTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
-                txnTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
-            }
-
-            boolean replaced = false;
-            for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
-                byte futureDedupMode = walTxnDetails.getDedupMode(futureSeqTxn);
-
-                // If the future transaction is a replace range operation
-                if (futureDedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
-                    long futureRangeTsLo = walTxnDetails.getReplaceRangeTsLow(futureSeqTxn);
-                    long futureRangeTsHi = walTxnDetails.getReplaceRangeTsHi(futureSeqTxn);
-
-                    // Check if the future transaction's replace range fully covers
-                    if (futureRangeTsLo <= txnTsLo && futureRangeTsHi >= txnTsHi) {
-                        replaced = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!replaced) {
-                break;
-            }
-        }
-
-        if (initialSeqTxn < seqTxn) {
-            LOG.info().$("skipped overwritten WAL transactions [table=").$(tableToken)
-                    .$(", fromSeqTxn=").$(initialSeqTxn)
-                    .$(", toSeqTxn=").$(seqTxn)
-                    .I$();
-        }
-        return seqTxn;
     }
 
     private void configureAppendPosition() {
