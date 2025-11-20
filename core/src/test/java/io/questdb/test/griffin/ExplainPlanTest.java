@@ -12956,6 +12956,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame backward scan on: cpu_ts
                             """
             );
+
+            assertPlanNoLeakCheck(
+                    "select sum(avg), sum(sum), count(first_value) from ( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by 1 desc",
+                    """
+                            Sort
+                              keys: [sum desc]
+                                GroupBy vectorized: false
+                                  values: [sum(avg),sum(sum),count(first_value)]
+                                    CachedWindow
+                                      orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cpu_ts
+                            """
+            );
         });
     }
 
