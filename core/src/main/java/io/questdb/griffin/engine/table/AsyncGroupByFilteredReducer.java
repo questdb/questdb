@@ -28,7 +28,6 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.Unordered2Map;
 import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.cairo.map.Unordered8Map;
@@ -43,7 +42,6 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -109,11 +107,10 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
                 } else if (atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
                     aggregateFilteredNonShardedLongKey(record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
                 } else {
-                    assert atom.getFragment(slotId).getMap() instanceof OrderedMap : "unexpected map class: " + atom.getFragment(slotId).getMap().getClass();
                     aggregateFilteredNonShardedGeneric(record, rows, baseRowId, functionUpdater, fragment, mapSink);
                 }
             } else {
-                // single short key can't be shared, so we don't need a special case here
+                // single short key won't be sharded with the default threshold, so we don't need a special case here
                 if (atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
                     aggregateFilteredShardedVarcharKey(record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
                 } else if (atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
@@ -121,7 +118,6 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
                 } else if (atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
                     aggregateFilteredShardedLongKey(record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
                 } else {
-                    assert atom.getFragment(slotId).getMap() instanceof OrderedMap : "unexpected map class: " + atom.getFragment(slotId).getMap().getClass();
                     aggregateFilteredShardedGeneric(record, rows, baseRowId, functionUpdater, fragment, mapSink);
                 }
             }
@@ -166,13 +162,11 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
     ) {
         assert columnIndex != -1;
         final Unordered4Map map = (Unordered4Map) fragment.reopenMap();
-        final long startPtr = record.getPageAddress(columnIndex);
         for (long i = 0, n = rows.size(); i < n; i++) {
             final long r = rows.get(i);
-            final long p = startPtr + (r << 2);
-            final int key = Unsafe.getUnsafe().getInt(p);
-            MapValue value = map.createValueWithKey(key);
             record.setRowIndex(r);
+            final int key = record.getInt(columnIndex);
+            MapValue value = map.createValueWithKey(key);
             if (value.isNew()) {
                 functionUpdater.updateNew(value, record, baseRowId + r);
             } else {
@@ -191,13 +185,11 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
     ) {
         assert columnIndex != -1;
         final Unordered8Map map = (Unordered8Map) fragment.reopenMap();
-        final long startPtr = record.getPageAddress(columnIndex);
         for (long i = 0, n = rows.size(); i < n; i++) {
             final long r = rows.get(i);
-            final long p = startPtr + (r << 3);
-            final long key = Unsafe.getUnsafe().getLong(p);
-            MapValue value = map.createValueWithKey(key);
             record.setRowIndex(r);
+            final long key = record.getLong(columnIndex);
+            MapValue value = map.createValueWithKey(key);
             if (value.isNew()) {
                 functionUpdater.updateNew(value, record, baseRowId + r);
             } else {
@@ -216,13 +208,11 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
     ) {
         assert columnIndex != -1;
         final Unordered2Map map = (Unordered2Map) fragment.reopenMap();
-        final long startPtr = record.getPageAddress(columnIndex);
         for (long i = 0, n = rows.size(); i < n; i++) {
             final long r = rows.get(i);
-            final long p = startPtr + (r << 1);
-            final short key = Unsafe.getUnsafe().getShort(p);
-            MapValue value = map.createValueWithKey(key);
             record.setRowIndex(r);
+            final short key = record.getShort(columnIndex);
+            MapValue value = map.createValueWithKey(key);
             if (value.isNew()) {
                 functionUpdater.updateNew(value, record, baseRowId + r);
             } else {
@@ -301,16 +291,15 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
             int columnIndex
     ) {
         assert columnIndex != -1;
-        final long startPtr = record.getPageAddress(columnIndex);
         for (long i = 0, n = rows.size(); i < n; i++) {
             final long r = rows.get(i);
-            final long p = startPtr + (r << 2);
-            final int key = Unsafe.getUnsafe().getInt(p);
+            record.setRowIndex(r);
+
+            final int key = record.getInt(columnIndex);
             final long hashCode = Unordered4Map.hashKey(key);
             final Unordered4Map shard = (Unordered4Map) fragment.getShardMap(hashCode);
 
             MapValue shardValue = shard.createValueWithKey(key, hashCode);
-            record.setRowIndex(r);
             if (shardValue.isNew()) {
                 functionUpdater.updateNew(shardValue, record, baseRowId + r);
             } else {
@@ -328,16 +317,15 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
             int columnIndex
     ) {
         assert columnIndex != -1;
-        final long startPtr = record.getPageAddress(columnIndex);
         for (long i = 0, n = rows.size(); i < n; i++) {
             final long r = rows.get(i);
-            final long p = startPtr + (r << 3);
-            final long key = Unsafe.getUnsafe().getLong(p);
+            record.setRowIndex(r);
+
+            final long key = record.getLong(columnIndex);
             final long hashCode = Unordered8Map.hashKey(key);
             final Unordered8Map shard = (Unordered8Map) fragment.getShardMap(hashCode);
 
             MapValue shardValue = shard.createValueWithKey(key, hashCode);
-            record.setRowIndex(r);
             if (shardValue.isNew()) {
                 functionUpdater.updateNew(shardValue, record, baseRowId + r);
             } else {
@@ -360,6 +348,7 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
         for (long i = 0, n = rows.size(); i < n; i++) {
             final long r = rows.get(i);
             record.setRowIndex(r);
+
             final MapKey lookupKey = lookupShard.withKey();
             lookupKey.putVarchar(record.getVarcharA(columnIndex));
             lookupKey.commit();

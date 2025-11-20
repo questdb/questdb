@@ -149,6 +149,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
+            // Check if we have single column key and, thus, can use simplified reducers.
+            if (keyTypes.getColumnCount() == 1 && listColumnFilter.getColumnCount() == 1 && ownerKeyFunctions.size() == 0) {
+                int index = listColumnFilter.getColumnIndex(0);
+                final int factor = listColumnFilter.getIndexFactor(index);
+                index = (index * factor - 1);
+                this.singleColumnIndex = index;
+            } else {
+                this.singleColumnIndex = -1;
+            }
+
             final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
             if (perWorkerGroupByFunctions != null) {
@@ -178,16 +188,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             // Destination shards are lazily initialized by the worker threads.
             destShards = new ObjList<>(shardCount);
             destShards.setPos(shardCount);
-
-            // Check if we have single column key and, thus, can use simplified reducers.
-            if (keyTypes.getColumnCount() == 1 && listColumnFilter.getColumnCount() == 1 && ownerKeyFunctions.size() == 0) {
-                int index = listColumnFilter.getColumnIndex(0);
-                final int factor = listColumnFilter.getIndexFactor(index);
-                index = (index * factor - 1);
-                this.singleColumnIndex = index;
-            } else {
-                this.singleColumnIndex = -1;
-            }
 
             final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(asm, columnTypes, listColumnFilter, ownerKeyFunctions, null);
             ownerMapSink = RecordSinkFactory.getInstance(sinkClass, ownerKeyFunctions);

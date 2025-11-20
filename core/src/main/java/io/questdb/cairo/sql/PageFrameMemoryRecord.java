@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
@@ -163,7 +164,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             final long dataOffset = Unsafe.getUnsafe().getLong(auxPageAddress + auxOffset);
             return getBin(dataPageAddress, dataOffset, dataPageLim, bsView(columnIndex));
         }
-        return NullMemoryCMR.INSTANCE.getBin(0);
+        return null;
     }
 
     @Override
@@ -193,7 +194,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             }
             return Unsafe.getUnsafe().getLong(dataPageAddress + dataOffset);
         }
-        return NullMemoryCMR.INSTANCE.getBinLen(0);
+        return TableUtils.NULL_LEN;
     }
 
     @Override
@@ -202,7 +203,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getByte(address + rowIndex) == 1;
         }
-        return NullMemoryCMR.INSTANCE.getBool(0);
+        return false;
     }
 
     @Override
@@ -211,7 +212,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getByte(address + rowIndex);
         }
-        return NullMemoryCMR.INSTANCE.getByte(0);
+        return 0;
     }
 
     @Override
@@ -220,7 +221,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
         }
-        return NullMemoryCMR.INSTANCE.getChar(0);
+        return 0;
     }
 
     @Override
@@ -243,7 +244,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
         }
-        return NullMemoryCMR.INSTANCE.getDecimal16(0);
+        return Decimals.DECIMAL16_NULL;
     }
 
     @Override
@@ -262,7 +263,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
-        return NullMemoryCMR.INSTANCE.getDecimal32(0);
+        return Decimals.DECIMAL32_NULL;
     }
 
     @Override
@@ -271,7 +272,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
         }
-        return NullMemoryCMR.INSTANCE.getDecimal64(0);
+        return Decimals.DECIMAL64_NULL;
     }
 
     @Override
@@ -280,7 +281,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getByte(address + rowIndex);
         }
-        return NullMemoryCMR.INSTANCE.getDecimal8(0);
+        return Decimals.DECIMAL8_NULL;
     }
 
     @Override
@@ -289,7 +290,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
         }
-        return NullMemoryCMR.INSTANCE.getDouble(0);
+        return Double.NaN;
     }
 
     @Override
@@ -298,7 +299,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getFloat(address + (rowIndex << 2));
         }
-        return NullMemoryCMR.INSTANCE.getFloat(0);
+        return Float.NaN;
     }
 
     public int getFrameIndex() {
@@ -347,7 +348,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
-        return NullMemoryCMR.INSTANCE.getIPv4(0);
+        return Numbers.IPv4_NULL;
     }
 
     @Override
@@ -356,7 +357,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
-        return NullMemoryCMR.INSTANCE.getInt(0);
+        return Numbers.INT_NULL;
     }
 
     // 0 means A, 1 means B
@@ -370,7 +371,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
         }
-        return NullMemoryCMR.INSTANCE.getLong(0);
+        return Numbers.LONG_NULL;
     }
 
     @Override
@@ -379,7 +380,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
         }
-        return NullMemoryCMR.INSTANCE.getLong128Hi();
+        return Numbers.LONG_NULL;
     }
 
     @Override
@@ -388,7 +389,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
         }
-        return NullMemoryCMR.INSTANCE.getLong128Lo();
+        return Numbers.LONG_NULL;
     }
 
     @Override
@@ -420,10 +421,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return Numbers.ipv4ToLong(getIPv4(columnIndex));
     }
 
-    public long getPageAddress(int columnIndex) {
-        return pageAddresses.getQuick(columnIndex);
-    }
-
     @Override
     public long getRowId() {
         return Rows.toRowID(frameIndex, rowIndex);
@@ -439,7 +436,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address != 0) {
             return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
         }
-        return NullMemoryCMR.INSTANCE.getShort(0);
+        return 0;
     }
 
     @Override
@@ -479,24 +476,27 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             }
             return Unsafe.getUnsafe().getInt(dataPageAddress + dataOffset);
         }
-        return NullMemoryCMR.INSTANCE.getStrLen(0);
+        return TableUtils.NULL_LEN;
     }
 
     @Override
     public CharSequence getSymA(int columnIndex) {
         final long address = pageAddresses.getQuick(columnIndex);
-        int key = NullMemoryCMR.INSTANCE.getInt(0);
         if (address != 0) {
-            key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+            final int key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+            return getSymbolTable(columnIndex).valueOf(key);
         }
-        return getSymbolTable(columnIndex).valueOf(key);
+        return null;
     }
 
     @Override
     public CharSequence getSymB(int columnIndex) {
         final long address = pageAddresses.getQuick(columnIndex);
-        final int key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
-        return getSymbolTable(columnIndex).valueBOf(key);
+        if (address != 0) {
+            final int key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+            return getSymbolTable(columnIndex).valueBOf(key);
+        }
+        return null;
     }
 
     @Override
@@ -656,7 +656,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             final long dataOffset = Unsafe.getUnsafe().getLong(auxPageAddress + auxOffset);
             return getStr(dataPageAddress, dataOffset, dataPageLim, csView);
         }
-        return NullMemoryCMR.INSTANCE.getStrB(0);
+        return null;
     }
 
     private SymbolTable getSymbolTable(int columnIndex) {

@@ -69,9 +69,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private final boolean convertToParquet;
     private final boolean enableJitCompiler;
     private final boolean enableParallelGroupBy;
+    private final Rnd rnd;
 
     public ParallelGroupByFuzzTest() {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        this.rnd = TestUtils.generateRandom(LOG);
         this.enableParallelGroupBy = rnd.nextBoolean();
         this.enableJitCompiler = rnd.nextBoolean();
         this.convertToParquet = rnd.nextBoolean();
@@ -87,8 +88,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         // Set the sharding threshold to a small value to test sharding.
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 2);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1 + rnd.nextInt(ROW_COUNT));
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(4));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
         super.setUp();
     }
