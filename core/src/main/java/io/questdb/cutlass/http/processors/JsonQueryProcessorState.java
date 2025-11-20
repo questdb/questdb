@@ -75,6 +75,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
+import static io.questdb.cutlass.http.processors.SqlValidationProcessor.readyForNextRequest;
 
 public class JsonQueryProcessorState implements Mutable, Closeable {
     public static final String HIDDEN = "hidden";
@@ -88,7 +89,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_SUFFIX = QUERY_RECORD_SUFFIX + 1; // 7
     static final int QUERY_SEND_RECORDS_LOOP = QUERY_SUFFIX + 1; // 8
     static final int QUERY_RECORD_PREFIX = QUERY_SEND_RECORDS_LOOP + 1; // 9
-
     // only used in Parquet export
     static final int QUERY_PARQUET_EXPORT_INIT = QUERY_RECORD_PREFIX + 1; // 10
     static final int QUERY_PARQUET_EXPORT_WAIT = QUERY_PARQUET_EXPORT_INIT + 1; // 11
@@ -96,8 +96,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_PARQUET_TO_PARQUET_FILE = QUERY_PARQUET_SEND_HEADER + 1; // 14
     static final int QUERY_PARQUET_FILE_SEND_INIT = QUERY_PARQUET_TO_PARQUET_FILE + 1; // 13
     static final int QUERY_PARQUET_FILE_SEND_CHUNK = QUERY_PARQUET_FILE_SEND_INIT + 1; // 15
-    static final int QUERY_PARQUET_FILE_SEND_COMPLETE = QUERY_PARQUET_FILE_SEND_CHUNK + 1; // 15
-
+    static final int QUERY_PARQUET_FILE_SEND_COMPLETE = QUERY_PARQUET_FILE_SEND_CHUNK + 1; // 16
+    static final int QUERY_ERROR = QUERY_PARQUET_FILE_SEND_COMPLETE + 1; // 17
+    static final int QUERY_DONE = QUERY_ERROR + 1;
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
@@ -105,6 +106,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
     private final RecordCursor.Counter counter = new RecordCursor.Counter();
+    private final StringSink errorMessage = new StringSink();
     private final SCSequence eventSubSequence = new SCSequence();
     private final HttpConnectionContext httpConnectionContext;
     private final CharSequence keepAliveHeader;
@@ -117,8 +119,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
     private int columnIndex;
-    // indicates to the state machine that column value was fully sent to
-    // the client, as opposed to being partially send
+    // indicates to the state machine that the column value was fully sent to
+    // the client, as opposed to being partially sent
     private boolean columnValueFullySent;
     private long compilerNanos;
     private boolean containsSecret;
@@ -126,6 +128,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean countRows = false;
     private RecordCursor cursor;
     private boolean cursorHasRows;
+    private int errorPosition;
     private long executeStartNanos;
     private boolean explain = false;
     private boolean noMeta = false;
@@ -163,6 +166,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         resumeActions.extendAndSet(QUERY_RECORD, this::onQueryRecord);
         resumeActions.extendAndSet(QUERY_RECORD_SUFFIX, this::onQueryRecordSuffix);
         resumeActions.extendAndSet(QUERY_SUFFIX, this::doQuerySuffix);
+        resumeActions.extendAndSet(QUERY_ERROR, (response, columnCount) -> onError(response));
+        resumeActions.extendAndSet(QUERY_DONE, (response, columnCount) -> response.done());
         this.nanosecondClock = nanosecondClock;
         this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
         this.keepAliveHeader = keepAliveHeader;
@@ -370,6 +375,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.executeStartNanos = nanosecondClock.getTicks();
     }
 
+    public void storeError(int errorPosition, CharSequence errorMessage) {
+        this.queryState = QUERY_ERROR;
+        this.errorPosition = errorPosition;
+        this.errorMessage.clear();
+        this.errorMessage.put(errorMessage);
+    }
+
     private static byte parseApiVersion(HttpRequestHeader header) {
         DirectUtf8Sequence versionStr = header.getUrlParam(URL_PARAM_VERSION);
         if (versionStr == null) {
@@ -571,7 +583,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         switch (ColumnType.tagOf(columnType)) {
             // list of explicitly supported types, to be keep in sync with doQueryRecord()
 
-            // we use a while-list since if we add a new type to QuestDB
+            // we use a while-list since if we add a new type to QuestDB,
             // the support has to be explicitly added to the JSON REST API
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
@@ -804,7 +816,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putDecimal256Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
                     break;
                 default:
-                    // this should never happen since metadata are already validated
+                    // this should never happen since metadata is already validated
                     throw CairoException.nonCritical().put("column type not supported [type=").put(ColumnType.nameOf(columnType)).put(']');
             }
         }
@@ -942,13 +954,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerIsSlowToReadException, PeerDisconnectedException {
-        // If there is an exception in the first record setup then upper layers will handle it:
+        // If there is an exception in the first record setup, then upper layers will handle it:
         // Either they will send error or pause execution on DataUnavailableException
         setupFirstRecord();
-        // If we make it past setup then we optimistically send HTTP 200 header.
+        // If we make it past setup, then we optimistically send HTTP 200 header.
         // There is still a risk of exception while iterating over cursor, but there is not much we can do about it.
         // Trying to access the first record before sending HTTP headers will already catch many errors.
-        // So we can send an appropriate HTTP error code. If there is an error past the first record then
+        // So we can send an appropriate HTTP error code. If there is an error past the first record, then
         // we have no choice but to disconnect :( - because we have already sent HTTP 200 header.
 
         // We assume HTTP headers will always fit into our buffer => a state transition to the QUERY_PREFIX
@@ -1082,20 +1094,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         cursorHasRows = true;
     }
 
-    static void prepareExceptionJson(
-            HttpChunkedResponse response,
-            int position,
-            CharSequence message,
-            CharSequence query
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        response.putAscii('{')
-                .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query != null ? query : "").putQuote().putAscii(',')
-                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(message != null ? message : "").putQuote().putAscii(',')
-                .putAsciiQuoted("position").putAscii(':').put(position)
-                .putAscii('}');
-        response.sendChunk(true);
-    }
-
     boolean of(RecordCursorFactory factory, boolean queryCacheable, SqlExecutionContextImpl sqlExecutionContext)
             throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         this.recordCursorFactory = factory;
@@ -1157,6 +1155,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return true;
     }
 
+    void onError(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        response.bookmark();
+        response.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(errorMessage).putQuote().putAscii(',')
+                .putAsciiQuoted("position").putAscii(':').put(errorPosition)
+                .putAscii('}');
+        queryState = QUERY_DONE;
+        readyForNextRequest(getHttpConnectionContext());
+        response.sendChunk(true);
+    }
+
     void querySuffixWithError(
             HttpChunkedResponse response,
             int code,
@@ -1164,7 +1174,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             int messagePosition
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // we no longer need cursor when we reached query suffix
-        // closing cursor here guarantees that by the time http client finished reading response the table
+        // closing cursor here guarantees that by the time an http client finished reading response, the table
         // is released
         cursor = Misc.free(cursor);
         circuitBreaker = null;

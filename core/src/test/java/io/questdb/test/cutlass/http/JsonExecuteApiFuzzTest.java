@@ -33,7 +33,6 @@ import org.junit.Test;
 public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
 
     @Test
-    @Ignore("TODO: Broken state machine")
     public void testFullFuzz() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         getSimpleTester()
