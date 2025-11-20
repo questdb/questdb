@@ -254,7 +254,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                 isMasterHasNextPending = false;
                 masterHasNext = false;
                 freeAllIteratorBlocks();
-                counter.add(size() - emittedRowCount);
+                counter.add(size - emittedRowCount);
             } else {
                 super.calculateSize(circuitBreaker, counter);
             }
