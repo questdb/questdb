@@ -78,6 +78,7 @@ public class AsyncGroupByReducer implements PageFrameReducer {
             long baseRowId = record.getRowId();
 
             if (fragment.isNotSharded()) {
+                // Avoid Map megamorphism by having specialized methods for single column maps.
                 if (atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
                     aggregateNonShardedVarcharKey(record, frameRowCount, baseRowId, functionUpdater, fragment, singleColumnIndex);
                 } else if (atom.getFragment(slotId).getMap() instanceof Unordered2Map) {
