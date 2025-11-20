@@ -233,24 +233,6 @@ public class SqlOptimiser implements Mutable {
         return appearsInArgs;
     }
 
-    public static ExpressionNode concatFilters(
-            boolean cairoSqlLegacyOperatorPrecedence,
-            ObjectPool<ExpressionNode> expressionNodePool,
-            ExpressionNode old,
-            ExpressionNode filter
-    ) {
-        if (old == null) {
-            return filter;
-        } else {
-            OperatorExpression andOp = OperatorExpression.chooseRegistry(cairoSqlLegacyOperatorPrecedence).getOperatorDefinition("and");
-            ExpressionNode node = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, filter.position);
-            node.paramCount = 2;
-            node.lhs = old;
-            node.rhs = filter;
-            return node;
-        }
-    }
-
     public void clear() {
         clearForUnionModelInJoin();
         contextPool.clear();
@@ -321,6 +303,24 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    private static ExpressionNode concatFilters(
+            boolean cairoSqlLegacyOperatorPrecedence,
+            ObjectPool<ExpressionNode> expressionNodePool,
+            ExpressionNode old,
+            ExpressionNode filter
+    ) {
+        if (old == null) {
+            return filter;
+        } else {
+            OperatorExpression andOp = OperatorExpression.chooseRegistry(cairoSqlLegacyOperatorPrecedence).getOperatorDefinition("and");
+            ExpressionNode node = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, filter.position);
+            node.paramCount = 2;
+            node.lhs = old;
+            node.rhs = filter;
+            return node;
+        }
     }
 
     private static boolean isOrderedByDesignatedTimestamp(QueryModel model) {
