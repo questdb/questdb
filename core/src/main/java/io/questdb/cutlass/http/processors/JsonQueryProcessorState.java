@@ -140,7 +140,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean pausedQuery = false;
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
-    private int queryState = QUERY_DONE;
+    private int queryState = QUERY_SETUP_FIRST_RECORD;
     private int queryTimestampIndex;
     private short queryType;
     private boolean quoteLargeNum = false;
@@ -199,7 +199,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
         query.clear();
         stringSink.clear();
-        queryState = QUERY_DONE;
+        queryState = QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
         columnValueFullySent = true;
         arrayState.clear();
@@ -341,10 +341,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 .$(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos)
                 .$(", q=`").$safe(getQueryOrHidden())
                 .$("`]").$();
-    }
-
-    public void newRequest() {
-        queryState = QUERY_SETUP_FIRST_RECORD;
     }
 
     public void setCompilerNanos(long compilerNanos) {

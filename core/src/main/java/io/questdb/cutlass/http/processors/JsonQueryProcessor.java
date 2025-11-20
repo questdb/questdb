@@ -299,9 +299,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             ));
         }
 
-        // todo: this is no good, it's likely hiding a problem
-        state.newRequest();
-
         // clear random for a new request to avoid reusing random between requests
         state.setRnd(null);
 
