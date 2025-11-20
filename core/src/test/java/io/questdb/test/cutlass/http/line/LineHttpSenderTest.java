@@ -1425,11 +1425,13 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
 
                 serverMain.awaitTxn(tableName, 1);
-                serverMain.assertSql("select * from " + tableName, "price\tquantity\trate\tts\n" +
-                        "123.45\t100.0000\t0.12345\t1970-01-02T03:46:40.000000Z\n" +
-                        "-45.67\t-10.5000\t-0.00001\t1970-01-02T03:46:40.000001Z\n" +
-                        "0.01\t0.0001\t0.00000\t1970-01-02T03:46:40.000002Z\n" +
-                        "999.00\t42.0000\t1.00000\t1970-01-02T03:46:40.000003Z\n");
+                serverMain.assertSql("select * from " + tableName, """
+                        price\tquantity\trate\tts
+                        123.45\t100.0000\t0.12345\t1970-01-02T03:46:40.000000Z
+                        -45.67\t-10.5000\t-0.00001\t1970-01-02T03:46:40.000001Z
+                        0.01\t0.0001\t0.00000\t1970-01-02T03:46:40.000002Z
+                        999.00\t42.0000\t1.00000\t1970-01-02T03:46:40.000003Z
+                        """);
             }
         });
     }
@@ -1482,12 +1484,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
 
                 serverMain.awaitTxn(tableName, 1);
-                serverMain.assertSql("select * from " + tableName, "value\tts\n" +
-                        "123.4560000000\t1970-01-02T03:46:40.000000Z\n" +
-                        "123.4500000000\t1970-01-02T03:46:40.000001Z\n" +
-                        "0.0000000001\t1970-01-02T03:46:40.000002Z\n" +
-                        "0.0000000000\t1970-01-02T03:46:40.000003Z\n" +
-                        "0.0000000000\t1970-01-02T03:46:40.000004Z\n");
+                serverMain.assertSql("select * from " + tableName, """
+                        value\tts
+                        123.4560000000\t1970-01-02T03:46:40.000000Z
+                        123.4500000000\t1970-01-02T03:46:40.000001Z
+                        0.0000000001\t1970-01-02T03:46:40.000002Z
+                        0.0000000000\t1970-01-02T03:46:40.000003Z
+                        0.0000000000\t1970-01-02T03:46:40.000004Z
+                        """);
             }
         });
     }
@@ -1532,10 +1536,12 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 serverMain.awaitTxn(tableName, 1);
                 // Both columns should have identical values
-                serverMain.assertSql("select * from " + tableName, "text_format\tbinary_format\tts\n" +
-                        "123.450\t123.450\t1970-01-02T03:46:40.000000Z\n" +
-                        "-45.670\t-45.670\t1970-01-02T03:46:40.000001Z\n" +
-                        "0.001\t0.001\t1970-01-02T03:46:40.000002Z\n");
+                serverMain.assertSql("select * from " + tableName, """
+                        text_format\tbinary_format\tts
+                        123.450\t123.450\t1970-01-02T03:46:40.000000Z
+                        -45.670\t-45.670\t1970-01-02T03:46:40.000001Z
+                        0.001\t0.001\t1970-01-02T03:46:40.000002Z
+                        """);
             }
         });
     }
@@ -1735,10 +1741,12 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
 
                 serverMain.awaitTxn(tableName, 1);
-                serverMain.assertSql("select * from " + tableName, "large\tsmall\tts\n" +
-                        "123000.00\t0.000000000123000\t1970-01-02T03:46:40.000000Z\n" +
-                        "4560.00\t0.000000045600000\t1970-01-02T03:46:40.000001Z\n" +
-                        "-999.00\t-0.000000000001500\t1970-01-02T03:46:40.000002Z\n");
+                serverMain.assertSql("select * from " + tableName, """
+                        large\tsmall\tts
+                        123000.00\t0.000000000123000\t1970-01-02T03:46:40.000000Z
+                        4560.00\t0.000000045600000\t1970-01-02T03:46:40.000001Z
+                        -999.00\t-0.000000000001500\t1970-01-02T03:46:40.000002Z
+                        """);
             }
         });
     }
@@ -1782,10 +1790,12 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
 
                 serverMain.awaitTxn(tableName, 1);
-                serverMain.assertSql("select * from " + tableName, "value1\tvalue2\tts\n" +
-                        "100.000\t50.00000\t1970-01-02T03:46:40.000000Z\n" +
-                        "1.200\t0.12300\t1970-01-02T03:46:40.000001Z\n" +
-                        "0.100\t0.00100\t1970-01-02T03:46:40.000002Z\n");
+                serverMain.assertSql("select * from " + tableName, """
+                        value1\tvalue2\tts
+                        100.000\t50.00000\t1970-01-02T03:46:40.000000Z
+                        1.200\t0.12300\t1970-01-02T03:46:40.000001Z
+                        0.100\t0.00100\t1970-01-02T03:46:40.000002Z
+                        """);
             }
         });
     }
@@ -1854,14 +1864,16 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
 
                 serverMain.awaitTxn(tableName, 1);
-                serverMain.assertSql("select * from " + tableName, "a\tb\tts\n" +
-                        "12345\t123.450\t1970-01-02T03:46:40.000000Z\n" +
-                        "\t123.456\t1970-01-02T03:46:40.000001Z\n" +
-                        "42\t42.000\t1970-01-02T03:46:40.000002Z\n" +
-                        "42\t42.123\t1970-01-02T03:46:40.000003Z\n" +
-                        "42\t42.100\t1970-01-02T03:46:40.000004Z\n" +
-                        "42\t42.100\t1970-01-02T03:46:40.000005Z\n" +
-                        "\t\t1970-01-02T03:46:40.000006Z\n");
+                serverMain.assertSql("select * from " + tableName, """
+                        a\tb\tts
+                        12345\t123.450\t1970-01-02T03:46:40.000000Z
+                        \t123.456\t1970-01-02T03:46:40.000001Z
+                        42\t42.000\t1970-01-02T03:46:40.000002Z
+                        42\t42.123\t1970-01-02T03:46:40.000003Z
+                        42\t42.100\t1970-01-02T03:46:40.000004Z
+                        42\t42.100\t1970-01-02T03:46:40.000005Z
+                        \t\t1970-01-02T03:46:40.000006Z
+                        """);
             }
         });
     }
