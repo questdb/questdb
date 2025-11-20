@@ -442,7 +442,10 @@ public class HttpResponseSink implements Closeable, Mutable {
             }
             if (addEofChunk) {
                 int len = EOF_CHUNK.length();
-                Utf8s.strCpyAscii(EOF_CHUNK, len, getWriteAddress(len));
+                // safety: unchecked store, but we reserve space for the last chunk -> this is sound as long as all
+                //         other writes use getWriteAddress() which does not allow anyone else to use the space reserved
+                //         for the last chunk.
+                Utf8s.strCpyAscii(EOF_CHUNK, len, _wptr);
                 _wptr += len;
                 LOG.debug().$("end chunk sent [fd=").$(getFd()).I$();
             }

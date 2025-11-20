@@ -1200,14 +1200,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                         .putAsciiQuoted("jitCompiled").putAscii(':').putAscii(queryJitCompiled ? "true" : "false")
                         .putAscii('}');
             }
-            response.putAscii('}');
-            response.sendChunk(true);
             count = -1;
             counter.set(-1);
-            // important: reset the count/counter state only *after* non-exceptional return from sendChunk()
-            // why? if the response object does not have a large enough free space in its internal buffer,
-            // then sendChunk() throws and everything after the last bookmark is discarded. eventually, we are called
-            // again and then we have to write the suffix to the response again.
+            response.putAscii('}');
+            response.sendChunk(true);
             return;
         }
         response.done();
