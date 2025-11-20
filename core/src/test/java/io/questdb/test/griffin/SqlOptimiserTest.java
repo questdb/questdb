@@ -1342,7 +1342,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by ts, s limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 1 
+                            Limit lo: 1000000 skip-over-rows: 0 limit: 1
                                 Sort
                                   keys: [ts, s]
                                     SelectedRecord
@@ -1466,7 +1466,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 7 
+                            Limit lo: 1000000 skip-over-rows: 0 limit: 7
                                 Sort
                                   keys: [s, ts]
                                     SelectedRecord
@@ -1560,7 +1560,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 63 
+                            Limit lo: 1000000 skip-over-rows: 0 limit: 63
                                 SelectedRecord
                                     Cross Join
                                         SortedSymbolIndex
@@ -2070,7 +2070,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) lt join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(query,
                     """
-                            Limit lo: 1000000 skip-over-rows: 0 limit: 7 
+                            Limit lo: 1000000 skip-over-rows: 0 limit: 7
                                 Sort
                                   keys: [s, ts1]
                                     SelectedRecord
