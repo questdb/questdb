@@ -2994,18 +2994,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getRowCount() + getO3RowCount();
     }
 
-    public boolean skipWalTransactions(long seqTxn, long skipTxnCount) {
-        if (txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0) {
-            LOG.info().$("skipping replaced WAL transactions [table=").$(tableToken)
-                    .$(", fromSeqTxn=").$(seqTxn)
-                    .$(", toSeqTxn=").$(seqTxn + skipTxnCount)
-                    .I$();
-            commitSeqTxn(seqTxn + skipTxnCount - 1);
-            return true;
-        }
-        return false;
-    }
-
     @TestOnly
     public void squashAllPartitionsIntoOne() {
         squashSplitPartitions(0, txWriter.getPartitionCount(), 1, false);
@@ -3081,6 +3069,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public final void truncateSoft() {
         truncate(true);
+    }
+
+    public boolean trySkipWalTransactions(long seqTxn, long skipTxnCount) {
+        if (txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0) {
+            LOG.info().$("skipping replaced WAL transactions [table=").$(tableToken)
+                    .$(", fromSeqTxn=").$(seqTxn)
+                    .$(", toSeqTxn=").$(seqTxn + skipTxnCount)
+                    .I$();
+            commitSeqTxn(seqTxn + skipTxnCount - 1);
+            return true;
+        }
+        return false;
     }
 
     public void updateTableToken(TableToken tableToken) {
