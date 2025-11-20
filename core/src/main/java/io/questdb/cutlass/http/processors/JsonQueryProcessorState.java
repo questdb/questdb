@@ -99,6 +99,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_PARQUET_FILE_SEND_COMPLETE = QUERY_PARQUET_FILE_SEND_CHUNK + 1; // 16
     static final int QUERY_ERROR = QUERY_PARQUET_FILE_SEND_COMPLETE + 1; // 17
     static final int QUERY_DONE = QUERY_ERROR + 1;
+    static final int QUERY_BAD_UTF8 = QUERY_DONE + 1;
+    static final int QUERY_EMPTY_QUERY = QUERY_BAD_UTF8 + 1;
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
@@ -168,6 +170,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         resumeActions.extendAndSet(QUERY_SUFFIX, this::doQuerySuffix);
         resumeActions.extendAndSet(QUERY_ERROR, (response, columnCount) -> onError(response));
         resumeActions.extendAndSet(QUERY_DONE, (response, columnCount) -> response.done());
+        resumeActions.extendAndSet(QUERY_BAD_UTF8, (response, columnCount) -> onResumeBadUtf8(response));
+        resumeActions.extendAndSet(QUERY_EMPTY_QUERY, (response, columnCount) -> onResumeEmptyQuery(response));
         this.nanosecondClock = nanosecondClock;
         this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
         this.keepAliveHeader = keepAliveHeader;
@@ -373,6 +377,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void startExecutionTimer() {
         this.executeStartNanos = nanosecondClock.getTicks();
+    }
+
+    public void storeEmptyQuery() {
+        queryState = QUERY_EMPTY_QUERY;
     }
 
     public void storeError(int errorPosition, CharSequence errorMessage) {
@@ -1167,6 +1175,34 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.sendChunk(true);
     }
 
+    void onResumeBadUtf8(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        Utf8Sequence query = getHttpConnectionContext().getRequestHeader().getUrlParam(URL_PARAM_QUERY);
+        response.bookmark();
+        response.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuoted(query.asAsciiCharSequence()).putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuoted("Bad UTF8 encoding in query text").putAscii(',')
+                .putAsciiQuoted("position").putAscii(':').put(0)
+                .putAscii('}');
+        queryState = QUERY_DONE;
+        readyForNextRequest(getHttpConnectionContext());
+        response.sendChunk(true);
+    }
+
+    void onResumeEmptyQuery(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        response.bookmark();
+        String noticeOrError = getApiVersion() >= 2 ? "notice" : "error";
+        response.put('{')
+                .putAsciiQuoted(noticeOrError).putAscii(':').putAsciiQuoted("empty query")
+                .putAscii(",")
+                .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(getQuery()).putQuote()
+                .putAscii(",")
+                .putAsciiQuoted("position").putAscii(':').putAsciiQuoted("0")
+                .putAscii('}');
+        queryState = QUERY_DONE;
+        readyForNextRequest(getHttpConnectionContext());
+        response.sendChunk(true);
+    }
+
     void querySuffixWithError(
             HttpChunkedResponse response,
             int code,
@@ -1226,6 +1262,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     void setQueryCacheable(boolean queryCacheable) {
         this.queryCacheable = queryCacheable;
+    }
+
+    void storeBadUtf8() {
+        queryState = QUERY_BAD_UTF8;
     }
 
     @FunctionalInterface
