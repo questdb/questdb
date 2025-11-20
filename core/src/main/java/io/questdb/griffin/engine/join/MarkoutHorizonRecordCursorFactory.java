@@ -540,9 +540,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
 
         private void gotoNextRow(long iterAddr) {
             int nextSlaveRowNum = iter_nextSlaveRowNum(iterAddr);
-            if (nextSlaveRowNum == slaveRowCount) {
-                return;
-            }
+            assert nextSlaveRowNum < slaveRowCount : "nextSlaveRowNum >= slaveRowCount";
             nextSlaveRowNum++;
             iter_setNextSlaveRowNum(iterAddr, nextSlaveRowNum);
             if (nextSlaveRowNum == slaveRowCount) {
