@@ -27,6 +27,7 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
@@ -38,6 +39,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.PropertyKey.CAIRO_WAL_MAX_LAG_SIZE;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 public class WalWriterReplaceRangeTest extends AbstractCairoTest {
@@ -849,6 +851,50 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             // Expected: rows before 23:00 + 3 rows in the replace ranges
             // Based on the test run, the original data has rows from 23:00 to 23:19:26 that get replaced
             assertSql("count\n98582\n", "select count(*) from stress");
+        });
+    }
+
+    @Test
+    public void testManyTransactionsSkippedWhenTruncateIfFound() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
+
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("stress");
+
+            long lastMinuteStart = MicrosTimestampDriver.floor("2022-02-24T23:59");
+
+            for (int i = 0; i < 100; i++) {
+                try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                    // Add a new row with the current replace value
+                    TableWriter.Row row = ww.newRow(lastMinuteStart + 30_000_000); // Middle of the last minute
+                    row.putLong(0, i);
+                    row.putLong(2, i * 100);
+                    row.append();
+                    ww.commit();
+                }
+            }
+            execute("truncate table stress");
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                // Add a new row with the current replace value
+                TableWriter.Row row = ww.newRow(lastMinuteStart + 30_000_000); // Middle of the last minute
+                row.putLong(0, 1001);
+                row.putLong(2, (1001) * 100);
+                row.append();
+                ww.commit();
+            }
+
+            // Apply any remaining WAL entries
+            drainWalQueue();
+
+            // Verify the total count
+            // Expected: rows before 23:00 + 3 rows in the replace ranges
+            // Based on the test run, the original data has rows from 23:00 to 23:19:26 that get replaced
+            assertSql("count\n1\n", "select count(*) from stress");
+            try (TableReader rdr = engine.getReader(tableToken)) {
+                var txn = rdr.getTxn();
+                Assert.assertEquals(2, txn); // Expecting many transactions to be skipped
+            }
         });
     }
 

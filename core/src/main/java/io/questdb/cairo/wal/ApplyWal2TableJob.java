@@ -74,8 +74,8 @@ import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalTxnType.*;
+import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
@@ -244,6 +244,85 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return false;
         }
         return true;
+    }
+
+    private static long skipOverwrittenWalTransactions(long seqTxn, WalTxnDetails walTxnDetails) {
+        // Check all future transactions to see if any fully replace this transaction's range
+        final long initialSeqTxn = seqTxn;
+        final long lastSeqTxn = walTxnDetails.getLastSeqTxn();
+        boolean proceed;
+
+        for (; seqTxn < lastSeqTxn; seqTxn++) {
+            int walId = walTxnDetails.getWalId(seqTxn);
+            if (walId < 1) {
+                // This is not a data transaction
+                break;
+            } else {
+                final byte walTxnType = walTxnDetails.getWalTxnType(seqTxn);
+                if (!isDataType(walTxnType)) {
+                    break;
+                }
+            }
+
+            long txnTsLo = walTxnDetails.getMinTimestamp(seqTxn);
+            long txnTsHi = walTxnDetails.getMaxTimestamp(seqTxn) + 1;
+            if (walTxnDetails.getDedupMode(seqTxn) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+                txnTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
+                txnTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
+            }
+
+            proceed = false;
+            boolean hasNonSkippableTxn = false;
+            for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
+                byte futureDedupMode = walTxnDetails.getDedupMode(futureSeqTxn);
+                int futureWalId = walTxnDetails.getWalId(futureSeqTxn);
+                if (futureWalId > 0) {
+                    final byte walTxnType = walTxnDetails.getWalTxnType(futureSeqTxn);
+                    if (walTxnType == TRUNCATE) {
+                        // Truncate fully removes any prior data, no point doing any data apply
+                        proceed = true;
+                        // we can skip straight to the truncate operation
+                        if (!hasNonSkippableTxn) {
+                            seqTxn = futureSeqTxn;
+                            proceed = false;
+                        }
+                        break;
+                    }
+
+                    if (walTxnType == SQL) {
+                        // This is not a data transaction.
+                        // Potentially it can be an UPDATE SQL that uses existing data
+                        // so the transactions cannot be skipped even if the data is fully replaces after the update.
+
+                        // We can optimize partition drops to be recognized here in the future.
+                        break;
+                    }
+                    hasNonSkippableTxn |= !WalTxnType.isDataType(walTxnType);
+                } else {
+                    hasNonSkippableTxn = true;
+                }
+
+
+                // If the future transaction is a replace range operation
+                if (futureDedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+                    long futureRangeTsLo = walTxnDetails.getReplaceRangeTsLow(futureSeqTxn);
+                    long futureRangeTsHi = walTxnDetails.getReplaceRangeTsHi(futureSeqTxn);
+
+                    // Check if the future transaction's replace range fully covers
+                    if (futureRangeTsLo <= txnTsLo && futureRangeTsHi >= txnTsHi) {
+                        proceed = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!proceed) {
+                // Do not continue the loop, do not increment seqTxn
+                break;
+            }
+        }
+
+        return seqTxn - initialSeqTxn;
     }
 
     /**
@@ -666,59 +745,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             default:
                 throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
         }
-    }
-
-    private long skipOverwrittenWalTransactions(long seqTxn, WalTxnDetails walTxnDetails) {
-        // Check all future transactions to see if any fully replace this transaction's range
-        final long initialSeqTxn = seqTxn;
-        final long lastSeqTxn = walTxnDetails.getLastSeqTxn();
-        boolean replaced;
-
-        for (; seqTxn < lastSeqTxn; seqTxn++) {
-            int walId = walTxnDetails.getWalId(seqTxn);
-            if (walId < 1) {
-                // This is not a data transaction
-                break;
-            }
-
-            long txnTsLo = walTxnDetails.getMinTimestamp(seqTxn);
-            long txnTsHi = walTxnDetails.getMaxTimestamp(seqTxn) + 1;
-            if (walTxnDetails.getDedupMode(seqTxn) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
-                txnTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
-                txnTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
-            }
-
-            replaced = false;
-            for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
-                byte futureDedupMode = walTxnDetails.getDedupMode(futureSeqTxn);
-                int futureWalId = walTxnDetails.getWalId(futureSeqTxn);
-                if (futureWalId < 1) {
-                    // This is not a data transaction.
-                    // Potentially it can be an update that uses existing data
-                    // so the transactions cannot be skipped even if the data is fully replaces after the update.
-                    break;
-                }
-
-                // If the future transaction is a replace range operation
-                if (futureDedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
-                    long futureRangeTsLo = walTxnDetails.getReplaceRangeTsLow(futureSeqTxn);
-                    long futureRangeTsHi = walTxnDetails.getReplaceRangeTsHi(futureSeqTxn);
-
-                    // Check if the future transaction's replace range fully covers
-                    if (futureRangeTsLo <= txnTsLo && futureRangeTsHi >= txnTsHi) {
-                        replaced = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!replaced) {
-                // Do not continue the loop, do not increment seqTxn
-                break;
-            }
-        }
-
-        return seqTxn - initialSeqTxn;
     }
 
     private void processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, OperationExecutor operationExecutor, long seqTxn) {
