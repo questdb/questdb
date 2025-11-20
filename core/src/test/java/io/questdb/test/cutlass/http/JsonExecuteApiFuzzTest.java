@@ -58,23 +58,22 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                                     {"backup table xyz", "{\"query\":\"backup table xyz\",\"error\":\"backup is disabled, server.conf property 'cairo.sql.backup.root' is not set\",\"position\":0}"}
                             };
 
-                            var candidateCount = requestResponse.length;
+                            rnd.shuffle(requestResponse);
+
                             try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                 testHttpClient.setKeepConnection(true);
-                                int iterCount = rnd.nextInt(10);
-                                for (int i = 0; i < iterCount; i++) {
-                                    int index = rnd.nextInt(candidateCount);
-                                    if (requestResponse[index][0] instanceof Utf8Sequence utf8Sql) {
+                                for (int i = 0; i < requestResponse.length; i++) {
+                                    if (requestResponse[i][0] instanceof Utf8Sequence utf8Sql) {
                                         testHttpClient.assertGet(
                                                 "/api/v1/sql/execute",
-                                                requestResponse[index][1].toString(),
+                                                requestResponse[i][1].toString(),
                                                 utf8Sql
                                         );
                                     } else {
                                         testHttpClient.assertGet(
                                                 "/api/v1/sql/execute",
-                                                requestResponse[index][1].toString(),
-                                                requestResponse[index][0].toString(),
+                                                requestResponse[i][1].toString(),
+                                                requestResponse[i][0].toString(),
                                                 "localhost",
                                                 9001,
                                                 null,
