@@ -753,6 +753,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             try {
                 SWITCH:
                 switch (state.queryState) {
+                    case QUERY_SEND_ERROR:
+                        state.resumeError(response);
+                        break;
+
                     case QUERY_SETUP_FIRST_RECORD:
                         state.hasNext = state.cursor.hasNext();
                         header(response, state, 200);
