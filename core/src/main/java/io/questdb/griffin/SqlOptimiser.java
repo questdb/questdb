@@ -66,6 +66,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntSortedList;
+import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
@@ -111,12 +112,6 @@ public class SqlOptimiser implements Mutable {
     private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_NOT_EQ = 9;
     private static final int NOT_OP_OR = 3;
-    private final static CharSequence[] ORDERED_GROUP_BY_FUNCTIONS = {
-            "first",
-            "first_not_null",
-            "last",
-            "last_not_null",
-    };
     // these are bit flags
     private static final int SAMPLE_BY_REWRITE_NO_WRAP = 0;
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
@@ -129,6 +124,7 @@ public class SqlOptimiser implements Mutable {
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+    private final static LowerCaseAsciiCharSequenceHashSet orderedGroupByFunctions;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
@@ -322,7 +318,7 @@ public class SqlOptimiser implements Mutable {
                         node = null;
                         continue;
                     case FUNCTION:
-                        if (node.token != null && isOrderedGroupByFunc(node.token)) {
+                        if (node.token != null && orderedGroupByFunctions.contains(node.token)) {
                             return true;
                         }
                         break;
@@ -2641,16 +2637,6 @@ public class SqlOptimiser implements Mutable {
         } catch (NumericException ne) {
             return false;
         }
-    }
-
-    private boolean isOrderedGroupByFunc(@NotNull CharSequence func) {
-        final int length = func.length();
-        for (int i = 0, n = ORDERED_GROUP_BY_FUNCTIONS.length; i < n; i++) {
-            if (Chars.equalsLowerCaseAscii(ORDERED_GROUP_BY_FUNCTIONS[i], func, 0, length)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private boolean isSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
@@ -7660,5 +7646,13 @@ public class SqlOptimiser implements Mutable {
         limitTypes.add(ColumnType.BYTE);
         limitTypes.add(ColumnType.SHORT);
         limitTypes.add(ColumnType.INT);
+    }
+
+    static {
+        orderedGroupByFunctions = new LowerCaseAsciiCharSequenceHashSet();
+        orderedGroupByFunctions.add("first");
+        orderedGroupByFunctions.add("first_not_null");
+        orderedGroupByFunctions.add("last");
+        orderedGroupByFunctions.add("last_not_null");
     }
 }
