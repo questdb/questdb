@@ -24,14 +24,13 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import org.jetbrains.annotations.NotNull;
 
 public class LastNotNullArrayGroupByFunction extends NotNullArrayGroupByFunction {
 
     public LastNotNullArrayGroupByFunction(@NotNull Function arg) {
-        super(arg, (srcRowId, destRowId) -> srcRowId > destRowId, (mapValue, valueIndex) -> false);
+        super(arg, (srcRowId, destRowId) -> srcRowId > destRowId, (mapValue, valueIdx) -> false);
     }
 
     @Override
