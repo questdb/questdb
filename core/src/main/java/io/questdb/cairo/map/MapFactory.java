@@ -31,6 +31,8 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.ColumnTypes.totalSize;
+
 public class MapFactory {
 
     /**
@@ -102,14 +104,14 @@ public class MapFactory {
     ) {
         final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
 
+        final int keySize = totalSize(keyTypes);
         final int valueSize = totalSize(valueTypes);
         // Check if we can use faster hash tables for single column case.
         if (keyTypes.getColumnCount() == 1) {
             final int keyType = keyTypes.getColumnType(0);
-            if (keyType == ColumnType.SHORT && valueSize <= maxEntrySize) {
+            if (keySize == Short.BYTES && valueSize <= maxEntrySize) {
                 return new Unordered2Map(keyTypes, valueTypes);
-            } else if (keyType == ColumnType.INT && Integer.BYTES + valueSize <= maxEntrySize) {
-                // TODO(puzpuzpuz): can we use symbol and ipv4 here???
+            } else if (keySize == Integer.BYTES && Integer.BYTES + valueSize <= maxEntrySize) {
                 return new Unordered4Map(
                         keyTypes,
                         valueTypes,
@@ -117,10 +119,7 @@ public class MapFactory {
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes()
                 );
-            } else if (
-                    (keyType == ColumnType.LONG || keyType == ColumnType.TIMESTAMP || keyType == ColumnType.DATE)
-                            && Long.BYTES + valueSize <= maxEntrySize
-            ) {
+            } else if (keySize == Long.BYTES && Long.BYTES + valueSize <= maxEntrySize) {
                 return new Unordered8Map(
                         keyTypes,
                         valueTypes,
@@ -148,26 +147,5 @@ public class MapFactory {
                 configuration.getSqlFastMapLoadFactor(),
                 configuration.getSqlMapMaxResizes()
         );
-    }
-
-    /**
-     * Returns total size in case of all fixed-size columns
-     * or -1 if there is a var-size column in the given list.
-     */
-    private static int totalSize(ColumnTypes types) {
-        if (types == null) {
-            return 0;
-        }
-        int totalSize = 0;
-        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
-            final int columnType = types.getColumnType(i);
-            final int size = ColumnType.sizeOf(columnType);
-            if (size > 0) {
-                totalSize += size;
-            } else {
-                return -1;
-            }
-        }
-        return totalSize;
     }
 }

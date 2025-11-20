@@ -26,16 +26,21 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.Unordered2Map;
+import io.questdb.cairo.map.Unordered4Map;
+import io.questdb.cairo.map.Unordered8Map;
+import io.questdb.cairo.map.UnorderedVarcharMap;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
@@ -58,6 +63,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
@@ -66,6 +72,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.ColumnTypes.totalSize;
 import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
 
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
@@ -98,6 +105,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<RecordSink> perWorkerMapSinks;
     private final int shardCount;
     private final int shardCountShr;
+    // In case of a single table column (not an expression/function), set to the column's index;
+    // otherwise, set to -1.
+    private final int singleColumnIndex;
     private final ColumnTypes valueTypes;
     // Set to true if we had to shard during the last query execution.
     private boolean lastSharded;
@@ -152,7 +162,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
-            shardCount = 256;//Math.min(Numbers.ceilPow2(2 * workerCount), MAX_SHARDS);
+            // TODO(puzpuzpuz): always go with 256 shards
+            shardCount = Math.min(Numbers.ceilPow2(2 * workerCount), MAX_SHARDS);
             shardCountShr = Long.numberOfLeadingZeros(shardCount) + 1;
             lastShardStats = new ObjList<>(shardCount);
             for (int i = 0; i < shardCount; i++) {
@@ -168,18 +179,22 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             destShards = new ObjList<>(shardCount);
             destShards.setPos(shardCount);
 
-            final Class<? extends RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
-                    asm,
-                    columnTypes,
-                    listColumnFilter,
-                    ownerKeyFunctions,
-                    null
-            );
-            ownerMapSink = RecordSinkFactory.getInstance(sinkClass, listColumnFilter, ownerKeyFunctions);
+            // Check if we have single column key and, thus, can use simplified reducers.
+            if (keyTypes.getColumnCount() == 1 && listColumnFilter.getColumnCount() == 1 && ownerKeyFunctions.size() == 0) {
+                int index = listColumnFilter.getColumnIndex(0);
+                final int factor = listColumnFilter.getIndexFactor(index);
+                index = (index * factor - 1);
+                this.singleColumnIndex = index;
+            } else {
+                this.singleColumnIndex = -1;
+            }
+
+            final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(asm, columnTypes, listColumnFilter, ownerKeyFunctions, null);
+            ownerMapSink = RecordSinkFactory.getInstance(sinkClass, ownerKeyFunctions);
             if (perWorkerKeyFunctions != null) {
                 perWorkerMapSinks = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.getInstance(sinkClass, listColumnFilter, perWorkerKeyFunctions.getQuick(i)));
+                    perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.getInstance(sinkClass, perWorkerKeyFunctions.getQuick(i)));
                 }
             } else {
                 perWorkerMapSinks = null;
@@ -304,6 +319,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public int getShardCount() {
         return shardCount;
+    }
+
+    public int getSingleColumnIndex() {
+        return singleColumnIndex;
     }
 
     @Override
@@ -532,10 +551,64 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
+    /**
+     * Behavior of this method must be consistent with {@link AsyncGroupByReducer}
+     * and {@link AsyncGroupByFilteredReducer}.
+     */
+    private Map createMap() {
+        final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
+        final long pageSize = configuration.getSqlSmallMapPageSize();
+        final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
+
+        final int keySize = totalSize(keyTypes);
+        final int valueSize = totalSize(valueTypes);
+        // Check if we can use faster hash tables for single column case.
+        if (singleColumnIndex != -1) {
+            assert keyTypes.getColumnCount() == 1;
+            if (keySize == Short.BYTES && valueSize <= maxEntrySize) {
+                return new Unordered2Map(keyTypes, valueTypes);
+            } else if (keySize == Integer.BYTES && Integer.BYTES + valueSize <= maxEntrySize) {
+                return new Unordered4Map(
+                        keyTypes,
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes()
+                );
+            } else if (keySize == Long.BYTES && Long.BYTES + valueSize <= maxEntrySize) {
+                return new Unordered8Map(
+                        keyTypes,
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes()
+                );
+            } else if (keyTypes.getColumnType(0) == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
+                return new UnorderedVarcharMap(
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes(),
+                        configuration.getGroupByAllocatorDefaultChunkSize(),
+                        configuration.getGroupByAllocatorMaxChunkSize()
+                );
+            }
+        }
+
+        return new OrderedMap(
+                pageSize,
+                keyTypes,
+                valueTypes,
+                keyCapacity,
+                configuration.getSqlFastMapLoadFactor(),
+                configuration.getSqlMapMaxResizes()
+        );
+    }
+
     private Map reopenDestShard(int shardIndex) {
         Map destMap = destShards.getQuick(shardIndex);
         if (destMap == null) {
-            destMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+            destMap = createMap();
             destShards.set(shardIndex, destMap);
         } else if (!destMap.isOpen()) {
             MapStats stats = lastShardStats.getQuick(shardIndex);
@@ -619,7 +692,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         private boolean sharded;
 
         private MapFragment(boolean owner) {
-            this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+            this.map = createMap();
             this.shards = new ObjList<>(shardCount);
             this.owner = owner;
         }
@@ -687,7 +760,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             int size = shards.size();
             if (size == 0) {
                 for (int i = 0; i < shardCount; i++) {
-                    shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes));
+                    shards.add(createMap());
                 }
             } else {
                 assert size == shardCount;

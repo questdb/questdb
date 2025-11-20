@@ -99,7 +99,7 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar
     ) {
-        final Class<? extends RecordSink> clazz = getInstanceClass(
+        final Class<RecordSink> clazz = getInstanceClass(
                 asm,
                 columnTypes,
                 columnFilter,
@@ -109,7 +109,7 @@ public class RecordSinkFactory {
                 writeStringAsVarchar,
                 null
         );
-        return getInstance(clazz, columnFilter, keyFunctions);
+        return getInstance(clazz, keyFunctions);
     }
 
     public static RecordSink getInstance(
@@ -122,7 +122,7 @@ public class RecordSinkFactory {
             @Nullable BitSet writeStringAsVarchar,
             @Nullable BitSet writeTimestampAsNanos
     ) {
-        final Class<? extends RecordSink> clazz = getInstanceClass(
+        final Class<RecordSink> clazz = getInstanceClass(
                 asm,
                 columnTypes,
                 columnFilter,
@@ -132,28 +132,18 @@ public class RecordSinkFactory {
                 writeStringAsVarchar,
                 writeTimestampAsNanos
         );
-        return getInstance(clazz, columnFilter, keyFunctions);
+        return getInstance(clazz, keyFunctions);
     }
 
     /**
      * Creates an instance of a record sink class previously generated via the
      * {@link #getInstanceClass(BytecodeAssembler, ColumnTypes, ColumnFilter, ObjList, BitSet)} method.
      */
-    public static RecordSink getInstance(
-            Class<? extends RecordSink> clazz,
-            @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions
-    ) {
+    public static RecordSink getInstance(Class<RecordSink> clazz, @Nullable ObjList<Function> keyFunctions) {
         try {
             final RecordSink sink = clazz.getDeclaredConstructor().newInstance();
             if (keyFunctions != null) {
                 sink.setFunctions(keyFunctions);
-            }
-            if (columnFilter.getColumnCount() == 1) {
-                int index = columnFilter.getColumnIndex(0);
-                final int factor = columnFilter.getIndexFactor(index);
-                index = (index * factor - 1);
-                sink.setColumnIndex(index);
             }
             return sink;
         } catch (Exception e) {
@@ -164,28 +154,18 @@ public class RecordSinkFactory {
 
     /**
      * Same as the getInstance() methods, but returns the generated class instead of its instance.
-     * An instance can be later created via the {@link #getInstance(BytecodeAssembler, ColumnTypes, ColumnFilter)}
-     * method.
+     * An instance can be later created via the {@link #getInstance(Class, ObjList)} method.
      * <p>
      * Used when creating per-worker sinks for parallel GROUP BY.
      */
-    public static Class<? extends RecordSink> getInstanceClass(
+    public static Class<RecordSink> getInstanceClass(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
             @Nullable ObjList<Function> keyFunctions,
             @Nullable BitSet writeSymbolAsString
     ) {
-        return getInstanceClass(
-                asm,
-                columnTypes,
-                columnFilter,
-                keyFunctions,
-                null,
-                writeSymbolAsString,
-                null,
-                null
-        );
+        return getInstanceClass(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null, null);
     }
 
     /**
@@ -287,7 +267,7 @@ public class RecordSinkFactory {
         asm.endMethod();
     }
 
-    private static Class<? extends RecordSink> getInstanceClass(
+    private static Class<RecordSink> getInstanceClass(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
@@ -297,35 +277,6 @@ public class RecordSinkFactory {
             @Nullable BitSet writeStringAsVarchar,
             @Nullable BitSet writeTimestampAsNanos
     ) {
-        if (columnFilter.getColumnCount() == 1) {
-            int index = columnFilter.getColumnIndex(0);
-            final int factor = columnFilter.getIndexFactor(index);
-            index = (index * factor - 1);
-            final int type = columnTypes.getColumnType(index);
-            if (factor > 0) {
-                switch (type) {
-                    case ColumnType.SHORT -> {
-                        return SingleShortColumnSink.class;
-                    }
-                    case ColumnType.INT -> {
-                        return SingleIntColumnSink.class;
-                    }
-                    case ColumnType.LONG -> {
-                        return SingleLongColumnSink.class;
-                    }
-                    case ColumnType.TIMESTAMP -> {
-                        return SingleTimestampColumnSink.class;
-                    }
-                    case ColumnType.DATE -> {
-                        return SingleDateColumnSink.class;
-                    }
-                    case ColumnType.VARCHAR -> {
-                        return SingleVarcharColumnSink.class;
-                    }
-                }
-            }
-        }
-
         asm.init(RecordSink.class);
         asm.setupPool();
         final int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/sink"));
@@ -1173,143 +1124,5 @@ public class RecordSinkFactory {
         }
 
         return Numbers.encodeLowHighInts(decimal128FieldIndex, decimal256FieldIndex);
-    }
-
-    public static class SingleDateColumnSink implements RecordSink {
-        private int columnIndex = -1;
-
-        @Override
-        public void copy(Record r, RecordSinkSPI w) {
-            w.putDate(r.getDate(columnIndex));
-        }
-
-        public int getColumnIndex() {
-            return 0;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void setFunctions(ObjList<Function> keyFunctions) {
-            // no-op
-        }
-    }
-
-    public static class SingleIntColumnSink implements RecordSink {
-        private int columnIndex = -1;
-
-        @Override
-        public void copy(Record r, RecordSinkSPI w) {
-            w.putInt(r.getInt(columnIndex));
-        }
-
-        public int getColumnIndex() {
-            return 0;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void setFunctions(ObjList<Function> keyFunctions) {
-            // no-op
-        }
-    }
-
-    public static class SingleLongColumnSink implements RecordSink {
-        private int columnIndex = -1;
-
-        @Override
-        public void copy(Record r, RecordSinkSPI w) {
-            w.putLong(r.getLong(columnIndex));
-        }
-
-        public int getColumnIndex() {
-            return 0;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void setFunctions(ObjList<Function> keyFunctions) {
-            // no-op
-        }
-    }
-
-    public static class SingleShortColumnSink implements RecordSink {
-        private int columnIndex = -1;
-
-        @Override
-        public void copy(Record r, RecordSinkSPI w) {
-            w.putShort(r.getShort(columnIndex));
-        }
-
-        public int getColumnIndex() {
-            return 0;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void setFunctions(ObjList<Function> keyFunctions) {
-            // no-op
-        }
-    }
-
-    public static class SingleTimestampColumnSink implements RecordSink {
-        private int columnIndex = -1;
-
-        @Override
-        public void copy(Record r, RecordSinkSPI w) {
-            w.putTimestamp(r.getTimestamp(columnIndex));
-        }
-
-        public int getColumnIndex() {
-            return 0;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void setFunctions(ObjList<Function> keyFunctions) {
-            // no-op
-        }
-    }
-
-    public static class SingleVarcharColumnSink implements RecordSink {
-        private int columnIndex = -1;
-
-        @Override
-        public void copy(Record r, RecordSinkSPI w) {
-            w.putVarchar(r.getVarcharA(columnIndex));
-        }
-
-        public int getColumnIndex() {
-            return 0;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void setFunctions(ObjList<Function> keyFunctions) {
-            // no-op
-        }
     }
 }
