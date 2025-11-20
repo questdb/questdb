@@ -2995,8 +2995,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean skipWalTransactions(long seqTxn, long skipTxnCount) {
-        boolean txnAfterSkipIsData = seqTxn + skipTxnCount <= walTxnDetails.getLastSeqTxn() && walTxnDetails.getWalId(seqTxn + skipTxnCount) > 0;
-        if (txnAfterSkipIsData || txWriter.getLagRowCount() == 0) {
+        if (txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0) {
             LOG.info().$("skipping replaced WAL transactions [table=").$(tableToken)
                     .$(", fromSeqTxn=").$(seqTxn)
                     .$(", toSeqTxn=").$(seqTxn + skipTxnCount)
