@@ -143,6 +143,14 @@ public class LineWalAppender {
                             securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
                             try {
                                 int newColumnType = ld.getColumnType(ld.getColNameUtf8(), ent);
+                                if (newColumnType == ColumnType.DECIMAL) {
+                                    throw CairoException.nonCritical()
+                                            .put("decimal columns cannot be created automatically [table=")
+                                            .put(writer.getTableToken())
+                                            .put(", columnName=")
+                                            .put(columnNameUtf16)
+                                            .put(']');
+                                }
                                 writer.addColumn(columnNameUtf16, newColumnType, securityContext);
                                 columnWriterIndex = metadata.getWriterIndex(metadata.getColumnIndexQuiet(columnNameUtf16));
                                 // Add the column to metadata cache too
