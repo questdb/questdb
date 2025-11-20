@@ -63,7 +63,6 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
@@ -76,8 +75,9 @@ import static io.questdb.cairo.ColumnTypes.totalSize;
 import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
 
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
-    // We use the first 8 bits of a hash code to determine the shard.
-    private static final int MAX_SHARDS = 128;
+    // We use the first bits of hash code to determine the shard.
+    private static final int NUM_SHARDS = 256;
+    private static final int NUM_SHARDS_SHR = Long.numberOfLeadingZeros(NUM_SHARDS) + 1;
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
@@ -103,8 +103,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<RecordSink> perWorkerMapSinks;
-    private final int shardCount;
-    private final int shardCountShr;
     // In case of a single table column (not an expression/function), set to the column's index;
     // otherwise, set to -1.
     private final int singleColumnIndex;
@@ -172,11 +170,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
-            // TODO(puzpuzpuz): always go with 256 shards
-            shardCount = Math.min(Numbers.ceilPow2(2 * workerCount), MAX_SHARDS);
-            shardCountShr = Long.numberOfLeadingZeros(shardCount) + 1;
-            lastShardStats = new ObjList<>(shardCount);
-            for (int i = 0; i < shardCount; i++) {
+            lastShardStats = new ObjList<>(NUM_SHARDS);
+            for (int i = 0; i < NUM_SHARDS; i++) {
                 lastShardStats.extendAndSet(i, new MapStats());
             }
             lastOwnerStats = new MapStats();
@@ -186,8 +181,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 perWorkerFragments.extendAndSet(i, new MapFragment(false));
             }
             // Destination shards are lazily initialized by the worker threads.
-            destShards = new ObjList<>(shardCount);
-            destShards.setPos(shardCount);
+            destShards = new ObjList<>(NUM_SHARDS);
+            destShards.setPos(NUM_SHARDS);
 
             final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(asm, columnTypes, listColumnFilter, ownerKeyFunctions, null);
             ownerMapSink = RecordSinkFactory.getInstance(sinkClass, ownerKeyFunctions);
@@ -263,11 +258,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         if (configuration.isGroupByPresizeEnabled()) {
             // Find max heap size and apply it to all shards.
             long maxHeapSize = 0;
-            for (int i = 0; i < shardCount; i++) {
+            for (int i = 0; i < NUM_SHARDS; i++) {
                 final MapStats stats = lastShardStats.getQuick(i);
                 maxHeapSize = Math.max(maxHeapSize, stats.maxHeapSize);
             }
-            for (int i = 0; i < shardCount; i++) {
+            for (int i = 0; i < NUM_SHARDS; i++) {
                 lastShardStats.getQuick(i).maxHeapSize = maxHeapSize;
             }
         }
@@ -318,7 +313,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     public int getShardCount() {
-        return shardCount;
+        return NUM_SHARDS;
     }
 
     public int getSingleColumnIndex() {
@@ -693,7 +688,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
         private MapFragment(boolean owner) {
             this.map = createMap();
-            this.shards = new ObjList<>(shardCount);
+            this.shards = new ObjList<>(NUM_SHARDS);
             this.owner = owner;
         }
 
@@ -712,7 +707,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
 
         public Map getShardMap(long hashCode) {
-            return shards.getQuick((int) (hashCode >>> shardCountShr));
+            return shards.getQuick((int) (hashCode >>> NUM_SHARDS_SHR));
         }
 
         public ObjList<Map> getShards() {
@@ -759,12 +754,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         private void reopenShards() {
             int size = shards.size();
             if (size == 0) {
-                for (int i = 0; i < shardCount; i++) {
+                for (int i = 0; i < NUM_SHARDS; i++) {
                     shards.add(createMap());
                 }
             } else {
-                assert size == shardCount;
-                for (int i = 0; i < shardCount; i++) {
+                assert size == NUM_SHARDS;
+                for (int i = 0; i < NUM_SHARDS; i++) {
                     MapStats stats = lastShardStats.getQuick(i);
                     int keyCapacity = targetKeyCapacity(stats, false);
                     long heapSize = targetHeapSize(stats, false);
