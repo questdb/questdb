@@ -36,17 +36,19 @@ paths:
       description: |
         Lists all files and directories in the imports root directory.
 
-        Supports cursor-based pagination following JSON:API specification.
+        Supports offset-based pagination.
 
         Requires: sql.copy.input.root must be configured
       operationId: getImportsList
       parameters:
-        - name: page[cursor]
+        - name: page[offset]
           in: query
-          description: Cursor value from a previous response to fetch the next page. Use the cursor value from meta.page.cursor
+          description: Number of files to skip (default 0)
           schema:
-            type: string
-          example: data.parquet
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
         - name: page[limit]
           in: query
           description: Number of files to return per page (default 10, max 1000)
@@ -79,7 +81,6 @@ paths:
                       totalFiles: 1
                       page:
                         limit: 10
-                        cursor: data.parquet
         '400':
           description: Bad request - imports path not configured
           content:
@@ -255,6 +256,89 @@ paths:
               schema:
                 type: string
               example: application/octet-stream
+            Content-Length:
+              description: Size of the file in bytes
+              schema:
+                type: integer
+              example: 2048
+            Last-Modified:
+              description: File modification date in RFC 2822 format
+              schema:
+                type: string
+              example: 'Wed, 13 Nov 2023 12:45:00 GMT'
+        '400':
+          description: Bad request - root not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - path traversal attempt detected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    head:
+      tags:
+        - Imports
+      summary: Get import file metadata
+      description: |
+        Retrieves metadata about a file in the imports directory without downloading it.
+
+        Returns the same headers as GET (Content-Length, Content-Type, Last-Modified)
+        but with no response body.
+
+        Useful for checking file size and modification time before downloading.
+      operationId: headImport
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          description: Name of the file to check (can include subdirectory paths)
+          schema:
+            type: string
+          examples:
+            simple:
+              value: data.parquet
+            nested:
+              value: subdir/data.csv
+      responses:
+        '200':
+          description: File metadata retrieved successfully
+          headers:
+            Content-Disposition:
+              description: Suggests filename for download
+              schema:
+                type: string
+              example: 'attachment; filename="data.parquet"'
+            Content-Type:
+              description: MIME type of the file
+              schema:
+                type: string
+              example: application/octet-stream
+            Content-Length:
+              description: Size of the file in bytes
+              schema:
+                type: integer
+              example: 2048
+            Last-Modified:
+              description: File modification date in RFC 2822 format
+              schema:
+                type: string
+              example: 'Wed, 13 Nov 2023 12:45:00 GMT'
         '400':
           description: Bad request - root not configured
           content:
@@ -339,17 +423,19 @@ paths:
       description: |
         Lists all files and directories in the exports root directory.
 
-        Supports cursor-based pagination following JSON:API specification.
+        Supports offset-based pagination.
 
         Requires: sql.copy.export.root must be configured
       operationId: getExportsList
       parameters:
-        - name: page[cursor]
+        - name: page[offset]
           in: query
-          description: Cursor value from a previous response to fetch the next page. Use the cursor value from meta.page.cursor
+          description: Number of files to skip (default 0)
           schema:
-            type: string
-          example: results.csv
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
         - name: page[limit]
           in: query
           description: Number of files to return per page (default 10, max 1000)
@@ -382,7 +468,6 @@ paths:
                       totalFiles: 1
                       page:
                         limit: 10
-                        cursor: results.csv
         '400':
           description: Bad request - exports path not configured
           content:
@@ -444,6 +529,89 @@ paths:
               schema:
                 type: string
               example: 'attachment; filename="results.csv"'
+            Content-Type:
+              description: MIME type of the file
+              schema:
+                type: string
+              example: text/csv
+            Content-Length:
+              description: Size of the file in bytes
+              schema:
+                type: integer
+              example: 4096
+            Last-Modified:
+              description: File modification date in RFC 2822 format
+              schema:
+                type: string
+              example: 'Wed, 13 Nov 2023 12:45:00 GMT'
+        '400':
+          description: Bad request - root not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden - path traversal attempt detected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    head:
+      tags:
+        - Exports
+      summary: Get export file metadata
+      description: |
+        Retrieves metadata about a file in the exports directory without downloading it.
+
+        Returns the same headers as GET (Content-Length, Content-Type, Last-Modified)
+        but with no response body.
+
+        Useful for checking file size and modification time before downloading.
+      operationId: headExport
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          description: Name of the file to check
+          schema:
+            type: string
+      responses:
+        '200':
+          description: File metadata retrieved successfully
+          headers:
+            Content-Disposition:
+              description: Suggests filename for download
+              schema:
+                type: string
+              example: 'attachment; filename="results.csv"'
+            Content-Type:
+              description: MIME type of the file
+              schema:
+                type: string
+              example: text/csv
+            Content-Length:
+              description: Size of the file in bytes
+              schema:
+                type: integer
+              example: 4096
+            Last-Modified:
+              description: File modification date in RFC 2822 format
+              schema:
+                type: string
+              example: 'Wed, 13 Nov 2023 12:45:00 GMT'
         '400':
           description: Bad request - root not configured
           content:
@@ -572,14 +740,14 @@ components:
 
     PaginationInfo:
       type: object
-      description: Pagination information for cursor-based pagination
+      description: Pagination information for offset-based pagination
       properties:
+        offset:
+          type: integer
+          description: The starting position of results in this page (optional, used internally)
         limit:
           type: integer
           description: The number of files returned in this page
-        cursor:
-          type: string
-          description: Cursor value to use for fetching the next page. Only present if there are more results available.
       required:
         - limit
 
