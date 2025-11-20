@@ -34,6 +34,121 @@ import org.junit.Test;
 public class SqlValidationTest extends AbstractCairoTest {
 
     @Test
+    public void testDoesNotMessUpTable() throws Exception {
+        execute("create table xyz as (select rnd_int() a from long_sequence(1000))");
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        getSimpleTester()
+                .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+                    try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"DROP\"}",
+                                "drop table xyz"
+                        );
+
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"RENAME TABLE\"}",
+                                "rename table xyz to abc"
+                        );
+
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"TRUNCATE\"}",
+                                "truncate table xyz"
+                        );
+
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"ALTER TABLE\"}",
+                                "alter table xyz rename column a to b"
+                        );
+
+                        // cancel query should not error out, it doesn't cancel anything actually
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"CANCEL QUERY\"}",
+                                "cancel query 1111"
+                        );
+
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"CHECKPOINT RELEASE\"}",
+                                "checkpoint release"
+                        );
+
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"CHECKPOINT CREATE\"}",
+                                "checkpoint create"
+                        );
+
+                        // make sure checkpoint is not in progress
+                        testHttpClient.assertGet(
+                                "/exec",
+                                "{\"query\":\"SELECT * FROM checkpoint_status();\",\"columns\":[{\"name\":\"in_progress\",\"type\":\"BOOLEAN\"},{\"name\":\"started_at\",\"type\":\"TIMESTAMP\"}],\"timestamp\":-1,\"dataset\":[[false,null]],\"count\":1}",
+                                "SELECT * FROM checkpoint_status();"
+                        );
+
+                        // we should not be able to create mat view
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"CREATE MAT VIEW\"}",
+                                """
+                                        CREATE MATERIALIZED VIEW 'trades_OHLC_15m'
+                                        WITH BASE 'trades' REFRESH IMMEDIATE AS
+                                                SELECT
+                                        timestamp, symbol,
+                                                first(price) AS open,
+                                        max(price) as high,
+                                        min(price) as low,
+                                        last(price) AS close,
+                                        sum(amount) AS volume
+                                        FROM trades
+                                        SAMPLE BY 15m;
+                                        """
+                        );
+
+                        // check that mat view does not exist
+                        TestUtils.assertException(
+                                engine,
+                                sqlExecutionContext,
+                                "select * from trades_OHLC_15m",
+                                "table does not exist [table=trades_OHLC_15m]",
+                                14,
+                                sink
+                        );
+
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"query\":\"backup table hello\",\"error\":\"backup is disabled, server.conf property 'cairo.sql.backup.root' is not set\",\"position\":0}",
+                                "backup table hello"
+                        );
+
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"query\":\"backup database\",\"error\":\"backup is disabled, server.conf property 'cairo.sql.backup.root' is not set\",\"position\":0}",
+                                "backup database"
+                        );
+
+                        // check that table is still exists
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "select count(a) from xyz",
+                                sink,
+                                """
+                                        count
+                                        1000
+                                        """
+                        );
+                    }
+                });
+    }
+
+    @Test
     public void testFullFuzz() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         getSimpleTester()
@@ -73,12 +188,7 @@ public class SqlValidationTest extends AbstractCairoTest {
                                         testHttpClient.assertGet(
                                                 "/api/v1/sql/validate",
                                                 requestResponse[index][1].toString(),
-                                                requestResponse[index][0].toString(),
-                                                "localhost",
-                                                9001,
-                                                null,
-                                                null,
-                                                null
+                                                requestResponse[index][0].toString()
                                         );
                                     }
                                 }
@@ -149,12 +259,7 @@ public class SqlValidationTest extends AbstractCairoTest {
                                                 "{\"name\":\"col_geohash_int\",\"type\":\"GEOHASH(32b)\"}," +
                                                 "{\"name\":\"col_array\",\"type\":\"ARRAY\",\"dim\":1,\"elemType\":\"DOUBLE\"}" +
                                                 "],\"timestamp\":13}",
-                                        "select * from xyz limit 10",
-                                        "localhost",
-                                        9001,
-                                        null,
-                                        null,
-                                        null
+                                        "select * from xyz limit 10"
                                 );
                             }
                         }
@@ -173,12 +278,7 @@ public class SqlValidationTest extends AbstractCairoTest {
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
                                 "{\"query\":\"select count() from xyz\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1}",
-                                "select count() from xyz",
-                                "localhost",
-                                9001,
-                                null,
-                                null,
-                                null
+                                "select count() from xyz"
                         );
                     }
                 });
@@ -196,12 +296,7 @@ public class SqlValidationTest extends AbstractCairoTest {
                                 testHttpClient.assertGet(
                                         "/api/v1/sql/validate",
                                         "{\"query\":\"select a, b from xyz\",\"error\":\"Invalid column: b\",\"position\":10}",
-                                        "select a, b from xyz",
-                                        "localhost",
-                                        9001,
-                                        null,
-                                        null,
-                                        null
+                                        "select a, b from xyz"
                                 );
                             }
                         }
