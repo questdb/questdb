@@ -277,7 +277,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         public boolean hasNext() {
             if (currentIterAddr == 0) {
                 advanceMasterIfPending();
-                if (!masterHasNext || slaveRecordArray.size() == 0) {
+                if (!masterHasNext || slaveRowCount == 0) {
                     return false;
                 }
                 isMasterHasNextPending = true;
@@ -334,7 +334,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         @Override
         public long size() {
             long sizeA = masterCursor.size();
-            long sizeB = slaveRecordArray.size();
+            long sizeB = slaveRowCount;
             if (sizeA == -1 || sizeB == -1) {
                 return -1;
             }
