@@ -66,7 +66,7 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                             var candidateCount = requestResponse.length;
                             try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                 testHttpClient.setKeepConnection(true);
-                                int iterCount = rnd.nextInt(10);
+                                int iterCount = rnd.nextInt(100);
                                 for (int i = 0; i < iterCount; i++) {
                                     int index = rnd.nextInt(candidateCount);
                                     if (requestResponse[index][0] instanceof Utf8Sequence utf8Sql) {
