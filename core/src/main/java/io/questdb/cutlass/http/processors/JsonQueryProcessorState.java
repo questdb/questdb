@@ -101,6 +101,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_DONE = QUERY_ERROR + 1;
     static final int QUERY_BAD_UTF8 = QUERY_DONE + 1;
     static final int QUERY_EMPTY_QUERY = QUERY_BAD_UTF8 + 1;
+    static final int QUERY_CONFIRMATION = QUERY_EMPTY_QUERY + 1;
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
@@ -172,6 +173,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         resumeActions.extendAndSet(QUERY_DONE, (response, columnCount) -> response.done());
         resumeActions.extendAndSet(QUERY_BAD_UTF8, (response, columnCount) -> onResumeBadUtf8(response));
         resumeActions.extendAndSet(QUERY_EMPTY_QUERY, (response, columnCount) -> onResumeEmptyQuery(response));
+        resumeActions.extendAndSet(QUERY_CONFIRMATION, (response, columnCount) -> onConfirmation(response));
         this.nanosecondClock = nanosecondClock;
         this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
         this.keepAliveHeader = keepAliveHeader;
@@ -343,6 +345,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 .$("`]").$();
     }
 
+    public void onConfirmation(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        response.bookmark();
+        response.put('{')
+                .putAsciiQuoted("ddl").putAscii(':').putAsciiQuoted("OK")
+                .putAscii('}');
+        queryState = QUERY_DONE;
+        readyForNextRequest(getHttpConnectionContext());
+        response.sendChunk(true);
+    }
+
     public void setCompilerNanos(long compilerNanos) {
         this.compilerNanos = compilerNanos;
     }
@@ -377,6 +389,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void startExecutionTimer() {
         this.executeStartNanos = nanosecondClock.getTicks();
+    }
+
+    public void storeConfirmation() {
+        queryState = QUERY_CONFIRMATION;
     }
 
     public void storeEmptyQuery() {
