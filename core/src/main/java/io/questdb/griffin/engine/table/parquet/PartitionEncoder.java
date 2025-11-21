@@ -188,8 +188,8 @@ public class PartitionEncoder {
             int columnCount,
             long columnNamesPtr,
             int columnNamesSize,
-            long destPathPtr,
-            int destPathLength,
+            long columnTypesPtr,
+            int timestampIndex,
             long compressionCodec,
             boolean statisticsEnabled,
             boolean rawArrayEncoding,
@@ -198,15 +198,13 @@ public class PartitionEncoder {
             int version
     ) throws CairoException;
 
-    private static native void writeStreamingParquetChunk(
+    private static native long writeStreamingParquetChunk(
             long writerPtr,
             long columnDataPtr,
-            long columnDataSize,
-            int timestampIndex,
             long rowCount
     ) throws CairoException;
 
-    private static native void finishStreamingParquetWrite(
+    private static native long finishStreamingParquetWrite(
             long writerPtr
     ) throws CairoException;
 
