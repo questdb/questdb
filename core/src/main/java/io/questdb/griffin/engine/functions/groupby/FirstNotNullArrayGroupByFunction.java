@@ -28,7 +28,6 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction {
@@ -49,14 +48,6 @@ public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction 
                 mapValue.putLong(valueIndex + 1, sink.ptr());
             }
         }
-    }
-
-    @Override
-    public ArrayView getArray(Record rec) {
-        if (rec.getLong(valueIndex + 1) == 0) {
-            return ArrayConstant.NULL;
-        }
-        return super.getArray(rec);
     }
 
     @Override
