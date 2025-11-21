@@ -195,6 +195,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                WorkerPoolUtils.setupAsyncMunmapJob(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
                 int size = rnd.nextInt(8 * 1024 * 1024);
@@ -211,6 +212,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                WorkerPoolUtils.setupAsyncMunmapJob(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
                 setZeroWalPurgeInterval();
