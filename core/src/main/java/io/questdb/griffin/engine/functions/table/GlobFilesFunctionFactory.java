@@ -59,7 +59,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
      * </ul>
      * <p>
      * The function stops at the first glob metacharacter: {@literal *}, ?, [, or ]
-     * It includes the directory separator before the first glob pattern.
+     * It excludes the directory separator before the first glob pattern.
      *
      * @param globPattern the glob pattern string
      * @return the non-glob prefix (everything up to and including the last separator before the first glob char)

@@ -106,8 +106,8 @@ public class FilesFunctionFactory implements FunctionFactory {
 
         @Override
         protected void _close() {
-            Misc.free(path);
             cursor.close();
+            Misc.free(path);
         }
     }
 
