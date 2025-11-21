@@ -930,7 +930,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testDistinctTsWithLimit3() throws Exception {
         assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di limit 10", """
-                Limit lo: 10 skip-over-rows: 0 limit: 10
+                Limit lo: 10 skip-over-rows: 0 limit: 0
                     Async Group By workers: 1
                       keys: [ts]
                       filter: null
@@ -956,7 +956,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testDistinctTsWithLimit5a() throws Exception {
         assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where y = 5 limit 10", """
-                Limit lo: 10 skip-over-rows: 0 limit: 10
+                Limit lo: 10 skip-over-rows: 0 limit: 0
                     Async JIT Group By workers: 1
                       keys: [ts]
                       filter: y=5
@@ -982,7 +982,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testDistinctTsWithLimit6a() throws Exception {
         assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit 10", """
-                Limit lo: 10 skip-over-rows: 0 limit: 10
+                Limit lo: 10 skip-over-rows: 0 limit: 0
                     Async Group By workers: 1
                       keys: [ts]
                       filter: abs(y)=5
@@ -1008,7 +1008,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testDistinctTsWithLimit7() throws Exception {
         assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit 10, 20", """
-                Limit lo: 10 hi: 20 skip-over-rows: 10 limit: 10
+                Limit lo: 10 hi: 20 skip-over-rows: 0 limit: 0
                     Async Group By workers: 1
                       keys: [ts]
                       filter: abs(y)=5
@@ -1049,7 +1049,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testDistinctWithLimit3() throws Exception {
         assertPlan("create table di (x int, y long)", "select distinct x from di limit 10", """
-                Limit lo: 10 skip-over-rows: 0 limit: 10
+                Limit lo: 10 skip-over-rows: 0 limit: 0
                     GroupBy vectorized: true workers: 1
                       keys: [x]
                       values: [count(*)]
@@ -1075,7 +1075,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testDistinctWithLimit5a() throws Exception {
         assertPlan("create table di (x int, y long)", "select distinct x from di where y = 5 limit 10", """
-                Limit lo: 10 skip-over-rows: 0 limit: 10
+                Limit lo: 10 skip-over-rows: 0 limit: 0
                     Async JIT Group By workers: 1
                       keys: [x]
                       filter: y=5
@@ -1101,7 +1101,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testDistinctWithLimit6a() throws Exception {
         assertPlan("create table di (x int, y long)", "select distinct x from di where abs(y) = 5 limit 10", """
-                Limit lo: 10 skip-over-rows: 0 limit: 10
+                Limit lo: 10 skip-over-rows: 0 limit: 0
                     Async Group By workers: 1
                       keys: [x]
                       filter: abs(y)=5
@@ -1127,7 +1127,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testDistinctWithLimit7() throws Exception {
         assertPlan("create table di (x int, y long)", "select distinct x from di where abs(y) = 5 limit 10, 20", """
-                Limit lo: 10 hi: 20 skip-over-rows: 10 limit: 10
+                Limit lo: 10 hi: 20 skip-over-rows: 0 limit: 0
                     Async Group By workers: 1
                       keys: [x]
                       filter: abs(y)=5
@@ -3368,7 +3368,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithLimit3() throws Exception {
         assertPlan("create table di (x int, y long)", "select x, count(*) from di group by x limit 10", """
-                Limit lo: 10 skip-over-rows: 0 limit: 10
+                Limit lo: 10 skip-over-rows: 0 limit: 0
                     GroupBy vectorized: true workers: 1
                       keys: [x]
                       values: [count(*)]
@@ -3394,7 +3394,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithLimit5a() throws Exception {
         assertPlan("create table di (x int, y long)", "select x, count(*) from di where y = 5 group by x limit 10", """
-                Limit lo: 10 skip-over-rows: 0 limit: 10
+                Limit lo: 10 skip-over-rows: 0 limit: 0
                     Async JIT Group By workers: 1
                       keys: [x]
                       values: [count(*)]
@@ -3422,7 +3422,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithLimit6a() throws Exception {
         assertPlan("create table di (x int, y long)", "select x, count(*) from di where abs(y) = 5 group by x limit 10", """
-                Limit lo: 10 skip-over-rows: 0 limit: 10
+                Limit lo: 10 skip-over-rows: 0 limit: 0
                     Async Group By workers: 1
                       keys: [x]
                       values: [count(*)]
@@ -3450,7 +3450,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithLimit7() throws Exception {
         assertPlan("create table di (x int, y long)", "select x, count(*) from di where abs(y) = 5 group by x limit 10, 20", """
-                Limit lo: 10 hi: 20 skip-over-rows: 10 limit: 10
+                Limit lo: 10 hi: 20 skip-over-rows: 0 limit: 0
                     Async Group By workers: 1
                       keys: [x]
                       values: [count(*)]
@@ -3765,7 +3765,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       ) order by bits desc
                     limit 10""";
             assertPlanNoLeakCheck(sql, """
-                    Limit lo: 10 skip-over-rows: 0 limit: 10
+                    Limit lo: 10 skip-over-rows: 0 limit: 1
                         Sort
                           keys: [bits desc]
                             VirtualRecord
@@ -3798,7 +3798,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             String sql = "with yy as (select ts, max(s) s from tab sample by 1h ALIGN TO FIRST OBSERVATION) " + "select * from yy latest on ts partition by s limit 10";
             assertPlanNoLeakCheck(sql, """
-                    Limit lo: 10 skip-over-rows: 0 limit: 10
+                    Limit lo: 10 skip-over-rows: 0 limit: 1
                         LatestBy
                             Sample By
                               fill: none
@@ -7670,7 +7670,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsAscNotPartitioned() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
-                Limit lo: 1 skip-over-rows: 0 limit: 1
+                Limit lo: 1 skip-over-rows: 0 limit: 0
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s deferred: true
                           filter: s='S1'
@@ -7681,7 +7681,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsAscPartitioned() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
-                Limit lo: 1 skip-over-rows: 0 limit: 1
+                Limit lo: 1 skip-over-rows: 0 limit: 0
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s deferred: true
                           filter: s='S1'
@@ -7692,7 +7692,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsDescNotPartitioned() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
-                Limit lo: 1 skip-over-rows: 0 limit: 1
+                Limit lo: 1 skip-over-rows: 0 limit: 0
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s deferred: true
                           filter: s='S1'
@@ -7703,7 +7703,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsDescPartitioned() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
-                Limit lo: 1 skip-over-rows: 0 limit: 1
+                Limit lo: 1 skip-over-rows: 0 limit: 0
                     DeferredSingleSymbolFilterPageFrame
                         Index backward scan on: s deferred: true
                           filter: s='S1'
@@ -7768,7 +7768,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01c() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1", "Limit lo: 1 skip-over-rows: 0 limit: 1\n" + "    FilterOnValues symbolOrder: desc\n" + "        Cursor-order scan\n" + //actual order is S2, S1
+        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1", "Limit lo: 1 skip-over-rows: 0 limit: 0\n" + "    FilterOnValues symbolOrder: desc\n" + "        Cursor-order scan\n" + //actual order is S2, S1
                 "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S2'\n" + "              filter: length(s)=2\n" + "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S1'\n" + "              filter: length(s)=2\n" + "        Frame forward scan on: a\n");
     }
 
@@ -7844,7 +7844,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols06() throws Exception {
         assertPlan("create table a ( s symbol index) ;", "select * from a where s = 'S1' order by s asc limit 10", """
-                Limit lo: 10 skip-over-rows: 0 limit: 10
+                Limit lo: 10 skip-over-rows: 0 limit: 0
                     DeferredSingleSymbolFilterPageFrame
                         Index forward scan on: s deferred: true
                           filter: s='S1'
@@ -7983,7 +7983,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols10() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s in ('S1', 'S2') limit 1", """
-                Limit lo: 1 skip-over-rows: 0 limit: 1
+                Limit lo: 1 skip-over-rows: 0 limit: 0
                     FilterOnValues
                         Table-order scan
                             Index forward scan on: s deferred: true
@@ -8122,7 +8122,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("insert into a select 'S' || (6-x), dateadd('m', 20*x::int, 0::timestamp) from long_sequence(5)");
             String query = "select * from " + "(" + "  select * from a " + "  where s1 not in ('S1', 'S2') " + "  order by ts asc " + "  limit 5" + ") order by ts asc";
             assertPlanNoLeakCheck(query, """
-                    Limit lo: 5 skip-over-rows: 0 limit: 5
+                    Limit lo: 5 skip-over-rows: 0 limit: 3
                         FilterOnExcludedValues
                           symbolFilter: s1 not in ['S1','S2']
                             Table-order scan
@@ -10156,14 +10156,33 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       keys: [sum desc]
                         GroupBy vectorized: false
                           values: [sum(avg),sum(sum),first(first_value)]
-                            CachedWindow
-                              orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                    first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
+                            Window
+                              functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
                                 PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: cpu_ts
-                    """);
+                                    Row backward scan
+                                    Frame backward scan on: cpu_ts
+                    """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select sum(avg), sum(sum), count(first_value) from ( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by 1 desc",
+                    """
+                            Sort
+                              keys: [sum desc]
+                                GroupBy vectorized: false
+                                  values: [sum(avg),sum(sum),count(first_value)]
+                                    CachedWindow
+                                      orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cpu_ts
+                            """);
         });
     }
 
@@ -10623,7 +10642,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution
         // actual order is S2, S1
         assertPlanNoLeakCheck(query, """
-                Limit lo: 5 skip-over-rows: 0 limit: 5
+                Limit lo: 5 skip-over-rows: 0 limit: 3
                     FilterOnValues symbolOrder: desc
                         Cursor-order scan
                             Index forward scan on: s deferred: true
@@ -10644,7 +10663,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         query = "select * from a where s in (:s1, :s2) order by s asc limit 5";
 
         assertPlanNoLeakCheck(query, """
-                Limit lo: 5 skip-over-rows: 0 limit: 5
+                Limit lo: 5 skip-over-rows: 0 limit: 3
                     FilterOnValues symbolOrder: asc
                         Cursor-order scan
                             Index forward scan on: s deferred: true
@@ -10676,7 +10695,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution
         // actual order is S2, S1
         assertPlanNoLeakCheck(query, """
-                Limit lo: 5 skip-over-rows: 0 limit: 5
+                Limit lo: 5 skip-over-rows: 0 limit: 3
                     FilterOnValues symbolOrder: desc
                         Cursor-order scan
                             Index forward scan on: s deferred: true
@@ -10698,7 +10717,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
 
         assertPlanNoLeakCheck(query, """
-                Limit lo: 5 skip-over-rows: 0 limit: 5
+                Limit lo: 5 skip-over-rows: 0 limit: 3
                     FilterOnValues symbolOrder: asc
                         Cursor-order scan
                             Index forward scan on: s deferred: true
@@ -10728,7 +10747,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         String queryAsc = "select * from a where s in (:s2, :s1) order by ts asc limit 5";
         assertPlanNoLeakCheck(queryAsc, """
-                Limit lo: 5 skip-over-rows: 0 limit: 5
+                Limit lo: 5 skip-over-rows: 0 limit: 4
                     FilterOnValues
                         Table-order scan
                             Index forward scan on: s deferred: true

@@ -126,6 +126,8 @@ public interface CairoConfiguration {
         return "crash+";
     }
 
+    boolean getAsyncMunmapEnabled();
+
     @NotNull
     String getAttachPartitionSuffix();
 
