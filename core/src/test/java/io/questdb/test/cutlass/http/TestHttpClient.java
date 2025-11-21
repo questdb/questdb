@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -409,7 +410,7 @@ public class TestHttpClient implements QuietCloseable {
 
     protected String reqToSink(
             HttpClient.Request req,
-            Utf8StringSink sink,
+            MutableUtf8Sink sink,
             @Nullable CharSequence username,
             @Nullable CharSequence password,
             @Nullable CharSequence token,
