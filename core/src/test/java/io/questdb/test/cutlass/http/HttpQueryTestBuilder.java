@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
@@ -31,6 +32,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
@@ -40,6 +42,7 @@ import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.ExportQueryProcessor;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.SqlValidationProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
@@ -56,6 +59,7 @@ import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
@@ -77,6 +81,8 @@ public class HttpQueryTestBuilder {
     private String copyInputRoot;
     private FactoryProvider factoryProvider;
     private FilesFacade filesFacade = new TestFilesFacadeImpl();
+    private int forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+    private int forceSendFragmentationChunkSize = Integer.MAX_VALUE;
     private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
@@ -85,6 +91,8 @@ public class HttpQueryTestBuilder {
     private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private long queryTimeout = -1;
+    private SecurityContext securityContext = null;
+    private int sendBufferSize = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
     private ObjList<SqlExecutionContextImpl> sqlExecutionContexts;
     private long startWriterWaitTimeout = 500;
@@ -106,13 +114,29 @@ public class HttpQueryTestBuilder {
 
     public void runNoLeakCheck(CairoConfiguration configuration, HttpClientCode code) throws Exception {
         final String baseDir = temp;
-        final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
+        serverConfigBuilder
                 .withBaseDir(baseDir)
                 .withFactoryProvider(factoryProvider)
                 .withStaticContentAuthRequired(httpStaticContentAuthType)
                 .withHealthCheckAuthRequired(httpHealthCheckAuthType)
                 .withNanosClock(nanosecondClock)
-                .build(configuration);
+                .withForceSendFragmentationChunkSize(forceSendFragmentationChunkSize)
+                .withForceRecvFragmentationChunkSize(forceRecvFragmentationChunkSize);
+        if (sendBufferSize != -1) {
+            serverConfigBuilder.withSendBufferSize(sendBufferSize);
+        }
+
+        if (securityContext != null) {
+            SecurityContextFactory securityContextFactory = (principalContext, interfaceId) -> securityContext;
+
+            serverConfigBuilder.withFactoryProvider(new DefaultFactoryProvider() {
+                @Override
+                public @NotNull SecurityContextFactory getSecurityContextFactory() {
+                    return securityContextFactory;
+                }
+            });
+        }
+        final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder.build(configuration);
         final WorkerPool workerPool = new TestWorkerPool(workerCount, httpConfiguration.getMetrics());
 
         CairoConfiguration cairoConfiguration = configuration;
@@ -201,8 +225,10 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
-                    return new ObjList<>("/upload");
+                public ObjHashSet<String> getUrls() {
+                    return new ObjHashSet<>() {{
+                        add("/upload");
+                    }};
                 }
 
                 @Override
@@ -215,8 +241,10 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
-                    return new ObjList<>("/query");
+                public ObjHashSet<String> getUrls() {
+                    return new ObjHashSet<>() {{
+                        add("/query");
+                    }};
                 }
 
                 @Override
@@ -240,7 +268,20 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
+                    return httpConfiguration.getContextPathSqlValidation();
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new SqlValidationProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, workerCount) {
+                    };
+                }
+            });
+
+            httpServer.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjHashSet<String> getUrls() {
                     return httpConfiguration.getContextPathExport();
                 }
 
@@ -256,7 +297,7 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return httpConfiguration.getContextPathTableStatus();
                 }
 
@@ -268,7 +309,7 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return httpConfiguration.getContextPathExec();
                 }
 
@@ -280,8 +321,10 @@ public class HttpQueryTestBuilder {
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
-                    return new ObjList<>("/status");
+                public ObjHashSet<String> getUrls() {
+                    return new ObjHashSet<>() {{
+                        add("/status");
+                    }};
                 }
 
                 @Override
@@ -334,6 +377,16 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
+    public HttpQueryTestBuilder withForceRecvFragmentationChunkSize(int forceRecvFragmentationChunkSize) {
+        this.forceRecvFragmentationChunkSize = forceRecvFragmentationChunkSize;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withForceSendFragmentationChunkSize(int forceSendFragmentationChunkSize) {
+        this.forceSendFragmentationChunkSize = forceSendFragmentationChunkSize;
+        return this;
+    }
+
     public HttpQueryTestBuilder withHealthCheckAuthRequired(byte httpHealthCheckAuthType) {
         this.httpHealthCheckAuthType = httpHealthCheckAuthType;
         return this;
@@ -366,6 +419,16 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withQueryTimeout(long queryTimeout) {
         this.queryTimeout = queryTimeout;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withSecurityContext(SecurityContext securityContext) {
+        this.securityContext = securityContext;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withSendBufferSize(int sendBufferSize) {
+        this.sendBufferSize = sendBufferSize;
         return this;
     }
 

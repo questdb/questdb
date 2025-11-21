@@ -89,6 +89,8 @@ public abstract class AbstractChunkedResponse implements Response, Fragment {
                     p = dataLo;
                     // chunk size is hex encoded integer terminated with CRLF
                     long res = -1;
+
+                    // this loop is looking at the CRLF after chunk size
                     while (p < dataHi) {
                         if (getByte(p) == '\r') {
                             p++;
@@ -130,7 +132,7 @@ public abstract class AbstractChunkedResponse implements Response, Fragment {
 
                 case STATE_CHUNK_DATA:
                     // there is data in the buffer
-                    if (dataLo < dataHi) {
+                    if (size > 0 && dataLo < dataHi) {
                         long chunkBytesRemaining = size - consumed;
                         long bufBytesRemaining = dataHi - dataLo;
 
@@ -155,16 +157,14 @@ public abstract class AbstractChunkedResponse implements Response, Fragment {
                             dataLo = dataHi;
                             receive = true;
                         }
-                        return size > 0 ? this : null;
+                        return this;
                     }
 
-                    if (size == 0) {
-                        receive = false;
-                        return null;
+                    if (size != 0) {
+                        // no chunk data in the buffer
+                        break;
                     }
-
-                    // no chunk data in the buffer
-                    break;
+                    // fall thru to read chunk end
 
                 case STATE_CHUNK_DATA_END:
                     // we are here to consume CRLF
@@ -174,6 +174,11 @@ public abstract class AbstractChunkedResponse implements Response, Fragment {
                             state = STATE_CHUNK_SIZE;
                             dataLo += CRLF_LEN;
                             receive = false;
+                            // we had to consume the tail CRLF after the last chunk
+                            // not to leave garbage in the recv buffer
+                            if (size == 0) {
+                                return null;
+                            }
                             break;
                         } else {
                             throw new HttpClientException("malformed chunk");

@@ -162,7 +162,8 @@ public class AbstractTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .withCopyExportRoot(root + "/export");
+                .withCopyExportRoot(root + "/export")
+                .withCopyInputRoot(root + "/export");
     }
 
     protected static String[] getServerMainArgs(CharSequence root) {

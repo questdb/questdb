@@ -35,6 +35,7 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
+import io.questdb.cutlass.http.processors.SqlValidationProcessor;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
@@ -501,13 +502,20 @@ public class Table2IlpTest {
                 httpServerConfiguration
         );
 
+        HttpServer.HttpRequestHandlerBuilder sqlValidationProcessorBuilder = () -> new SqlValidationProcessor(
+                httpServerConfiguration.getJsonQueryProcessorConfiguration(),
+                cairoEngine,
+                1
+        );
+
         HttpServer.addDefaultEndpoints(
                 server,
                 serverConfiguration,
                 cairoEngine,
                 1,
                 jsonQueryProcessorBuilder,
-                ilpV2WriteProcessorBuilder
+                ilpV2WriteProcessorBuilder,
+                sqlValidationProcessorBuilder
         );
         return server;
     }

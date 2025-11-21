@@ -36,7 +36,7 @@ import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
 import io.questdb.std.ConcurrentCacheConfiguration;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicReference;
@@ -81,42 +81,42 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
-    public ObjList<String> getContextPathExec() {
+    public ObjHashSet<String> getContextPathExec() {
         return getDelegate().getContextPathExec();
     }
 
     @Override
-    public ObjList<String> getContextPathExport() {
+    public ObjHashSet<String> getContextPathExport() {
         return getDelegate().getContextPathExport();
     }
 
     @Override
-    public ObjList<String> getContextPathILP() {
+    public ObjHashSet<String> getContextPathILP() {
         return getDelegate().getContextPathILP();
     }
 
     @Override
-    public ObjList<String> getContextPathILPPing() {
+    public ObjHashSet<String> getContextPathILPPing() {
         return getDelegate().getContextPathILPPing();
     }
 
     @Override
-    public ObjList<String> getContextPathImport() {
+    public ObjHashSet<String> getContextPathImport() {
         return getDelegate().getContextPathImport();
     }
 
     @Override
-    public ObjList<String> getContextPathSettings() {
+    public ObjHashSet<String> getContextPathSettings() {
         return getDelegate().getContextPathSettings();
     }
 
     @Override
-    public ObjList<String> getContextPathTableStatus() {
+    public ObjHashSet<String> getContextPathTableStatus() {
         return getDelegate().getContextPathTableStatus();
     }
 
     @Override
-    public ObjList<String> getContextPathWarnings() {
+    public ObjHashSet<String> getContextPathWarnings() {
         return getDelegate().getContextPathWarnings();
     }
 

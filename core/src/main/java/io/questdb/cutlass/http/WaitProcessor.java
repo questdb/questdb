@@ -226,7 +226,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
     private boolean sendToOutQueue() {
         boolean useful = false;
         final long now = clock.getTicks();
-        while (nextRerun.size() > 0) {
+        while (!nextRerun.isEmpty()) {
             Retry next = nextRerun.peek();
             if (next.getAttemptDetails().nextRunTimestamp <= now) {
                 useful = true;

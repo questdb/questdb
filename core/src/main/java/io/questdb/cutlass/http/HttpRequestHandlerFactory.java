@@ -24,10 +24,10 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 
 public interface HttpRequestHandlerFactory {
-    ObjList<String> getUrls();
+    ObjHashSet<String> getUrls();
 
     HttpRequestHandler newInstance();
 }

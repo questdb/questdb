@@ -333,7 +333,9 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     private class ChunkUtf8Sink implements Utf8Sink, Closeable, Mutable {
-        private static final String EOF_CHUNK = "\r\n00\r\n\r\n";
+        // the last chunk is a chunk with size zero. it happens to have exactly 8 ascii chars so it fits to long nicely: \r\n00\r\n\r\n
+        private static final long EOF_CHUNK_LONG = (long) '\r' << 56 | (long) '\n' << 48 | (long) '0' << 40 | (long) '0' << 32 | (long) '\r' << 24 | (long) '\n' << 16 | (long) '\r' << 8 | (long) '\n';
+        private static final long EOF_CHUNK_LONG_BE = Numbers.bswap(EOF_CHUNK_LONG);
         private static final int MAX_CHUNK_HEADER_SIZE = 12;
         private long _rptr;
         private long _wptr;
@@ -353,7 +355,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         @Override
         public void close() {
             if (bufStart != 0) {
-                Unsafe.free(bufStart, bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
+                Unsafe.free(bufStart, bufSize + MAX_CHUNK_HEADER_SIZE + Long.BYTES, MemoryTag.NATIVE_HTTP_CONN);
                 bufStart = bufStartOfData = _wptr = _rptr = 0;
             }
         }
@@ -387,7 +389,10 @@ public class HttpResponseSink implements Closeable, Mutable {
         public void reopen(long bufSize) {
             if (bufStart == 0) {
                 this.bufSize = bufSize;
-                bufStart = Unsafe.malloc(bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
+                // note: we reserve extra space for:
+                // 1. chunk header size: MAX_CHUNK_HEADER_SIZE bytes
+                // 2. last chunk marker: single Long, 8 bytes
+                bufStart = Unsafe.malloc(bufSize + MAX_CHUNK_HEADER_SIZE + Long.BYTES, MemoryTag.NATIVE_HTTP_CONN);
                 bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;
                 clear();
             }
@@ -408,10 +413,11 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         long getWriteAddress(long size) {
             assert _wptr != 0;
-            if (getWriteNAvailable() >= size) {
+            long available = getWriteNAvailable();
+            if (available >= size) {
                 return _wptr;
             }
-            throw NoSpaceLeftInResponseBufferException.instance(size);
+            throw NoSpaceLeftInResponseBufferException.instance(size, available, bufSize);
         }
 
         long getWriteNAvailable() {
@@ -440,9 +446,11 @@ public class HttpResponseSink implements Closeable, Mutable {
                 _wptr = tmp;
             }
             if (addEofChunk) {
-                int len = EOF_CHUNK.length();
-                Utf8s.strCpyAscii(EOF_CHUNK, len, _wptr);
-                _wptr += len;
+                // safety: unchecked store, but we reserve space for the last chunk -> this is sound as long as all
+                //         other writes use getWriteAddress() which does not allow anyone else to use the space reserved
+                //         for the last chunk.
+                Unsafe.getUnsafe().putLong(_wptr, EOF_CHUNK_LONG_BE);
+                _wptr += Long.BYTES;
                 LOG.debug().$("end chunk sent [fd=").$(getFd()).I$();
             }
         }

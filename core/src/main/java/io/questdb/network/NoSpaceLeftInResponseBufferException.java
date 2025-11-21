@@ -31,15 +31,19 @@ public class NoSpaceLeftInResponseBufferException extends HttpException {
     private static final ThreadLocal<NoSpaceLeftInResponseBufferException> tlException = new ThreadLocal<>(NoSpaceLeftInResponseBufferException::new);
 
     private long bytesRequired;
+    private long bytesAvailable;
+    private long capacity;
 
     public NoSpaceLeftInResponseBufferException() {
         super();
-        put("no space left in response buffer");
+        put("no space left in response buffer [bytesRequired=").put(bytesRequired).put(']');
     }
 
-    public static NoSpaceLeftInResponseBufferException instance(long bytesRequired) {
+    public static NoSpaceLeftInResponseBufferException instance(long bytesRequired, long bytesAvailable, long capacity) {
         NoSpaceLeftInResponseBufferException ex = tlException.get();
         ex.bytesRequired = bytesRequired;
+        ex.bytesAvailable = bytesAvailable;
+        ex.capacity = capacity;
         return ex;
     }
 

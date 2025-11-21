@@ -263,7 +263,7 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
 
     private void checkCapacity(long capacity) {
         if (sendBufWritePos + capacity > sendBufEnd) {
-            throw NoSpaceLeftInResponseBufferException.instance(capacity);
+            throw NoSpaceLeftInResponseBufferException.instance(capacity, sendBufEnd - sendBufWritePos, sendBufEnd - sendBufStart);
         }
     }
 
