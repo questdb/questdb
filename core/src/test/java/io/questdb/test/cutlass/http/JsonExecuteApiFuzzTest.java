@@ -38,11 +38,17 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
     public void testFullFuzz() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
 
-        var emptyColList = new CharSequenceObjHashMap<String>();
-        emptyColList.put("cols", ",");
+        var emptyColParams = new CharSequenceObjHashMap<String>();
+        emptyColParams.put("cols", ",");
 
-        var nonExistingColList = new CharSequenceObjHashMap<String>();
-        nonExistingColList.put("cols", "z");
+        var limitParams = new CharSequenceObjHashMap<String>();
+        limitParams.put("limit", "1");
+
+        var badLimitParams = new CharSequenceObjHashMap<String>();
+        badLimitParams.put("limit", "not a number");
+
+        var nonExistingColParams = new CharSequenceObjHashMap<String>();
+        nonExistingColParams.put("cols", "z");
 
         var badUtf8Params = new CharSequenceObjHashMap<Utf8Sequence>();
         Utf8StringSink badUtf8Sink = new Utf8StringSink();
@@ -62,8 +68,11 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                             var requestResponse = new Object[][]{
                                     {"select count() from xyz", "{\"query\":\"select count() from xyz\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1000]],\"count\":1}"},
                                     {"select a from xyz limit 1", "{\"query\":\"select a from xyz limit 1\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[-1148479920]],\"count\":1}"},
-                                    {"select a from xyz limit 1", "{\"query\":\"select a from xyz limit 1\",\"error\":\"empty column in query parameter\"}", emptyColList},
-                                    {"select a from xyz limit 1", "{\"query\":\"select a from xyz limit 1\",\"error\":\"column not found: 'z'\"}", nonExistingColList},
+                                    {"select a from xyz limit 1", "{\"query\":\"select a from xyz limit 1\",\"error\":\"empty column in query parameter\"}", emptyColParams},
+                                    {"select a from xyz", "{\"query\":\"select a from xyz\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[-1148479920]],\"count\":1}", limitParams},
+                                    // limit params are forgiving - invalid limit is ignored, by design
+                                    {"select a from xyz limit 1", "{\"query\":\"select a from xyz limit 1\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[-1148479920]],\"count\":1}", badLimitParams},
+                                    {"select a from xyz limit 1", "{\"query\":\"select a from xyz limit 1\",\"error\":\"column not found: 'z'\"}", nonExistingColParams},
                                     {"select b from xyz limit 5", "{\"query\":\"select b from xyz limit 5\",\"columns\":[{\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[0.8043224099968393],[0.08486964232560668],[0.0843832076262595],[0.6508594025855301],[0.7905675319675964]],\"count\":5}"},
                                     {"select ts, b from xyz limit 15", "{\"query\":\"select ts, b from xyz limit 15\",\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestamp\":0,\"dataset\":[[\"1970-01-01T00:00:00.000000Z\",0.8043224099968393],[\"1970-01-01T00:00:00.001000Z\",0.08486964232560668],[\"1970-01-01T00:00:00.002000Z\",0.0843832076262595],[\"1970-01-01T00:00:00.003000Z\",0.6508594025855301],[\"1970-01-01T00:00:00.004000Z\",0.7905675319675964],[\"1970-01-01T00:00:00.005000Z\",0.22452340856088226],[\"1970-01-01T00:00:00.006000Z\",0.3491070363730514],[\"1970-01-01T00:00:00.007000Z\",0.7611029514995744],[\"1970-01-01T00:00:00.008000Z\",0.4217768841969397],[\"1970-01-01T00:00:00.009000Z\",0.0367581207471136],[\"1970-01-01T00:00:00.010000Z\",0.6276954028373309],[\"1970-01-01T00:00:00.011000Z\",0.6778564558839208],[\"1970-01-01T00:00:00.012000Z\",0.8756771741121929],[\"1970-01-01T00:00:00.013000Z\",0.8799634725391621],[\"1970-01-01T00:00:00.014000Z\",0.5249321062686694]],\"count\":15}"},
                                     {"select a, z from xyz", "{\"query\":\"select a, z from xyz\",\"error\":\"Invalid column: z\",\"position\":10}"},
