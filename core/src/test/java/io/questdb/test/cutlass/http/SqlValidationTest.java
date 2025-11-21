@@ -98,13 +98,17 @@ public class SqlValidationTest extends AbstractCairoTest {
                             };
 
                             var candidateCount = requestResponse.length;
+                            String[] hostnames = {"localhost", "127.0.0.1"};
+                            int hostnameIndex = 0;
                             try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                 testHttpClient.setKeepConnection(true);
-                                int iterCount = rnd.nextInt(10);
-                                for (int i = 0; i < iterCount; i++) {
+                                for (int i = 0; i < 100; i++) {
                                     int index = rnd.nextInt(candidateCount);
+                                    if (rnd.nextInt(100) < 5) {
+                                        hostnameIndex = 1 - hostnameIndex;
+                                    }
                                     String expectedResponse = requestResponse[index][1].toString();
-                                    HttpClient.Request req = testHttpClient.getHttpClient().newRequest("127.0.0.1", 9001);
+                                    HttpClient.Request req = testHttpClient.getHttpClient().newRequest(hostnames[hostnameIndex], 9001);
                                     req.GET().url("/exp");
                                     if (requestResponse[index][0] instanceof Utf8Sequence sql) {
                                         req.query("query", sql);
