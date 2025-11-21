@@ -3773,8 +3773,8 @@ public class IODispatcherTest extends AbstractTest {
                 Transfer-Encoding: chunked\r
                 Content-Type: application/json; charset=utf-8\r
                 \r
-                25\r
-                {"error":"utf8 error in column list"}\r
+                67\r
+                {"query":"select 'oops' рекордно from long_sequence(10)\\n","error":"utf8 error in column list"}\r
                 00\r
                 \r
                 """);

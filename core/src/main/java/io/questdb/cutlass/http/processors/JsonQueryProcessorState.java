@@ -1188,11 +1188,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 if (rawLo <= 0) {
                     info().$("utf8 error when decoding column list '").$safe(columnNames).$('\'').$();
                     HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
+                    storeError("utf8 error in column list");
                     JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
-                    response.putAscii('{')
-                            .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("utf8 error in column list")
-                            .putAscii('}');
-                    response.sendChunk(true);
+                    onResumeError(response);
                     return false;
                 }
 

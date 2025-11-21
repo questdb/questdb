@@ -26,7 +26,9 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Rnd;
+import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -38,12 +40,16 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
     public void testFullFuzz() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
 
-
-        var emptyColList = new CharSequenceObjHashMap<>();
+        var emptyColList = new CharSequenceObjHashMap<String>();
         emptyColList.put("cols", ",");
 
-        var nonExistingColList = new CharSequenceObjHashMap<>();
+        var nonExistingColList = new CharSequenceObjHashMap<String>();
         nonExistingColList.put("cols", "z");
+
+        var badUtf8Params = new CharSequenceObjHashMap<Utf8Sequence>();
+        Utf8StringSink badUtf8Sink = new Utf8StringSink();
+        badUtf8Sink.put("select").putAny((byte) 0xC3).putAny((byte) 0x28);
+        badUtf8Params.put("cols", badUtf8Sink);
 
         getSimpleTester()
                 .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
@@ -64,6 +70,7 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                                     {"create table if not exists abc(x int)", "{\"ddl\":\"OK\"}"},
                                     {"select \"µ\" from xyz", "{\"query\":\"select \\\"µ\\\" from xyz\",\"error\":\"Invalid column: µ\",\"position\":7}"},
                                     {new Utf8StringSink().put("select").putAny((byte) 0xC3).putAny((byte) 0x28), "{\"query\":\"selectￃ(\",\"error\":\"Bad UTF8 encoding in query text\",\"position\":0}"},
+                                    {new Utf8StringSink().put("xyz"), "{\"query\":\"xyz\",\"error\":\"utf8 error in column list\"}", badUtf8Params},
                                     // empty query
                                     {"", "{\"error\":\"empty query\",\"query\":\"\",\"position\":\"0\"}"},
                                     {"backup table xyz", "{\"query\":\"backup table xyz\",\"error\":\"backup is disabled, server.conf property 'cairo.sql.backup.root' is not set\",\"position\":0}"},
@@ -82,13 +89,13 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                                     int index = rnd.nextInt(candidateCount);
                                     Object[] testCase = requestResponse[index];
 
-                                    CharSequenceObjHashMap<String> queryParams = null;
-                                    if (testCase.length > 2) {
-                                        queryParams = (CharSequenceObjHashMap<String>) testCase[2];
-                                    }
-
 
                                     if (testCase[0] instanceof Utf8Sequence utf8Sql) {
+                                        CharSequenceObjHashMap<Utf8Sequence> queryParams = null;
+                                        if (testCase.length > 2) {
+                                            queryParams = (CharSequenceObjHashMap<Utf8Sequence>) testCase[2];
+                                        }
+
                                         testHttpClient.assertGet(
                                                 "/api/v1/sql/execute",
                                                 testCase[1].toString(),
@@ -96,6 +103,11 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                                                 queryParams
                                         );
                                     } else {
+                                        CharSequenceObjHashMap<String> queryParams = null;
+                                        if (testCase.length > 2) {
+                                            queryParams = (CharSequenceObjHashMap<String>) testCase[2];
+                                        }
+
                                         testHttpClient.assertGet(
                                                 "/api/v1/sql/execute",
                                                 testCase[1].toString(),
