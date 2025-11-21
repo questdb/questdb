@@ -223,6 +223,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         counter.clear();
         stop = 0;
         containsSecret = false;
+        errorMessage.clear();
+        updateRecords = 0;
     }
 
     public void clearFactory() {
