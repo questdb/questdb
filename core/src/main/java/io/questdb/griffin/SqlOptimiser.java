@@ -66,6 +66,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntSortedList;
+import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
@@ -123,6 +124,7 @@ public class SqlOptimiser implements Mutable {
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+    private final static LowerCaseAsciiCharSequenceHashSet orderedGroupByFunctions;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
@@ -268,7 +270,7 @@ public class SqlOptimiser implements Mutable {
         return functionParser.getFunctionFactoryCache();
     }
 
-    public boolean hasAggregates(ExpressionNode node) {
+    public boolean hasGroupByFunc(ExpressionNode node) {
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
@@ -282,6 +284,41 @@ public class SqlOptimiser implements Mutable {
                         continue;
                     case FUNCTION:
                         if (functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+                            return true;
+                        }
+                        break;
+                    default:
+                        for (int i = 0, n = node.args.size(); i < n; i++) {
+                            sqlNodeStack.add(node.args.getQuick(i));
+                        }
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        break;
+                }
+
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return false;
+    }
+
+    public boolean hasOrderedGroupByFunc(ExpressionNode node) {
+        sqlNodeStack.clear();
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.type) {
+                    case LITERAL:
+                        node = null;
+                        continue;
+                    case FUNCTION:
+                        if (node.token != null && orderedGroupByFunctions.contains(node.token)) {
                             return true;
                         }
                         break;
@@ -2589,8 +2626,8 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
-    private boolean isIntegerConstant(ExpressionNode n) {
-        if (n.type != CONSTANT) {
+    private boolean isIntegerConstant(@Nullable ExpressionNode n) {
+        if (n == null || n.type != CONSTANT) {
             return false;
         }
 
@@ -3309,11 +3346,12 @@ public class SqlOptimiser implements Mutable {
         int orderByMnemonic;
         int n = columns.size();
 
-        //limit x,y forces order materialization; we can't push order by past it and need to discover actual nested ordering
+        // limit x,y forces order materialization; we can't push order by past it and need to discover actual nested ordering
         if (model.getLimitLo() != null) {
             topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
         }
-        //if model has explicit timestamp then we should detect and preserve actual order because it might be used for asof/lt/splice join
+
+        // if model has explicit timestamp then we should detect and preserve actual order because it might be used for asof/lt/splice join
         if (model.getTimestamp() != null) {
             topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
         }
@@ -3335,7 +3373,7 @@ public class SqlOptimiser implements Mutable {
                 if (model.getSampleBy() == null && orderByMnemonic != OrderByMnemonic.ORDER_BY_INVARIANT) {
                     for (int i = 0; i < n; i++) {
                         QueryColumn col = columns.getQuick(i);
-                        if (hasAggregates(col.getAst())) {
+                        if (hasGroupByFunc(col.getAst())) {
                             orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
                             break;
                         }
@@ -3360,6 +3398,16 @@ public class SqlOptimiser implements Mutable {
                     orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
                 }
                 break;
+        }
+
+        // some aggregate functions (e.g. first()) rely on the rows being properly ordered to return the correct result
+        if (model.getSelectModelType() == SELECT_MODEL_GROUP_BY) {
+            for (int i = 0; i < n && orderByMnemonic != OrderByMnemonic.ORDER_BY_REQUIRED; i++) {
+                if (hasOrderedGroupByFunc(columns.getQuick(i).getAst())) {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+                    break;
+                }
+            }
         }
 
         final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model, orderByMnemonic);
@@ -4247,6 +4295,7 @@ public class SqlOptimiser implements Mutable {
                         && functionParser.getFunctionFactoryCache().isGroupBy(agg.token)
                         && Chars.equalsIgnoreCase("sum", agg.token)
                         && op.type == OPERATION
+                        && op.paramCount == 2
         ) {
             if (Chars.equals(op.token, '*')) { // sum(x*10) == sum(x)*10
                 if (isIntegerConstant(op.rhs) && isSimpleIntegerColumn(op.lhs, model)) {
@@ -7598,5 +7647,13 @@ public class SqlOptimiser implements Mutable {
         limitTypes.add(ColumnType.BYTE);
         limitTypes.add(ColumnType.SHORT);
         limitTypes.add(ColumnType.INT);
+    }
+
+    static {
+        orderedGroupByFunctions = new LowerCaseAsciiCharSequenceHashSet();
+        orderedGroupByFunctions.add("first");
+        orderedGroupByFunctions.add("first_not_null");
+        orderedGroupByFunctions.add("last");
+        orderedGroupByFunctions.add("last_not_null");
     }
 }
