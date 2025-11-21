@@ -1305,9 +1305,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                         .putAsciiQuoted("jitCompiled").putAscii(':').putAscii(queryJitCompiled ? "true" : "false")
                         .putAscii('}');
             }
+            response.putAscii('}');
             count = -1;
             counter.set(-1);
-            response.putAscii('}');
             response.sendChunk(true);
             return;
         }
