@@ -48,47 +48,34 @@ public class GlobStrFunctionFactory implements FunctionFactory {
         for (int i = 0, n = globPattern.length(); i < n; i++) {
             char c = globPattern.charAt(i);
             switch (c) {
-                case '.':
-                case '^':
-                case '$':
-                case '+':
-                case '{':
-                case '}':
-                case '(':
-                case ')':
-                case '|':
+                case '.', '^', '$', '+', '{', '}', '(', ')', '|' -> {
                     sink.put('\\');
                     sink.put(c);
-                    break;
-                case '\\':
-                    sink.put("\\\\");
-                    break;
-                case '*':
+                }
+                case '\\' -> sink.put("\\\\");
+                case '*' -> {
                     if (i + 1 < n && globPattern.charAt(i + 1) == '*' && i + 2 < n && globPattern.charAt(i + 2) == Files.SEPARATOR) {
                         i++;
                     }
                     sink.put(".*");
-                    break;
-                case '?':
-                    sink.put('.');
-                    break;
-                case '[':
+                }
+                case '?' -> sink.put('.');
+                case '[' -> {
                     bracketStackDepth++;
                     sink.put('[');
-                    break;
-                case ']':
+                }
+                case ']' -> {
                     bracketStackDepth--;
                     sink.put(']');
-                    break;
-                case '!':
+                }
+                case '!' -> {
                     if (bracketStackDepth > 0) {
                         sink.put('^');
                     } else {
                         sink.put('!');
                     }
-                    break;
-                default:
-                    sink.put(c);
+                }
+                default -> sink.put(c);
             }
         }
         sink.put('$'); // end anchor
