@@ -171,6 +171,9 @@ public class QueryExportTest extends AbstractCairoTest {
                                     String query = queries[index];
                                     req.query("query", query);
                                     req.query("fmt", "parquet");
+                                    if (rnd.nextBoolean()) {
+                                        req.query("rmode", "nodelay");
+                                    }
                                     sink.clear();
                                     testHttpClient.reqToSink(req, sink, null, null, null, null);
                                     int bytesReceived = sink.size();
