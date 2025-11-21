@@ -29,7 +29,6 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
@@ -73,12 +72,7 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                                         testHttpClient.assertGet(
                                                 "/api/v1/sql/execute",
                                                 requestResponse[i][1].toString(),
-                                                requestResponse[i][0].toString(),
-                                                "localhost",
-                                                9001,
-                                                null,
-                                                null,
-                                                null
+                                                requestResponse[i][0].toString()
                                         );
                                     }
                                 }
@@ -86,5 +80,4 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                         }
                 );
     }
-
 }

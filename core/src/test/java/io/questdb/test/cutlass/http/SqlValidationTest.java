@@ -220,6 +220,12 @@ public class SqlValidationTest extends AbstractCairoTest {
                                 "backup database"
                         );
 
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"CREATE TABLE\"}",
+                                "create table should_not_exist(a int, ts timestamp) timestamp(ts) partition by hour"
+                        );
+
                         // check that table is still exists
                         TestUtils.assertSql(
                                 engine,
@@ -230,6 +236,15 @@ public class SqlValidationTest extends AbstractCairoTest {
                                         count
                                         1000
                                         """
+                        );
+
+                        TestUtils.assertException(
+                                engine,
+                                sqlExecutionContext,
+                                "select * from should_not_exist",
+                                "table does not exist [table=should_not_exist]",
+                                14,
+                                sink
                         );
                     }
                 });
