@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -36,6 +37,14 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
     @Test
     public void testFullFuzz() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
+
+
+        var emptyColList = new CharSequenceObjHashMap<>();
+        emptyColList.put("cols", ",");
+
+        var nonExistingColList = new CharSequenceObjHashMap<>();
+        nonExistingColList.put("cols", "z");
+
         getSimpleTester()
                 .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
                 .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
@@ -47,6 +56,8 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                             var requestResponse = new Object[][]{
                                     {"select count() from xyz", "{\"query\":\"select count() from xyz\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1000]],\"count\":1}"},
                                     {"select a from xyz limit 1", "{\"query\":\"select a from xyz limit 1\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[-1148479920]],\"count\":1}"},
+                                    {"select a from xyz limit 1", "{\"query\":\"select a from xyz limit 1\",\"error\":\"empty column in query parameter\"}", emptyColList},
+                                    {"select a from xyz limit 1", "{\"query\":\"select a from xyz limit 1\",\"error\":\"column not found: 'z'\"}", nonExistingColList},
                                     {"select b from xyz limit 5", "{\"query\":\"select b from xyz limit 5\",\"columns\":[{\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[0.8043224099968393],[0.08486964232560668],[0.0843832076262595],[0.6508594025855301],[0.7905675319675964]],\"count\":5}"},
                                     {"select ts, b from xyz limit 15", "{\"query\":\"select ts, b from xyz limit 15\",\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestamp\":0,\"dataset\":[[\"1970-01-01T00:00:00.000000Z\",0.8043224099968393],[\"1970-01-01T00:00:00.001000Z\",0.08486964232560668],[\"1970-01-01T00:00:00.002000Z\",0.0843832076262595],[\"1970-01-01T00:00:00.003000Z\",0.6508594025855301],[\"1970-01-01T00:00:00.004000Z\",0.7905675319675964],[\"1970-01-01T00:00:00.005000Z\",0.22452340856088226],[\"1970-01-01T00:00:00.006000Z\",0.3491070363730514],[\"1970-01-01T00:00:00.007000Z\",0.7611029514995744],[\"1970-01-01T00:00:00.008000Z\",0.4217768841969397],[\"1970-01-01T00:00:00.009000Z\",0.0367581207471136],[\"1970-01-01T00:00:00.010000Z\",0.6276954028373309],[\"1970-01-01T00:00:00.011000Z\",0.6778564558839208],[\"1970-01-01T00:00:00.012000Z\",0.8756771741121929],[\"1970-01-01T00:00:00.013000Z\",0.8799634725391621],[\"1970-01-01T00:00:00.014000Z\",0.5249321062686694]],\"count\":15}"},
                                     {"select a, z from xyz", "{\"query\":\"select a, z from xyz\",\"error\":\"Invalid column: z\",\"position\":10}"},
@@ -69,17 +80,27 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                                 int iterCount = rnd.nextInt(100);
                                 for (int i = 0; i < iterCount; i++) {
                                     int index = rnd.nextInt(candidateCount);
-                                    if (requestResponse[index][0] instanceof Utf8Sequence utf8Sql) {
+                                    Object[] testCase = requestResponse[index];
+
+                                    CharSequenceObjHashMap<String> queryParams = null;
+                                    if (testCase.length > 2) {
+                                        queryParams = (CharSequenceObjHashMap<String>) testCase[2];
+                                    }
+
+
+                                    if (testCase[0] instanceof Utf8Sequence utf8Sql) {
                                         testHttpClient.assertGet(
                                                 "/api/v1/sql/execute",
-                                                requestResponse[index][1].toString(),
-                                                utf8Sql
+                                                testCase[1].toString(),
+                                                utf8Sql,
+                                                queryParams
                                         );
                                     } else {
                                         testHttpClient.assertGet(
                                                 "/api/v1/sql/execute",
-                                                requestResponse[index][1].toString(),
-                                                requestResponse[index][0].toString()
+                                                testCase[1].toString(),
+                                                testCase[0].toString(),
+                                                queryParams
                                         );
                                     }
                                 }
