@@ -400,17 +400,33 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyParquetEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table empty_table (x int, y string)");
+            execute("create table all_types_empty (" +
+                    "bool_col boolean, " +
+                    "byte_col byte, " +
+                    "short_col short, " +
+                    "int_col int, " +
+                    "long_col long, " +
+                    "float_col float, " +
+                    "double_col double, " +
+                    "string_col string, " +
+                    "symbol_col symbol, " +
+                    "t_ns timestamp_ns, " +
+                    "d_array DOUBLE[], " +
+                    "ts timestamp" +
+                    ") timestamp(ts)");
 
             CopyExportRunnable stmt = () ->
-                    runAndFetchCopyExportID("copy empty_table to 'output15' with format parquet", sqlExecutionContext);
-
+                    runAndFetchCopyExportID("copy all_types_empty to 'all_types_empty' with format parquet", sqlExecutionContext);
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertSql("""
-                                    export_path\tnum_exported_files\tstatus
-                                    \t0\tfinished
-                                    """,
-                            "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"));
+                    assertEventually(() -> {
+                        assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "all_types_empty.parquet" + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("""
+                                        bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tt_ns\td_array\tts
+                                        """,
+                                "select * from read_parquet('" + exportRoot + File.separator + "all_types_empty" + ".parquet')");
+                    });
 
             testCopyExport(stmt, test);
         });
