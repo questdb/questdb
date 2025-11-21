@@ -24,264 +24,448 @@
 
 package io.questdb.test.griffin.engine.functions.regex;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.regex.GlobStrFunctionFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.str.StringSink;
-import org.junit.Assert;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class GlobStrFunctionFactoryTest {
+public class GlobStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testConvertGlobPatternBackslashes() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("path\\to\\file*.txt", sink, 0);
-        Assert.assertEquals("^path\\\\to\\\\file.*\\.txt$", sink.toString());
-    }
-
-    // Bracket expressions with negation
-    @Test
-    public void testConvertGlobPatternBracketWithNegation() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file[!abc].txt", sink, 0);
-        Assert.assertEquals("^file[^abc]\\.txt$", sink.toString());
-    }
-
-    @Test
-    public void testConvertGlobPatternCaretEscaped() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file^name.txt", sink, 0);
-        Assert.assertEquals("^file\\^name\\.txt$", sink.toString());
-    }
-
-    // Path patterns
-    @Test
-    public void testConvertGlobPatternComplexPath() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("/var/log/app_*.log", sink, 0);
-        Assert.assertEquals("^/var/log/app_.*\\.log$", sink.toString());
+    public void testGlobBracketExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('file_a.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file_b.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file_c.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file_x.txt' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            file_a.txt
+                            file_b.txt
+                            file_c.txt
+                            """,
+                    "select * from x where glob(name, 'file_[abc].txt')"
+            );
+        });
     }
 
     @Test
-    public void testConvertGlobPatternCurlyBracesEscaped() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file{1,2}.txt", sink, 0);
-        Assert.assertEquals("^file\\{1,2\\}\\.txt$", sink.toString());
+    public void testGlobBracketNegation() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('file_a.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file_b.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file_c.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file_x.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file_1.txt' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            file_x.txt
+                            file_1.txt
+                            """,
+                    "select * from x where glob(name, 'file_[!abc].txt')"
+            );
+        });
     }
 
     @Test
-    public void testConvertGlobPatternDollarEscaped() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file$name.txt", sink, 0);
-        Assert.assertEquals("^file\\$name\\.txt$", sink.toString());
+    public void testGlobBracketRange() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('file_0.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file_5.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file_9.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file_a.txt' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            file_0.txt
+                            file_5.txt
+                            file_9.txt
+                            """,
+                    "select * from x where glob(name, 'file_[0-9].txt')"
+            );
+        });
     }
 
     @Test
-    public void testConvertGlobPatternEmptyBracket() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file[].txt", sink, 0);
-        Assert.assertEquals("^file[]\\.txt$", sink.toString());
-    }
-
-    // Edge cases: empty and special patterns
-    @Test
-    public void testConvertGlobPatternEmptyString() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("", sink, 0);
-        Assert.assertEquals("^$", sink.toString());
-    }
-
-    // Escaped characters handling
-    @Test
-    public void testConvertGlobPatternEscapedCharacters() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file\\\\.txt", sink, 0);
-        Assert.assertEquals("^file\\\\\\\\\\.txt$", sink.toString());
-    }
-
-    @Test
-    public void testConvertGlobPatternMixedSlashesAndBackslashes() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("path/to\\data/file*.txt", sink, 0);
-        Assert.assertEquals("^path/to\\\\data/file.*\\.txt$", sink.toString());
-    }
-
-    // Nested patterns with multiple wildcards
-    @Test
-    public void testConvertGlobPatternMultipleConsecutiveAsterisks() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file***.txt", sink, 0);
-        Assert.assertEquals("^file.*.*.*\\.txt$", sink.toString());
+    public void testGlobComplexBracketExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('data_0.csv' as string) as name from long_sequence(1)
+                    union
+                    select cast('data_5.csv' as string) as name from long_sequence(1)
+                    union
+                    select cast('data_9.csv' as string) as name from long_sequence(1)
+                    union
+                    select cast('data_a.csv' as string) as name from long_sequence(1)
+                    union
+                    select cast('data_z.csv' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            data_0.csv
+                            data_5.csv
+                            data_9.csv
+                            """,
+                    "select * from x where glob(name, 'data_[0-9].csv')"
+            );
+        });
     }
 
     @Test
-    public void testConvertGlobPatternMultipleUnmatchedBrackets() {
-        StringSink sink = new StringSink();
-        try {
-            GlobStrFunctionFactory.convertGlobPatternToRegex("file[abc[def.txt", sink, 0);
-            Assert.fail("Expected SqlException for unmatched brackets");
-        } catch (SqlException e) {
-            Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "unbalanced bracket"));
-        }
+    public void testGlobComplexBracketWithNegation() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('data_0.csv' as string) as name from long_sequence(1)
+                    union
+                    select cast('data_a.csv' as string) as name from long_sequence(1)
+                    union
+                    select cast('data_A.csv' as string) as name from long_sequence(1)
+                    union
+                    select cast('data_Z.csv' as string) as name from long_sequence(1)
+                    union
+                    select cast('data_z.csv' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            data_0.csv
+                            """,
+                    "select * from x where glob(name, 'data_[!a-zA-Z].csv')"
+            );
+        });
+    }
+
+    // Nested patterns
+    @Test
+    public void testGlobDoubleStar() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('file.txt' as string) as path from long_sequence(1)
+                    union
+                    select cast('dir/file.txt' as string) as path from long_sequence(1)
+                    union
+                    select cast('dir/subdir/file.txt' as string) as path from long_sequence(1)
+                    union
+                    select cast('other.csv' as string) as path from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            path
+                            dir/file.txt
+                            dir/subdir/file.txt
+                            """,
+                    "select * from x where glob(path, '**/file.txt')"
+            );
+        });
+    }
+
+    // Edge cases
+    @Test
+    public void testGlobExactMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('file.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('readme.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            file.txt
+                            """,
+                    "select * from x where glob(name, 'file.txt')"
+            );
+        });
     }
 
     @Test
-    public void testConvertGlobPatternNegationInsideBracket() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("[!xyz]", sink, 0);
-        Assert.assertEquals("^[^xyz]$", sink.toString());
-    }
-
-    // Negation handling
-    @Test
-    public void testConvertGlobPatternNegationOutsideBracket() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file!abc.txt", sink, 0);
-        Assert.assertEquals("^file!abc\\.txt$", sink.toString());
-    }
-
-    @Test
-    public void testConvertGlobPatternNestedBracketNegation() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file[!a-zA-Z0-9].txt", sink, 0);
-        Assert.assertEquals("^file[^a-zA-Z0-9]\\.txt$", sink.toString());
-    }
-
-    @Test
-    public void testConvertGlobPatternOnlyAsterisk() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("*", sink, 0);
-        Assert.assertEquals("^.*$", sink.toString());
+    public void testGlobMultipleWildcards() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('log_2024_01_app.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('log_2024_02_app.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('log_2023_01_app.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('data_2024_01.txt' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            log_2024_01_app.txt
+                            log_2024_02_app.txt
+                            """,
+                    "select * from x where glob(name, 'log_2024_*_app.txt')"
+            );
+        });
     }
 
     @Test
-    public void testConvertGlobPatternOnlyQuestionMark() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("?", sink, 0);
-        Assert.assertEquals("^.$", sink.toString());
+    public void testGlobNegationOutsideBracket() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('file!test.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('fileXtest.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file!.txt' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            file!test.txt
+                            file!.txt
+                            """,
+                    "select * from x where glob(name, 'file!*')"
+            );
+        });
     }
 
     @Test
-    public void testConvertGlobPatternParenthesesEscaped() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file(name).txt", sink, 0);
-        Assert.assertEquals("^file\\(name\\)\\.txt$", sink.toString());
+    public void testGlobNoMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('file.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('readme.pdf' as string) as name from long_sequence(1)
+                    union
+                    select cast('document.doc' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    "name\n",
+                    "select * from x where glob(name, '*.csv')"
+            );
+        });
     }
 
     @Test
-    public void testConvertGlobPatternPipeEscaped() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file|name.txt", sink, 0);
-        Assert.assertEquals("^file\\|name\\.txt$", sink.toString());
+    public void testGlobOnlyAsterisk() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('file.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('readme' as string) as name from long_sequence(1)
+                    union
+                    select cast('' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            file.txt
+                            readme
+                            
+                            """,
+                    "select * from x where glob(name, '*')"
+            );
+        });
+    }
+
+    // Basic glob patterns tests
+    @Test
+    public void testGlobSimpleAsterisk() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('file.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('readme.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('document.pdf' as string) as name from long_sequence(1)
+                    union
+                    select cast('image.jpg' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            file.txt
+                            readme.txt
+                            """,
+                    "select * from x where glob(name, '*.txt')"
+            );
+        });
     }
 
     @Test
-    public void testConvertGlobPatternPlusEscaped() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file+name.txt", sink, 0);
-        Assert.assertEquals("^file\\+name\\.txt$", sink.toString());
+    public void testGlobSimpleQuestionMark() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('file1.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file2.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file12.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('readme.txt' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            file1.txt
+                            file2.txt
+                            """,
+                    "select * from x where glob(name, 'file?.txt')"
+            );
+        });
     }
 
-    // Basic glob patterns
+    // Unicode and whitespace
     @Test
-    public void testConvertGlobPatternSimpleAsterisk() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("*.txt", sink, 0);
-        Assert.assertEquals("^.*\\.txt$", sink.toString());
+    public void testGlobUnicodeCharacters() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('файл_2024.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('файл_2023.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('document_2024.txt' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            файл_2024.txt
+                            файл_2023.txt
+                            """,
+                    "select * from x where glob(name, 'файл_*.txt')"
+            );
+        });
     }
 
+    // Case sensitivity and special characters
     @Test
-    public void testConvertGlobPatternSimpleBracket() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file[abc].txt", sink, 0);
-        Assert.assertEquals("^file[abc]\\.txt$", sink.toString());
-    }
-
-    @Test
-    public void testConvertGlobPatternSimpleQuestionMark() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file?.txt", sink, 0);
-        Assert.assertEquals("^file.\\.txt$", sink.toString());
-    }
-
-    @Test
-    public void testConvertGlobPatternSingleCharacter() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("a", sink, 0);
-        Assert.assertEquals("^a$", sink.toString());
-    }
-
-    @Test
-    public void testConvertGlobPatternSlashes() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("path/to/file*.txt", sink, 0);
-        Assert.assertEquals("^path/to/file.*\\.txt$", sink.toString());
-    }
-
-    @Test
-    public void testConvertGlobPatternSpecialRegexChars() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file.^$+{}()|txt", sink, 0);
-        Assert.assertEquals("^file\\.\\^\\$\\+\\{\\}\\(\\)\\|txt$", sink.toString());
-    }
-
-    // Unicode and special characters
-    @Test
-    public void testConvertGlobPatternUnicodeCharacters() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("файл*.txt", sink, 0);
-        Assert.assertEquals("^файл.*\\.txt$", sink.toString());
-    }
-
-    @Test
-    public void testConvertGlobPatternUnlimitedDirectory() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("**/file.txt", sink, 0);
-        Assert.assertEquals("^.*/file\\.txt$", sink.toString());
-    }
-
-    @Test
-    public void testConvertGlobPatternUnmatchedCloseBracket() {
-        StringSink sink = new StringSink();
-        try {
-            GlobStrFunctionFactory.convertGlobPatternToRegex("]abc.txt", sink, 0);
-            Assert.fail("Expected SqlException for unmatched closing bracket");
-        } catch (SqlException e) {
-            Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "unbalanced bracket"));
-        }
-    }
-
-    // Malformed patterns: unmatched brackets
-    @Test
-    public void testConvertGlobPatternUnmatchedOpenBracket() {
-        StringSink sink = new StringSink();
-        try {
-            GlobStrFunctionFactory.convertGlobPatternToRegex("file[abc.txt", sink, 0);
-            Assert.fail("Expected SqlException for unmatched bracket");
-        } catch (SqlException e) {
-            Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "unbalanced bracket"));
-        }
+    public void testGlobWithDot() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('file.name.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('filename.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('file_name.txt' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            file.name.txt
+                            """,
+                    "select * from x where glob(name, 'file.name.txt')"
+            );
+        });
     }
 
     @Test
-    public void testConvertGlobPatternWithDot() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("file.name.txt", sink, 0);
-        Assert.assertEquals("^file\\.name\\.txt$", sink.toString());
+    public void testGlobWithNumbers() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('data_2024_01.csv' as string) as name from long_sequence(1)
+                    union
+                    select cast('data_2023_01.csv' as string) as name from long_sequence(1)
+                    union
+                    select cast('data_2024_02.csv' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            data_2024_01.csv
+                            data_2024_02.csv
+                            """,
+                    "select * from x where glob(name, 'data_2024_*.csv')"
+            );
+        });
     }
 
     @Test
-    public void testConvertGlobPatternWithNumbers() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("data_2024_*.csv", sink, 0);
-        Assert.assertEquals("^data_2024_.*\\.csv$", sink.toString());
+    public void testGlobWithPath() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('/var/log/app_2024.log' as string) as path from long_sequence(1)
+                    union
+                    select cast('/var/log/app_2023.log' as string) as path from long_sequence(1)
+                    union
+                    select cast('/var/data/app.log' as string) as path from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            path
+                            /var/log/app_2024.log
+                            /var/log/app_2023.log
+                            """,
+                    "select * from x where glob(path, '/var/log/app_*.log')"
+            );
+        });
     }
 
     @Test
-    public void testConvertGlobPatternWithWhitespace() throws SqlException {
-        StringSink sink = new StringSink();
-        GlobStrFunctionFactory.convertGlobPatternToRegex("my file *.txt", sink, 0);
-        Assert.assertEquals("^my file .*\\.txt$", sink.toString());
+    public void testGlobWithWhitespace() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = """
+                    create table x as (
+                    select cast('my file 2024.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('my file 2023.txt' as string) as name from long_sequence(1)
+                    union
+                    select cast('other_file.txt' as string) as name from long_sequence(1)
+                    )""";
+            execute(sql);
+            assertSql(
+                    """
+                            name
+                            my file 2024.txt
+                            my file 2023.txt
+                            """,
+                    "select * from x where glob(name, 'my file *.txt')"
+            );
+        });
     }
 }
