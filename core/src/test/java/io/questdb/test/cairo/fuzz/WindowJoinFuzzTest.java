@@ -43,8 +43,7 @@ import java.util.List;
 // in CI frequently along with other fuzz tests.
 public class WindowJoinFuzzTest extends AbstractCairoTest {
     private static final CharSequence[] AGGREGATE_FUNCTIONS = new CharSequence[]{
-            // "first", "last", - uncomment when https://github.com/questdb/questdb/pull/6414 is merged
-            "count", "max", "min", "avg", "sum"
+            "first", "last", "count", "max", "min", "avg", "sum"
     };
     private static final CharSequence[] EQ_OPERATORS = new CharSequence[]{
             "<=", ">=", "<>", "!=", "<", ">",
