@@ -2600,6 +2600,7 @@ public final class TestUtils {
         private boolean skipChecksOnClose;
 
         public LeakCheck() {
+            Files.getMmapCache().asyncMunmap();
             Path.clearThreadLocals();
             CLOSEABLE.forEach(Misc::free);
             mem = Unsafe.getMemUsed();
@@ -2638,6 +2639,8 @@ public final class TestUtils {
                                 ", list: " + Files.getOpenFdDebugInfo()
                 );
             }
+
+            Files.getMmapCache().asyncMunmap();
 
             // Checks that the same tag used for allocation and freeing native memory
             long memAfter = Unsafe.getMemUsed();
