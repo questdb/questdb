@@ -759,8 +759,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         break;
 
                     case QUERY_SETUP_FIRST_RECORD:
-                        state.queryState = QUERY_METADATA;
                         state.hasNext = state.cursor.hasNext();
+                        // Advance queryState before calling header(). Why?
+                        // header() call may fail, but it durably populates the headers, even if sending
+                        // them fails. Header sending resumes prior to this loop, in `resumeResponseSend()` call.
+                        // If we then proceed to calling `header()` again, the headers will be repopulated and
+                        // sent in full again.
+                        state.queryState = QUERY_METADATA;
                         header(response, state, 200);
                         // fall through
                     case QUERY_METADATA:
