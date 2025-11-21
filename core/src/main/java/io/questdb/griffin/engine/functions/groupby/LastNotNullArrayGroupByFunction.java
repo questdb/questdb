@@ -28,27 +28,12 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.constants.ArrayConstant;
-import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class LastNotNullArrayGroupByFunction extends FirstArrayGroupByFunction {
 
     public LastNotNullArrayGroupByFunction(@NotNull Function arg) {
         super(arg);
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        mapValue.putLong(valueIndex, rowId);
-        ArrayView array = arg.getArray(record);
-        if (array == null || array.isNull()) {
-            mapValue.putLong(valueIndex + 1, 0);
-        } else {
-            sink.of(0);
-            sink.put(array);
-            mapValue.putLong(valueIndex + 1, sink.ptr());
-        }
     }
 
     @Override
@@ -64,14 +49,6 @@ public class LastNotNullArrayGroupByFunction extends FirstArrayGroupByFunction {
     }
 
     @Override
-    public ArrayView getArray(Record rec) {
-        if (rec.getLong(valueIndex + 1) == 0) {
-            return ArrayConstant.NULL;
-        }
-        return super.getArray(rec);
-    }
-
-    @Override
     public String getName() {
         return "last_not_null";
     }
@@ -83,15 +60,9 @@ public class LastNotNullArrayGroupByFunction extends FirstArrayGroupByFunction {
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId || destRowId == Numbers.LONG_NULL) {
+        if (srcRowId > destRowId || destValue.getLong(valueIndex + 1) == 0) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
         }
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-        mapValue.putLong(valueIndex + 1, 0);
     }
 }
