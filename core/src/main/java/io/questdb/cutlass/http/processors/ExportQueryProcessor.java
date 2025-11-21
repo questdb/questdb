@@ -669,7 +669,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     case QUERY_PARQUET_SEND_MAGIC:
                         if (state.getExportModel().isNoDelay()) {
                             try {
-                                // We send first 3 byes of parquet file, that is always "PAR" in ascii
+                                // We send first 3 bytes of parquet file, that is always "PAR" in ascii
                                 // as a chunk to trigger download to open file save dialog and start background download browsers.
                                 response.put("PAR");
                                 state.parquetFileOffset = 3;

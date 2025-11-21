@@ -174,7 +174,7 @@ public abstract class AbstractChunkedResponse implements Response, Fragment {
                             state = STATE_CHUNK_SIZE;
                             dataLo += CRLF_LEN;
                             receive = false;
-                            // we had to consume the tail CRLF after last chunk for
+                            // we had to consume the tail CRLF after the last chunk
                             // not to leave garbage in the recv buffer
                             if (size == 0) {
                                 return null;
