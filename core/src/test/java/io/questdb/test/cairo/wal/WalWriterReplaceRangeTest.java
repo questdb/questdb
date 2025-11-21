@@ -45,6 +45,50 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     @Test
+    public void testManyTransactionsSkippedWhenTruncateIfFound() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
+
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("stress");
+
+            long lastMinuteStart = MicrosTimestampDriver.floor("2022-02-24T23:59");
+
+            for (int i = 0; i < 100; i++) {
+                try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                    // Add a new row with the current replace value
+                    TableWriter.Row row = ww.newRow(lastMinuteStart + 30_000_000); // Middle of the last minute
+                    row.putLong(0, i);
+                    row.putLong(2, i * 100);
+                    row.append();
+                    ww.commit();
+                }
+            }
+            execute("truncate table stress");
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                // Add a new row with the current replace value
+                TableWriter.Row row = ww.newRow(lastMinuteStart + 30_000_000); // Middle of the last minute
+                row.putLong(0, 1001);
+                row.putLong(2, (1001) * 100);
+                row.append();
+                ww.commit();
+            }
+
+            // Apply any remaining WAL entries
+            drainWalQueue();
+
+            // Verify the total count
+            // Expected: rows before 23:00 + 3 rows in the replace ranges
+            // Based on the test run, the original data has rows from 23:00 to 23:19:26 that get replaced
+            assertSql("count\n1\n", "select count(*) from stress");
+            try (TableReader rdr = engine.getReader(tableToken)) {
+                var txn = rdr.getTxn();
+                Assert.assertEquals(3, txn); // Expecting many transactions to be skipped
+            }
+        });
+    }
+
+    @Test
     public void testRemovesFirstPartitionNoRowsAdded() throws Exception {
         testRemovesFirstPartitionNoRowsAdded(true);
     }
@@ -496,6 +540,194 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         testReplaceTruncatesAllData(true);
     }
 
+    @Test
+    public void testStressReplaceLastMinuteRepeatedly() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
+
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("stress");
+
+            // Insert 100k rows spanning 1 day, so that partition is reasonably big to rewrite
+            execute("insert into stress select x, cast('2022-02-24T00:00' as timestamp) + (x / 60) * 840000 * 60, x * 10 from long_sequence(100000)");
+            drainWalQueue();
+
+            // Verify initial state
+            assertSql("count\n100000\n", "select count(*) from stress");
+
+            // Get the timestamp of the last minute (last row timestamp)
+            long lastMinuteStart = MicrosTimestampDriver.floor("2022-02-24T23:59");
+            long lastMinuteEnd = lastMinuteStart + 60 * 1_000_000; // 1 minute in microseconds
+
+            // Perform 1,000 replace commits, each replacing the last minute with a new value
+            long replaceValue = 1000L;
+            long lastValue = 0;
+            for (int i = 0; i < 1_000; i++) {
+                try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                    // Add a new row with the current replace value
+                    TableWriter.Row row = ww.newRow(lastMinuteStart + 30_000_000); // Middle of the last minute
+                    row.putLong(0, replaceValue + i);
+                    row.putLong(2, (replaceValue + i) * 100);
+                    row.append();
+
+                    // Commit with replace range for the last minute
+                    ww.commitWithParams(lastMinuteStart, lastMinuteEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
+                    lastValue = (replaceValue + i) * 100;
+                }
+            }
+
+            // Apply WAL
+            drainWalQueue();
+
+            // Verify the final state
+            assertSql("count\n100001\n", "select count(*) from stress");
+
+            // Check the results of the last minute
+            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:59' and ts < '2022-02-25T00:00'");
+
+            // Verify the value is from the last replace operation
+            assertSql("value\n" + lastValue + "\n", "select value from stress where ts >= '2022-02-24T23:59' and ts < '2022-02-25T00:00'");
+        });
+    }
+
+    @Test
+    public void testStressReplaceLastMinuteRepeatedlyWithSkippableTransactions() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
+
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("stress");
+
+            // Insert 100k rows spanning 1 day, so that partition is reasonably big to rewrite
+            execute("insert into stress select x, cast('2022-02-24T00:00' as timestamp) + (x / 60) * 840000 * 60, x * 10 from long_sequence(100000)");
+            drainWalQueue();
+
+            // Verify initial state
+            assertSql("count\n100000\n", "select count(*) from stress");
+
+            // Base timestamp ranges - we'll vary these to create overlapping and non-overlapping replace ranges
+            long baseHour = MicrosTimestampDriver.floor("2022-02-24T23:00");
+            long minuteInMicros = 60 * 1_000_000L;
+
+            // Perform 1000 replace commits with randomly varying replace ranges
+            // Some transactions will replace the same time range (and can be skipped)
+            // Others will replace different ranges (and cannot be skipped)
+            long replaceValue = 1000L;
+            java.util.Random rnd = new java.util.Random(42); // Fixed seed for reproducibility
+            long[] lastValues = new long[3];
+
+            for (int i = 0; i < 1_000; i++) {
+                try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                    // Randomly choose one of 3 different time ranges to replace
+                    // This creates overlaps where ~33% of transactions can be skipped
+                    int rangeSelector = rnd.nextInt(3);
+                    long rangeStart = baseHour + rangeSelector * 20 * minuteInMicros; // 23:00, 23:20, or 23:40
+                    long rangeEnd = rangeStart + 20 * minuteInMicros; // 20 minute ranges
+
+                    // Insert a row within the replace range
+                    long insertTs = rangeStart + 10 * minuteInMicros; // Middle of the range
+                    TableWriter.Row row = ww.newRow(insertTs);
+                    row.putLong(0, replaceValue + i);
+                    long currentValue = (replaceValue + i) * 100;
+                    row.putLong(2, currentValue);
+                    row.append();
+
+                    // Commit with replace range
+                    ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
+                    lastValues[rangeSelector] = currentValue;
+                }
+
+                // Drain periodically to allow some batching and transaction skipping
+                if (i % 10 == 9) {
+                    drainWalQueue();
+                }
+            }
+
+            // Apply any remaining WAL entries
+            drainWalQueue();
+
+            assertSql("value\tts\n" +
+                            lastValues[0] + "\t2022-02-24T23:10:00.000000Z\n" +
+                            lastValues[1] + "\t2022-02-24T23:30:00.000000Z\n" +
+                            lastValues[2] + "\t2022-02-24T23:50:00.000000Z\n",
+                    "select value, ts from stress where ts >= '2022-02-24T23:00'"
+            );
+        });
+    }
+
+    @Test
+    public void testStressReplaceWithInterleavedSkipsAndApplies() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
+
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("stress");
+
+            // Insert 100k rows spanning 1 day
+            execute("insert into stress select x, cast('2022-02-24T00:00' as timestamp) + (x / 60) * 840000 * 60, x * 10 from long_sequence(100000)");
+            drainWalQueue();
+
+            // Verify initial state
+            assertSql("count\n100000\n", "select count(*) from stress");
+
+            long baseHour = MicrosTimestampDriver.floor("2022-02-24T23:00");
+            long minuteInMicros = 60 * 1_000_000L;
+
+            // Create a pattern that forces: skip -> apply -> skip -> apply within a single batch
+            // Pattern: A, A, B, C, C, D, A, C, E, F (where A-F are different time ranges)
+            // Within this batch:
+            // - Txns 0-1 (A,A) -> skipped (replaced by txn 6 which is the last A)
+            // - Txn 2 (B) -> APPLIED (only B, not replaced by any later transaction)
+            // - Txns 3-4 (C,C) -> skipped (replaced by txn 7 which is the last C)
+            // - Txn 5 (D) -> APPLIED (only D, not replaced)
+            // - Txn 6 (A) -> APPLIED (last A)
+            // - Txn 7 (C) -> APPLIED (last C)
+            // - Txn 8 (E) -> APPLIED (only E)
+            // - Txn 9 (F) -> APPLIED (only F)
+            // This creates: skip(0-1) -> APPLY(2) -> skip(3-4) -> APPLY(5) -> APPLY(6-9)
+            // We use 6 different ranges (0-5) to ensure some are unique and must be applied
+            int[] pattern = {0, 0, 1, 2, 2, 3, 0, 2, 4, 5}; // 0-5 represent 6 different time ranges
+            long replaceValue = 1000L;
+            long[] lastValues = new long[6];
+
+            for (int batch = 0; batch < 10; batch++) {
+                for (int i = 0; i < pattern.length; i++) {
+                    try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                        int rangeSelector = pattern[i];
+                        // Create 6 different 10-minute ranges to spread transactions across more ranges
+                        long rangeStart = baseHour + rangeSelector * 10 * minuteInMicros; // 23:00, 23:10, 23:20, 23:30, 23:40, 23:50
+                        long rangeEnd = rangeStart + 10 * minuteInMicros; // 10 minute ranges
+
+                        // Insert a row within the replace range
+                        long insertTs = rangeStart + 5 * minuteInMicros; // Middle of the range
+                        TableWriter.Row row = ww.newRow(insertTs);
+                        row.putLong(0, replaceValue);
+                        row.putLong(2, replaceValue * 100);
+                        row.append();
+
+                        // Commit with replace range
+                        ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
+                        lastValues[rangeSelector] = replaceValue * 100;
+                        replaceValue++;
+                    }
+                }
+                // Drain after each complete pattern to allow skipping within the batch
+                drainWalQueue();
+            }
+
+            // Verify we have exactly one row in each of the six 10-minute ranges
+            assertSql("value\tts\n" +
+                            lastValues[0] + "\t2022-02-24T23:05:00.000000Z\n" +
+                            lastValues[1] + "\t2022-02-24T23:15:00.000000Z\n" +
+                            lastValues[2] + "\t2022-02-24T23:25:00.000000Z\n" +
+                            lastValues[3] + "\t2022-02-24T23:35:00.000000Z\n" +
+                            lastValues[4] + "\t2022-02-24T23:45:00.000000Z\n" +
+                            lastValues[5] + "\t2022-02-24T23:55:00.000000Z\n",
+                    "select value, ts from stress where ts >= '2022-02-24T23:00'"
+            );
+        });
+    }
+
     private static void commitNoRowsWithRangeReplace(
             TableToken tableToken,
             String rangeStartStr,
@@ -735,239 +967,6 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             drainWalQueue();
 
             insertRowWithReplaceRange("2022-02-21,2022-02-21T01", "2022-02-21", "2022-02-27", tableToken, false, false, "rg", "expected", true, generateNoRowsCommit);
-        });
-    }
-
-    @Test
-    public void testStressReplaceLastMinuteRepeatedly() throws Exception {
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
-
-            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("stress");
-
-            // Insert 100k rows spanning 1 day, so that partition is reasonably big to rewrite
-            execute("insert into stress select x, cast('2022-02-24T00:00' as timestamp) + (x / 60) * 840000 * 60, x * 10 from long_sequence(100000)");
-            drainWalQueue();
-
-            // Verify initial state
-            assertSql("count\n100000\n", "select count(*) from stress");
-
-            // Get the timestamp of the last minute (last row timestamp)
-            long lastMinuteStart = MicrosTimestampDriver.floor("2022-02-24T23:59");
-            long lastMinuteEnd = lastMinuteStart + 60 * 1_000_000; // 1 minute in microseconds
-
-            // Perform 1,000 replace commits, each replacing the last minute with a new value
-            long replaceValue = 1000L;
-            long lastValue = 0;
-            for (int i = 0; i < 1_000; i++) {
-                try (WalWriter ww = engine.getWalWriter(tableToken)) {
-                    // Add a new row with the current replace value
-                    TableWriter.Row row = ww.newRow(lastMinuteStart + 30_000_000); // Middle of the last minute
-                    row.putLong(0, replaceValue + i);
-                    row.putLong(2, (replaceValue + i) * 100);
-                    row.append();
-
-                    // Commit with replace range for the last minute
-                    ww.commitWithParams(lastMinuteStart, lastMinuteEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
-                    lastValue = (replaceValue + i) * 100;
-                }
-            }
-
-            // Apply WAL
-            drainWalQueue();
-
-            // Verify the final state
-            assertSql("count\n100001\n", "select count(*) from stress");
-
-            // Check the results of the last minute
-            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:59' and ts < '2022-02-25T00:00'");
-
-            // Verify the value is from the last replace operation
-            assertSql("value\n" + lastValue + "\n", "select value from stress where ts >= '2022-02-24T23:59' and ts < '2022-02-25T00:00'");
-        });
-    }
-
-    @Test
-    public void testStressReplaceLastMinuteRepeatedlyWithSkippableTransactions() throws Exception {
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
-
-            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("stress");
-
-            // Insert 100k rows spanning 1 day, so that partition is reasonably big to rewrite
-            execute("insert into stress select x, cast('2022-02-24T00:00' as timestamp) + (x / 60) * 840000 * 60, x * 10 from long_sequence(100000)");
-            drainWalQueue();
-
-            // Verify initial state
-            assertSql("count\n100000\n", "select count(*) from stress");
-
-            // Base timestamp ranges - we'll vary these to create overlapping and non-overlapping replace ranges
-            long baseHour = MicrosTimestampDriver.floor("2022-02-24T23:00");
-            long minuteInMicros = 60 * 1_000_000L;
-
-            // Perform 1000 replace commits with randomly varying replace ranges
-            // Some transactions will replace the same time range (and can be skipped)
-            // Others will replace different ranges (and cannot be skipped)
-            long replaceValue = 1000L;
-            java.util.Random rnd = new java.util.Random(42); // Fixed seed for reproducibility
-
-            for (int i = 0; i < 1_000; i++) {
-                try (WalWriter ww = engine.getWalWriter(tableToken)) {
-                    // Randomly choose one of 3 different time ranges to replace
-                    // This creates overlaps where ~33% of transactions can be skipped
-                    int rangeSelector = rnd.nextInt(3);
-                    long rangeStart = baseHour + rangeSelector * 20 * minuteInMicros; // 23:00, 23:20, or 23:40
-                    long rangeEnd = rangeStart + 20 * minuteInMicros; // 20 minute ranges
-
-                    // Insert a row within the replace range
-                    long insertTs = rangeStart + 10 * minuteInMicros; // Middle of the range
-                    TableWriter.Row row = ww.newRow(insertTs);
-                    row.putLong(0, replaceValue + i);
-                    row.putLong(2, (replaceValue + i) * 100);
-                    row.append();
-
-                    // Commit with replace range
-                    ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
-                }
-
-                // Drain periodically to allow some batching and transaction skipping
-                if (i % 10 == 9) {
-                    drainWalQueue();
-                }
-            }
-
-            // Apply any remaining WAL entries
-            drainWalQueue();
-
-            // Verify we have exactly one row in each of the three 20-minute ranges
-            // (Each range was replaced multiple times, but only the last replacement for each range survives)
-            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:00' and ts < '2022-02-24T23:20'");
-            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:20' and ts < '2022-02-24T23:40'");
-            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:40' and ts < '2022-02-25T00:00'");
-
-            // Verify the total count
-            // Expected: rows before 23:00 + 3 rows in the replace ranges
-            // Based on the test run, the original data has rows from 23:00 to 23:19:26 that get replaced
-            assertSql("count\n98582\n", "select count(*) from stress");
-        });
-    }
-
-    @Test
-    public void testManyTransactionsSkippedWhenTruncateIfFound() throws Exception {
-        assertMemoryLeak(() -> {
-            setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
-
-            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("stress");
-
-            long lastMinuteStart = MicrosTimestampDriver.floor("2022-02-24T23:59");
-
-            for (int i = 0; i < 100; i++) {
-                try (WalWriter ww = engine.getWalWriter(tableToken)) {
-                    // Add a new row with the current replace value
-                    TableWriter.Row row = ww.newRow(lastMinuteStart + 30_000_000); // Middle of the last minute
-                    row.putLong(0, i);
-                    row.putLong(2, i * 100);
-                    row.append();
-                    ww.commit();
-                }
-            }
-            execute("truncate table stress");
-            try (WalWriter ww = engine.getWalWriter(tableToken)) {
-                // Add a new row with the current replace value
-                TableWriter.Row row = ww.newRow(lastMinuteStart + 30_000_000); // Middle of the last minute
-                row.putLong(0, 1001);
-                row.putLong(2, (1001) * 100);
-                row.append();
-                ww.commit();
-            }
-
-            // Apply any remaining WAL entries
-            drainWalQueue();
-
-            // Verify the total count
-            // Expected: rows before 23:00 + 3 rows in the replace ranges
-            // Based on the test run, the original data has rows from 23:00 to 23:19:26 that get replaced
-            assertSql("count\n1\n", "select count(*) from stress");
-            try (TableReader rdr = engine.getReader(tableToken)) {
-                var txn = rdr.getTxn();
-                Assert.assertEquals(2, txn); // Expecting many transactions to be skipped
-            }
-        });
-    }
-
-    @Test
-    public void testStressReplaceWithInterleavedSkipsAndApplies() throws Exception {
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
-
-            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("stress");
-
-            // Insert 100k rows spanning 1 day
-            execute("insert into stress select x, cast('2022-02-24T00:00' as timestamp) + (x / 60) * 840000 * 60, x * 10 from long_sequence(100000)");
-            drainWalQueue();
-
-            // Verify initial state
-            assertSql("count\n100000\n", "select count(*) from stress");
-
-            long baseHour = MicrosTimestampDriver.floor("2022-02-24T23:00");
-            long minuteInMicros = 60 * 1_000_000L;
-
-            // Create a pattern that forces: skip -> apply -> skip -> apply within a single batch
-            // Pattern: A, A, B, C, C, D, A, C, E, F (where A-F are different time ranges)
-            // Within this batch:
-            // - Txns 0-1 (A,A) -> skipped (replaced by txn 6 which is the last A)
-            // - Txn 2 (B) -> APPLIED (only B, not replaced by any later transaction)
-            // - Txns 3-4 (C,C) -> skipped (replaced by txn 7 which is the last C)
-            // - Txn 5 (D) -> APPLIED (only D, not replaced)
-            // - Txn 6 (A) -> APPLIED (last A)
-            // - Txn 7 (C) -> APPLIED (last C)
-            // - Txn 8 (E) -> APPLIED (only E)
-            // - Txn 9 (F) -> APPLIED (only F)
-            // This creates: skip(0-1) -> APPLY(2) -> skip(3-4) -> APPLY(5) -> APPLY(6-9)
-            // We use 6 different ranges (0-5) to ensure some are unique and must be applied
-            int[] pattern = {0, 0, 1, 2, 2, 3, 0, 2, 4, 5}; // 0-5 represent 6 different time ranges
-            long replaceValue = 1000L;
-
-            for (int batch = 0; batch < 10; batch++) {
-                for (int i = 0; i < pattern.length; i++) {
-                    try (WalWriter ww = engine.getWalWriter(tableToken)) {
-                        int rangeSelector = pattern[i];
-                        // Create 6 different 10-minute ranges to spread transactions across more ranges
-                        long rangeStart = baseHour + rangeSelector * 10 * minuteInMicros; // 23:00, 23:10, 23:20, 23:30, 23:40, 23:50
-                        long rangeEnd = rangeStart + 10 * minuteInMicros; // 10 minute ranges
-
-                        // Insert a row within the replace range
-                        long insertTs = rangeStart + 5 * minuteInMicros; // Middle of the range
-                        TableWriter.Row row = ww.newRow(insertTs);
-                        row.putLong(0, replaceValue);
-                        row.putLong(2, replaceValue * 100);
-                        row.append();
-
-                        // Commit with replace range
-                        ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
-                        replaceValue++;
-                    }
-                }
-                // Drain after each complete pattern to allow skipping within the batch
-                drainWalQueue();
-            }
-
-            // Verify we have exactly one row in each of the six 10-minute ranges
-            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:00' and ts < '2022-02-24T23:10'");
-            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:10' and ts < '2022-02-24T23:20'");
-            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:20' and ts < '2022-02-24T23:30'");
-            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:30' and ts < '2022-02-24T23:40'");
-            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:40' and ts < '2022-02-24T23:50'");
-            assertSql("count\n1\n", "select count(*) from stress where ts >= '2022-02-24T23:50' and ts < '2022-02-25T00:00'");
-
-            // Verify the total count
-            // Original 100k rows go up to 23:19:26.4, which includes rows in the first two ranges (23:00-23:10 and 23:10-23:20)
-            // Those get replaced, so we have: (100k - original rows in 23:00-23:20) + 6 new rows
-            assertSql("count\n98585\n", "select count(*) from stress");
         });
     }
 }

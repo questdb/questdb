@@ -129,27 +129,27 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final long lastSeqTxn = walTxnDetails.getLastSeqTxn();
 
         // Initial loop condition, as if the previous transaction was skipped
-        long seqTxn = initialSeqTxn - 1;
-        boolean seqTxnCanBeSkipped = true;
-
-        while (seqTxnCanBeSkipped && seqTxn < lastSeqTxn) {
-            seqTxn++;
-            seqTxnCanBeSkipped = false;
-
+        for (long seqTxn = initialSeqTxn; seqTxn < lastSeqTxn; seqTxn++) {
             int walId = walTxnDetails.getWalId(seqTxn);
             if (walId < 1 || !isDataType(walTxnDetails.getWalTxnType(seqTxn))) {
                 // This is not a data transaction
-                break;
+                return seqTxn - initialSeqTxn;
             }
 
             long txnTsLo = walTxnDetails.getMinTimestamp(seqTxn);
-            long txnTsHi = walTxnDetails.getMaxTimestamp(seqTxn) + 1;
+            long txnTsHi = walTxnDetails.getMaxTimestamp(seqTxn) + 1; // Max is inclusive, make txnTsHi exclusive
             if (walTxnDetails.getDedupMode(seqTxn) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
                 txnTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
                 txnTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
             }
 
             long firstNonSkippableTxn = Long.MAX_VALUE;
+            boolean seqTxnCanBeSkipped = false;
+
+            // Even though it's O(N^2) complexity, the number of transactions we can skip is expected to be small.
+            // So the outer loop exits very early, it is expected to exit after 1st iteration.
+            // Unless TRUNCATE SQL found and many transactions can be skipped.
+            // TRUNCATE has special optimization to stop scanning early.
             for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
                 int futureWalId = walTxnDetails.getWalId(futureSeqTxn);
                 if (futureWalId > 0) {
@@ -189,9 +189,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                 }
             }
+
+            if (!seqTxnCanBeSkipped) {
+                return seqTxn - initialSeqTxn;
+            }
         }
 
-        return seqTxn - initialSeqTxn;
+        return lastSeqTxn - initialSeqTxn;
     }
 
     private static void cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
