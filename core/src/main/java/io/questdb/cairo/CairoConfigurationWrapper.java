@@ -102,6 +102,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getAsyncMunmapEnabled() {
+        return getDelegate().getAsyncMunmapEnabled();
+    }
+
+    @Override
     public @NotNull String getAttachPartitionSuffix() {
         return getDelegate().getAttachPartitionSuffix();
     }

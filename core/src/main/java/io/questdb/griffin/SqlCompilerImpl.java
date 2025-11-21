@@ -166,8 +166,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return true;
         }
     };
-    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
+    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
@@ -1739,7 +1739,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final boolean sizeInferred;
 
                     tok = SqlUtil.fetchNext(lexer);
-                    if (tok == null) {
+                    if (tok == null || isSemicolon(tok)) {
                         indexValueBlockSize = estimateIndexValueBlockSizeFromReader(configuration, executionContext, matViewToken, columnIndex);
                         sizeInferred = true;
                     } else {

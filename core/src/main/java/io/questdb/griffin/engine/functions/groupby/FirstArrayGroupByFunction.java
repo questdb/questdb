@@ -41,9 +41,9 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private final GroupByArraySink sink;
-    private int valueIndex;
+    protected final Function arg;
+    protected final GroupByArraySink sink;
+    protected int valueIndex;
 
     public FirstArrayGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -64,9 +64,14 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
-        sink.of(0);
-        sink.put(arg.getArray(record));
-        mapValue.putLong(valueIndex + 1, sink.ptr());
+        ArrayView array = arg.getArray(record);
+        if (array == null || array.isNull()) {
+            mapValue.putLong(valueIndex + 1, 0);
+        } else {
+            sink.of(0);
+            sink.put(array);
+            mapValue.putLong(valueIndex + 1, sink.ptr());
+        }
     }
 
     @Override
