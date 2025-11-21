@@ -24,17 +24,76 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class FirstNotNullArrayGroupByFunction extends NotNullArrayGroupByFunction {
+public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction {
 
     public FirstNotNullArrayGroupByFunction(@NotNull Function arg) {
-        super(arg, (srcRowId, destRowId) -> srcRowId < destRowId, (mapValue, valueIdx) -> mapValue.getLong(valueIdx + 1) != 0);
+        super(arg);
+    }
+
+    @Override
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        ArrayView array = arg.getArray(record);
+        if (array == null || array.isNull()) {
+            mapValue.putLong(valueIndex + 1, 0);
+        } else {
+            sink.of(0);
+            sink.put(array);
+            mapValue.putLong(valueIndex + 1, sink.ptr());
+        }
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        if (mapValue.getLong(valueIndex + 1) == 0) {
+            ArrayView array = arg.getArray(record);
+            if (array != null && !array.isNull()) {
+                mapValue.putLong(valueIndex, rowId);
+                long ptr = mapValue.getLong(valueIndex + 1);
+                sink.of(ptr);
+                sink.put(array);
+                mapValue.putLong(valueIndex + 1, sink.ptr());
+            }
+        }
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        if (rec.getLong(valueIndex + 1) == 0) {
+            return ArrayConstant.NULL;
+        }
+        return super.getArray(rec);
     }
 
     @Override
     public String getName() {
         return "first_not_null";
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        if (srcValue.getLong(valueIndex + 1) == 0) {
+            return;
+        }
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
+        }
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 }
