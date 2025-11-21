@@ -889,6 +889,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             CharSequence keepAliveHeader,
             int statusCode
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // State management note: We assume our response sink buffer is large enough to accommodate for all
+        // HTTP response headers. In other words - this method never throws the NoSpaceLeftInResponseBufferException
+        // exception.
+        // It can still throw PeerIsSlowToReadException when there is no space in TCP send buffer! In practice, it means
+        // the processor should advance its state BEFORE calling this method.
+
         response.status(statusCode, HttpConstants.CONTENT_TYPE_JSON);
         response.headers().setKeepAlive(keepAliveHeader);
         context.getCookieHandler().setServiceAccountCookie(response.headers(), context.getSecurityContext());
