@@ -2481,7 +2481,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             CharSequence alias = timestamp.token;
             final CharSequence currTimestamp = curr.getTimestamp().token;
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                final QueryColumn col = model.getColumns().getQuick(i);
+                final QueryColumn col = model.getBottomUpColumns().getQuick(i);
                 final ExpressionNode ast = col.getAst();
                 if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)) {
                     final CharSequence ts;
