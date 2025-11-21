@@ -109,6 +109,13 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         if (!Chars.equals(glob, root)) {
             glob = glob.subSequence(root.length(), glob.length());
         }
+
+        if (Chars.isBlank(glob)) {
+            // then it is just a file scan
+            return filesFunctionFactory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
+        }
+
+        // strip leading char
         if (glob.charAt(0) == '/' || glob.charAt(0) == '\\') {
             glob = glob.subSequence(1, glob.length());
         }

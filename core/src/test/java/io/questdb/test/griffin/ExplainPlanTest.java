@@ -140,7 +140,6 @@ import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory;
 import io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory;
-import io.questdb.griffin.engine.functions.regex.GlobStrFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
@@ -2837,9 +2836,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     FunctionFactory factory = descriptor.getFactory();
                     if (factory instanceof ReadParquetFunctionFactory) {
                         continue;
-                    }
-                    if (factory instanceof GlobStrFunctionFactory || Chars.equals(key, "glob")) {
-                        System.out.println("boo");
                     }
                     int sigArgCount = descriptor.getSigArgCount();
 

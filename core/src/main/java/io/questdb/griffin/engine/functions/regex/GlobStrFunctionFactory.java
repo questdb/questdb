@@ -30,15 +30,18 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 public class GlobStrFunctionFactory implements FunctionFactory {
+    private static final io.questdb.std.ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private final MatchStrFunctionFactory matchStrFactory = new MatchStrFunctionFactory();
-    StringSink sink = new StringSink();
 
-    public static void convertGlobPatternToRegex(CharSequence globPattern, StringSink sink) {
+    public static void convertGlobPatternToRegex(@NotNull CharSequence globPattern, StringSink sink, int position) throws SqlException {
         int bracketStackDepth = 0;
         sink.put('^'); // start anchor
         for (int i = 0, n = globPattern.length(); i < n; i++) {
@@ -85,7 +88,9 @@ public class GlobStrFunctionFactory implements FunctionFactory {
             }
         }
         sink.put('$'); // end anchor
-        assert bracketStackDepth == 0;
+        if (bracketStackDepth != 0) {
+            throw SqlException.$(position, "unbalanced bracket [glob=").put(globPattern).put(']');
+        }
     }
 
     @Override
@@ -97,9 +102,17 @@ public class GlobStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function arg = args.getQuick(1);
         assert arg.isConstant();
+        final CharSequence globPattern = arg.getStrA(null);
+
+        if (Chars.isBlank(globPattern)) {
+            throw SqlException.$(argPositions.get(1), "glob pattern must not be null or empty");
+        }
+
+        final StringSink sink = tlSink.get();
         sink.clear();
-        convertGlobPatternToRegex(arg.getStrA(null), sink);
+        convertGlobPatternToRegex(globPattern, sink, argPositions.get(1));
         StrConstant regex = StrConstant.newInstance(sink);
+
         final ObjList<Function> newArgList = args.copy();
         newArgList.set(1, regex);
         return matchStrFactory.newInstance(position, newArgList, argPositions, configuration, sqlExecutionContext);
