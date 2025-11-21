@@ -102,6 +102,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_BAD_UTF8 = QUERY_DONE + 1;
     static final int QUERY_EMPTY_QUERY = QUERY_BAD_UTF8 + 1;
     static final int QUERY_CONFIRMATION = QUERY_EMPTY_QUERY + 1;
+    static final int QUERY_INSERT_CONFIRMATION = QUERY_CONFIRMATION + 1;
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
@@ -174,6 +175,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         resumeActions.extendAndSet(QUERY_BAD_UTF8, (response, columnCount) -> onResumeBadUtf8(response));
         resumeActions.extendAndSet(QUERY_EMPTY_QUERY, (response, columnCount) -> onResumeEmptyQuery(response));
         resumeActions.extendAndSet(QUERY_CONFIRMATION, (response, columnCount) -> onConfirmation(response));
+        resumeActions.extendAndSet(QUERY_INSERT_CONFIRMATION, (response, columnCount) -> onInsertConfirmation(response));
         this.nanosecondClock = nanosecondClock;
         this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
         this.keepAliveHeader = keepAliveHeader;
@@ -355,6 +357,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.sendChunk(true);
     }
 
+    public void onInsertConfirmation(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        response.bookmark();
+        response.put('{')
+                .putAsciiQuoted("dml").putAscii(':').putAsciiQuoted("OK")
+                .put('}');
+        queryState = QUERY_DONE;
+        readyForNextRequest(getHttpConnectionContext());
+        response.sendChunk(true);
+    }
+
     public void setCompilerNanos(long compilerNanos) {
         this.compilerNanos = compilerNanos;
     }
@@ -404,6 +416,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.errorPosition = errorPosition;
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
+    }
+
+    public void storeInsertConfirmation() {
+        queryState = QUERY_INSERT_CONFIRMATION;
     }
 
     private static byte parseApiVersion(HttpRequestHeader header) {

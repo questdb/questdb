@@ -42,6 +42,7 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                 .withSendBufferSize(Math.max(1024, rnd.nextInt(4099)))
                 .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
                             engine.execute("create table xyz as (select rnd_int() a, rnd_double() b, timestamp_sequence(0,1000) ts from long_sequence(1000)) timestamp(ts) partition by hour");
+                            engine.execute("create table growing as (select rnd_int() a, rnd_double() b, timestamp_sequence(0,1000) ts from long_sequence(1000)) timestamp(ts) partition by hour");
 
                             var requestResponse = new Object[][]{
                                     {"select count() from xyz", "{\"query\":\"select count() from xyz\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1000]],\"count\":1}"},
@@ -54,7 +55,8 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                                     {new Utf8StringSink().put("select").putAny((byte) 0xC3).putAny((byte) 0x28), "{\"query\":\"selectￃ(\",\"error\":\"Bad UTF8 encoding in query text\",\"position\":0}"},
                                     // empty query
                                     {"", "{\"error\":\"empty query\",\"query\":\"\",\"position\":\"0\"}"},
-                                    {"backup table xyz", "{\"query\":\"backup table xyz\",\"error\":\"backup is disabled, server.conf property 'cairo.sql.backup.root' is not set\",\"position\":0}"}
+                                    {"backup table xyz", "{\"query\":\"backup table xyz\",\"error\":\"backup is disabled, server.conf property 'cairo.sql.backup.root' is not set\",\"position\":0}"},
+                                    {"insert into growing values (0, 0, '2000')", "{\"dml\":\"OK\"}"}
                             };
 
 
