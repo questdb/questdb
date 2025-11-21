@@ -252,6 +252,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long getColumnTop(int columnIndex) {
+            return baseFrame.getColumnTop(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
         public byte getFormat() {
             return baseFrame.getFormat();
         }

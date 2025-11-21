@@ -456,7 +456,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_createStream
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,
-    col_types_ptr: *const i32,
+    col_meta_data: *const i64,
     timestamp_index: jint,
     compression_codec: jlong,
     statistics_enabled: jboolean,
@@ -470,7 +470,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_createStream
             col_count,
             col_names_ptr,
             col_names_len,
-            col_types_ptr,
+            col_meta_data,
             timestamp_index,
         )?;
         let mut current_buffer = Vec::with_capacity(8192);
@@ -638,7 +638,7 @@ fn create_partition_template(
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,
-    col_types_ptr: *const i32,
+    col_meta_data_ptr: *const i64,
     timestamp_index: jint,
 ) -> ParquetResult<Partition> {
     let col_count = col_count as usize;
@@ -647,16 +647,21 @@ fn create_partition_template(
     let mut col_names = unsafe {
         std::str::from_utf8_unchecked(slice::from_raw_parts(col_names_ptr, col_names_len))
     };
-    let col_types = unsafe { slice::from_raw_parts(col_types_ptr, col_count) };
-
+    let col_meta_datas = unsafe { slice::from_raw_parts(col_meta_data_ptr, col_count) };
     let mut columns = vec![];
-    for (col_idx, &col_type) in col_types.iter().enumerate() {
-        let col_name_end = col_names.find('\0').unwrap_or(col_names.len());
-        let (col_name, tail) = col_names.split_at(col_name_end);
-        col_names = tail.strip_prefix('\0').unwrap_or(tail);
+
+    for col_idx in 0..col_count {
+        let raw_idx = col_idx * 2;
+        let col_name_size = col_meta_datas[raw_idx];
+        let (col_name, tail) = col_names.split_at(col_name_size as usize);
+        col_names = tail;
+
+        let packed = col_meta_datas[raw_idx + 1];
+        let col_id = (packed >> 32) as i32;
+        let col_type = (packed & 0xFFFFFFFF) as i32;
         let designated_timestamp = col_idx as i32 == timestamp_index;
         let column = Column::from_raw_data(
-            col_idx as i32,
+            col_id,
             col_name,
             col_type,
             0,
@@ -681,7 +686,7 @@ fn update_partition_data(
     col_data_ptr: *const i64,
     row_count: usize,
 ) -> ParquetResult<()> {
-    const COL_DATA_ENTRY_SIZE: usize = 8;
+    const COL_DATA_ENTRY_SIZE: usize = 7;
     let col_data = unsafe {
         slice::from_raw_parts(col_data_ptr, partition.columns.len() * COL_DATA_ENTRY_SIZE)
     };
