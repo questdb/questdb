@@ -45,17 +45,17 @@ import io.questdb.std.str.Utf8s;
  * Used by both ImportFilesFunctionFactory and ExportFilesFunctionFactory.
  */
 public class FilesRecordCursor implements NoRandomAccessRecordCursor {
-    private static final int MODIFIED_TIME_COLUMN = 3;
-    private static final int PATH_COLUMN = 0;
-    private static final int SIZE_COLUMN = 1;
-    private static final int SIZE_HUMAN_COLUMN = 2;
+    public static final int MODIFIED_TIME_COLUMN = 3;
+    public static final int PATH_COLUMN = 0;
+    public static final int SIZE_COLUMN = 1;
+    public static final int SIZE_HUMAN_COLUMN = 2;
     protected final FilesFacade ff;
     protected final Utf8StringSink fileNameSink = new Utf8StringSink();
     protected final FileRecord record = new FileRecord();
     protected final Utf8StringSink relativePathSink = new Utf8StringSink();
     protected final Path rootPath;
     protected final int rootPathLen;
-    protected final Path workingPath = new Path(MemoryTag.NATIVE_FUNC_RSS);
+    protected final Path workingPath = new Path(MemoryTag.NATIVE_PATH);
     private final LongStack dirFindPtrs = new LongStack();
     private final IntStack dirPathLens = new IntStack();
     protected long findPtr = 0;

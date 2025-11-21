@@ -22,47 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.filewatch;
+package io.questdb.cutlass.http.processors.v1;
 
-public final class LinuxAccessorFacadeImpl implements LinuxAccessorFacade {
-    public static final LinuxAccessorFacadeImpl INSTANCE = new LinuxAccessorFacadeImpl();
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.std.ObjHashSet;
 
-    private LinuxAccessorFacadeImpl() {
+/**
+ * Routes OpenAPI specification requests to the OpenApiProcessor.
+ * Serves the OpenAPI 3.0 specification at /api/v1/ or /api/v1
+ */
+public class OpenApiRouter implements HttpRequestHandler {
+    private final HttpRequestProcessor processor;
 
+    public OpenApiRouter() {
+        processor = new OpenApiProcessor();
+    }
+
+    public static ObjHashSet<String> getRoutes(ObjHashSet<String> parentRoutes) {
+        ObjHashSet<String> out = new ObjHashSet<>(parentRoutes.size());
+        for (int i = 0; i < parentRoutes.size(); i++) {
+            String parentRoute = parentRoutes.get(i);
+            out.add(parentRoute);
+        }
+        return out;
     }
 
     @Override
-    public int inotifyAddWatch(long fd, long pathPtr, int flags) {
-        return LinuxAccessor.inotifyAddWatch(fd, pathPtr, flags);
-    }
-
-    @Override
-    public int inotifyInit() {
-        return LinuxAccessor.inotifyInit();
-    }
-
-    @Override
-    public short inotifyRmWatch(long fd, int wd) {
-        return LinuxAccessor.inotifyRmWatch(fd, wd);
-    }
-
-    @Override
-    public long pipe() {
-        return LinuxAccessor.pipe();
-    }
-
-    @Override
-    public int readEvent(long fd, long buf, int bufSize) {
-        return LinuxAccessor.readEvent(fd, buf, bufSize);
-    }
-
-    @Override
-    public int readPipe(long fd) {
-        return LinuxAccessor.readPipe(fd);
-    }
-
-    @Override
-    public int writePipe(long fd) {
-        return LinuxAccessor.writePipe(fd);
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return processor;
     }
 }

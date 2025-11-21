@@ -80,6 +80,8 @@ public interface FilesFacade {
 
     int getFileSystemStatus(LPSZ lpszName);
 
+    long getLastModified(long fd);
+
     long getLastModified(LPSZ path);
 
     long getMapCountLimit();

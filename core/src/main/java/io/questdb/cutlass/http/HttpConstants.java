@@ -29,10 +29,12 @@ import io.questdb.std.str.Utf8String;
 public final class HttpConstants {
     public static final String CONTENT_TYPE_CSV = "text/csv; charset=utf-8";
     public static final String CONTENT_TYPE_JSON = "application/json; charset=utf-8";
+    public static final String CONTENT_TYPE_JSON_API = "application/vnd.api+json";
     @SuppressWarnings("unused")
     public static final String CONTENT_TYPE_MULTIPART_FORM_DATA = "multipart/form-data";
     @SuppressWarnings("unused")
     public static final String CONTENT_TYPE_MULTIPART_MIXED = "multipart/mixed";
+    public static final String CONTENT_TYPE_OCTET_STREAM = "application/octet-stream";
     public static final String CONTENT_TYPE_PARQUET = "application/vnd.apache.parquet";
     public static final String CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     public static final char COOKIE_SEPARATOR = ';';
@@ -44,8 +46,8 @@ public final class HttpConstants {
     public static final Utf8String EXPORT_PARQUET_OPTION_PARQUET_VERSION = new Utf8String("parquet_version");
     public static final Utf8String EXPORT_PARQUET_OPTION_PARTITION_BY = new Utf8String("partition_by");
     public static final Utf8String EXPORT_PARQUET_OPTION_RAW_ARRAY_ENCODING = new Utf8String("raw_array_encoding");
-    public static final Utf8String EXPORT_PARQUET_OPTION_ROW_GROUP_SIZE = new Utf8String("row_group_size");
     public static final Utf8String EXPORT_PARQUET_OPTION_RESPONSE_MODE = new Utf8String("rmode");
+    public static final Utf8String EXPORT_PARQUET_OPTION_ROW_GROUP_SIZE = new Utf8String("row_group_size");
     public static final Utf8String EXPORT_PARQUET_OPTION_STATISTICS_ENABLED = new Utf8String("statistics_enabled");
     public static final Utf8String HEADER_AUTHORIZATION = new Utf8String("Authorization");
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
@@ -79,6 +81,7 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_CREATE = new Utf8String("create");
     public static final Utf8String URL_PARAM_DELIMITER = new Utf8String("delimiter");
     public static final Utf8String URL_PARAM_EXPLAIN = new Utf8String("explain");
+    public static final Utf8String URL_PARAM_FILE = new Utf8String("file");
     public static final Utf8String URL_PARAM_FILENAME = new Utf8String("filename");
     public static final Utf8String URL_PARAM_FMT = new Utf8String("fmt");
     public static final Utf8String URL_PARAM_FORCE_HEADER = new Utf8String("forceHeader");
@@ -100,6 +103,7 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_TIMESTAMP = new Utf8String("timestamp");
     public static final Utf8String URL_PARAM_TIMINGS = new Utf8String("timings");
     public static final Utf8String URL_PARAM_VERSION = new Utf8String("version");
+    public static final Utf8String URL_PREFIX_API_V1 = new Utf8String("/api/v1");
 
     private HttpConstants() {
     }

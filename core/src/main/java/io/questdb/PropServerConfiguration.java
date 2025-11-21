@@ -81,7 +81,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -224,14 +224,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
-    private final ObjList<String> httpContextPathExec = new ObjList<>();
-    private final ObjList<String> httpContextPathExport = new ObjList<>();
-    private final ObjList<String> httpContextPathILP = new ObjList<>();
-    private final ObjList<String> httpContextPathILPPing = new ObjList<>();
-    private final ObjList<String> httpContextPathImport = new ObjList<>();
-    private final ObjList<String> httpContextPathSettings = new ObjList<>();
-    private final ObjList<String> httpContextPathTableStatus = new ObjList<>();
-    private final ObjList<String> httpContextPathWarnings = new ObjList<>();
+    private final ObjHashSet<String> httpContextPathApiV1 = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathSqlExecute = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathSqlValidate = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathExport = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathILP = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathILPPing = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathImport = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathSettings = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathTableStatus = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathWarnings = new ObjHashSet<>();
     private final String httpContextWebConsole;
     private final long httpExportTimeout;
     private final boolean httpFrozenClock;
@@ -1046,8 +1048,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXPORT, this.httpContextPathExport, httpContextWebConsole + "/exp");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_SETTINGS, this.httpContextPathSettings, httpContextWebConsole + "/settings");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_TABLE_STATUS, this.httpContextPathTableStatus, httpContextWebConsole + "/chk");
-            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, httpContextWebConsole + "/exec");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathSqlExecute, httpContextWebConsole + "/exec", httpContextWebConsole + "/api/v1/sql/execute");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathSqlValidate, httpContextWebConsole + "/api/v1/sql/validate");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_API_V1, this.httpContextPathApiV1, httpContextWebConsole + "/api/v1");
+
 
             // If any REST services that the Web Console depends on are overridden,
             // ensure the required context paths remain available,
@@ -1063,14 +1068,18 @@ public class PropServerConfiguration implements ServerConfiguration {
             // 4. table status, to support CSV import UI
             // 5. JSON query execution, e.g. exec
             // 6. warnings, that displays warnings in the table view
+            // 7. new export/import rest api
 
             // we use defaults, because this is what the Web Console expects
             httpContextPathImport.add(httpContextWebConsole + "/imp");
             httpContextPathExport.add(httpContextWebConsole + "/exp");
             httpContextPathSettings.add(httpContextWebConsole + "/settings");
             httpContextPathTableStatus.add(httpContextWebConsole + "/chk");
-            httpContextPathExec.add(httpContextWebConsole + "/exec");
+            httpContextPathSqlExecute.add(httpContextWebConsole + "/exec");
+            httpContextPathSqlExecute.add(httpContextWebConsole + "/api/v1/sql/execute");
+            httpContextPathSqlValidate.add(httpContextWebConsole + "/api/v1/sql/validate");
             httpContextPathWarnings.add(httpContextWebConsole + "/warnings");
+            httpContextPathApiV1.add(httpContextWebConsole + "/api/v1");
 
             // read the redirect map
             this.redirectMap = new Utf8SequenceObjHashMap<>();
@@ -2400,7 +2409,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             Properties properties,
             @Nullable Map<String, String> env,
             ConfigPropertyKey key,
-            ObjList<String> target,
+            ObjHashSet<String> target,
             String... defaultValue
     ) throws ServerConfigurationException {
         String envCandidate = key.getEnvVarName();
@@ -4651,42 +4660,52 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public ObjList<String> getContextPathExec() {
-            return httpContextPathExec;
+        public ObjHashSet<String> getContextPathApiV1() {
+            return httpContextPathApiV1;
         }
 
         @Override
-        public ObjList<String> getContextPathExport() {
+        public ObjHashSet<String> getContextPathExec() {
+            return httpContextPathSqlExecute;
+        }
+
+        @Override
+        public ObjHashSet<String> getContextPathSqlValidation() {
+            return httpContextPathSqlValidate;
+        }
+
+        @Override
+        public ObjHashSet<String> getContextPathExport() {
             return httpContextPathExport;
         }
 
         @Override
-        public ObjList<String> getContextPathILP() {
+        public ObjHashSet<String> getContextPathILP() {
             return httpContextPathILP;
         }
 
         @Override
-        public ObjList<String> getContextPathILPPing() {
+        public ObjHashSet<String> getContextPathILPPing() {
             return httpContextPathILPPing;
         }
 
         @Override
-        public ObjList<String> getContextPathImport() {
+        public ObjHashSet<String> getContextPathImport() {
             return httpContextPathImport;
         }
 
         @Override
-        public ObjList<String> getContextPathSettings() {
+        public ObjHashSet<String> getContextPathSettings() {
             return httpContextPathSettings;
         }
 
         @Override
-        public ObjList<String> getContextPathTableStatus() {
+        public ObjHashSet<String> getContextPathTableStatus() {
             return httpContextPathTableStatus;
         }
 
         @Override
-        public ObjList<String> getContextPathWarnings() {
+        public ObjHashSet<String> getContextPathWarnings() {
             return httpContextPathWarnings;
         }
 

@@ -119,7 +119,6 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.finance;
     exports io.questdb.std.json;
     exports io.questdb.griffin.engine.functions.json;
-    exports io.questdb.std.filewatch;
     exports io.questdb.griffin.engine.table.parquet;
     exports io.questdb.cairo.mv;
     exports io.questdb.cairo.file;
@@ -130,4 +129,5 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.memoization;
     exports io.questdb.griffin.engine.functions.decimal;
     exports io.questdb.cutlass.parquet;
+    exports io.questdb.cutlass.http.processors.v1;
 }

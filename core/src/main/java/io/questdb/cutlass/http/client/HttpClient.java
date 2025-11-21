@@ -294,6 +294,12 @@ public abstract class HttpClient implements QuietCloseable {
             return putAscii("GET ");
         }
 
+        public Request HEAD() {
+            assert state == STATE_REQUEST;
+            state = STATE_URL;
+            return putAscii("HEAD ");
+        }
+
         public Request POST() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
@@ -495,7 +501,7 @@ public abstract class HttpClient implements QuietCloseable {
          *   <li>Failover scenarios - retry the same request on a different server</li>
          *   <li>Multi-publishing - send the same data to multiple endpoints</li>
          * </ul>
-         * Important: If the request buffer already contains a HTTP request header with a host
+         * Important: If the request buffer already contains an HTTP request header with a host
          * then the host will not change! This means reverse proxies routing requests to different
          * host based on the Host header will not work! Routing on TLS SNI will not be affected.
          *

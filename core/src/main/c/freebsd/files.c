@@ -168,6 +168,17 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
 #endif
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified0
+        (JNIEnv* e,jclass cl,jint fd) {
+  struct stat st;
+  int r = fstat(fd, &st);
+#ifdef __APPLE__
+  return r == 0 ? ((1000 * st.st_mtimespec.tv_sec) + (st.st_mtimespec.tv_nsec / 1000000)) : r;
+#else
+  return r == 0 ? ((1000 * st.st_mtim.tv_sec) + (st.st_mtim.tv_nsec / 1000000)) : r;
+#endif
+}
+
 #ifdef __APPLE__
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate

@@ -62,7 +62,11 @@ public interface HttpRequestHeader {
 
     DirectUtf8Sequence getUrlParam(Utf8Sequence name);
 
+    boolean isDeleteRequest();
+
     boolean isGetRequest();
+
+    boolean isHeadRequest();
 
     boolean isPostRequest();
 

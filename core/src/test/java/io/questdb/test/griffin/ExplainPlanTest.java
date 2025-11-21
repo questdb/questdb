@@ -140,10 +140,12 @@ import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory;
 import io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory;
+import io.questdb.griffin.engine.functions.regex.GlobStrFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
+import io.questdb.griffin.engine.functions.table.GlobFilesFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
@@ -2836,6 +2838,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     if (factory instanceof ReadParquetFunctionFactory) {
                         continue;
                     }
+                    if (factory instanceof GlobStrFunctionFactory || Chars.equals(key, "glob")) {
+                        System.out.println("boo");
+                    }
                     int sigArgCount = descriptor.getSigArgCount();
 
                     sink.clear();
@@ -3017,6 +3022,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof WalTransactionsFunctionFactory && sigArgType == ColumnType.STRING) {
                                     // Skip it, it requires a WAL table to exist
                                     break FUNCTIONS;
+                                } else if (factory instanceof GlobFilesFunctionFactory) {
+                                    args.add(new StrConstant("/tmp/*"));
                                 } else {
                                     args.add(getConst(constFuncs, sigArgType, p, no));
                                 }

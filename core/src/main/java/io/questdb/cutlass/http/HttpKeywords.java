@@ -107,6 +107,16 @@ public class HttpKeywords {
                 && (tok.byteAt(14) | 32) == 'd';
     }
 
+    public static boolean isDELETE(@Nullable Utf8Sequence tok) {
+        return tok != null && tok.size() == 6
+                && (tok.byteAt(0)) == 'D'
+                && (tok.byteAt(1)) == 'E'
+                && (tok.byteAt(2)) == 'L'
+                && (tok.byteAt(3)) == 'E'
+                && (tok.byteAt(4)) == 'T'
+                && (tok.byteAt(5)) == 'E';
+    }
+
     public static boolean isFalse(@Nullable Utf8Sequence tok) {
         return tok != null && tok.size() == 5
                 && (tok.byteAt(0) | 32) == 'f'
@@ -121,6 +131,14 @@ public class HttpKeywords {
                 && (tok.byteAt(0)) == 'G'
                 && (tok.byteAt(1)) == 'E'
                 && (tok.byteAt(2)) == 'T';
+    }
+
+    public static boolean isHEAD(@Nullable Utf8Sequence tok) {
+        return tok != null && tok.size() == 4
+                && (tok.byteAt(0)) == 'H'
+                && (tok.byteAt(1)) == 'E'
+                && (tok.byteAt(2)) == 'A'
+                && (tok.byteAt(3)) == 'D';
     }
 
     public static boolean isHeaderSetCookie(@Nullable Utf8Sequence tok) {

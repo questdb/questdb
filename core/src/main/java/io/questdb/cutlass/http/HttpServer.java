@@ -35,6 +35,9 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
+import io.questdb.cutlass.http.processors.v1.ExportsRouter;
+import io.questdb.cutlass.http.processors.v1.ImportsRouter;
+import io.questdb.cutlass.http.processors.v1.OpenApiRouter;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.HeartBeatException;
@@ -51,18 +54,22 @@ import io.questdb.std.AssociativeCache;
 import io.questdb.std.ConcurrentAssociativeCache;
 import io.questdb.std.Misc;
 import io.questdb.std.NoOpAssociativeCache;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
 public class HttpServer implements Closeable {
     static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private final ActiveConnectionTracker activeConnectionTracker;
     private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final HttpContextFactory httpContextFactory;
@@ -70,7 +77,6 @@ public class HttpServer implements Closeable {
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final int workerCount;
-    private final ActiveConnectionTracker activeConnectionTracker;
 
     public HttpServer(
             HttpServerConfiguration configuration,
@@ -84,8 +90,7 @@ public class HttpServer implements Closeable {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
 
-        if (configuration instanceof HttpFullFatServerConfiguration) {
-            final HttpFullFatServerConfiguration serverConfiguration = (HttpFullFatServerConfiguration) configuration;
+        if (configuration instanceof HttpFullFatServerConfiguration serverConfiguration) {
             if (serverConfiguration.isQueryCacheEnabled()) {
                 this.selectCache = new ConcurrentAssociativeCache<>(serverConfiguration.getConcurrentCacheConfiguration());
             } else {
@@ -133,7 +138,8 @@ public class HttpServer implements Closeable {
             CairoEngine cairoEngine,
             int sharedQueryWorkerCount,
             HttpRequestHandlerBuilder jsonQueryProcessorBuilder,
-            HttpRequestHandlerBuilder ilpWriteProcessorBuilderV2
+            HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder,
+            HttpRequestHandlerBuilder sqlValidationProcessorBuilder
     ) {
         final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = httpServerConfiguration.getLineHttpProcessorConfiguration();
@@ -141,13 +147,13 @@ public class HttpServer implements Closeable {
 
             server.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return httpServerConfiguration.getContextPathILP();
                 }
 
                 @Override
                 public HttpRequestHandler newInstance() {
-                    return ilpWriteProcessorBuilderV2.newInstance();
+                    return ilpV2WriteProcessorBuilder.newInstance();
                 }
             });
 
@@ -156,7 +162,7 @@ public class HttpServer implements Closeable {
             );
             server.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
+                public ObjHashSet<String> getUrls() {
                     return httpServerConfiguration.getContextPathILPPing();
                 }
 
@@ -170,7 +176,7 @@ public class HttpServer implements Closeable {
         final SettingsProcessor settingsProcessor = new SettingsProcessor(cairoEngine, serverConfiguration);
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return httpServerConfiguration.getContextPathSettings();
             }
 
@@ -183,7 +189,7 @@ public class HttpServer implements Closeable {
         final WarningsProcessor warningsProcessor = new WarningsProcessor(serverConfiguration.getCairoConfiguration());
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return httpServerConfiguration.getContextPathWarnings();
             }
 
@@ -195,7 +201,7 @@ public class HttpServer implements Closeable {
 
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return httpServerConfiguration.getContextPathExec();
             }
 
@@ -207,7 +213,7 @@ public class HttpServer implements Closeable {
 
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return httpServerConfiguration.getContextPathImport();
             }
 
@@ -219,7 +225,19 @@ public class HttpServer implements Closeable {
 
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
+                return httpServerConfiguration.getContextPathSqlValidation();
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
+                return sqlValidationProcessorBuilder.newInstance();
+            }
+        });
+
+        server.bind(new HttpRequestHandlerFactory() {
+            @Override
+            public ObjHashSet<String> getUrls() {
                 return httpServerConfiguration.getContextPathExport();
             }
 
@@ -235,7 +253,7 @@ public class HttpServer implements Closeable {
 
         server.bind(new HttpRequestHandlerFactory() {
             @Override
-            public ObjList<String> getUrls() {
+            public ObjHashSet<String> getUrls() {
                 return httpServerConfiguration.getContextPathTableStatus();
             }
 
@@ -245,10 +263,46 @@ public class HttpServer implements Closeable {
             }
         });
 
+        server.bind(new HttpRequestHandlerFactory() {
+            @Override
+            public ObjHashSet<String> getUrls() {
+                return ImportsRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
+                return new ImportsRouter(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
+            }
+        });
+
+        server.bind(new HttpRequestHandlerFactory() {
+            @Override
+            public ObjHashSet<String> getUrls() {
+                return ExportsRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
+                return new ExportsRouter(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
+            }
+        });
+
+        server.bind(new HttpRequestHandlerFactory() {
+            @Override
+            public ObjHashSet<String> getUrls() {
+                return OpenApiRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
+                return new OpenApiRouter();
+            }
+        });
+
         server.bind(new StaticContentProcessorFactory(httpServerConfiguration));
     }
 
-    public static Utf8Sequence normalizeUrl(DirectUtf8String url) {
+    public static DirectUtf8Sequence normalizeUrl(DirectUtf8String url) {
         long p = url.ptr();
         long shift = 0;
         boolean lastSlash = false;
@@ -277,10 +331,10 @@ public class HttpServer implements Closeable {
     }
 
     public void bind(HttpRequestHandlerFactory factory, boolean useAsDefault) {
-        final ObjList<String> urls = factory.getUrls();
+        final ObjHashSet<String> urls = factory.getUrls();
         assert urls != null;
         for (int j = 0, n = urls.size(); j < n; j++) {
-            final String url = urls.getQuick(j);
+            final String url = urls.get(j);
             for (int i = 0; i < workerCount; i++) {
                 HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
                 if (HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
@@ -326,7 +380,13 @@ public class HttpServer implements Closeable {
         closeables.add(closeable);
     }
 
-    private boolean handleClientOperation(HttpConnectionContext context, int operation, HttpRequestProcessorSelector selector, WaitProcessor rescheduleContext, IODispatcher<HttpConnectionContext> dispatcher) {
+    private boolean handleClientOperation(
+            HttpConnectionContext context,
+            int operation,
+            HttpRequestProcessorSelector selector,
+            WaitProcessor rescheduleContext,
+            IODispatcher<HttpConnectionContext> dispatcher
+    ) {
         try {
             return context.handleClientOperation(operation, selector, rescheduleContext);
         } catch (HeartBeatException e) {
@@ -362,7 +422,7 @@ public class HttpServer implements Closeable {
     }
 
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
-
+        private static final ThreadLocal<DirectUtf8String> routingUrl = new ThreadLocal<>(DirectUtf8String::new);
         private final Utf8SequenceObjHashMap<HttpRequestHandler> requestHandlerMap = new Utf8SequenceObjHashMap<>();
         private HttpRequestProcessor defaultRequestProcessor = null;
 
@@ -377,8 +437,16 @@ public class HttpServer implements Closeable {
 
         @Override
         public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-            final Utf8Sequence normalizedUrl = normalizeUrl(requestHeader.getUrl());
-            final HttpRequestHandler requestHandler = requestHandlerMap.get(normalizedUrl);
+            final DirectUtf8Sequence normalizedUrl = normalizeUrl(requestHeader.getUrl());
+            HttpRequestHandler requestHandler = requestHandlerMap.get(normalizedUrl);
+            if (requestHandler == null && Utf8s.startsWith(normalizedUrl, HttpConstants.URL_PREFIX_API_V1)) {
+                // fallback to find most specific selector
+                DirectUtf8String partialUrl = routingUrl.get().of(normalizedUrl.lo(), normalizedUrl.hi());
+                int hi;
+                while (requestHandler == null && (hi = Utf8s.lastIndexOfAscii(partialUrl, '/')) > 1) {
+                    requestHandler = requestHandlerMap.get(partialUrl.decHi(partialUrl.size() - hi));
+                }
+            }
             return requestHandler != null ? requestHandler.getProcessor(requestHeader) : defaultRequestProcessor;
         }
     }

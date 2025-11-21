@@ -69,6 +69,11 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
         return this;
     }
 
+    public DirectUtf8Sequence decHi(int amount) {
+        this.hi -= amount;
+        return this;
+    }
+
     @Override
     public boolean isAscii() {
         return ascii;
@@ -92,6 +97,11 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
     @Override
     public long ptr() {
         return lo;
+    }
+
+    public DirectUtf8Sequence setHi(long hi) {
+        this.hi = hi;
+        return this;
     }
 
     public void shl(long delta) {

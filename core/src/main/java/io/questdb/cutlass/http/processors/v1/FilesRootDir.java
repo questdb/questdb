@@ -22,20 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.filewatch;
+package io.questdb.cutlass.http.processors.v1;
 
-public interface LinuxAccessorFacade {
-    int inotifyAddWatch(long fd, long pathPtr, int flags);
+import io.questdb.cairo.CairoConfiguration;
 
-    int inotifyInit();
+public enum FilesRootDir {
+    IMPORTS("sql.copy.input.root"),
+    EXPORTS("sql.copy.export.root");
+    private final CharSequence configName;
 
-    short inotifyRmWatch(long fd, int wd);
+    FilesRootDir(CharSequence configName) {
+        this.configName = configName;
+    }
 
-    long pipe();
+    public static CharSequence getRootPath(FilesRootDir type, CairoConfiguration configuration) {
+        return switch (type) {
+            case IMPORTS -> configuration.getSqlCopyInputRoot();
+            case EXPORTS -> configuration.getSqlCopyExportRoot();
+        };
+    }
 
-    int readEvent(long fd, long buf, int bufSize);
-
-    int readPipe(long fd);
-
-    int writePipe(long fd);
+    public CharSequence getConfigName() {
+        return configName;
+    }
 }

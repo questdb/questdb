@@ -62,6 +62,7 @@ import static java.net.HttpURLConnection.*;
 
 public class HttpResponseSink implements Closeable, Mutable {
     public static final int HTTP_MISDIRECTED_REQUEST = 421;
+    public static final int HTTP_MULTI_STATUS = 207;
     public static final int HTTP_TOO_MANY_REQUESTS = 429;
     private static final Utf8String EMPTY_JSON = new Utf8String("{}");
     private static final int HTTP_RANGE_NOT_SATISFIABLE = 416;
@@ -115,6 +116,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         headersSent = false;
         chunkedRequestDone = false;
         simpleResponse.clear();
+        chunkedResponse.clear();
         resetZip();
     }
 
@@ -440,8 +442,9 @@ public class HttpResponseSink implements Closeable, Mutable {
                 _wptr = tmp;
             }
             if (addEofChunk) {
+                // todo: this can blow up
                 int len = EOF_CHUNK.length();
-                Utf8s.strCpyAscii(EOF_CHUNK, len, _wptr);
+                Utf8s.strCpyAscii(EOF_CHUNK, len, getWriteAddress(len));
                 _wptr += len;
                 LOG.debug().$("end chunk sent [fd=").$(getFd()).I$();
             }
@@ -453,12 +456,17 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    private class ChunkedResponseImpl extends ResponseSinkImpl implements HttpChunkedResponse {
+    private class ChunkedResponseImpl extends ResponseSinkImpl implements HttpChunkedResponse, Mutable {
         private long bookmark = 0L;
 
         @Override
         public void bookmark() {
             bookmark = buffer._wptr;
+        }
+
+        @Override
+        public void clear() {
+            this.bookmark = 0;
         }
 
         @Override
@@ -697,6 +705,16 @@ public class HttpResponseSink implements Closeable, Mutable {
             headerSent = false;
         }
 
+        public void sendStatusJsonApiContent(
+                int code,
+                @NotNull Utf8Sequence message,
+                boolean appendEOL
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            final long contentLength = message.size();
+            assert contentLength > 0 : "json content is missing";
+            sendStatusWithContent(CONTENT_TYPE_JSON_API, code, message, null, null, null, contentLength, appendEOL);
+        }
+
         public void sendStatusJsonContent(
                 int code
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -861,6 +879,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(HTTP_OK, new Utf8String("OK"));
         httpStatusMap.put(HTTP_NO_CONTENT, new Utf8String("OK"));
         httpStatusMap.put(HTTP_PARTIAL, new Utf8String("Partial content"));
+        httpStatusMap.put(HTTP_MULTI_STATUS, new Utf8String("Multi status"));
         httpStatusMap.put(HTTP_MOVED_PERM, new Utf8String("Moved Permanently"));
         httpStatusMap.put(HTTP_MOVED_TEMP, new Utf8String("Temporarily Moved"));
         httpStatusMap.put(HTTP_NOT_MODIFIED, new Utf8String("Not Modified"));
@@ -879,6 +898,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(HTTP_INTERNAL_ERROR, new Utf8String("Internal server error"));
         httpStatusMap.put(HTTP_MISDIRECTED_REQUEST, new Utf8String("Misdirected Request"));
         httpStatusMap.put(HTTP_TOO_MANY_REQUESTS, new Utf8String("Too Many Requests"));
+        httpStatusMap.put(HTTP_CREATED, new Utf8String("Created"));
     }
 
     static {

@@ -109,6 +109,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -2322,8 +2323,10 @@ public class IODispatcherTest extends AbstractTest {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
                 httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
-                    public ObjList<String> getUrls() {
-                        return new ObjList<>("/upload");
+                    public ObjHashSet<String> getUrls() {
+                        return new ObjHashSet<>() {{
+                            add("/upload");
+                        }};
                     }
 
                     @Override
@@ -8345,8 +8348,10 @@ public class IODispatcherTest extends AbstractTest {
                                                  int workerCount) implements HttpRequestHandlerFactory {
 
         @Override
-        public ObjList<String> getUrls() {
-            return new ObjList<>("/query");
+        public ObjHashSet<String> getUrls() {
+            return new ObjHashSet<>() {{
+                add("/query");
+            }};
         }
 
         @Override

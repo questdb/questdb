@@ -611,7 +611,12 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                             .withContent()
                             .putAscii(line)
                             .putAscii(line);
-                    assertResponse(request, HTTP_BAD_METHOD, "Method DELETE not supported\r\n");
+                    assertResponse(request, HTTP_BAD_REQUEST, "DELETE request method cannot have content\r\n");
+
+                    HttpClient.Request request2 = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
+                    request2.DELETE()
+                            .url("/write ");
+                    assertResponse(request2, HTTP_BAD_METHOD, "Method DELETE not supported\r\n");
                 }
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {

@@ -1470,6 +1470,27 @@ public final class Utf8s {
         }
     }
 
+    public static void utf8ZCopyEscaped(long addr, Utf8Sink sink) {
+        for (long i = addr; ; i++) {
+            byte b = Unsafe.getUnsafe().getByte(i);
+            if (b == 0) break;
+            if (b == (byte) '\"' || b == (byte) '\\') {
+                sink.putAscii('\\');
+            }
+            sink.putAny(b);
+        }
+    }
+
+    public static void utf8ZCopyEscaped(long start, long end, Utf8Sink sink) {
+        for (long i = start; i < end; i++) {
+            byte b = Unsafe.getUnsafe().getByte(i);
+            if (b == (byte) '\"' || b == (byte) '\\') {
+                sink.putAscii('\\');
+            }
+            sink.putAny(b);
+        }
+    }
+
     public static int validateUtf8(@NotNull Utf8Sequence seq) {
         if (seq.isAscii()) {
             return seq.size();
