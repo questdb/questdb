@@ -97,11 +97,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     static final int QUERY_DONE = 1;
     static final int QUERY_METADATA = 2;
     static final int QUERY_PARQUET_EXPORT_INIT = 10;
-    static final int QUERY_PARQUET_FILE_SEND_CHUNK = 15;
-    static final int QUERY_PARQUET_FILE_SEND_COMPLETE = 16;
-    static final int QUERY_PARQUET_FILE_SEND_INIT = 14;
+    static final int QUERY_PARQUET_FILE_SEND_CHUNK = 16;
+    static final int QUERY_PARQUET_FILE_SEND_COMPLETE = 17;
+    static final int QUERY_PARQUET_FILE_SEND_INIT = 15;
     static final int QUERY_PARQUET_SEND_HEADER = 12;
-    static final int QUERY_PARQUET_TO_PARQUET_FILE = 13;
+    static final int QUERY_PARQUET_SEND_MAGIC = 13;
+    static final int QUERY_PARQUET_TO_PARQUET_FILE = 14;
     static final int QUERY_RECORD = 5;
     static final int QUERY_RECORD_START = 4;
     static final int QUERY_RECORD_SUFFIX = 6;
@@ -656,15 +657,31 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     case QUERY_PARQUET_SEND_HEADER:
                         if (state.getExportModel().isNoDelay()) {
                             try {
-                                sendParquetHeader(response, state);
+                                state.queryState = QUERY_PARQUET_SEND_MAGIC;
+                                header(response, state, 200);
                             } catch (CairoException e) {
                                 sendException(response, 0, e.getFlyweightMessage(), state);
                                 break OUT;
                             }
                         }
-                        state.queryState = QUERY_PARQUET_TO_PARQUET_FILE;
                         // fall through
 
+                    case QUERY_PARQUET_SEND_MAGIC:
+                        if (state.getExportModel().isNoDelay()) {
+                            try {
+                                // We send first 3 byes of parquet file, that is always "PAR" in ascii
+                                // as a chunk to trigger download to open file save dialog and start background download browsers.
+                                response.put("PAR");
+                                state.parquetFileOffset = 3;
+                                response.bookmark();
+                                state.queryState = QUERY_PARQUET_TO_PARQUET_FILE;
+                                response.sendChunk(false);
+                            } catch (CairoException e) {
+                                sendException(response, 0, e.getFlyweightMessage(), state);
+                                break OUT;
+                            }
+                        }
+                        // fall through
                     case QUERY_PARQUET_TO_PARQUET_FILE:
                         try {
                             copyQueryToParquetFile(state);
@@ -677,7 +694,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         }
                         state.queryState = QUERY_PARQUET_FILE_SEND_INIT;
                         // fall through
-
                     case QUERY_PARQUET_FILE_SEND_INIT:
                         try {
                             initParquetFileSending(context, state);
@@ -686,8 +702,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             break OUT;
                         }
                         state.queryState = QUERY_PARQUET_FILE_SEND_CHUNK;
+                        // in Nodelay mode header is sent before parquet file is read
+                        // so no need to send it here
+                        if (!state.getExportModel().isNoDelay()) {
+                            header(context.getChunkedResponse(), state, 200);
+                        }
                         // fall through
-
                     case QUERY_PARQUET_FILE_SEND_CHUNK:
                         sendParquetFileChunk(response, state);
                         if (state.parquetFileOffset >= state.parquetFileSize) {
@@ -891,12 +911,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
         state.parquetFileSize = ff.length(state.parquetFileFd);
         state.parquetFileAddress = TableUtils.mapRO(ff, state.parquetFileFd, state.parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
-
-        // in Nodelay mode header is sent before parquet file is read
-        // so no need to send it here
-        if (!state.getExportModel().isNoDelay()) {
-            header(context.getChunkedResponse(), state, 200);
-        }
     }
 
     private void internalError(
@@ -1249,17 +1263,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (state.parquetFileOffset < state.parquetFileSize) {
             response.sendChunk(false);
         }
-    }
-
-    private void sendParquetHeader(HttpChunkedResponse response, ExportQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(response, state, 200);
-
-        // We send first 3 byes of parquet file, that is always "PAR" in ascii
-        // as a chunk to trigger download to open file save dialog and start background download browsers.
-        response.put("PAR");
-        state.parquetFileOffset = 3;
-        response.bookmark();
-        response.sendChunk(false);
     }
 
     private void syntaxError(
