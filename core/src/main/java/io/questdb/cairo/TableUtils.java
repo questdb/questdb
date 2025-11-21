@@ -1094,9 +1094,10 @@ public final class TableUtils {
 
     public static long lock(FilesFacade ff, LPSZ path, boolean verbose, boolean logDebug) {
         // workaround for https://github.com/docker/for-mac/issues/7004
+        boolean withLogging = verbose || logDebug;
         if (Files.VIRTIO_FS_DETECTED) {
             if (!ff.touch(path)) {
-                if (verbose || logDebug) {
+                if (withLogging) {
                     LogRecord log = logDebug ? LOG.debug() : LOG.error();
                     log.$("cannot touch '").$(path).$("' to lock [errno=").$(ff.errno()).I$();
                 }
@@ -1106,14 +1107,14 @@ public final class TableUtils {
 
         long fd = ff.openRWNoCache(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
-            if (verbose || logDebug) {
+            if (withLogging) {
                 LogRecord log = logDebug ? LOG.debug() : LOG.error();
                 log.$("cannot open '").$(path).$("' to lock [errno=").$(ff.errno()).I$();
             }
             return -1;
         }
         if (ff.lock(fd) != 0) {
-            if (verbose || logDebug) {
+            if (withLogging) {
                 LogRecord log = logDebug ? LOG.debug() : LOG.error();
                 log.$("cannot lock '").$(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).I$();
             }
@@ -1121,7 +1122,7 @@ public final class TableUtils {
             return -1;
         }
 
-        if (verbose || logDebug) {
+        if (withLogging) {
             LOG.debug().$("locked '").$(path).$("' [fd=").$(fd).I$();
         }
         return fd;
