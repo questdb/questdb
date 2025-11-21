@@ -302,6 +302,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                                 final MillisecondClock millisecondClock = engine.getConfiguration().getMillisecondClock();
                                 final long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
                                 TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                                writerTxn = txReader.getSeqTxn();
                                 bufferedTxnSize = txReader.getLagTxnCount();
                                 return true;
                             }

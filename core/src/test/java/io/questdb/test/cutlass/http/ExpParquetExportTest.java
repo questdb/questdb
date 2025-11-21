@@ -121,7 +121,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 .run((engine, sqlExecutionContext) -> testHttpClient.assertGetParquet(
                         "/exp",
                         "PAR1\u0015\u0000\u0015",
-                        "generate_series(0, '1971-01-01', '5s');"
+                        "generate_series(0, '1970-01-02', '5s');"
                 ));
     }
 

@@ -282,7 +282,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         try {
                             final int walId = Numbers.parseInt(walName, 3, walName.size());
                             onDiskWalIDSet.add(walId);
-                            long walLockFd = TableUtils.lock(ff, setWalLockPath(tableToken, walId).$(), true);
+                            long walLockFd = TableUtils.lock(ff, setWalLockPath(tableToken, walId).$(), false, true);
                             if (walLockFd > 0) {
                                 LOG.debug().$("locked: ").$(path).$(", lockFd=").$(walLockFd).I$();
                             }
