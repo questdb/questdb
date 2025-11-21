@@ -54,6 +54,10 @@ public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory 
         return cursor;
     }
 
+    public Path getPath() {
+        return path;
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;

@@ -32,8 +32,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
@@ -84,6 +84,10 @@ public class ReadParquetPageFrameRecordCursorFactory extends AbstractRecordCurso
         assert order != ORDER_DESC;
         pageFrameCursor.of(path.$());
         return pageFrameCursor;
+    }
+
+    public Path getPath() {
+        return path;
     }
 
     @Override

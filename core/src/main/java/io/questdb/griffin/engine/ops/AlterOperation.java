@@ -751,7 +751,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         int size();
     }
 
-    private static class DirectCharSequenceList implements CharSequenceList {
+    public static class DirectCharSequenceList implements CharSequenceList {
         private final LongList offsets = new LongList();
         private final DirectString strA = new DirectString();
         private final DirectString strB = new DirectString();
