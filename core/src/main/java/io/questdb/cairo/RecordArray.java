@@ -97,6 +97,11 @@ public class RecordArray extends RecordChain {
         return offset;
     }
 
+    @Override
+    public long size() {
+        return size;
+    }
+
     public void toBottom() {
         nextRecordIndex = size - 1;
     }
