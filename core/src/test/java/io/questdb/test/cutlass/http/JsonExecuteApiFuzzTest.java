@@ -93,7 +93,6 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                                     {"explain select * from arr", "{\"query\":\"explain select * from arr\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"PageFrame\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: arr\"]],\"count\":3}"}
                             };
 
-
                             var candidateCount = requestResponse.length;
                             try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                 testHttpClient.setKeepConnection(true);

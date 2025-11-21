@@ -89,15 +89,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_SUFFIX = QUERY_RECORD_SUFFIX + 1; // 7
     static final int QUERY_SEND_RECORDS_LOOP = QUERY_SUFFIX + 1; // 8
     static final int QUERY_RECORD_PREFIX = QUERY_SEND_RECORDS_LOOP + 1; // 9
-    // only used in Parquet export
-    static final int QUERY_PARQUET_EXPORT_INIT = QUERY_RECORD_PREFIX + 1; // 10
-    static final int QUERY_PARQUET_EXPORT_WAIT = QUERY_PARQUET_EXPORT_INIT + 1; // 11
-    static final int QUERY_PARQUET_SEND_HEADER = QUERY_PARQUET_EXPORT_WAIT + 1; // 12
-    static final int QUERY_PARQUET_TO_PARQUET_FILE = QUERY_PARQUET_SEND_HEADER + 1; // 14
-    static final int QUERY_PARQUET_FILE_SEND_INIT = QUERY_PARQUET_TO_PARQUET_FILE + 1; // 13
-    static final int QUERY_PARQUET_FILE_SEND_CHUNK = QUERY_PARQUET_FILE_SEND_INIT + 1; // 15
-    static final int QUERY_PARQUET_FILE_SEND_COMPLETE = QUERY_PARQUET_FILE_SEND_CHUNK + 1; // 16
-    static final int QUERY_ERROR = QUERY_PARQUET_FILE_SEND_COMPLETE + 1; // 17
+    static final int QUERY_ERROR = QUERY_RECORD_PREFIX + 1; // 17
     static final int QUERY_DONE = QUERY_ERROR + 1;
     static final int QUERY_BAD_UTF8 = QUERY_DONE + 1;
     static final int QUERY_EMPTY_QUERY = QUERY_BAD_UTF8 + 1;
@@ -1329,9 +1321,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     @FunctionalInterface
     interface StateResumeAction {
-        void onResume(
-                HttpChunkedResponse response,
-                int columnCount
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException;
+        void onResume(HttpChunkedResponse response, int columnCount)
+                throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException;
     }
 }

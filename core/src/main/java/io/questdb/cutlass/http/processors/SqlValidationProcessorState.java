@@ -50,7 +50,6 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -359,7 +358,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
             doQueryMetadata(response, columnCount);
             doQueryMetadataSuffix(response);
         }
-        resumeValidationSuffix(response, 0, null, 0);
+        resumeValidationSuffix(response);
     }
 
     private void onSetupFirstRecord(
@@ -446,24 +445,9 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     }
 
     void resumeValidationSuffix(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        resumeValidationSuffix(response, 0, null, 0);
-    }
-
-    void resumeValidationSuffix(
-            HttpChunkedResponse response,
-            int code,
-            @Nullable CharSequence message,
-            int messagePosition
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         validationState = VALIDATION_SUFFIX;
         logTimings();
         response.bookmark();
-        if (code > 0) {
-            response.putAscii(',')
-                    .putAsciiQuoted("error").putAscii(':')
-                    .putQuote().escapeJsonStr(message != null ? message : "Internal server error").putQuote()
-                    .putAscii(", \"errorPos\"").putAscii(':').put(messagePosition);
-        }
         response.putAscii('}');
         validationState = VALIDATION_DONE;
         response.sendChunk(true);

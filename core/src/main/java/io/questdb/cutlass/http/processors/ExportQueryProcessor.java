@@ -696,7 +696,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         // fall through
                     case QUERY_PARQUET_FILE_SEND_INIT:
                         try {
-                            initParquetFileSending(context, state);
+                            initParquetFileSending(state);
                         } catch (CairoException e) {
                             sendException(response, 0, e.getFlyweightMessage(), state);
                             break OUT;
@@ -742,9 +742,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         readyForNextRequest(context);
     }
 
-    private void doResumeSend(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+    private void doResumeSend(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         ExportQueryProcessorState state = LV.get(context);
         if (state == null) {
             return;
@@ -895,7 +894,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         return LOG.info().$('[').$(state.getFd()).$("] ");
     }
 
-    private void initParquetFileSending(HttpConnectionContext context, ExportQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void initParquetFileSending(ExportQueryProcessorState state) {
         Utf8Sequence pathStr = state.getExportResult().getPath();
         if (pathStr.size() == 0) {
             throw CairoException.nonCritical().put("empty table");
