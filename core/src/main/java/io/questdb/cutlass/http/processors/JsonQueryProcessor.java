@@ -441,7 +441,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
         state.storeConfirmation();
         header(response, context, keepAliveHeader, 200);
-        state.onConfirmation(response);
+        state.onResumeConfirmation(response);
     }
 
     private static void sendEmptyQueryNotice(
@@ -465,7 +465,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
         state.storeInsertConfirmation();
         header(response, context, keepAliveHeader, 200);
-        state.onInsertConfirmation(response);
+        state.onResumeInsertConfirmation(response);
     }
 
     private static void sendUpdateConfirmation(
@@ -478,7 +478,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
         state.storeUpdateConfirmation(updateRecords);
         header(response, context, keepAliveHeader, 200);
-        state.onUpdateConfirmation(response);
+        state.onResumeUpdateConfirmation(response);
     }
 
     private void compileAndExecuteQuery(
@@ -902,7 +902,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
         state.storeError(position, message);
         header(response, context, configuration.getKeepAliveHeader(), code);
-        state.onError(response);
+        state.onResumeError(response);
     }
 
     @FunctionalInterface
