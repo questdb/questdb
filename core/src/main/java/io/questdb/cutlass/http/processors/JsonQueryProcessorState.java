@@ -434,6 +434,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.errorMessage.put(errorMessage);
     }
 
+    public void storeError(CharSequence errorMessage) {
+        this.queryState = QUERY_ERROR;
+        this.errorPosition = Numbers.INT_NULL;
+        this.errorMessage.clear();
+        this.errorMessage.put(errorMessage);
+    }
+
     public void storeInsertConfirmation() {
         queryState = QUERY_INSERT_CONFIRMATION;
     }
@@ -693,12 +700,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (columnIndex == RecordMetadata.COLUMN_NOT_FOUND) {
             info().$("column not found: '").$safe(stringSink).$('\'').$();
             HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
+
+            storeError("column not found: '");
+            errorMessage.put(stringSink).putAscii('\'');
+
             JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
-            response.putAscii('{')
-                    .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
-                    .putAsciiQuoted("error").putAscii(':').putAscii('\"').putAscii("column not found: '").escapeJsonStr(stringSink).putAscii("'\"")
-                    .putAscii('}');
-            response.sendChunk(true);
+            onResumeError(response);
             return true;
         }
 
@@ -1181,23 +1188,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 if (rawLo <= 0) {
                     info().$("utf8 error when decoding column list '").$safe(columnNames).$('\'').$();
                     HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
+                    storeError("utf8 error in column list");
                     JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
-                    response.putAscii('{')
-                            .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("utf8 error in column list")
-                            .putAscii('}');
-                    response.sendChunk(true);
+                    onResumeError(response);
                     return false;
                 }
 
                 if (stringSink.isEmpty()) {
                     info().$("empty column in query parameter '").$(URL_PARAM_COLS).$(": ").$safe(columnNames).$('\'').$();
                     HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
+                    storeError("empty column in query parameter");
                     JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
-                    response.putAscii('{')
-                            .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
-                            .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("empty column in query parameter")
-                            .putAscii('}');
-                    response.sendChunk(true);
+                    onResumeError(response);
                     return false;
                 }
 
@@ -1248,9 +1250,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.bookmark();
         response.putAscii('{')
                 .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
-                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(errorMessage).putQuote().putAscii(',')
-                .putAsciiQuoted("position").putAscii(':').put(errorPosition)
-                .putAscii('}');
+                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(errorMessage).putQuote();
+
+        if (errorPosition != Numbers.INT_NULL) {
+            response.putAscii(',').putAsciiQuoted("position").putAscii(':').put(errorPosition);
+        }
+
+        response.putAscii('}');
         queryState = QUERY_DONE;
         readyForNextRequest(getHttpConnectionContext());
         response.sendChunk(true);
@@ -1299,9 +1305,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                         .putAsciiQuoted("jitCompiled").putAscii(':').putAscii(queryJitCompiled ? "true" : "false")
                         .putAscii('}');
             }
+            response.putAscii('}');
             count = -1;
             counter.set(-1);
-            response.putAscii('}');
             response.sendChunk(true);
             return;
         }
