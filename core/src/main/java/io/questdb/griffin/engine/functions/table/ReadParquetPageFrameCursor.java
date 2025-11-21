@@ -197,6 +197,11 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
+        public long getColumnTop(int columnIndex) {
+            return 0;
+        }
+
+        @Override
         public byte getFormat() {
             return PartitionFormat.PARQUET;
         }

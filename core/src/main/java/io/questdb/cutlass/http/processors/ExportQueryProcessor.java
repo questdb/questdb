@@ -34,12 +34,18 @@ import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -58,6 +64,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.log.Log;
@@ -71,6 +78,7 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Interval;
@@ -81,6 +89,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -89,7 +98,12 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
+import static io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
 import static io.questdb.cutlass.http.HttpConstants.*;
+import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
 import static io.questdb.griffin.model.ExportModel.COPY_FORMAT_PARQUET;
 
 public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
@@ -832,6 +846,82 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         readyForNextRequest(context);
     }
 
+    private void doStreamingParquetExport(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+        ExportQueryProcessorState state = LV.get(context);
+        final HttpChunkedResponse response = context.getChunkedResponse();
+
+        OUT:
+        while (true) {
+            try {
+                switch (state.queryState) {
+                    case JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD:
+                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT;
+
+                    case JsonQueryProcessorState.QUERY_PARQUET_SEND_HEADER:
+                        if (state.getExportModel().isNoDelay()) {
+                            try {
+                                sendParquetHeader(response, state);
+                            } catch (CairoException e) {
+                                sendException(response, 0, e.getFlyweightMessage(), state);
+                                break OUT;
+                            }
+                        }
+                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_TO_PARQUET_FILE;
+                        // fall through
+
+                    case JsonQueryProcessorState.QUERY_PARQUET_TO_PARQUET_FILE:
+                        try {
+                            copyQueryToParquetFile(state);
+                        } catch (SqlException | CairoException e) {
+                            sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
+                            break OUT;
+                        } catch (Throwable e) {
+                            sendException(response, 0, e.getMessage(), state);
+                            break OUT;
+                        }
+                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT;
+                        // fall through
+
+                    case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT:
+                        try {
+                            initParquetFileSending(context, state);
+                        } catch (CairoException e) {
+                            sendException(response, 0, e.getFlyweightMessage(), state);
+                            break OUT;
+                        }
+                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_CHUNK;
+                        // fall through
+
+                    case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_CHUNK:
+                        sendParquetFileChunk(response, state);
+                        if (state.parquetFileOffset >= state.parquetFileSize) {
+                            state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_COMPLETE;
+                        }
+                        break;
+                    case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_COMPLETE:
+                        sendDone(response, state);
+                        break OUT;
+                    default:
+                        break OUT;
+                }
+            } catch (DataUnavailableException e) {
+                throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+            } catch (NoSpaceLeftInResponseBufferException ignored) {
+                if (response.resetToBookmark()) {
+                    response.sendChunk(false);
+                } else {
+                    info(state).$("Response buffer is too small, state=").$(state.queryState).$();
+                    throw PeerDisconnectedException.INSTANCE;
+                }
+            }
+        }
+
+        // Clean up parquet state when done
+        readyForNextRequest(context);
+    }
+
     private LogRecord error(ExportQueryProcessorState state) {
         return LOG.error().$('[').$(state.getFd()).$("] ");
     }
@@ -1228,6 +1318,109 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         state.parquetFileOffset = 3;
         response.bookmark();
         response.sendChunk(false);
+    }
+
+    private void streamCopyQueryToParquetFile(ExportQueryProcessorState state) throws SqlException {
+        if (state.copyID != -1) {
+            CopyExportContext.ExportTaskEntry entry = null;
+            long streamWriter = 0;
+            try {
+                var copyExportContext = engine.getCopyExportContext();
+                entry = copyExportContext.getEntry(state.copyID);
+                RecordCursorFactory recordCursorFactory = state.recordCursorFactory;
+                assert recordCursorFactory.supportsPageFrameCursor();
+                final int order = recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
+                PageFrameCursor frameCursor = recordCursorFactory.getPageFrameCursor(sqlExecutionContext, order);
+
+                RecordMetadata metadata = recordCursorFactory.getMetadata();
+                DirectUtf8Sink columnNames = new DirectUtf8Sink(32);
+                DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_DEFAULT);
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    CharSequence columnName = metadata.getColumnName(i);
+                    int startSize = columnNames.size();
+                    columnNames.put(columnName);
+                    columnMetadata.add(columnNames.size() - startSize);
+                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | metadata.getColumnType(i));
+                }
+                streamWriter = createStreamingParquetWriter(
+                        metadata.getColumnCount(),
+                        columnNames.ptr(),
+                        columnNames.size(),
+                        columnMetadata.getAddress(),
+                        metadata.getTimestampIndex(),
+                        ParquetCompression.packCompressionCodecLevel(state.getExportModel().getCompressionCodec(),
+                                state.getExportModel().getCompressionLevel()),
+                        state.getExportModel().isStatisticsEnabled(),
+                        state.getExportModel().isRawArrayEncoding(),
+                        state.getExportModel().getRowGroupSize(),
+                        state.getExportModel().getDataPageSize(),
+                        state.getExportModel().getParquetVersion()
+                );
+
+                TableReader tableReader = null;
+                if (frameCursor instanceof TablePageFrameCursor) {
+                    tableReader = ((TablePageFrameCursor) frameCursor).getTableReader();
+                }
+
+                PageFrame frame;
+                DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_DEFAULT);
+                while ((frame = frameCursor.next()) != null) {
+                    columnData.clear();
+                    final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
+
+                    for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
+                        long localColTop = frame.getColumnTop(i);
+                        if (localColTop > frameRowCount) {
+                            localColTop = frameRowCount;
+                        }
+
+                        final int columnType = metadata.getColumnType(i);
+
+                        if (ColumnType.isSymbol(columnType) && tableReader != null) {
+                            SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);
+                            final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
+                            final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
+
+                            columnData.add(localColTop);
+                            columnData.add(frame.getPageAddress(i));
+                            columnData.add(frame.getPageSize(i));
+                            columnData.add(symbolValuesMem.addressOf(0));
+                            columnData.add(symbolValuesMem.size());
+                            columnData.add(symbolOffsetsMem.addressOf(HEADER_SIZE));
+                            columnData.add(symbolMapReader.getSymbolCount());
+                        } else {
+                            columnData.add(localColTop);
+                            columnData.add(frame.getPageAddress(i));
+                            columnData.add(frame.getPageSize(i));
+                            columnData.add(frame.getAuxPageAddress(i));
+                            columnData.add(frame.getAuxPageSize(i));
+                            columnData.add(0L);
+                            columnData.add(0L);
+                        }
+                    }
+
+                    // Write chunk to Parquet
+                    long buffer = writeStreamingParquetChunk(
+                            streamWriter,
+                            columnData.getAddress(),
+                            frameRowCount
+                    );
+                    
+
+                    // TODO: handle buffer/streaming output if needed
+                }
+
+            } finally {
+                if (entry != null) {
+                    engine.getCopyExportContext().releaseEntry(entry);
+                }
+                if (streamWriter != 0) {
+                    closeStreamingParquetWriter(streamWriter);
+                }
+            }
+        } else {
+            throw CairoException.nonCritical().put("invalid export state, cannot find export id");
+        }
     }
 
     private void syntaxError(
