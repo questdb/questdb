@@ -57,7 +57,9 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                                     {"", "{\"error\":\"empty query\",\"query\":\"\",\"position\":\"0\"}"},
                                     {"backup table xyz", "{\"query\":\"backup table xyz\",\"error\":\"backup is disabled, server.conf property 'cairo.sql.backup.root' is not set\",\"position\":0}"},
                                     {"insert into growing values (0, 0, '2000')", "{\"dml\":\"OK\"}"},
-                                    {"--", "{\"error\":\"empty query\",\"query\":\"--\",\"position\":\"0\"}"}
+                                    // non-empty query text with an effectively empty query
+                                    {"--", "{\"error\":\"empty query\",\"query\":\"--\",\"position\":\"0\"}"},
+                                    {"update growing set a = 42 where a != a", "{\"dml\":\"OK\",\"updated\":0}"}
                             };
 
 

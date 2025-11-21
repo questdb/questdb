@@ -475,13 +475,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponse response = context.getChunkedResponse();
+
+        state.storeUpdateConfirmation(updateRecords);
         header(response, context, keepAliveHeader, 200);
-        response.put('{')
-                .putAsciiQuoted("dml").putAscii(':').putAsciiQuoted("OK").putAscii(',')
-                .putAsciiQuoted("updated").putAscii(':').put(updateRecords)
-                .put('}');
-        response.sendChunk(true);
-        readyForNextRequest(context);
+        state.onUpdateConfirmation(response);
     }
 
     private void compileAndExecuteQuery(
