@@ -2626,8 +2626,8 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
-    private boolean isIntegerConstant(ExpressionNode n) {
-        if (n.type != CONSTANT) {
+    private boolean isIntegerConstant(@Nullable ExpressionNode n) {
+        if (n == null || n.type != CONSTANT) {
             return false;
         }
 
@@ -4295,6 +4295,7 @@ public class SqlOptimiser implements Mutable {
                         && functionParser.getFunctionFactoryCache().isGroupBy(agg.token)
                         && Chars.equalsIgnoreCase("sum", agg.token)
                         && op.type == OPERATION
+                        && op.paramCount == 2
         ) {
             if (Chars.equals(op.token, '*')) { // sum(x*10) == sum(x)*10
                 if (isIntegerConstant(op.rhs) && isSimpleIntegerColumn(op.lhs, model)) {

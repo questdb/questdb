@@ -884,8 +884,6 @@ public class Decimal64 implements Sinkable, Decimal {
     private static long scaleUp(long value, int scaleDiff) {
         if (scaleDiff == 0) return value;
 
-        long multiplier = TEN_POWERS_TABLE[scaleDiff];
-
         // Check for overflow
         if (value > 0 && value > MAX_SAFE_MULTIPLY[scaleDiff]) {
             throw NumericException.instance().put("Overflow in scale adjustment: multiplying by 10^" + scaleDiff + " exceeds 64-bit capacity");
@@ -894,6 +892,7 @@ public class Decimal64 implements Sinkable, Decimal {
             throw NumericException.instance().put("Overflow in scale adjustment: multiplying by 10^" + scaleDiff + " exceeds 64-bit capacity");
         }
 
+        long multiplier = TEN_POWERS_TABLE[scaleDiff];
         return value * multiplier;
     }
 
