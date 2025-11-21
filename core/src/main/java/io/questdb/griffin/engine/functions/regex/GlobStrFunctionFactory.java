@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
@@ -63,6 +64,9 @@ public class GlobStrFunctionFactory implements FunctionFactory {
                     sink.put("\\\\");
                     break;
                 case '*':
+                    if (i + 1 < n && globPattern.charAt(i + 1) == '*' && i + 2 < n && globPattern.charAt(i + 2) == Files.SEPARATOR) {
+                        i++;
+                    }
                     sink.put(".*");
                     break;
                 case '?':
