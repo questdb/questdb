@@ -149,7 +149,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_USER, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.ALTER_USER, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.CANCEL_QUERY, sendConfirmation);
-            this.queryExecutors.extendAndSet(CompiledQuery.EMPTY, JsonQueryProcessor::sendEmptyQueryNotice);
+            this.queryExecutors.extendAndSet(CompiledQuery.EMPTY, (state, cq, keepAliveHeader) -> sendEmptyQueryNotice(state, keepAliveHeader));
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_MAT_VIEW, this::executeDdl);
             this.queryExecutors.extendAndSet(CompiledQuery.REFRESH_MAT_VIEW, sendConfirmation);
 
@@ -446,22 +446,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
     private static void sendEmptyQueryNotice(
             JsonQueryProcessorState state,
-            CompiledQuery cc,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponse response = context.getChunkedResponse();
+
+        state.storeEmptyQuery();
         header(response, context, keepAliveHeader, 200);
-        String noticeOrError = state.getApiVersion() >= 2 ? "notice" : "error";
-        response.put('{')
-                .putAsciiQuoted(noticeOrError).putAscii(':').putAsciiQuoted("empty query")
-                .putAscii(",")
-                .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(state.getQuery()).putQuote()
-                .putAscii(",")
-                .putAsciiQuoted("position").putAscii(':').putAsciiQuoted("0")
-                .putAscii('}');
-        response.sendChunk(true);
-        readyForNextRequest(context);
+        state.onResumeEmptyQuery(response);
     }
 
     private static void sendInsertConfirmation(
@@ -788,10 +780,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 // Since we are not parsing query text, we should not have any encoding issues.
             }
             state.info().$("Empty query header received. Sending empty reply.").$();
-            final HttpChunkedResponse response = context.getChunkedResponse();
-            state.storeEmptyQuery();
-            JsonQueryProcessor.header(response, context, keepAliveHeader, 200);
-            state.onResumeEmptyQuery(response);
+            sendEmptyQueryNotice(state, keepAliveHeader);
             return false;
         }
 
