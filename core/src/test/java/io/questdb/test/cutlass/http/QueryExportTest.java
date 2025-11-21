@@ -131,56 +131,7 @@ public class QueryExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExportParquetFuzzDisabled() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        getSimpleTester()
-                .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
-                .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
-                .withSendBufferSize(Math.max(1024, rnd.nextInt(4096)))
-                // send buffer has to be large enough for the error message and the http header (maybe we should truncate the message if it doesn't fit?)
-                .withSendBufferSize(Math.max(1024, rnd.nextInt(4099)))
-                .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
-                            engine.execute("""
-                                    create table xyz as (select
-                                        rnd_int() a,
-                                        rnd_double() b,
-                                        timestamp_sequence(0,1000) ts
-                                        from long_sequence(1000)
-                                    ) timestamp(ts) partition by hour""");
-
-                            var requestResponse = new Object[][]{
-                                    {"select count() from xyz", """
-                                        {"query":"select count() from xyz","error":"parquet export is disabled ['cairo.sql.copy.export.root' is not set]","position":0}"""},
-                                    {"select * from xyz", """
-                                        {"query":"select * from xyz","error":"parquet export is disabled ['cairo.sql.copy.export.root' is not set]","position":0}"""},
-                            };
-
-                            var candidateCount = requestResponse.length;
-                            try (TestHttpClient testHttpClient = new TestHttpClient()) {
-                                testHttpClient.setKeepConnection(true);
-                                for (int i = 0; i < 100; i++) {
-                                    int index = rnd.nextInt(candidateCount);
-                                    CharSequence expectedResponse = requestResponse[index][1].toString();
-                                    HttpClient.Request req = testHttpClient.getHttpClient().newRequest("127.0.0.1", 9001);
-                                    req.GET().url("/exp");
-
-                                    if (requestResponse[index][0] instanceof Utf8Sequence sql) {
-                                        req.query("query", sql);
-                                    } else {
-                                        req.query("query", requestResponse[index][0].toString());
-                                    }
-
-                                    req.query("fmt", "parquet");
-                                    testHttpClient.reqToSink(req, testHttpClient.sink, null, null, null, null);
-                                    TestUtils.assertEquals(expectedResponse, testHttpClient.sink);
-                                }
-                            }
-                        }
-                );
-    }
-
-    @Test
-    public void testParquetExportFuzz() throws Exception {
+    public void testExportParquetFuzz() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         getExportTester()
                 .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
@@ -223,6 +174,7 @@ public class QueryExportTest extends AbstractCairoTest {
                                     sink.clear();
                                     testHttpClient.reqToSink(req, sink, null, null, null, null);
                                     int bytesReceived = sink.size();
+
                                     // Save to file
                                     String filename = "test_export_" + i + ".parquet";
                                     Path path = Path.getThreadLocal(root);
@@ -235,13 +187,64 @@ public class QueryExportTest extends AbstractCairoTest {
                                     } finally {
                                         Files.close(fd);
                                     }
-                                    // Read back using read_parquet() and compare
+
+                                    // Read back using read_parquet() and compare with result of direct query
                                     String selectFromParquet = "read_parquet('" + filename + "')";
                                     var expectedSink = new StringSink();
                                     var actualSink = new StringSink();
                                     TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
                                     TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
                                     TestUtils.assertEquals(expectedSink, actualSink);
+                                }
+                            }
+                        }
+                );
+    }
+
+    @Test
+    public void testExportParquetFuzzDisabled() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        getSimpleTester()
+                .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                // send buffer has to be large enough for the error message and the http header (maybe we should truncate the message if it doesn't fit?)
+                .withSendBufferSize(Math.max(1024, rnd.nextInt(4099)))
+                .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+                            engine.execute("""
+                                    create table xyz as (select
+                                        rnd_int() a,
+                                        rnd_double() b,
+                                        timestamp_sequence(0,1000) ts
+                                        from long_sequence(1000)
+                                    ) timestamp(ts) partition by hour""");
+
+                            var requestResponse = new Object[][]{
+                                    {"select count() from xyz", """
+                                        {"query":"select count() from xyz","error":"parquet export is disabled ['cairo.sql.copy.export.root' is not set]","position":0}"""},
+                                    {"select * from xyz", """
+                                        {"query":"select * from xyz","error":"parquet export is disabled ['cairo.sql.copy.export.root' is not set]","position":0}"""},
+                                    {"create table abc (ts TIMESTAMP)", """
+                                        {"query":"create table abc (ts TIMESTAMP)","error":"/exp endpoint only accepts SELECT","position":0}"""}
+                            };
+
+                            var candidateCount = requestResponse.length;
+                            try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                                testHttpClient.setKeepConnection(true);
+                                for (int i = 0; i < 100; i++) {
+                                    int index = rnd.nextInt(candidateCount);
+                                    CharSequence expectedResponse = requestResponse[index][1].toString();
+                                    HttpClient.Request req = testHttpClient.getHttpClient().newRequest("127.0.0.1", 9001);
+                                    req.GET().url("/exp");
+
+                                    if (requestResponse[index][0] instanceof Utf8Sequence sql) {
+                                        req.query("query", sql);
+                                    } else {
+                                        req.query("query", requestResponse[index][0].toString());
+                                    }
+
+                                    req.query("fmt", "parquet");
+                                    testHttpClient.reqToSink(req, testHttpClient.sink, null, null, null, null);
+                                    TestUtils.assertEquals(expectedResponse, testHttpClient.sink);
                                 }
                             }
                         }
