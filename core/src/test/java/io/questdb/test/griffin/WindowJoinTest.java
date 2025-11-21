@@ -36,7 +36,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -807,7 +806,6 @@ public class WindowJoinTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore // unIgnore after https://github.com/questdb/questdb/pull/6409 merge
     @Test
     public void testMasterFilterLimit() throws Exception {
         // timestamp types don't matter for this test
