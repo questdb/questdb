@@ -398,7 +398,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public void maybeEnableSharding(MapFragment fragment) {
         final int shardingThreshold = configuration.getGroupByShardingThreshold();
-        if (!sharded && (fragment.getMap().size() > shardingThreshold || fragment.calculateLocalFunctionCardinality() > shardingThreshold)) {
+        // Functions are cheaper to merge when compared with merging the maps, hence the 10x multiplier.
+        if (!sharded && (fragment.getMap().size() > shardingThreshold || fragment.calculateLocalFunctionCardinality() > 10L * shardingThreshold)) {
             sharded = true;
         }
     }
@@ -626,7 +627,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
 
         final int shardingThreshold = configuration.getGroupByShardingThreshold();
-        shardedHint = (totalShardSize > shardingThreshold || totalFunctionCardinality > shardingThreshold);
+        // Functions are cheaper to merge when compared with merging the maps, hence the 10x multiplier.
+        shardedHint = (totalShardSize > shardingThreshold || totalFunctionCardinality > 10L * shardingThreshold);
     }
 
     private static class MapStats {
