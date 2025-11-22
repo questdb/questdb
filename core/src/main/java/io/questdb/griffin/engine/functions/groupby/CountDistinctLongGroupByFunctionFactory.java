@@ -32,6 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CountDistinctLongGroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "count_distinct(L)";
@@ -53,8 +54,7 @@ public class CountDistinctLongGroupByFunctionFactory implements FunctionFactory 
         return new CountDistinctLongGroupByFunction(
                 args.getQuick(0),
                 configuration.getCountDistinctCapacity(),
-                configuration.getCountDistinctLoadFactor(),
-                sqlExecutionContext.getSharedQueryWorkerCount()
+                configuration.getCountDistinctLoadFactor()
         );
     }
 }

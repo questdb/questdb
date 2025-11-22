@@ -32,6 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public final class CountDistinctUuidGroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "count_distinct(Z)";
@@ -53,8 +54,7 @@ public final class CountDistinctUuidGroupByFunctionFactory implements FunctionFa
         return new CountDistinctUuidGroupByFunction(
                 args.getQuick(0),
                 configuration.getCountDistinctCapacity(),
-                configuration.getCountDistinctLoadFactor(),
-                sqlExecutionContext.getSharedQueryWorkerCount()
+                configuration.getCountDistinctLoadFactor()
         );
     }
 }

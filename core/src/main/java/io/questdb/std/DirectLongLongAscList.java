@@ -46,6 +46,9 @@ public class DirectLongLongAscList implements DirectLongLongSortedList {
         }
         // slow path
         int p = binSearch(value);
+        if (p == capacity) {
+            return;
+        }
         if (p < capacity - 1) {
             Vect.memmove(ptr + 16L * (p + 1), ptr + 16L * p, 16L * (capacity - p - 1));
         }

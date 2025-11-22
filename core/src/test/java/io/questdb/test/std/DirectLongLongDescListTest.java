@@ -40,23 +40,27 @@ public class DirectLongLongDescListTest {
 
     @Test
     public void testFuzz() {
-        final int N = 10000;
+        final int N = 100000;
         final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int duplicateProb = rnd.nextInt(100);
         final PriorityQueue<Long> oracle = new PriorityQueue<>(100, (l1, l2) -> Long.compare(l2, l1));
         try (DirectLongLongDescList queue = new DirectLongLongDescList(100, MemoryTag.NATIVE_DEFAULT)) {
+            long v = rnd.nextLong();
             for (long i = 0; i < N; i++) {
-                long v = rnd.nextLong();
+                if (rnd.nextInt(100) > duplicateProb) {
+                    v = rnd.nextLong();
+                }
                 queue.add(v, v);
                 oracle.add(v);
             }
 
             DirectLongLongDescList.Cursor cursor = queue.getCursor();
             for (int i = 0, n = queue.size(); i < n; i++) {
-                Long v = oracle.poll();
-                Assert.assertNotNull(v);
+                Long vLong = oracle.poll();
+                Assert.assertNotNull(vLong);
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals((long) v, cursor.index());
-                Assert.assertEquals((long) v, cursor.value());
+                Assert.assertEquals((long) vLong, cursor.index());
+                Assert.assertEquals((long) vLong, cursor.value());
             }
             Assert.assertFalse(cursor.hasNext());
         }

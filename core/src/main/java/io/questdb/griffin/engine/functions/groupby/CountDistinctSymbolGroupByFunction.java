@@ -33,19 +33,17 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
-import io.questdb.griffin.engine.groupby.GroupByLongList;
 
 import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 public class CountDistinctSymbolGroupByFunction extends AbstractCountDistinctIntGroupByFunction {
     private int knownSymbolCount = -1;
 
-    public CountDistinctSymbolGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor, int workerCount) {
+    public CountDistinctSymbolGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         super(
                 arg,
                 new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL),
-                new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL),
-                new GroupByLongList(Math.max(workerCount, 4))
+                new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL)
         );
     }
 
@@ -61,6 +59,7 @@ public class CountDistinctSymbolGroupByFunction extends AbstractCountDistinctInt
         if (key != VALUE_IS_NULL) {
             mapValue.putLong(valueIndex, 1);
             mapValue.putLong(valueIndex + 1, key);
+            cardinality++;
         } else {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
@@ -75,6 +74,7 @@ public class CountDistinctSymbolGroupByFunction extends AbstractCountDistinctInt
             if (cnt == 0) {
                 mapValue.putLong(valueIndex, 1);
                 mapValue.putLong(valueIndex + 1, key);
+                cardinality++;
             } else if (cnt == 1) { // inlined value
                 final int keyB = (int) mapValue.getLong(valueIndex + 1);
                 if (key != keyB) {
@@ -82,6 +82,7 @@ public class CountDistinctSymbolGroupByFunction extends AbstractCountDistinctInt
                     setA.add(keyB);
                     mapValue.putLong(valueIndex, 2);
                     mapValue.putLong(valueIndex + 1, setA.ptr());
+                    cardinality++;
                 }
             } else { // non-empty set
                 final long ptr = mapValue.getLong(valueIndex + 1);
@@ -90,6 +91,7 @@ public class CountDistinctSymbolGroupByFunction extends AbstractCountDistinctInt
                     setA.addAt(index, key);
                     mapValue.putLong(valueIndex, cnt + 1);
                     mapValue.putLong(valueIndex + 1, setA.ptr());
+                    cardinality++;
                 }
             }
         }
