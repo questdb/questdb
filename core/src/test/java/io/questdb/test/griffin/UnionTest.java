@@ -1459,6 +1459,67 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionWithNegativeLimitReturnsLastNRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (symbol SYMBOL, side SYMBOL, price DOUBLE, amount DOUBLE, timestamp TIMESTAMP) " +
+                    "timestamp (timestamp) PARTITION BY DAY WAL;");
+            execute("INSERT INTO trades VALUES('BTC', 'sell', 50000.0, 1.0, '2022-03-08T18:03:57.609765Z');");
+            execute("INSERT INTO trades VALUES('ETH', 'buy', 3000.0, 10.0, '2022-03-09T18:03:57.609765Z');");
+            execute("INSERT INTO trades VALUES('BTC', 'buy', 51000.0, 2.0, '2022-03-10T18:03:57.609765Z');");
+            drainWalQueue();
+
+            String limitQuery = "(SELECT timestamp FROM trades LIMIT 1) " +
+                    "UNION ALL " +
+                    "(SELECT timestamp FROM trades LIMIT -1);";
+
+            String groupQuery = "(SELECT min(timestamp) timestamp FROM trades) " +
+                    "UNION ALL " +
+                    "(SELECT max(timestamp) FROM trades);";
+
+            assertQueryNoLeakCheck(
+                    "timestamp\n" +
+                            "2022-03-08T18:03:57.609765Z\n" +
+                            "2022-03-10T18:03:57.609765Z\n",
+                    limitQuery,
+                    null,
+                    false,
+                    true);
+
+            assertPlanNoLeakCheck(limitQuery, "Union All\n" +
+                    "    Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: trades\n" +
+                    "    Limit lo: -1 skip-over-rows: 2 limit: 1\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: trades\n");
+
+            assertQueryNoLeakCheck(
+                    "timestamp\n" +
+                            "2022-03-08T18:03:57.609765Z\n" +
+                            "2022-03-10T18:03:57.609765Z\n",
+                    "(SELECT min(timestamp) timestamp FROM trades) " +
+                            "UNION ALL " +
+                            "(SELECT max(timestamp) FROM trades);",
+                    null,
+                    false,
+                    true);
+
+            assertPlanNoLeakCheck(groupQuery, "Union All\n" +
+                    "    Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: trades\n" +
+                    "    Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
+                    "        SelectedRecord\n" +
+                    "            PageFrame\n" +
+                    "                Row backward scan\n" +
+                    "                Frame backward scan on: trades\n");
+        });
+    }
+
+    @Test
     public void testWithClauseWithSetOperationAndOrderByAndLimit() throws Exception {
         assertQuery("x\n0\n2\n",
                 "with q as  (select 1 x union all select 2 union all select 3 from long_sequence(1) order by x desc limit 2) " +
