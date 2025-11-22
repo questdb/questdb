@@ -142,4 +142,26 @@ public class SqlHintsTest extends AbstractTest {
             Assert.assertFalse(SqlHints.hasEnablePreTouchHint(model, "myTable"));
         });
     }
+
+    @Test
+    public void testMarkoutHorizonJoinHint() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            QueryModel model = new QueryModel.QueryModelFactory().newInstance();
+            Assert.assertFalse(SqlHints.hasMarkoutHorizonHint(model, "tableA", "tableB"));
+
+            model.addHint(SqlHints.MARKOUT_HORIZON_HINT, "tableA tableB");
+            Assert.assertTrue(SqlHints.hasMarkoutHorizonHint(model, "tableA", "tableB"));
+
+            // case-insensitive
+            Assert.assertTrue(SqlHints.hasMarkoutHorizonHint(model, "tablea", "tableb"));
+            Assert.assertTrue(SqlHints.hasMarkoutHorizonHint(model, "TABLEA", "TABLEB"));
+
+            // different order
+            Assert.assertTrue(SqlHints.hasMarkoutHorizonHint(model, "tableB", "tableA"));
+            Assert.assertTrue(SqlHints.hasMarkoutHorizonHint(model, "TABLEB", "TABLEA"));
+
+            model.clear();
+            Assert.assertFalse(SqlHints.hasMarkoutHorizonHint(model, "tableA", "tableB"));
+        });
+    }
 }

@@ -139,7 +139,6 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
 
     @Override
     public void reopen() {
-        recordChain.reopen();
         mem.reopen();
     }
 
@@ -365,6 +364,12 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         }
 
         @Override
+        public long preComputedStateSize() {
+            // no state to preserve
+            return 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             recordChain.recordAt(record, atRowId);
         }
@@ -372,12 +377,6 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         @Override
         public long size() {
             return baseCursor.size();
-        }
-
-        @Override
-        public long preComputedStateSize() {
-            // no state to preserve
-            return 0;
         }
 
         @Override

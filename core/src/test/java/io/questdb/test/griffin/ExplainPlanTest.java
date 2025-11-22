@@ -144,6 +144,7 @@ import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
+import io.questdb.griffin.engine.functions.table.GlobFilesFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
@@ -2499,6 +2500,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof WalTransactionsFunctionFactory && sigArgType == ColumnType.STRING) {
                                     // Skip it, it requires a WAL table to exist
                                     break FUNCTIONS;
+                                } else if (factory instanceof GlobFilesFunctionFactory) {
+                                    args.add(new StrConstant("/tmp/*"));
                                 } else {
                                     args.add(getConst(constFuncs, sigArgType, p, no));
                                 }
