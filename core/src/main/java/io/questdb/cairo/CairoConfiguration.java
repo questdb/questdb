@@ -413,19 +413,19 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
-    int getParquetExportCopyReportFrequencyLines();
-
     int getParquetExportCompressionCodec();
 
     int getParquetExportCompressionLevel();
+
+    int getParquetExportCopyReportFrequencyLines();
 
     int getParquetExportDataPageSize();
 
     int getParquetExportRowGroupSize();
 
-    int getParquetExportVersion();
-
     CharSequence getParquetExportTableNamePrefix();
+
+    int getParquetExportVersion();
 
     int getPartitionEncoderParquetCompressionCodec();
 
@@ -465,6 +465,8 @@ public interface CairoConfiguration {
     int getRenameTableModelPoolCapacity();
 
     int getRepeatMigrationsFromVersion();
+
+    int getRmdirMaxDepth();
 
     int getRndFunctionMemoryMaxPages();
 

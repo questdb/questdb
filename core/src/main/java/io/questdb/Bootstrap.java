@@ -211,6 +211,7 @@ public class Bootstrap {
             }
 
             Files.FS_CACHE_ENABLED = config.getCairoConfiguration().getFileDescriptorCacheEnabled();
+            Files.RMDIR_MAX_DEPTH = config.getCairoConfiguration().getRmdirMaxDepth();
             LogLevel.init(config.getCairoConfiguration());
             if (LogLevel.TIMESTAMP_TIMEZONE != null) {
                 log.infoW().$("changing logger timezone [from=`UTC`, to=`").$(LogLevel.TIMESTAMP_TIMEZONE).$('`').I$();

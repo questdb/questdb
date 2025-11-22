@@ -104,7 +104,7 @@ public class AbstractTest {
         final Path path = Path.getThreadLocal(root);
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
         path.slash$();
-        Assert.assertTrue("Test dir cleanup error", !ff.exists(path.$()) || ff.rmdir(path.slash()));
+        Assert.assertTrue("Test dir cleanup error", !ff.exists(path.$()) || Files.rmdir(path.slash(), true));
     }
 
     @BeforeClass

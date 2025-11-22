@@ -24,8 +24,10 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
@@ -34,6 +36,7 @@ import org.jetbrains.annotations.Nullable;
 public class FilesFacadeImpl implements FilesFacade {
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
+    private final static Log LOG = LogFactory.getLog(FilesFacadeImpl.class);
     private static final long ZFS_MAGIC_NUMBER = 0x2fc12fc1;
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
@@ -442,13 +445,36 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    final public boolean rmdir(Path name) {
-        return rmdir(name, true);
+    public boolean rmdir(Path name, boolean haltOnError) {
+        Path pathSecureCopy = SecurePath.PATH.get().of(name);
+
+        try {
+            int resDepth = Files.rmdir(pathSecureCopy, haltOnError, LOG);
+            int depth = resDepth > 0 ? resDepth : -resDepth - 1;
+
+            // Log all error dirs with subdirectories or if there was a security error
+            if (depth > 0 || (resDepth < 0 && Files.isSecurityError(Os.errno()))) {
+                if (resDepth > -1) {
+                    LOG.info().$("completed rmdir with subdirectories [path=").$(pathSecureCopy)
+                            .$(", subDirDepth=").$(depth)
+                            .I$();
+                } else {
+                    LOG.error().$("error in rmdir with subdirectories [path=").$(pathSecureCopy)
+                            .$(", subDirDepth=").$(depth)
+                            .$(", errno=").$(Os.errno())
+                            .I$();
+                }
+            }
+            return resDepth > -1;
+        } catch (CairoError e) {
+            LOG.error().$("could not remove dir [path=").$(name).$(", error=").$(e.getFlyweightMessage()).I$();
+            throw e;
+        }
     }
 
     @Override
-    public boolean rmdir(Path name, boolean haltOnError) {
-        return Files.rmdir(name, haltOnError);
+    final public boolean rmdir(Path name) {
+        return rmdir(name, true);
     }
 
     @Override
