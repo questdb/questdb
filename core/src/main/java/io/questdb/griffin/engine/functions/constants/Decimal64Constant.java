@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
@@ -41,6 +42,17 @@ public class Decimal64Constant extends Decimal64Function implements ConstantFunc
     @Override
     public long getDecimal64(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isEquivalentTo(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof Decimal64Constant that) {
+            return this.value == that.value && this.type == that.type;
+        }
+        return false;
     }
 
     @Override

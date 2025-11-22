@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFunction, UnaryFunction {
@@ -41,6 +42,13 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
 
     public FirstIPv4GroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putInt(valueIndex + 1, Unsafe.getUnsafe().getInt(ptr));
+        }
     }
 
     @Override
@@ -117,6 +125,11 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         setInt(mapValue, Numbers.IPv4_NULL);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

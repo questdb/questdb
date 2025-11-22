@@ -59,6 +59,10 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     public RuntimeIntervalModel(TimestampDriver timestampDriver, int partitionBy, LongList staticIntervals, ObjList<Function> dynamicRangeList) {
+        this(timestampDriver, partitionBy, staticIntervals, dynamicRangeList, true);
+    }
+
+    public RuntimeIntervalModel(TimestampDriver timestampDriver, int partitionBy, LongList staticIntervals, ObjList<Function> dynamicRangeList, boolean dynamicRangeListOwner) {
         this.intervals = staticIntervals;
         this.dynamicRangeList = dynamicRangeList;
         this.timestampDriver = timestampDriver;
@@ -103,9 +107,22 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         Misc.freeObjList(dynamicRangeList);
     }
 
+    public ObjList<Function> getDynamicRangeList() {
+        return dynamicRangeList;
+    }
+
+    public LongList getStaticIntervals() {
+        return intervals;
+    }
+
     @Override
     public TimestampDriver getTimestampDriver() {
         return timestampDriver;
+    }
+
+    @Override
+    public boolean isStatic() {
+        return dynamicRangeList == null || dynamicRangeList.size() == 0;
     }
 
     @Override
@@ -312,10 +329,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         } else {
             return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
         }
-    }
-
-    private boolean isStatic() {
-        return dynamicRangeList == null || dynamicRangeList.size() == 0;
     }
 
     private void negatedNothing(LongList outIntervals, int divider) {

@@ -150,7 +150,6 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
-
         private static final int INIT_DONE = 2;
         private static final int INIT_FIRST_RECORD_DONE = 1;
         private static final int INIT_PENDING = 0;

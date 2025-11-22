@@ -197,9 +197,9 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final DirectLongList rows = task.getFilteredRows();
         final PageFrameSequence<AsyncTopKAtom> frameSequence = task.getFrameSequence(AsyncTopKAtom.class);
 
+        final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
         final long frameRowCount = task.getFrameRowCount();

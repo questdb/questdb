@@ -28,12 +28,27 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class LastNotNullDateGroupByFunction extends FirstDateGroupByFunction {
 
     public LastNotNullDateGroupByFunction(int position, @NotNull Function arg) {
         super(arg);
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            long hi = ptr + (count - 1) * 8L;
+            for (; hi >= ptr; hi -= 8L) {
+                long value = Unsafe.getUnsafe().getLong(hi);
+                if (value != Numbers.LONG_NULL) {
+                    mapValue.putLong(valueIndex + 1, value);
+                    break;
+                }
+            }
+        }
     }
 
     @Override

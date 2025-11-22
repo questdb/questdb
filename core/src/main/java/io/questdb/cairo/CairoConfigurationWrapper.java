@@ -647,11 +647,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getParquetExportCopyReportFrequencyLines() {
-        return getDelegate().getParquetExportCopyReportFrequencyLines();
-    }
-
-    @Override
     public int getParquetExportCompressionCodec() {
         return getDelegate().getParquetExportCompressionCodec();
     }
@@ -659,6 +654,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getParquetExportCompressionLevel() {
         return getDelegate().getParquetExportCompressionLevel();
+    }
+
+    @Override
+    public int getParquetExportCopyReportFrequencyLines() {
+        return getDelegate().getParquetExportCopyReportFrequencyLines();
     }
 
     @Override
@@ -672,13 +672,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getParquetExportVersion() {
-        return getDelegate().getParquetExportVersion();
+    public CharSequence getParquetExportTableNamePrefix() {
+        return getDelegate().getParquetExportTableNamePrefix();
     }
 
     @Override
-    public CharSequence getParquetExportTableNamePrefix() {
-        return getDelegate().getParquetExportTableNamePrefix();
+    public int getParquetExportVersion() {
+        return getDelegate().getParquetExportVersion();
     }
 
     @Override
@@ -1019,6 +1019,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getSqlSmallMapPageSize() {
         return getDelegate().getSqlSmallMapPageSize();
+    }
+
+    @Override
+    public int getSqlSmallPageFrameMaxRows() {
+        return getDelegate().getSqlSmallPageFrameMaxRows();
+    }
+
+    @Override
+    public int getSqlSmallPageFrameMinRows() {
+        return getDelegate().getSqlSmallPageFrameMinRows();
     }
 
     @Override
@@ -1419,6 +1429,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelTopKEnabled() {
         return getDelegate().isSqlParallelTopKEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelWindowJoinEnabled() {
+        return getDelegate().isSqlParallelWindowJoinEnabled();
     }
 
     @Override

@@ -56,6 +56,17 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
+    default boolean isEquivalentTo(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof UnaryFunction that) {
+            return getArg().isEquivalentTo(that.getArg());
+        }
+        return false;
+    }
+
+    @Override
     default boolean isNonDeterministic() {
         return getArg().isNonDeterministic();
     }
