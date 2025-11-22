@@ -167,6 +167,24 @@ public class Unordered2Map implements Map, Reopenable {
         }
     }
 
+    // Fast-path method to create a key without involving the Key object
+    public MapValue createValueWithKey(short key) {
+        if (key != 0) {
+            long startAddress = getStartAddress(key);
+            short k = Unsafe.getUnsafe().getShort(startAddress);
+            size += (k == 0) ? 1 : 0;
+            Unsafe.getUnsafe().putShort(startAddress, key);
+            return valueOf(startAddress, k == 0, value);
+        }
+
+        if (hasZero) {
+            return valueOf(memStart, false, value);
+        }
+        size++;
+        hasZero = true;
+        return valueOf(memStart, true, value);
+    }
+
     @Override
     public MapRecordCursor getCursor() {
         return cursor.init(memStart, memLimit, hasZero, size);

@@ -31,6 +31,8 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.ColumnTypes.totalSize;
+
 public class MapFactory {
 
     /**
@@ -104,7 +106,9 @@ public class MapFactory {
 
         final int keySize = totalSize(keyTypes);
         final int valueSize = totalSize(valueTypes);
-        if (keySize > 0) {
+        // Check if we can use faster hash tables for single column case.
+        if (keyTypes.getColumnCount() == 1) {
+            final int keyType = keyTypes.getColumnType(0);
             if (keySize == Short.BYTES && valueSize <= maxEntrySize) {
                 return new Unordered2Map(keyTypes, valueTypes);
             } else if (keySize == Integer.BYTES && Integer.BYTES + valueSize <= maxEntrySize) {
@@ -123,20 +127,16 @@ public class MapFactory {
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes()
                 );
+            } else if (keyType == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
+                return new UnorderedVarcharMap(
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes(),
+                        configuration.getGroupByAllocatorDefaultChunkSize(),
+                        configuration.getGroupByAllocatorMaxChunkSize()
+                );
             }
-        }
-
-        if (keyTypes.getColumnCount() == 1
-                && keyTypes.getColumnType(0) == ColumnType.VARCHAR
-                && 2 * Long.BYTES + valueSize <= maxEntrySize) {
-            return new UnorderedVarcharMap(
-                    valueTypes,
-                    keyCapacity,
-                    configuration.getSqlFastMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes(),
-                    configuration.getGroupByAllocatorDefaultChunkSize(),
-                    configuration.getGroupByAllocatorMaxChunkSize()
-            );
         }
 
         return new OrderedMap(
@@ -147,26 +147,5 @@ public class MapFactory {
                 configuration.getSqlFastMapLoadFactor(),
                 configuration.getSqlMapMaxResizes()
         );
-    }
-
-    /**
-     * Returns total size in case of all fixed-size columns
-     * or -1 if there is a var-size column in the given list.
-     */
-    private static int totalSize(ColumnTypes types) {
-        if (types == null) {
-            return 0;
-        }
-        int totalSize = 0;
-        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
-            final int columnType = types.getColumnType(i);
-            final int size = ColumnType.sizeOf(columnType);
-            if (size > 0) {
-                totalSize += size;
-            } else {
-                return -1;
-            }
-        }
-        return totalSize;
     }
 }
