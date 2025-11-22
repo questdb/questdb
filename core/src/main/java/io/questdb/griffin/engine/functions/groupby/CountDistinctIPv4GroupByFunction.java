@@ -28,18 +28,16 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
-import io.questdb.griffin.engine.groupby.GroupByLongList;
 import io.questdb.std.Numbers;
 
 public class CountDistinctIPv4GroupByFunction extends AbstractCountDistinctIntGroupByFunction {
 
-    public CountDistinctIPv4GroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor, int workerCount) {
+    public CountDistinctIPv4GroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         super(
                 arg,
                 // Numbers.IPv4_NULL is zero which is nice for faster zeroing on rehash.
                 new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL),
-                new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL),
-                new GroupByLongList(Math.max(workerCount, 4))
+                new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL)
         );
     }
 
@@ -49,6 +47,7 @@ public class CountDistinctIPv4GroupByFunction extends AbstractCountDistinctIntGr
         if (value != Numbers.IPv4_NULL) {
             mapValue.putLong(valueIndex, 1);
             mapValue.putLong(valueIndex + 1, value);
+            cardinality++;
         } else {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
@@ -63,6 +62,7 @@ public class CountDistinctIPv4GroupByFunction extends AbstractCountDistinctIntGr
             if (cnt == 0) {
                 mapValue.putLong(valueIndex, 1);
                 mapValue.putLong(valueIndex + 1, value);
+                cardinality++;
             } else if (cnt == 1) { // inlined value
                 final int valueB = (int) mapValue.getLong(valueIndex + 1);
                 if (value != valueB) {
@@ -70,6 +70,7 @@ public class CountDistinctIPv4GroupByFunction extends AbstractCountDistinctIntGr
                     setA.add(valueB);
                     mapValue.putLong(valueIndex, 2);
                     mapValue.putLong(valueIndex + 1, setA.ptr());
+                    cardinality++;
                 }
             } else { // non-empty set
                 final long ptr = mapValue.getLong(valueIndex + 1);
@@ -78,6 +79,7 @@ public class CountDistinctIPv4GroupByFunction extends AbstractCountDistinctIntGr
                     setA.addAt(index, value);
                     mapValue.putLong(valueIndex, cnt + 1);
                     mapValue.putLong(valueIndex + 1, setA.ptr());
+                    cardinality++;
                 }
             }
         }

@@ -87,6 +87,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     // Note: all function updaters should be used through a getFunctionUpdater() call
     // to properly initialize group by functions' allocator.
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
+    private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
@@ -138,6 +139,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.perWorkerFilters = perWorkerFilters;
             this.ownerKeyFunctions = ownerKeyFunctions;
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
+            this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
             final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
@@ -160,10 +162,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 lastShardStats.extendAndSet(i, new MapStats());
             }
             lastOwnerStats = new MapStats();
-            ownerFragment = new MapFragment(true);
+            ownerFragment = new MapFragment(-1);
             perWorkerFragments = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerFragments.extendAndSet(i, new MapFragment(false));
+                perWorkerFragments.extendAndSet(i, new MapFragment(i));
             }
             // Destination shards are lazily initialized by the worker threads.
             destShards = new ObjList<>(shardCount);
@@ -205,6 +207,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         Misc.free(ownerFragment);
         Misc.freeObjListAndKeepObjects(perWorkerFragments);
         Misc.freeObjListAndKeepObjects(destShards);
+        Misc.clearObjList(ownerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
@@ -240,17 +243,34 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     public void finalizeShardStats() {
+        assert sharded;
+
+        // Find max heap size and apply it to all shards.
         if (configuration.isGroupByPresizeEnabled()) {
-            // Find max heap size and apply it to all shards.
             long maxHeapSize = 0;
             for (int i = 0; i < shardCount; i++) {
                 final MapStats stats = lastShardStats.getQuick(i);
-                maxHeapSize = Math.max(maxHeapSize, stats.maxHeapSize);
+                maxHeapSize = Math.max(stats.maxHeapSize, maxHeapSize);
             }
             for (int i = 0; i < shardCount; i++) {
                 lastShardStats.getQuick(i).maxHeapSize = maxHeapSize;
             }
         }
+
+        // Check if sharding was necessary.
+        long totalShardSize = 0;
+        for (int i = 0; i < shardCount; i++) {
+            totalShardSize += destShards.getQuick(i).size();
+        }
+
+        long totalFunctionCardinality = 0;
+        totalFunctionCardinality += ownerFragment.totalFunctionCardinality;
+        for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
+            totalFunctionCardinality += perWorkerFragments.getQuick(i).totalFunctionCardinality;
+        }
+
+        final int shardingThreshold = configuration.getGroupByShardingThreshold();
+        lastSharded = (totalShardSize > shardingThreshold || totalFunctionCardinality > shardingThreshold);
     }
 
     public ObjList<Function> getBindVarFunctions() {
@@ -295,6 +315,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             return ownerMapSink;
         }
         return perWorkerMapSinks.getQuick(slotId);
+    }
+
+    // thread-unsafe
+    public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
+        return ownerGroupByFunctions;
     }
 
     public int getShardCount() {
@@ -384,6 +409,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         // All other threads, e.g. worker or work stealing threads, must always acquire a lock
         // to use shared resources.
         return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+    }
+
+    public void maybeEnableSharding(MapFragment fragment) {
+        final int shardingThreshold = configuration.getGroupByShardingThreshold();
+        if (!sharded && (fragment.getMap().size() > shardingThreshold || fragment.calculateLocalFunctionCardinality() > shardingThreshold)) {
+            sharded = true;
+        }
     }
 
     public Map mergeOwnerMap() {
@@ -500,14 +532,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         // The maps will be open lazily by worker threads.
     }
 
-    public void requestSharding(MapFragment fragment) {
-        if (!sharded && fragment.getMap().size() > configuration.getGroupByShardingThreshold()) {
-            sharded = true;
-        }
-    }
-
     public void shardAll() {
-        lastSharded = true;
         ownerFragment.shard();
         for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
             perWorkerFragments.getQuick(i).shard();
@@ -525,6 +550,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+    }
+
+    private ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
+        if (slotId == -1 || perWorkerGroupByFunctions == null) {
+            return ownerGroupByFunctions;
+        }
+        return perWorkerGroupByFunctions.getQuick(slotId);
     }
 
     private Map reopenDestShard(int shardIndex) {
@@ -609,19 +641,21 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public class MapFragment implements QuietCloseable {
         private final Map map; // non-sharded partial result
-        private final boolean owner;
         private final ObjList<Map> shards; // this.map split into shards
+        private final int slotId; // -1 stands for owner fragment
         private boolean sharded;
+        private long totalFunctionCardinality;
 
-        private MapFragment(boolean owner) {
+        private MapFragment(int slotId) {
             this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
             this.shards = new ObjList<>(shardCount);
-            this.owner = owner;
+            this.slotId = slotId;
         }
 
         @Override
         public void close() {
             sharded = false;
+            totalFunctionCardinality = 0;
             map.close();
             for (int i = 0, n = shards.size(); i < n; i++) {
                 Map m = shards.getQuick(i);
@@ -647,11 +681,19 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
         public Map reopenMap() {
             if (!map.isOpen()) {
+                final boolean owner = slotId == -1;
                 int keyCapacity = targetKeyCapacity(lastOwnerStats, owner);
                 long heapSize = targetHeapSize(lastOwnerStats, owner);
                 map.reopen(keyCapacity, heapSize);
             }
             return map;
+        }
+
+        public void resetLocalStats() {
+            final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
+            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                groupByFunctions.getQuick(i).resetStats();
+            }
         }
 
         public void shard() {
@@ -676,6 +718,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             map.close();
             sharded = true;
+        }
+
+        private long calculateLocalFunctionCardinality() {
+            final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
+            long maxCardinality = 0;
+            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                maxCardinality = Math.max(groupByFunctions.getQuick(i).getCardinalityStat(), maxCardinality);
+            }
+            this.totalFunctionCardinality += maxCardinality;
+            return maxCardinality;
         }
 
         private void reopenShards() {
