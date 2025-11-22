@@ -24,8 +24,11 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
@@ -57,6 +60,9 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -83,30 +89,32 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String baseTableName;
     private final int baseTableNamePosition;
+    private final CairoConfiguration configuration;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     private final boolean deferred;
     private final int periodDelay;
     private final char periodDelayUnit;
-    private final int periodLength;
-    private final char periodLengthUnit;
     private final int refreshType;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final String sqlText;
     private final String timeZone;
     private final String timeZoneOffset;
     private final int timerInterval;
-    private final long timerStartUs;
-    private final String timerTimeZone;
     private final char timerUnit;
     private final IntList tmpColumnIndexes = new IntList();
     private final LowerCaseCharSequenceHashSet tmpLiterals = new LowerCaseCharSequenceHashSet();
     private final MatViewDefinition viewDefinition = new MatViewDefinition();
     private int baseTableTimestampType;
     private CreateTableOperationImpl createTableOperation;
+    private int periodLength;
+    private char periodLengthUnit;
     private long samplingInterval;
     private char samplingIntervalUnit;
+    private long timerStartUs;
+    private String timerTimeZone;
 
     public CreateMatViewOperationImpl(
+            @NotNull CairoConfiguration configuration,
             @NotNull String sqlText,
             @NotNull CreateTableOperationImpl createTableOperation,
             int refreshType,
@@ -124,6 +132,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             int periodDelay,
             char periodDelayUnit
     ) {
+        this.configuration = configuration;
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
         this.refreshType = refreshType;
@@ -454,6 +463,38 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         // Don't forget to reset augmented columns in create table op with what we have scraped.
         createTableOperation.initColumnMetadata(createColumnModelMap);
+
+        if (periodLength == -1) {
+            // It's PERIOD (SAMPLE BY INTERVAL) which means that we need to align the period to the SAMPLE BY bucket.
+            periodLength = (int) Math.min(samplingInterval, Integer.MAX_VALUE);
+            periodLengthUnit = samplingIntervalUnit;
+            CreateMatViewOperation.validateMatViewPeriodLength(periodLength, periodLengthUnit, intervalPos);
+            final TimestampSampler periodSamplerMicros = TimestampSamplerFactory.getInstance(
+                    MicrosTimestampDriver.INSTANCE,
+                    periodLength,
+                    periodLengthUnit,
+                    intervalPos
+            );
+            assert timerTimeZone == null;
+            timerTimeZone = timeZone;
+            TimeZoneRules tzRulesMicros = null;
+            if (timerTimeZone != null) {
+                try {
+                    tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
+                } catch (CairoException e) {
+                    throw SqlException.position(intervalPos).put(e.getFlyweightMessage());
+                }
+            }
+            if (timeZoneOffset != null) {
+                final long val = Dates.parseOffset(timeZoneOffset);
+                if (val != 0 && val != Numbers.LONG_NULL) {
+                    throw SqlException.position(intervalPos).put("PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
+                }
+            }
+            final long nowMicros = configuration.getMicrosecondClock().getTicks();
+            final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
+            timerStartUs = periodSamplerMicros.round(nowLocalMicros);
+        }
     }
 
     @Override

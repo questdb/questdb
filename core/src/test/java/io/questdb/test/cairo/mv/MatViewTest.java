@@ -889,7 +889,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h_t set refresh every 2h period (start)",
                     64,
-                    "'length' expected"
+                    "'length' or 'sample' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h_t set refresh period( length",
