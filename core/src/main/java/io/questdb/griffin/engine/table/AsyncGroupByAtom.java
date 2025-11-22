@@ -101,9 +101,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final int shardCount;
     private final int shardCountShr;
     private final ColumnTypes valueTypes;
-    // Set to true if we had to shard during the last query execution.
-    private boolean lastSharded;
     private volatile boolean sharded;
+    // A hint whether to shard during the next query execution.
+    private boolean shardedHint;
 
     public AsyncGroupByAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -243,8 +243,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     public void finalizeShardStats() {
-        assert sharded;
-
         // Find max heap size and apply it to all shards.
         if (configuration.isGroupByPresizeEnabled()) {
             long maxHeapSize = 0;
@@ -257,20 +255,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             }
         }
 
-        // Check if sharding was necessary.
-        long totalShardSize = 0;
-        for (int i = 0; i < shardCount; i++) {
-            totalShardSize += destShards.getQuick(i).size();
-        }
-
-        long totalFunctionCardinality = 0;
-        totalFunctionCardinality += ownerFragment.totalFunctionCardinality;
-        for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
-            totalFunctionCardinality += perWorkerFragments.getQuick(i).totalFunctionCardinality;
-        }
-
-        final int shardingThreshold = configuration.getGroupByShardingThreshold();
-        lastSharded = (totalShardSize > shardingThreshold || totalFunctionCardinality > shardingThreshold);
+        updateShardedHint();
     }
 
     public ObjList<Function> getBindVarFunctions() {
@@ -419,7 +404,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     public Map mergeOwnerMap() {
-        lastSharded = false;
         final Map destMap = ownerFragment.reopenMap();
         final int perWorkerMapCount = perWorkerFragments.size();
         // Make sure to set the allocator for the owner's group by functions.
@@ -461,6 +445,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         if (configuration.isGroupByPresizeEnabled()) {
             stats.update(medianSize, maxHeapSize, destMap.size(), destMap.getHeapSize());
         }
+
+        updateShardedHint();
 
         return destMap;
     }
@@ -525,7 +511,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     @Override
     public void reopen() {
-        if (lastSharded) {
+        if (shardedHint) {
             // Looks like we had to shard during previous execution, so let's do it ahead of time.
             sharded = true;
         }
@@ -621,6 +607,26 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             keyCapacity = Math.max((int) statKeyCapacity, keyCapacity);
         }
         return keyCapacity;
+    }
+
+    private void updateShardedHint() {
+        long totalShardSize = 0;
+        if (sharded) {
+            for (int i = 0; i < shardCount; i++) {
+                totalShardSize += destShards.getQuick(i).size();
+            }
+        } else {
+            totalShardSize = ownerFragment.map.size();
+        }
+
+        long totalFunctionCardinality = 0;
+        totalFunctionCardinality += ownerFragment.totalFunctionCardinality;
+        for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
+            totalFunctionCardinality += perWorkerFragments.getQuick(i).totalFunctionCardinality;
+        }
+
+        final int shardingThreshold = configuration.getGroupByShardingThreshold();
+        shardedHint = (totalShardSize > shardingThreshold || totalFunctionCardinality > shardingThreshold);
     }
 
     private static class MapStats {
