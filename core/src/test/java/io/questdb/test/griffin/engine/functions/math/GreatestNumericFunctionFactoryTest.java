@@ -53,6 +53,11 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
         assertSqlWithTypes("greatest\n4.0:DOUBLE\n", "select greatest(1::short, 4.0)");
         assertSqlWithTypes("greatest\n4.0:DOUBLE\n", "select greatest(1f, 4.0::double)");
         assertSqlWithTypes("greatest\n4.0:FLOAT\n", "select greatest(1f, 4::int)");
+        // A short has a precision of 5 (32,768), when scaling it to match the decimal, we have a precision of 6 and a
+        // scale of 1 -> DECIMAL(6, 1)
+        assertSqlWithTypes("greatest\n4.0:DECIMAL(6,1)\n", "select greatest(1::decimal(2,1), 4::short)");
+        // Doubles takes precedence over decimal has they have a much bigger range
+        assertSqlWithTypes("greatest\n4.0:DOUBLE\n", "select greatest(4::decimal(2,1), 1d, null::decimal(1,0))");
     }
 
     @Test
@@ -65,6 +70,26 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
                 "greatest\n2020-09-13T00:00:00.000Z:DATE\n",
                 "select greatest('2020-09-10'::date, '2020-09-11'::date, '2020-09-13'::date)"
         );
+    }
+
+    @Test
+    public void testGreatestNumericFunctionFactoryDecimalOverflow() throws Exception {
+        assertException(
+                "select greatest(123.456::decimal(76,73), 99999::int)",
+                46,
+                "inconvertible value: 99999 [INT -> DECIMAL(76,73)]"
+        );
+    }
+
+    @Test
+    public void testGreatestNumericFunctionFactoryDecimals() throws Exception {
+        assertSqlWithTypes("greatest\n6.000:DECIMAL(8,3)\n", "select greatest(2::decimal(4,0), 6::decimal(4,3), null::decimal(5,0))");
+        assertSqlWithTypes("greatest\n6.000:DECIMAL(28,3)\n", "select greatest(2::decimal(24,0), 6::decimal(24,3), null::decimal(25,0))");
+        assertSqlWithTypes("greatest\n6.000:DECIMAL(48,3)\n", "select greatest(2::decimal(44,0), 6::decimal(44,3), null::decimal(45,0))");
+        assertSqlWithTypes("greatest\n2.0:DECIMAL(2,1)\n", "select greatest(null::decimal(1,0), 2::decimal(2,1), 1::decimal(1,0))");
+        assertSqlWithTypes("greatest\n12.34:DECIMAL(4,2)\n", "select greatest(1::decimal(1,0), 12.34::decimal(4,2), 6.7::decimal(2,1))");
+        assertSqlWithTypes("greatest\n123.456:DECIMAL(8,3)\n", "select greatest(123.456::decimal(6,3), 100::short, null::byte)");
+        assertSqlWithTypes("greatest\n123456.78901:DECIMAL(15,5)\n", "select greatest(123.456::decimal(6,3), 99999::int, 123456.78901::DECIMAL(11,5))");
     }
 
     @Test

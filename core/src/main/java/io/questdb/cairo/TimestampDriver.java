@@ -189,7 +189,17 @@ public interface TimestampDriver {
      * @return the timestamp value
      * @throws UnsupportedOperationException if the unit is not supported
      */
-    long from(long ts, byte unit);
+    default long from(long ts, byte unit) {
+        return switch (unit) {
+            case CommonUtils.TIMESTAMP_UNIT_NANOS -> fromNanos(ts);
+            case CommonUtils.TIMESTAMP_UNIT_MICROS -> fromMicros(ts);
+            case CommonUtils.TIMESTAMP_UNIT_MILLIS -> fromMillis(ts);
+            case CommonUtils.TIMESTAMP_UNIT_SECONDS -> fromSeconds(ts);
+            case CommonUtils.TIMESTAMP_UNIT_MINUTES -> fromMinutes((int) ts);
+            case CommonUtils.TIMESTAMP_UNIT_HOURS -> fromHours((int) ts);
+            default -> throw new UnsupportedOperationException();
+        };
+    }
 
     long fromDate(long timestamp);
 

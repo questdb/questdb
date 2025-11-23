@@ -201,7 +201,7 @@ public class InDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return valueFunctions;
         }
 
@@ -236,7 +236,7 @@ public class InDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 

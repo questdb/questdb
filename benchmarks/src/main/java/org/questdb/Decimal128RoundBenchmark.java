@@ -158,7 +158,7 @@ public class Decimal128RoundBenchmark {
             case "ROUND_LARGE":
                 // Large number rounding: large 128-bit value
                 decimal128Value = new Decimal128();
-                decimal128Value.set(123456789L, 987654321098765432L, 9);
+                decimal128Value.of(123456789L, 987654321098765432L, 9);
                 bigDecimalValue = new BigDecimal("123456789987654321098.765432100");
                 targetScale = 6;
                 break;

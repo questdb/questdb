@@ -32,7 +32,7 @@ public class Long128 {
     // this is because of alternation of the order when using getLong128Hi, getLong128Lo
     // instead as A, B records.
     // See special cases for Long128 in RecordComparatorCompiler
-    public static int compare(long aLo, long bHi, long aHi, long bLo) {
+    public static int compare(long aHi, long aLo, long bHi, long bLo) {
 
         if (aHi < bHi) {
             return -1;

@@ -259,6 +259,73 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByAggregateKeepsOrdering() throws Exception {
+        execute("""
+                create table trades (
+                    sym symbol,
+                    price double,
+                    ts timestamp
+                ) timestamp(ts) partition by DAY
+                """);
+        execute("""
+                insert into trades values
+                ('AAPL', 100.0, cast('2023-01-01T09:00:00.000000Z' as TIMESTAMP)),
+                ('AAPL', 101.0, cast('2023-01-01T09:01:00.000000Z' as TIMESTAMP)),
+                ('AAPL', 102.0, cast('2023-01-01T09:02:00.000000Z' as TIMESTAMP)),
+                ('MSFT', 200.0, cast('2023-01-01T09:03:00.000000Z' as TIMESTAMP)),
+                ('MSFT', 201.0, cast('2023-01-01T09:04:00.000000Z' as TIMESTAMP)),
+                ('GOOGL', 300.0, cast('2023-01-01T09:05:00.000000Z' as TIMESTAMP)),
+                ('GOOGL', 301.0, cast('2023-01-01T09:06:00.000000Z' as TIMESTAMP)),
+                ('AAPL', 103.0, cast('2023-01-01T09:07:00.000000Z' as TIMESTAMP)),
+                ('MSFT', 202.0, cast('2023-01-01T09:08:00.000000Z' as TIMESTAMP)),
+                ('GOOGL', 302.0, cast('2023-01-01T09:09:00.000000Z' as TIMESTAMP))
+                """);
+
+        execute("""
+                create table prices (
+                    sym symbol,
+                    price double,
+                    ts timestamp
+                ) timestamp(ts) partition by DAY
+                """);
+        execute("""
+                insert into prices values
+                ('AAPL', 99.5, cast('2023-01-01T08:59:00.000000Z' as TIMESTAMP)),
+                ('AAPL', 100.5, cast('2023-01-01T09:00:00.000000Z' as TIMESTAMP)),
+                ('AAPL', 101.5, cast('2023-01-01T09:01:00.000000Z' as TIMESTAMP)),
+                ('MSFT', 199.5, cast('2023-01-01T09:02:00.000000Z' as TIMESTAMP)),
+                ('MSFT', 200.5, cast('2023-01-01T09:03:00.000000Z' as TIMESTAMP)),
+                ('GOOGL', 299.5, cast('2023-01-01T09:04:00.000000Z' as TIMESTAMP)),
+                ('GOOGL', 300.5, cast('2023-01-01T09:05:00.000000Z' as TIMESTAMP)),
+                ('AAPL', 102.5, cast('2023-01-01T09:06:00.000000Z' as TIMESTAMP)),
+                ('MSFT', 201.5, cast('2023-01-01T09:07:00.000000Z' as TIMESTAMP)),
+                ('GOOGL', 301.5, cast('2023-01-01T09:08:00.000000Z' as TIMESTAMP))
+                """);
+
+        assertQuery("""
+                        sym	price	ts	f
+                        AAPL	102.0	2023-01-01T09:02:00.000000Z	101.5000
+                        MSFT	200.0	2023-01-01T09:03:00.000000Z	199.5000
+                        MSFT	201.0	2023-01-01T09:04:00.000000Z	200.5000
+                        """,
+                """
+                        select sym, price, ts, first(concat(price0, '000')) f
+                        from (
+                          select t.*, p.price as price0
+                          from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t
+                          left join prices p
+                          on (t.sym = p.sym) and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
+                          order by t.ts, p.ts
+                        )
+                        order by ts
+                        """,
+                null,
+                "ts",
+                true,
+                true);
+    }
+
+    @Test
     public void testOrderByGeoByte() throws Exception {
         assertQuery(
                 "id\tgeo\n",

@@ -40,6 +40,9 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -107,6 +110,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     SqlExecutionCircuitBreaker getCircuitBreaker();
 
     boolean getCloneSymbolTables();
+
+    Decimal128 getDecimal128();
+
+    Decimal256 getDecimal256();
+
+    Decimal64 getDecimal64();
 
     int getIntervalFunctionType();
 

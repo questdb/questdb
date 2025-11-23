@@ -196,6 +196,11 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
             buildMapOfSlaveRecords();
+            while (slaveChainCursor != null && slaveChainCursor.hasNext()) {
+                slaveChainCursor.next();
+                counter.inc();
+            }
+
             final Record masterRecord = masterCursor.getRecord();
             while (masterCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();

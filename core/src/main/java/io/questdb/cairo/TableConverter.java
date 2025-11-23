@@ -65,6 +65,7 @@ public class TableConverter {
         }
 
         final Path path = Path.getThreadLocal(configuration.getDbRoot());
+        final Path metaPath = Path.getThreadLocal2(configuration.getDbRoot());
         final int rootLen = path.size();
         final Utf8StringSink dirNameSink = Misc.getThreadLocalUtf8Sink();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -83,8 +84,9 @@ public class TableConverter {
                                 .I$();
 
                         path.trimTo(rootLen).concat(dirNameSink);
+                        metaPath.trimTo(rootLen).concat(dirNameSink);
                         try (final MemoryMARW metaMem = Vm.getCMARWInstance()) {
-                            openSmallFile(ff, path, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
+                            openSmallFile(ff, metaPath, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
                             final String dirName = dirNameSink.toString();
                             TableToken existingToken = tableNameRegistry.getTableTokenByDirName(dirName);
 
@@ -115,7 +117,7 @@ public class TableConverter {
 
                                 if (walEnabled) {
                                     try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
-                                        metadata.reload(metaMem);
+                                        metadata.reload(metaPath, metaMem);
                                         tableSequencerAPI.registerTable(tableId, metadata, token);
                                     }
 

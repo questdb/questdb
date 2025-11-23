@@ -31,7 +31,17 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.griffin.engine.TestBinarySequence;
@@ -44,6 +54,8 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class MemoryCARWImplTest {
+    Decimal128 decimal128 = new Decimal128();
+    Decimal256 decimal256 = new Decimal256();
 
     @AfterClass
     public static void afterClass() {
@@ -269,6 +281,96 @@ public class MemoryCARWImplTest {
                 mem.putStrUtf8(null);
                 Assert.fail();
             } catch (UnsupportedOperationException ignored) {
+            }
+        }
+    }
+
+    @Test
+    public void testDecimal128() {
+        try (MemoryARW mem = new MemoryCARWImpl(32, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            int n = 120;
+
+            long o = 0;
+            for (int i = 0; i < n; i++) {
+                mem.putDecimal128(i, -i);
+                o += Long.BYTES << 1;
+                Assert.assertEquals(o, mem.getAppendOffset());
+            }
+
+            o = 0;
+            for (int i = 0; i < n; i++) {
+                mem.getDecimal128(o, decimal128);
+                assertEquals(i, decimal128.getHigh());
+                assertEquals(-i, decimal128.getLow());
+                o += Long.BYTES << 1;
+            }
+        }
+    }
+
+    @Test
+    public void testDecimal128WithOffset() {
+        try (MemoryARW mem = new MemoryCARWImpl(32, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            int n = 120;
+
+            long o = 0;
+            for (int i = n; i > 0; i--) {
+                mem.putDecimal128(o, i, -i);
+                o += Long.BYTES << 1;
+            }
+
+            o = 0;
+            for (int i = n; i > 0; i--) {
+                mem.getDecimal128(o, decimal128);
+                assertEquals(i, decimal128.getHigh());
+                assertEquals(-i, decimal128.getLow());
+                o += Long.BYTES << 1;
+            }
+        }
+    }
+
+    @Test
+    public void testDecimal256() {
+        try (MemoryARW mem = new MemoryCARWImpl(32, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            int n = 120;
+
+            long o = 0;
+            for (int i = 0; i < n; i++) {
+                mem.putDecimal256(i, -i, i + 1, -i - 1);
+                o += Long.BYTES << 2;
+                Assert.assertEquals(o, mem.getAppendOffset());
+            }
+
+            o = 0;
+            for (int i = 0; i < n; i++) {
+                mem.getDecimal256(o, decimal256);
+                assertEquals(i, decimal256.getHh());
+                assertEquals(-i, decimal256.getHl());
+                assertEquals(i + 1, decimal256.getLh());
+                assertEquals(-i - 1, decimal256.getLl());
+                o += Long.BYTES << 2;
+            }
+        }
+    }
+
+    @Test
+    public void testDecimal256WithOffset() {
+        try (MemoryARW mem = new MemoryCARWImpl(32, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            int n = 120;
+
+            long o = 0;
+            for (int i = n; i > 0; i--) {
+                mem.putDecimal256(o, i, -i, i + 1, -i - 1);
+                o += Long.BYTES << 2;
+            }
+
+            o = 0;
+            for (int i = n; i > 0; i--) {
+                mem.getDecimal256(o, decimal256);
+                assertEquals(i, decimal256.getHh());
+                assertEquals(-i, decimal256.getHl());
+                assertEquals(i + 1, decimal256.getLh());
+                assertEquals(-i - 1, decimal256.getLl());
+                o += Long.BYTES << 2;
             }
         }
     }
