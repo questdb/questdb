@@ -205,6 +205,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
+        Assert.assertEquals(8, configuration.getCairoConfiguration().getViewLexerPoolCapacity());
+        Assert.assertFalse(configuration.getCairoConfiguration().isViewEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
         Assert.assertEquals(200, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
@@ -276,6 +278,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertModelPoolCapacity());
+        Assert.assertEquals(8, configuration.getCairoConfiguration().getCompileViewModelPoolCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getInsertModelBatchSize());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableColumnModelPoolCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getCreateTableModelBatchSize());
@@ -1472,6 +1475,8 @@ public class PropServerConfigurationTest {
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
 
+            Assert.assertTrue(configuration.getCairoConfiguration().isViewEnabled());
+
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
@@ -1887,6 +1892,8 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(CommitMode.ASYNC, configuration.getCommitMode());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());
+        Assert.assertEquals(16, configuration.getViewLexerPoolCapacity());
+        Assert.assertTrue(configuration.isViewEnabled());
         Assert.assertFalse(configuration.isMatViewEnabled());
         Assert.assertTrue(configuration.getDefaultSymbolCacheFlag());
         Assert.assertEquals(512, configuration.getDefaultSymbolCapacity());
@@ -1950,6 +1957,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1024, configuration.getWithClauseModelPoolCapacity());
         Assert.assertEquals(512, configuration.getRenameTableModelPoolCapacity());
         Assert.assertEquals(128, configuration.getInsertModelPoolCapacity());
+        Assert.assertEquals(32, configuration.getCompileViewModelPoolCapacity());
         Assert.assertEquals(256, configuration.getCreateTableColumnModelPoolCapacity());
         Assert.assertEquals(2001, configuration.getSampleByIndexSearchPageSize());
         Assert.assertFalse(configuration.getSampleByDefaultAlignmentCalendar());
