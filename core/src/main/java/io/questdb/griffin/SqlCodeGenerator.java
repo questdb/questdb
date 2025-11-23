@@ -220,6 +220,7 @@ import io.questdb.griffin.engine.join.LtJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.MarkoutHorizonRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
@@ -425,6 +426,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
+    private final MarkoutHorizonInfo markoutHorizonInfo = new MarkoutHorizonInfo();
     private final LongList prefixes = new LongList();
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
@@ -456,6 +458,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
+    // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
+    // Tracks the last model with non-empty ORDER BY as we descend through nested models
+    private QueryModel lastSeenOrderByModel;
 
     public SqlCodeGenerator(
             CairoConfiguration configuration,
@@ -1592,6 +1597,136 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return symbolShortCircuit;
+    }
+
+    /**
+     * Attempts to detect the "markout horizon" pattern in a cross-join with ORDER BY.
+     * <p>
+     * The pattern consists of:
+     * <ol>
+     *   <li>A cross-join between a table with a designated timestamp and an arithmetic sequence
+     *   <li>An ORDER BY clause on the sum of the timestamp and the sequence element
+     * </ol>
+     * <p>
+     * Detection isn't foolproof and can result in false positives. We do not attempt it unless
+     * the hint {@value SqlHints#MARKOUT_HORIZON_HINT} is present in the query.
+     * <p>
+     * These are the prerequisites for the Markout Horizon optimization to kick in:
+     * <ol>
+     *  <li><code>markout_horizon(lhs rhs)</code> hint is present
+     *  <li>LHS (master) cursor supports random access
+     *  <li>RHS (slave) cursor originates from the <code>long_sequence</code> function
+     *  <li>LHS table has a designated timestamp column
+     *  <li><code>ORDER BY</code> is a sum of two operands
+     *  <li>one operand is the designated timestamp of LHS table
+     *  <li>the other operand is a column of the RHS table
+     * </ol>
+     *
+     * @param masterAlias         alias for the master LHS of the join
+     * @param masterModel         QueryModel for the LHS of the join
+     * @param masterMetadata      Metadata for the LHS of the join
+     * @param masterCursorFactory the LHS cursor factory
+     * @param slaveModel          QueryModel for the RHS of the join
+     * @param slaveMetadata       Metadata for the RHS of the join (should be an arithmetic sequence)
+     * @param slaveCursorFactory  the RHS cursor factory (should produce an arithmetic sequence)
+     * @return MarkoutHorizonInfo if pattern is detected, null otherwise
+     */
+    private MarkoutHorizonInfo detectMarkoutHorizonPattern(
+            CharSequence masterAlias,
+            QueryModel masterModel,
+            RecordMetadata masterMetadata,
+            RecordCursorFactory masterCursorFactory,
+            QueryModel slaveModel,
+            RecordMetadata slaveMetadata,
+            RecordCursorFactory slaveCursorFactory
+    ) {
+        // Detect the markout_horizon hint, and ensure the master cursor supports random access
+        if (!SqlHints.hasMarkoutHorizonHint(masterModel, masterAlias, slaveModel.getName()) ||
+                !masterCursorFactory.recordCursorSupportsRandomAccess()
+        ) {
+            return null;
+        }
+
+        // Ensure the slave table is `long_sequence()`, or based on it
+        RecordCursorFactory rootFac = slaveCursorFactory;
+        while (!rootFac.getClass().getSimpleName().contains("LongSequence")) {
+            rootFac = rootFac.getBaseFactory();
+            if (rootFac == null) {
+                return null;
+            }
+        }
+        // Ensure the master table has a designated timestamp column
+        int designatedTimestampIndex = masterMetadata.getTimestampIndex();
+        if (designatedTimestampIndex == -1) {
+            return null;
+        }
+
+        // Ensure we have an ORDER BY clause.
+        // lastSeenOrderByModel was captured as we were descending through nested models
+        if (lastSeenOrderByModel == null) {
+            return null;
+        }
+        // Ensure there's only one sort column
+        if (lastSeenOrderByModel.getOrderBy().size() != 1) {
+            return null;
+        }
+        // Ensure sort direction is ascending
+        IntList dirs = lastSeenOrderByModel.getOrderByDirection();
+        int dir = (dirs.size() > 0) ? dirs.getQuick(0) : ORDER_DIRECTION_ASCENDING;
+        if (dir != ORDER_DIRECTION_ASCENDING) {
+            return null;
+        }
+
+        // The ORDER BY node may be a column alias (LITERAL) - resolve it to the actual expression
+        ExpressionNode orderByNode = lastSeenOrderByModel.getOrderBy().getQuick(0);
+        ExpressionNode orderByExpr = orderByNode;
+        if (orderByNode.type == ExpressionNode.LITERAL) {
+            QueryColumn queryColumn = lastSeenOrderByModel.getAliasToColumnMap().get(orderByNode.token);
+            if (queryColumn != null) {
+                orderByExpr = queryColumn.getAst();
+            }
+        }
+        // Ensure that ORDER BY is an addition operation
+        if (orderByExpr.type != ExpressionNode.OPERATION || !"+".contentEquals(orderByExpr.token)) {
+            return null;
+        }
+        // The ORDER BY should be timestamp_column + offset_column, or vice versa
+        ExpressionNode lhs = orderByExpr.lhs;
+        ExpressionNode rhs = orderByExpr.rhs;
+        if (lhs == null || rhs == null) {
+            return null;
+        }
+
+        // Try to identify which operand is the timestamp from master and which is from slave
+        int timestampColumnIndex = -1;
+        ExpressionNode slaveColumnNode = null;
+
+        // Check if LHS is the designated timestamp column from master
+        if (lhs.type == ExpressionNode.LITERAL) {
+            int colIndex = masterMetadata.getColumnIndexQuiet(lhs.token);
+            if (colIndex >= 0 && colIndex == designatedTimestampIndex) {
+                timestampColumnIndex = colIndex;
+                slaveColumnNode = rhs;
+            }
+        }
+
+        // If not found, check if RHS is the designated timestamp column from master and LHS is from slave
+        if (timestampColumnIndex == -1 && rhs.type == ExpressionNode.LITERAL) {
+            int colIndex = masterMetadata.getColumnIndexQuiet(rhs.token);
+            if (colIndex >= 0 && colIndex == designatedTimestampIndex) {
+                timestampColumnIndex = colIndex;
+                slaveColumnNode = lhs;
+            }
+        }
+
+        if (slaveColumnNode == null || slaveColumnNode.type != ExpressionNode.LITERAL) {
+            return null;
+        }
+        int slaveColumnIndex = slaveMetadata.getColumnIndexQuiet(slaveColumnNode.token);
+        if (slaveColumnIndex == -1) {
+            return null; // Slave column not found
+        }
+        return markoutHorizonInfo.of(timestampColumnIndex, slaveColumnIndex);
     }
 
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
@@ -2947,6 +3082,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                     writeSymbolAsString.unset(slaveSymbolColumnIndex);
                     SymbolJoinKeyMapping joinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
+                    keyTypes.clear();
+                    keyTypes.add(ColumnType.INT);
                     return new AsOfJoinLightRecordCursorFactory(
                             configuration,
                             joinMetadata,
@@ -3240,12 +3377,43 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case JOIN_CROSS:
                                 validateOuterJoinExpressions(slaveModel, "CROSS");
-                                master = new CrossJoinRecordCursorFactory(
-                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+
+                                // Try to detect the markout horizon pattern
+                                MarkoutHorizonInfo horizonInfo = detectMarkoutHorizonPattern(
+                                        masterAlias,
+                                        model,
+                                        masterMetadata,
                                         master,
-                                        slave,
-                                        masterMetadata.getColumnCount()
+                                        slaveModel,
+                                        slaveMetadata,
+                                        slave
                                 );
+
+                                if (horizonInfo != null) {
+                                    // Create RecordSink for materializing slave records
+                                    entityColumnFilter.of(slaveMetadata.getColumnCount());
+                                    RecordSink slaveRecordSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter);
+
+                                    // Use the optimized MarkoutHorizonRecordCursorFactory
+                                    master = new MarkoutHorizonRecordCursorFactory(
+                                            configuration,
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            horizonInfo.masterTimestampColumnIndex,
+                                            horizonInfo.slaveSequenceColumnIndex,
+                                            slaveRecordSink
+                                    );
+                                } else {
+                                    // Fall back to standard CrossJoinRecordCursorFactory
+                                    master = new CrossJoinRecordCursorFactory(
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount()
+                                    );
+                                }
                                 masterAlias = null;
                                 break;
                             case JOIN_ASOF:
@@ -4037,26 +4205,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        return generateLimit(
-                generateOrderBy(
-                        generateLatestBy(
-                                generateFilter(
-                                        generateSelect(
-                                                model,
-                                                executionContext,
-                                                processJoins
-                                        ),
-                                        model,
-                                        executionContext
-                                ),
-                                model
-                        ),
-                        model,
-                        executionContext
-                ),
-                model,
-                executionContext
-        );
+        // Remember the last model with non-empty ORDER BY as we descend through nested models.
+        // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
+        // several levels up from the model that holds the join clause.
+        final QueryModel savedOrderByModel = lastSeenOrderByModel;
+        try {
+            final ObjList<ExpressionNode> orderBy = model.getOrderBy();
+            if (orderBy != null && orderBy.size() > 0) {
+                lastSeenOrderByModel = model;
+            }
+            RecordCursorFactory factory;
+
+            factory = generateSelect(model, executionContext, processJoins);
+            factory = generateFilter(factory, model, executionContext);
+            factory = generateLatestBy(factory, model);
+            factory = generateOrderBy(factory, model, executionContext);
+            factory = generateLimit(factory, model, executionContext);
+
+            return factory;
+        } finally {
+            lastSeenOrderByModel = savedOrderByModel;
+        }
     }
 
     @NotNull
@@ -4536,7 +4705,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateSelect(
             QueryModel model,
             SqlExecutionContext executionContext,
-            boolean processJoins
+            boolean shouldProcessJoins
     ) throws SqlException {
         return switch (model.getSelectModelType()) {
             case SELECT_MODEL_CHOOSE -> generateSelectChoose(model, executionContext);
@@ -4546,12 +4715,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case SELECT_MODEL_DISTINCT -> generateSelectDistinct(model, executionContext);
             case SELECT_MODEL_CURSOR -> generateSelectCursor(model, executionContext);
             case SELECT_MODEL_SHOW -> model.getTableNameFunction();
-            default -> {
-                if (model.getJoinModels().size() > 1 && processJoins) {
-                    yield generateJoins(model, executionContext);
-                }
-                yield generateNoSelect(model, executionContext);
-            }
+            default -> shouldProcessJoins && model.getJoinModels().size() > 1
+                    ? generateJoins(model, executionContext)
+                    : generateNoSelect(model, executionContext);
         };
     }
 
@@ -7158,6 +7324,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @FunctionalInterface
     interface ModelOperator {
         void operate(ObjectPool<ExpressionNode> pool, QueryModel model);
+    }
+
+    /**
+     * Container class to hold the detected parameters of a markout horizon pattern.
+     */
+    private static class MarkoutHorizonInfo {
+        int masterTimestampColumnIndex;
+        int slaveSequenceColumnIndex;
+
+        MarkoutHorizonInfo of(int timestampColumnIndex, int slaveColumnIndex) {
+            this.masterTimestampColumnIndex = timestampColumnIndex;
+            this.slaveSequenceColumnIndex = slaveColumnIndex;
+            return this;
+        }
     }
 
     private static class RecordCursorFactoryStub implements RecordCursorFactory {

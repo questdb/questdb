@@ -46,12 +46,13 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
-public class ImportFilesFunctionFactory implements FunctionFactory {
+
+public class FilesFunctionFactory implements FunctionFactory {
     public static final RecordMetadata METADATA;
 
     @Override
     public String getSignature() {
-        return "import_files()";
+        return "files(s)";
     }
 
     @Override
@@ -67,27 +68,24 @@ public class ImportFilesFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        if (Chars.isBlank(configuration.getSqlCopyInputRoot())) {
-            throw SqlException.$(position, "import_files() is disabled ['cairo.sql.copy.root' is not set?]");
+        final Function arg = args.getQuick(0);
+        final CharSequence root = arg.getStrA(null);
+        if (Chars.isBlank(root)) {
+            throw SqlException.$(position, "root path must be non-empty");
         }
-        return new CursorFunction(new ImportFilesCursorFactory(configuration)) {
-            @Override
-            public boolean isRuntimeConstant() {
-                return true;
-            }
-        };
+        return new CursorFunction(new FilesRecordCursorFactory(configuration, root));
     }
 
-    public static class ImportFilesCursorFactory extends AbstractRecordCursorFactory {
-        public static final Log LOG = LogFactory.getLog(ImportFilesCursorFactory.class);
+    public static class FilesRecordCursorFactory extends AbstractRecordCursorFactory {
+        public static final Log LOG = LogFactory.getLog(FilesRecordCursorFactory.class);
         private final FilesRecordCursor cursor;
-        private final Path importPath = new Path(MemoryTag.NATIVE_PATH);
+        private final Path path = new Path(MemoryTag.NATIVE_PATH);
 
-        public ImportFilesCursorFactory(CairoConfiguration configuration) {
+        public FilesRecordCursorFactory(CairoConfiguration configuration, CharSequence root) {
             super(METADATA);
-            importPath.of(configuration.getSqlCopyInputRoot());
-            int rootPathLen = importPath.size();
-            cursor = new FilesRecordCursor(configuration.getFilesFacade(), importPath, rootPathLen);
+            path.of(root);
+            int rootPathLen = path.size();
+            cursor = new FilesRecordCursor(configuration.getFilesFacade(), path, rootPathLen);
         }
 
         @Override
@@ -103,13 +101,13 @@ public class ImportFilesFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.type("import_files()");
+            sink.type("File Scan: ").val(path);
         }
 
         @Override
         protected void _close() {
-            Misc.free(importPath);
             cursor.close();
+            Misc.free(path);
         }
     }
 

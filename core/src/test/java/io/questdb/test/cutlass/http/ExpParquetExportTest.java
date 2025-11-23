@@ -27,10 +27,10 @@ package io.questdb.test.cutlass.http;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -121,7 +121,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 .run((engine, sqlExecutionContext) -> testHttpClient.assertGetParquet(
                         "/exp",
                         "PAR1\u0015\u0000\u0015",
-                        "generate_series(0, '1971-01-01', '5s');"
+                        "generate_series(0, '1971-01-01', '1m');"
                 ));
     }
 
