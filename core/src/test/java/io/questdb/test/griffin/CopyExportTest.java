@@ -1566,16 +1566,18 @@ public class CopyExportTest extends AbstractCairoTest {
     public void testCopyWithSameOutput() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (x int, y string)");
-            execute("insert into test_table values (1, 'test')");
+            execute("insert into test_table select x, x::string as y FROM long_sequence(1_000_000)");
 
             CopyExportRunnable stmt = () -> {
-                runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
-                try {
-                    runAndFetchCopyExportID("copy test_table to 'output9' with format parquet statistics_enabled true", sqlExecutionContext);
-                    Assert.fail("Expected failure due to ongoing export to same directory");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "duplicate sql statement: test_table");
-                }
+                assertEventually(() -> {
+                    runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
+                    try {
+                        runAndFetchCopyExportID("copy test_table to 'output9' with format parquet statistics_enabled true", sqlExecutionContext);
+                        Assert.fail("Expected failure due to ongoing export to same directory");
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getMessage(), "duplicate sql statement: test_table");
+                    }
+                });
             };
 
             CopyExportRunnable test = () ->
@@ -1583,8 +1585,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertSql("export_path\tnum_exported_files\tstatus\n" +
                                         exportRoot + File.separator + "output8.parquet" + "\t1\tfinished\n",
                                 "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("x\ty\n1\ttest\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet')");
+                        assertSql("x\ty\n1\t1\n",
+                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet') LIMIT 1");
                     });
 
             testCopyExport(stmt, test);
@@ -1595,7 +1597,7 @@ public class CopyExportTest extends AbstractCairoTest {
     public void testCopyWithSameSql() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (x int, y string)");
-            execute("insert into test_table values (1, 'test')");
+            execute("insert into test_table select x, x::string as y FROM long_sequence(1_000_000)");
 
             CopyExportRunnable stmt = () -> {
                 runAndFetchCopyExportID("copy (select x from test_table) to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
@@ -1616,7 +1618,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                         x
                                         1
                                         """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet')");
+                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet') LIMIT 1");
                     });
 
             testCopyExport(stmt, test);
