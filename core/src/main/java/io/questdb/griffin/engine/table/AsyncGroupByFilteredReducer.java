@@ -91,6 +91,8 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
 
+            fragment.resetLocalStats();
+
             if (atom.isSharded()) {
                 fragment.shard();
             }
@@ -113,9 +115,10 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
                     aggregateNonShardedGeneric(record, rows, baseRowId, functionUpdater, fragment, mapSink);
                 }
             } else {
-                // single short key won't be sharded with the default threshold, so we don't need a special case here
                 if (map instanceof UnorderedVarcharMap) {
                     aggregateShardedVarcharKey(record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
+                } else if (map instanceof Unordered2Map) {
+                    aggregateShardedShortKey(frameMemory, record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
                 } else if (map instanceof Unordered4Map) {
                     aggregateShardedIntKey(frameMemory, record, rows, baseRowId, functionUpdater, fragment, singleColumnIndex);
                 } else if (map instanceof Unordered8Map) {
@@ -126,7 +129,7 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
                 }
             }
 
-            atom.requestSharding(fragment);
+            atom.maybeEnableSharding(fragment);
         } finally {
             atom.release(slotId);
         }
@@ -432,6 +435,55 @@ public class AsyncGroupByFilteredReducer implements PageFrameReducer {
                 final long hashCode = Unordered8Map.hashKey(key);
                 final Unordered8Map shard = (Unordered8Map) fragment.getShardMap(hashCode);
                 final MapValue shardValue = shard.createValueWithKey(key, hashCode);
+                record.setRowIndex(r);
+                if (!shardValue.isNew()) {
+                    functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+                } else {
+                    functionUpdater.updateNew(shardValue, record, baseRowId + r);
+                }
+                for (long i = 1, n = rows.size(); i < n; i++) {
+                    r = rows.get(i);
+                    record.setRowIndex(r);
+                    functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+                }
+            }
+        }
+    }
+
+    private static void aggregateShardedShortKey(
+            PageFrameMemory frameMemory,
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        assert columnIndex != -1;
+        final long addr = frameMemory.getPageAddress(columnIndex);
+        if (addr != 0) {
+            for (long i = 0, n = rows.size(); i < n; i++) {
+                final long r = rows.get(i);
+                final short key = Unsafe.getUnsafe().getShort(addr + (r << 1));
+                final long hashCode = Unordered2Map.hashKey(key);
+                final Unordered2Map shard = (Unordered2Map) fragment.getShardMap(hashCode);
+
+                MapValue shardValue = shard.createValueWithKey(key);
+                record.setRowIndex(r);
+                if (!shardValue.isNew()) {
+                    functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+                } else {
+                    functionUpdater.updateNew(shardValue, record, baseRowId + r);
+                }
+            }
+        } else { // column top
+            if (rows.size() > 0) {
+                long r = rows.get(0);
+                record.setRowIndex(r);
+                final short key = record.getShort(columnIndex);
+                final long hashCode = Unordered2Map.hashKey(key);
+                final Unordered2Map shard = (Unordered2Map) fragment.getShardMap(hashCode);
+                final MapValue shardValue = shard.createValueWithKey(key);
                 record.setRowIndex(r);
                 if (!shardValue.isNew()) {
                     functionUpdater.updateExisting(shardValue, record, baseRowId + r);

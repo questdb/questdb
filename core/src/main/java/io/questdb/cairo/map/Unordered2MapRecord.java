@@ -327,7 +327,7 @@ final class Unordered2MapRecord implements MapRecord {
 
     @Override
     public long keyHashCode() {
-        return 0; // no-op
+        return Unordered2Map.hashKey(Unsafe.getUnsafe().getShort(startAddress));
     }
 
     public void of(long address) {

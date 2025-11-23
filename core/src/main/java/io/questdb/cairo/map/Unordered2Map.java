@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Hash;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
@@ -147,6 +148,13 @@ public class Unordered2Map implements Map, Reopenable {
             close();
             throw th;
         }
+    }
+
+    public static long hashKey(short key) {
+        // Although this map does not use hash codes, this method is implemented
+        // for the purpose of map sharding, i.e. to spread keys among multiple Unordered2Maps
+        // in case when group by functions, such as count_distinct(), have high cardinality.
+        return Hash.hashShort64(key);
     }
 
     @Override
@@ -374,7 +382,7 @@ public class Unordered2Map implements Map, Reopenable {
 
         @Override
         public long hash() {
-            return 0; // no-op
+            return hashKey(Unsafe.getUnsafe().getShort(keyMemStart));
         }
 
         public Key init() {

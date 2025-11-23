@@ -58,12 +58,10 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
-
     private final RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncGroupByRecordCursor cursor;
     private final PageFrameSequence<AsyncGroupByAtom> frameSequence;
-    private final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<Function> recordFunctions; // includes groupByFunctions
     private final int workerCount;
 
@@ -93,7 +91,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         super(groupByMetadata);
         try {
             this.base = base;
-            this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
             final AsyncGroupByAtom atom = new AsyncGroupByAtom(
                     asm,
@@ -126,7 +123,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     workerCount,
                     PageFrameReduceTask.TYPE_GROUP_BY
             );
-            this.cursor = new AsyncGroupByRecordCursor(engine, groupByFunctions, recordFunctions, messageBus);
+            this.cursor = new AsyncGroupByRecordCursor(engine, recordFunctions, messageBus);
             this.workerCount = workerCount;
         } catch (Throwable th) {
             close();
@@ -176,7 +173,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
         sink.meta("workers").val(workerCount);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
-        sink.optAttr("values", groupByFunctions, true);
+        sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions(), true);
         sink.optAttr("filter", frameSequence.getAtom(), true);
         sink.child(base);
     }
