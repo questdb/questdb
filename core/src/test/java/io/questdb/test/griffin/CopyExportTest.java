@@ -1566,18 +1566,18 @@ public class CopyExportTest extends AbstractCairoTest {
     public void testCopyWithSameOutput() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (x int, y string)");
-            execute("insert into test_table select x, x::string as y FROM long_sequence(1_000_000)");
+            execute("insert into test_table select x, x::string as y FROM long_sequence(100_000)");
 
             CopyExportRunnable stmt = () -> {
-                assertEventually(() -> {
-                    runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
-                    try {
-                        runAndFetchCopyExportID("copy test_table to 'output9' with format parquet statistics_enabled true", sqlExecutionContext);
-                        Assert.fail("Expected failure due to ongoing export to same directory");
-                    } catch (SqlException e) {
-                        TestUtils.assertContains(e.getMessage(), "duplicate sql statement: test_table");
-                    }
-                });
+                runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
+                // Wait for the first export to be active before attempting the second
+                waitForActiveExport();
+                try {
+                    runAndFetchCopyExportID("copy test_table to 'output9' with format parquet statistics_enabled true", sqlExecutionContext);
+                    Assert.fail("Expected failure due to ongoing export to same directory");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getMessage(), "duplicate sql statement: test_table");
+                }
             };
 
             CopyExportRunnable test = () ->
@@ -1597,10 +1597,12 @@ public class CopyExportTest extends AbstractCairoTest {
     public void testCopyWithSameSql() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (x int, y string)");
-            execute("insert into test_table select x, x::string as y FROM long_sequence(1_000_000)");
+            execute("insert into test_table select x, x::string as y FROM long_sequence(100_000)");
 
             CopyExportRunnable stmt = () -> {
                 runAndFetchCopyExportID("copy (select x from test_table) to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
+                // Wait for the first export to be active before attempting the second
+                waitForActiveExport();
                 try {
                     runAndFetchCopyExportID("copy (select y from test_table) to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
                     Assert.fail("Expected failure due to ongoing export to same directory");
@@ -1827,6 +1829,14 @@ public class CopyExportTest extends AbstractCairoTest {
 
     private void assertEventually(TestUtils.EventualCode assertion) throws Exception {
         TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
+    }
+
+    private void waitForActiveExport() throws Exception {
+        // Wait for an export to be in the active state (running)
+        TestUtils.assertEventually(() -> {
+            long exportId = engine.getCopyExportContext().getActiveExportId();
+            Assert.assertNotEquals("No active export found", -1L, exportId);
+        }, 5, exceptionTypesToCatch);
     }
 
     private boolean exportFileExists(String fileName) {
