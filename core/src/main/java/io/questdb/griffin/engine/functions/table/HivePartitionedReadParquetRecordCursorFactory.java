@@ -102,6 +102,6 @@ public class HivePartitionedReadParquetRecordCursorFactory extends AbstractRecor
 
     @Override
     protected void _close() {
-        // glob function is managed elsewhere
+        // globCursorFactory is managed elsewhere and may be shared with other factories
     }
 }

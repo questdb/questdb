@@ -44,6 +44,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -93,45 +94,54 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             // get file infos
             Function globFunc = new GlobFilesFunctionFactory().newInstance(position, newArgs, argPos, configuration, context);
             RecordCursorFactory globFactory = globFunc.getRecordCursorFactory();
-            try (RecordCursor globCursor = globFactory.getCursor(context)) {
-                if (!globCursor.hasNext()) {
-                    throw SqlException.$(argPos.getQuick(0), "glob did not return any readable parquet files [glob=")
-                            .put(filePath).put(']');
-                }
-
-                CharSequence nonGlobbedRoot = GlobFilesFunctionFactory.extractNonGlobPrefix(path.toString());
-                Utf8Sequence firstGlobbedPath = globCursor.getRecord().getVarcharA(0);
-
-                try {
-                    path = Path.getThreadLocal2("");
-                    path.of(nonGlobbedRoot).concat(firstGlobbedPath);
-                    final FilesFacade ff = configuration.getFilesFacade();
-                    final long fd = TableUtils.openRO(ff, path.$(), LOG);
-                    long addr = 0;
-                    long fileSize = 0;
-                    try (PartitionDecoder decoder = new PartitionDecoder()) {
-                        fileSize = ff.length(fd);
-                        addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                        decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-                        // `read_parquet` function will request symbols to be converted to varchar
-                        decoder.metadata().copyToSansUnsupported(metadata, true);
-                        if (metadata.getColumnCount() == 0) {
-                            throw SqlException.$(argPos.getQuick(0), "no supported columns found in parquet file: ").put(filePath);
-                        }
-
-                        return new CursorFunction(new HivePartitionedReadParquetRecordCursorFactory(configuration, globFactory, nonGlobbedRoot, filePath, metadata));
-                    } finally {
-                        ff.close(fd);
-                        if (addr != 0) {
-                            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                        }
+            try {
+                try (RecordCursor globCursor = globFactory.getCursor(context)) {
+                    if (!globCursor.hasNext()) {
+                        throw SqlException.$(argPos.getQuick(0), "glob did not return any readable parquet files [glob=")
+                                .put(filePath).put(']');
                     }
-                } catch (CairoException e) {
-                    throw SqlException.$(argPos.getQuick(0), "error reading parquet file ").put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage());
-                } catch (Throwable e) {
-                    throw SqlException.$(argPos.getQuick(0), "failed to read parquet file: ").put(filePath).put(": ").put(e.getMessage());
+
+                    CharSequence nonGlobbedRoot = GlobFilesFunctionFactory.extractNonGlobPrefix(path.toString());
+                    Utf8Sequence firstGlobbedPath = globCursor.getRecord().getVarcharA(0);
+
+                    try {
+                        path = Path.getThreadLocal2("");
+                        path.of(nonGlobbedRoot).concat(firstGlobbedPath);
+                        final FilesFacade ff = configuration.getFilesFacade();
+                        final long fd = TableUtils.openRO(ff, path.$(), LOG);
+                        long addr = 0;
+                        long fileSize = 0;
+                        try (PartitionDecoder decoder = new PartitionDecoder()) {
+                            fileSize = ff.length(fd);
+                            addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+                            // `read_parquet` function will request symbols to be converted to varchar
+                            decoder.metadata().copyToSansUnsupported(metadata, true);
+                            if (metadata.getColumnCount() == 0) {
+                                throw SqlException.$(argPos.getQuick(0), "no supported columns found in parquet file: ").put(filePath);
+                            }
+
+                            // Transfer ownership of globFactory to the returned factory
+                            // The factory will manage the lifecycle of globFactory and globCursor
+                            return new CursorFunction(new HivePartitionedReadParquetRecordCursorFactory(configuration, globFactory, nonGlobbedRoot, filePath, metadata));
+                        } finally {
+                            ff.close(fd);
+                            if (addr != 0) {
+                                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                            }
+                        }
+                    } catch (CairoException e) {
+                        throw SqlException.$(argPos.getQuick(0), "error reading parquet file ").put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage());
+                    } catch (Throwable e) {
+                        throw SqlException.$(argPos.getQuick(0), "failed to read parquet file: ").put(filePath).put(": ").put(e.getMessage());
+                    }
                 }
+            } catch (Throwable e) {
+                // If anything fails before returning the HivePartitionedReadParquetRecordCursorFactory,
+                // close the globFactory as it won't be managed by the factory
+                Misc.free(globFactory);
+                throw e;
             }
         }
 
