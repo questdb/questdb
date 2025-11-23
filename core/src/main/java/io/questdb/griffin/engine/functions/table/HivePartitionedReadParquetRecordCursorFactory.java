@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -62,20 +63,26 @@ public class HivePartitionedReadParquetRecordCursorFactory extends AbstractRecor
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         // Get the cursor from the glob cursor factory
         RecordCursor globCursor = globCursorFactory.getCursor(executionContext);
+        try {
+            // Create a single-file parquet reader that we'll reuse for each file
+            ReadParquetRecordCursor parquetCursor = new ReadParquetRecordCursor(
+                    configuration.getFilesFacade(),
+                    getMetadata()
+            );
 
-        // Create a single-file parquet reader that we'll reuse for each file
-        ReadParquetRecordCursor parquetCursor = new ReadParquetRecordCursor(
-                configuration.getFilesFacade(),
-                getMetadata()
-        );
-
-        // Create the hive partitioned cursor that wraps both
-        return new HivePartitionedReadParquetRecordCursor(
-                globCursor,
-                parquetCursor,
-                configuration.getFilesFacade(),
-                nonGlobbedRoot
-        );
+            // Create the hive partitioned cursor that wraps both
+            return new HivePartitionedReadParquetRecordCursor(
+                    globCursor,
+                    parquetCursor,
+                    configuration.getFilesFacade(),
+                    nonGlobbedRoot
+            );
+        } catch (Throwable e) {
+            // If anything goes wrong after globCursor is created,
+            // ensure it's closed to avoid leaking the directory iterator FD
+            globCursor.close();
+            throw e;
+        }
     }
 
     public RecordCursorFactory getGlobCursorFactory() {

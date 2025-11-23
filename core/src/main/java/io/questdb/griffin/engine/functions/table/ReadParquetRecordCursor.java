@@ -252,14 +252,42 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     public void ofMetadata(LPSZ path) {
+        // Close old resources FIRST to prevent FD leak when switching files
+        if (fd != -1) {
+            ff.close(fd);
+            fd = -1;
+        }
+        if (addr != 0) {
+            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            addr = 0;
+        }
+
         // Reopen the file, it could have changed
-        this.fd = TableUtils.openRO(ff, path, LOG);
-        this.fileSize = ff.length(fd);
-        this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-        decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-        if (metadataHasChanged(metadata, decoder)) {
-            // We need to recompile the factory as the Parquet metadata has changed.
-            throw TableReferenceOutOfDateException.of(path);
+        long newFd = -1;
+        long newAddr = 0;
+        long newFileSize = 0;
+        try {
+            newFd = TableUtils.openRO(ff, path, LOG);
+            newFileSize = ff.length(newFd);
+            newAddr = TableUtils.mapRO(ff, newFd, newFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            decoder.of(newAddr, newFileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            if (metadataHasChanged(metadata, decoder)) {
+                // We need to recompile the factory as the Parquet metadata has changed.
+                throw TableReferenceOutOfDateException.of(path);
+            }
+            // Metadata is valid, keep the new resources
+            this.fd = newFd;
+            this.fileSize = newFileSize;
+            this.addr = newAddr;
+        } catch (Throwable e) {
+            // Clean up newly opened resources if anything fails
+            if (newFd != -1) {
+                ff.close(newFd);
+            }
+            if (newAddr != 0) {
+                ff.munmap(newAddr, newFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            throw e;
         }
     }
 

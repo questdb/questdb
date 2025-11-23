@@ -53,10 +53,10 @@ import java.util.Collection;
  * - SQL variant support (UNION, JOIN, WHERE filters, GROUP BY, aggregates)
  */
 @RunWith(Parameterized.class)
-public class ParquetAdvancedTest extends AbstractCairoTest {
+public class AdditionalParquetTests extends AbstractCairoTest {
     private final boolean parallel;
 
-    public ParquetAdvancedTest(boolean parallel) {
+    public AdditionalParquetTests(boolean parallel) {
         this.parallel = parallel;
     }
 
