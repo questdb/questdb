@@ -81,7 +81,7 @@ public class AsyncGroupByReducer implements PageFrameReducer {
             final long baseRowId = record.getRowId();
             final Map map = atom.getFragment(slotId).getMap();
             if (fragment.isNotSharded()) {
-                // Avoid Map megamorphism by having specialized methods for single column maps.
+                // Check if we can apply a fast-path for single column GROUP BY.
                 if (map instanceof UnorderedVarcharMap) {
                     aggregateNonShardedVarcharKey(record, frameRowCount, baseRowId, functionUpdater, fragment, singleColumnIndex);
                 } else if (map instanceof Unordered2Map) {
@@ -91,7 +91,6 @@ public class AsyncGroupByReducer implements PageFrameReducer {
                 } else if (map instanceof Unordered8Map) {
                     aggregateNonShardedLongKey(frameMemory, record, frameRowCount, baseRowId, functionUpdater, fragment, singleColumnIndex);
                 } else {
-                    // OrderedMap goes here
                     aggregateNonShardedGeneric(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
                 }
             } else {
@@ -104,7 +103,6 @@ public class AsyncGroupByReducer implements PageFrameReducer {
                 } else if (map instanceof Unordered8Map) {
                     aggregateShardedLongKey(frameMemory, record, frameRowCount, baseRowId, functionUpdater, fragment, singleColumnIndex);
                 } else {
-                    // OrderedMap goes here
                     aggregateShardedGeneric(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
                 }
             }
