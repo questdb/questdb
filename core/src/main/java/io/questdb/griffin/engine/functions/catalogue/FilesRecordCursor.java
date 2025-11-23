@@ -55,7 +55,7 @@ public class FilesRecordCursor implements NoRandomAccessRecordCursor {
     protected final Utf8StringSink relativePathSink = new Utf8StringSink();
     protected final Path rootPath;
     protected final int rootPathLen;
-    protected final Path workingPath = new Path(MemoryTag.NATIVE_FUNC_RSS);
+    protected final Path workingPath = new Path(MemoryTag.NATIVE_PATH);
     private final LongStack dirFindPtrs = new LongStack();
     private final IntStack dirPathLens = new IntStack();
     protected long findPtr = 0;

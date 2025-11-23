@@ -516,7 +516,7 @@ public class AbstractO3Test extends AbstractTest {
                 while (cursor.hasNext()) {
                     long timestamp = record.getTimestamp(timestampIndex);
                     TableWriter.Row row = writer.newRow(timestamp);
-                    copier.copy(record, row);
+                    copier.copy(sqlExecutionContext, record, row);
                     row.append();
                 }
             }

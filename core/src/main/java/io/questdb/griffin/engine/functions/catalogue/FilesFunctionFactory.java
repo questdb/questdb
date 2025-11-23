@@ -79,7 +79,7 @@ public class FilesFunctionFactory implements FunctionFactory {
     public static class FilesRecordCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(FilesRecordCursorFactory.class);
         private final FilesRecordCursor cursor;
-        private final Path path = new Path(MemoryTag.NATIVE_FUNC_RSS);
+        private final Path path = new Path(MemoryTag.NATIVE_PATH);
 
         public FilesRecordCursorFactory(CairoConfiguration configuration, CharSequence root) {
             super(METADATA);
@@ -101,13 +101,13 @@ public class FilesFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.type("File Scan").val(path);
+            sink.type("File Scan: ").val(path);
         }
 
         @Override
         protected void _close() {
-            Misc.free(path);
             cursor.close();
+            Misc.free(path);
         }
     }
 

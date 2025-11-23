@@ -24,7 +24,10 @@
 
 package io.questdb.test.std;
 
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
+import io.questdb.std.Decimals;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -39,6 +42,13 @@ import java.math.RoundingMode;
  * Tests for the Decimal64 class
  */
 public class Decimal64Test {
+
+    @Test(expected = NumericException.class)
+    public void testAddOverflowMaxValue() {
+        Decimal64 res = new Decimal64();
+        res.copyFrom(Decimal64.MAX_VALUE);
+        res.add(Decimal64.ONE);
+    }
 
     @Test
     public void testAddition() {
@@ -72,15 +82,18 @@ public class Decimal64Test {
         }
     }
 
-    @Test
-    public void testModuloStatic() {
-        Decimal64 a = Decimal64.fromLong(10, 0);
-        Decimal64 b = Decimal64.fromLong(3, 0);
-        Decimal64 result = new Decimal64();
-        Decimal64.modulo(a, b, result);
-        Assert.assertEquals(1, result.getValue());
-        Assert.assertEquals(10, a.getValue());
-        Assert.assertEquals(3, b.getValue());
+    @Test(expected = NumericException.class)
+    public void testAdditionOverflowNegativeScale() {
+        Decimal64 a = Decimal64.fromLong(-10000000, 0);
+        Decimal64 b = Decimal64.fromLong(1, 15);
+        a.add(b);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testAdditionOverflowScale() {
+        Decimal64 a = Decimal64.fromLong(10000000, 0);
+        Decimal64 b = Decimal64.fromLong(1, 15);
+        a.add(b);
     }
 
     @Test
@@ -93,112 +106,22 @@ public class Decimal64Test {
     }
 
     @Test
-    public void testDivideNegative() {
-        Decimal64 a = Decimal64.fromLong(-10, 0);
-        Decimal64 b = Decimal64.fromLong(-2, 0);
-        a.divide(b, 0, RoundingMode.HALF_UP);
-        Assert.assertEquals(5, a.getValue());
-        Assert.assertEquals(0, a.getScale());
-    }
-
-    @Test
-    public void testDivideNegativeResult() {
-        Decimal64 a = Decimal64.fromLong(-10, 0);
-        Decimal64 b = Decimal64.fromLong(2, 0);
-        a.divide(b, 0, RoundingMode.HALF_UP);
-        Assert.assertEquals(-5, a.getValue());
-        Assert.assertEquals(0, a.getScale());
-    }
-
-    @Test
-    public void testModuloScale() {
-        Decimal64 a = Decimal64.fromLong(10, 0);
-        Decimal64 b = Decimal64.fromLong(30, 1);
-        a.modulo(b);
-        Assert.assertEquals(10, a.getValue());
-        Assert.assertEquals(1, a.getScale());
-    }
-
-    @Test(expected = NumericException.class)
-    public void testMultiplyOverflowScale() {
-        Decimal64 a = Decimal64.fromLong(2, 10);
-        Decimal64 b = Decimal64.fromLong(2, 10);
-        a.multiply(b);
-    }
-
-    @Test
-    public void testRoundScale() {
-        Decimal64 a = Decimal64.fromLong(-10, 1);
-        a.round(2, RoundingMode.HALF_UP);
-        Assert.assertEquals(-100, a.getValue());
-        Assert.assertEquals(2, a.getScale());
-    }
-
-    @Test
-    public void testSubtractScaleB() {
-        Decimal64 a = Decimal64.fromLong(10, 1);
-        Decimal64 b = Decimal64.fromLong(1, 0);
-        a.subtract(b);
-        Assert.assertEquals(0, a.getValue());
-        Assert.assertEquals(1, a.getScale());
-    }
-
-    @Test(expected = NumericException.class)
-    public void testDivisionOverflowScale() {
-        Decimal64 a = Decimal64.fromLong(1, 0);
-        Decimal64 b = Decimal64.fromLong(1, 10);
-        a.divide(b, 10, RoundingMode.HALF_UP);
-    }
-
-    @Test(expected = NumericException.class)
-    public void testDivisionOverflow() {
-        Decimal64 a = Decimal64.fromLong(10000000, 0);
-        Decimal64 b = Decimal64.fromLong(1, 10);
-        a.divide(b, 5, RoundingMode.HALF_UP);
-    }
-
-    @Test(expected = NumericException.class)
-    public void testAdditionOverflowScale() {
-        Decimal64 a = Decimal64.fromLong(10000000, 0);
-        Decimal64 b = Decimal64.fromLong(1, 15);
-        a.add(b);
-    }
-
-    @Test(expected = NumericException.class)
-    public void testAdditionOverflowNegativeScale() {
-        Decimal64 a = Decimal64.fromLong(-10000000, 0);
-        Decimal64 b = Decimal64.fromLong(1, 15);
-        a.add(b);
-    }
-
-    @Test
     public void testAllModes() {
         double testValue = 1.235;
         int originalScale = 3;
         int targetScale = 2;
 
         // Test all rounding modes
-        java.math.RoundingMode[] modes = {
-                java.math.RoundingMode.UP,
-                java.math.RoundingMode.DOWN,
-                java.math.RoundingMode.CEILING,
-                java.math.RoundingMode.FLOOR,
-                java.math.RoundingMode.HALF_UP,
-                java.math.RoundingMode.HALF_DOWN,
-                java.math.RoundingMode.HALF_EVEN
-        };
+        java.math.RoundingMode[] modes = {java.math.RoundingMode.UP, java.math.RoundingMode.DOWN, java.math.RoundingMode.CEILING, java.math.RoundingMode.FLOOR, java.math.RoundingMode.HALF_UP, java.math.RoundingMode.HALF_DOWN, java.math.RoundingMode.HALF_EVEN};
 
         for (java.math.RoundingMode mode : modes) {
             Decimal64 a = Decimal64.fromDouble(testValue, originalScale);
             a.round(targetScale, mode);
 
             // Compare with BigDecimal reference
-            java.math.BigDecimal reference = java.math.BigDecimal.valueOf(testValue)
-                    .setScale(originalScale, java.math.RoundingMode.HALF_UP)
-                    .setScale(targetScale, mode);
+            java.math.BigDecimal reference = java.math.BigDecimal.valueOf(testValue).setScale(originalScale, java.math.RoundingMode.HALF_UP).setScale(targetScale, mode);
 
-            Assert.assertEquals("Rounding mode " + mode + " failed for " + testValue,
-                    reference, a.toBigDecimal());
+            Assert.assertEquals("Rounding mode " + mode + " failed for " + testValue, reference, a.toBigDecimal());
             Assert.assertEquals("Scale should be " + targetScale, targetScale, a.getScale());
         }
     }
@@ -280,6 +203,39 @@ public class Decimal64Test {
     }
 
     @Test
+    public void testCompareToWithNull() {
+        // Create null decimal
+        Decimal64 nullDecimal = new Decimal64();
+        nullDecimal.ofNull();
+        Assert.assertTrue(nullDecimal.isNull());
+
+        // Create another null decimal
+        Decimal64 anotherNullDecimal = new Decimal64();
+        anotherNullDecimal.ofNull();
+
+        // Create non-null decimal
+        Decimal64 nonNullDecimal = Decimal64.fromLong(123, 2);
+        Assert.assertFalse(nonNullDecimal.isNull());
+
+        // Test null comparing with null (should return 0)
+        Assert.assertEquals("null compareTo null should return 0", 0, nullDecimal.compareTo(anotherNullDecimal));
+
+        // Test null comparing with non-null (should return -1)
+        Assert.assertEquals("null compareTo non-null should return -1", -1, nullDecimal.compareTo(nonNullDecimal));
+
+        // Test non-null comparing with null (should return 1)
+        Assert.assertEquals("non-null compareTo null should return 1", 1, nonNullDecimal.compareTo(nullDecimal));
+
+        // Test using the direct compareTo(value, scale) method
+        Assert.assertEquals("null compareTo(DECIMAL64_NULL, 0) should return 0", 0, nullDecimal.compareTo(Decimals.DECIMAL64_NULL, 0));
+
+        Assert.assertEquals("non-null compareTo(DECIMAL64_NULL, 0) should return 1", 1, nonNullDecimal.compareTo(Decimals.DECIMAL64_NULL, 0));
+
+        // Test that null decimal with compareTo on another null returns 0 regardless of scale
+        Assert.assertEquals("null compareTo null with different scale should return 0", 0, nullDecimal.compareTo(Decimals.DECIMAL64_NULL, 5));
+    }
+
+    @Test
     public void testConstants() {
         Assert.assertEquals(0, Decimal64.ZERO.getValue());
         Assert.assertEquals(0, Decimal64.ZERO.getScale());
@@ -287,8 +243,8 @@ public class Decimal64Test {
         Assert.assertEquals(1, Decimal64.ONE.getValue());
         Assert.assertEquals(0, Decimal64.ONE.getScale());
 
-        Assert.assertEquals(Long.MAX_VALUE, Decimal64.MAX_VALUE.getValue());
-        Assert.assertEquals(Long.MIN_VALUE, Decimal64.MIN_VALUE.getValue());
+        Assert.assertEquals(999999999999999999L, Decimal64.MAX_VALUE.getValue());
+        Assert.assertEquals(-999999999999999999L, Decimal64.MIN_VALUE.getValue());
     }
 
     @Test
@@ -318,6 +274,68 @@ public class Decimal64Test {
         Assert.assertEquals(source.getValue(), target.getValue());
         Assert.assertEquals(source.getScale(), target.getScale());
         Assert.assertEquals(source.toString(), target.toString());
+    }
+
+    @Test
+    public void testDecimal64Null() {
+        Decimal64 a = new Decimal64();
+        a.ofNull();
+        Assert.assertEquals("", a.toString());
+        Assert.assertTrue(Decimal64.isNull(a.getValue()));
+    }
+
+    @Test
+    public void testDigitExtractionLoop() {
+        // Test extracting all digits from 12345 using the two methods together
+        Decimal64 value = new Decimal64(12345, 0);
+
+        // Extract ten thousands digit (1)
+        int digit = value.getDigit(10000);
+        Assert.assertEquals(1, digit);
+        value.subtract((long) digit * 10000, 0);
+        Assert.assertEquals(2345, value.getValue());
+
+        // Extract thousands digit (2)
+        digit = value.getDigit(1000);
+        Assert.assertEquals(2, digit);
+        value.subtract((long) digit * 1000, 0);
+        Assert.assertEquals(345, value.getValue());
+
+        // Extract hundreds digit (3)
+        digit = value.getDigit(100);
+        Assert.assertEquals(3, digit);
+        value.subtract((long) digit * 100, 0);
+        Assert.assertEquals(45, value.getValue());
+
+        // Extract tens digit (4)
+        digit = value.getDigit(10);
+        Assert.assertEquals(4, digit);
+        value.subtract((long) digit * 10, 0);
+        Assert.assertEquals(5, value.getValue());
+
+        // Extract ones digit (5)
+        digit = value.getDigit(1);
+        Assert.assertEquals(5, digit);
+        value.subtract((long) digit, 0);
+        Assert.assertEquals(0, value.getValue());
+    }
+
+    @Test
+    public void testDivideNegative() {
+        Decimal64 a = Decimal64.fromLong(-10, 0);
+        Decimal64 b = Decimal64.fromLong(-2, 0);
+        a.divide(b, 0, RoundingMode.HALF_UP);
+        Assert.assertEquals(5, a.getValue());
+        Assert.assertEquals(0, a.getScale());
+    }
+
+    @Test
+    public void testDivideNegativeResult() {
+        Decimal64 a = Decimal64.fromLong(-10, 0);
+        Decimal64 b = Decimal64.fromLong(2, 0);
+        a.divide(b, 0, RoundingMode.HALF_UP);
+        Assert.assertEquals(-5, a.getValue());
+        Assert.assertEquals(0, a.getScale());
     }
 
     @Test
@@ -384,6 +402,20 @@ public class Decimal64Test {
     }
 
     @Test(expected = NumericException.class)
+    public void testDivisionOverflow() {
+        Decimal64 a = Decimal64.fromLong(10000000, 0);
+        Decimal64 b = Decimal64.fromLong(1, 10);
+        a.divide(b, 5, RoundingMode.HALF_UP);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testDivisionOverflowScale() {
+        Decimal64 a = Decimal64.fromLong(1, 0);
+        Decimal64 b = Decimal64.fromLong(1, 10);
+        a.divide(b, 10, RoundingMode.HALF_UP);
+    }
+
+    @Test(expected = NumericException.class)
     public void testDivisionRemainderUnnecessary() {
         Decimal64 dividend = Decimal64.fromLong(10L, 0);
         Decimal64 divisor = Decimal64.fromLong(3L, 0);
@@ -397,6 +429,7 @@ public class Decimal64Test {
         Decimal64 c = new Decimal64(1230, 2);  // 12.30
         Decimal64 d = new Decimal64(1234, 2);  // 12.34
 
+        Assert.assertEquals(a, a);  // Same objects
         Assert.assertEquals(a, b);  // Same value, different scale
         Assert.assertEquals(a, c);  // Same value, same scale
         Assert.assertNotEquals(a, d); // Different value
@@ -439,6 +472,22 @@ public class Decimal64Test {
         Decimal64 small2 = Decimal64.fromLong(5, 0);
         Assert.assertEquals(small1.getValue(), small2.getValue());
         Assert.assertEquals(small1.getScale(), small2.getScale());
+    }
+
+    @Test
+    public void testGetDigitAtPowerOfTenBoundaryValues() {
+        Assert.assertEquals(9, Decimal64.getDigit(9, 1));
+        Assert.assertEquals(9, Decimal64.getDigit(99, 10));
+        Assert.assertEquals(9, Decimal64.getDigit(999, 100));
+        Assert.assertEquals(9, Decimal64.getDigit(9999, 1000));
+    }
+
+    @Test
+    public void testGetDigitAtPowerOfTenHundredsPlace() {
+        Assert.assertEquals(5, Decimal64.getDigit(523, 100));
+        Assert.assertEquals(9, Decimal64.getDigit(999, 100));
+        Assert.assertEquals(1, Decimal64.getDigit(100, 100));
+        Assert.assertEquals(0, Decimal64.getDigit(99, 100));
     }
 
     @Test
@@ -510,6 +559,26 @@ public class Decimal64Test {
     }
 
     @Test
+    public void testModuloScale() {
+        Decimal64 a = Decimal64.fromLong(10, 0);
+        Decimal64 b = Decimal64.fromLong(30, 1);
+        a.modulo(b);
+        Assert.assertEquals(10, a.getValue());
+        Assert.assertEquals(1, a.getScale());
+    }
+
+    @Test
+    public void testModuloStatic() {
+        Decimal64 a = Decimal64.fromLong(10, 0);
+        Decimal64 b = Decimal64.fromLong(3, 0);
+        Decimal64 result = new Decimal64();
+        Decimal64.modulo(a, b, result);
+        Assert.assertEquals(1, result.getValue());
+        Assert.assertEquals(10, a.getValue());
+        Assert.assertEquals(3, b.getValue());
+    }
+
+    @Test
     public void testMultiplication() {
         Decimal64 a = new Decimal64(123, 1);  // 12.3
         Decimal64 b = new Decimal64(456, 2);  // 4.56
@@ -534,8 +603,18 @@ public class Decimal64Test {
     }
 
     @Test(expected = NumericException.class)
-    public void testNegateMinValue() {
-        new Decimal64(Long.MIN_VALUE, 0).negate();
+    public void testMultiplyOverflowScale() {
+        Decimal64 a = Decimal64.fromLong(2, 10);
+        Decimal64 b = Decimal64.fromLong(2, 10);
+        a.multiply(b);
+    }
+
+    @Test
+    public void testNegateNull() {
+        Decimal64 m = new Decimal64();
+        m.copyFrom(Decimal64.NULL_VALUE);
+        m.negate();
+        Assert.assertTrue(m.isNull());
     }
 
     @Test
@@ -565,6 +644,136 @@ public class Decimal64Test {
     @Test(expected = NumericException.class)
     public void testNullBigDecimal() {
         Decimal64.fromBigDecimal(null);
+    }
+
+    @Test
+    public void testOfStringDecimalPointAtEnd() throws NumericException {
+        Decimal64 d = new Decimal64();
+        int precision = Numbers.decodeLowInt(d.ofString("103."));
+        Assert.assertEquals(3, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("103", d.toString());
+    }
+
+    @Test
+    public void testOfStringDecimalPointAtStart() throws NumericException {
+        Decimal64 d = new Decimal64();
+        int precision = Numbers.decodeLowInt(d.ofString(".123"));
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, d.getScale());
+        Assert.assertEquals("0.123", d.toString());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringEmptyString() throws NumericException {
+        Decimal64 d = new Decimal64();
+        d.ofString("");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExceedsMaxPrecision() throws NumericException {
+        Decimal64 d = new Decimal64();
+        String tooLarge = new String(new char[19]).replace('\0', '9'); // 19 digits
+        d.ofString(tooLarge);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExceedsMaxScale() throws NumericException {
+        Decimal64 d = new Decimal64();
+        String tooManyDecimals = "1." + new String(new char[19]).replace('\0', '1'); // 19 decimal places
+        d.ofString(tooManyDecimals);
+    }
+
+    @Test
+    public void testOfStringExponentWithIntegerBase() throws NumericException {
+        Decimal64 d = new Decimal64();
+
+        // Integer base with positive exponent
+        int precision = Numbers.decodeLowInt(d.ofString("123e2"));
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("12300", d.toString());
+
+        // Integer base with negative exponent
+        precision = Numbers.decodeLowInt(d.ofString("456e-3"));
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, d.getScale());
+        Assert.assertEquals("0.456", d.toString());
+    }
+
+    @Test
+    public void testOfStringExponentWithNegativeNumber() throws NumericException {
+        Decimal64 d = new Decimal64();
+
+        // Negative number with positive exponent
+        int precision = Numbers.decodeLowInt(d.ofString("-1.5e3"));
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("-1500", d.toString());
+
+        // Negative number with negative exponent
+        precision = Numbers.decodeLowInt(d.ofString("-2.5e-2"));
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, d.getScale());
+        Assert.assertEquals("-0.025", d.toString());
+    }
+
+    @Test
+    public void testOfStringInfinity() throws NumericException {
+        Decimal64 d = new Decimal64();
+        d.ofString("Infinity");
+        Assert.assertTrue(d.isNull());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringInvalidCharacter() throws NumericException {
+        Decimal64 d = new Decimal64();
+        d.ofString("123a45");
+    }
+
+    @Test
+    public void testOfStringNaN() throws NumericException {
+        Decimal64 d = new Decimal64();
+        d.ofString("NaN");
+        Assert.assertTrue(d.isNull());
+    }
+
+    @Test
+    public void testOfStringSimpleNegative() throws NumericException {
+        Decimal64 d = new Decimal64();
+        int precision = Numbers.decodeLowInt(d.ofString("-123.45"));
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(2, d.getScale());
+        Assert.assertEquals("-123.45", d.toString());
+    }
+
+    // Helper methods for fuzz testing accuracy
+
+    @Test
+    public void testOfStringSimplePositive() throws NumericException {
+        Decimal64 d = new Decimal64();
+        int precision = Numbers.decodeLowInt(d.ofString("123.45"));
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(2, d.getScale());
+        Assert.assertEquals("123.45", d.toString());
+    }
+
+    @Test
+    public void testOfStringWithLeadingZeros() throws NumericException {
+        Decimal64 d = new Decimal64();
+        int precision = Numbers.decodeLowInt(d.ofString("00123.45"));
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(2, d.getScale());
+        Assert.assertEquals("123.45", d.toString());
+    }
+
+    @Test
+    public void testOfStringWithMSuffix() throws NumericException {
+        Decimal64 d = new Decimal64();
+        int precision = Numbers.decodeLowInt(d.ofString("123.45m"));
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(2, d.getScale());
+        Assert.assertEquals("123.45", d.toString());
     }
 
     @Test
@@ -603,7 +812,57 @@ public class Decimal64Test {
         Decimal64 b = new Decimal64(1, 9);   // 0.000000001 (scale 9)
         a.add(b);
         Assert.assertEquals(9, a.getScale());
-        Assert.assertEquals("2E-9", a.toString()); // BigDecimal uses scientific notation for very small numbers
+        Assert.assertEquals("0.000000002", a.toString()); // BigDecimal uses scientific notation for very small numbers
+    }
+
+    @Test
+    public void testRescaleBasic() {
+        Decimal64 a = Decimal64.fromLong(123, 1);  // 12.3
+        a.rescale(3);
+        Assert.assertEquals(12300, a.getValue());
+        Assert.assertEquals(3, a.getScale());
+        Assert.assertEquals("12.300", a.toString());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleExceedsMaxScale() {
+        Decimal64 a = new Decimal64(100, 2);
+        a.rescale(19);  // Exceeds MAX_SCALE of 18
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleInvalidScale() {
+        Decimal64 a = new Decimal64(100, 2);
+        a.rescale(-1);  // Negative scale is invalid
+    }
+
+    @Test
+    public void testRescaleNegativeValue() {
+        Decimal64 a = Decimal64.fromLong(-10, 0);
+        a.rescale(2);
+        Assert.assertEquals(-1000, a.getValue());
+        Assert.assertEquals(2, a.getScale());
+        Assert.assertEquals("-10.00", a.toString());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleOverflow() {
+        Decimal64 a = Decimal64.fromLong(Long.MAX_VALUE / 100, 0);
+        a.rescale(18);  // This should cause overflow
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleToLowerScale() {
+        Decimal64 a = new Decimal64(100, 10);
+        a.rescale(5);  // Cannot reduce scale
+    }
+
+    @Test
+    public void testRescaleToMaxScale() {
+        Decimal64 a = Decimal64.fromLong(9, 1);
+        a.rescale(18);
+        Assert.assertEquals(18, a.getScale());
+        Assert.assertEquals("0.900000000000000000", a.toString());
     }
 
     @Test
@@ -624,15 +883,7 @@ public class Decimal64Test {
         final Rnd rnd = TestUtils.generateRandom(null);
 
         // All rounding modes except UNNECESSARY (which requires special handling)
-        java.math.RoundingMode[] roundingModes = {
-                java.math.RoundingMode.UP,
-                java.math.RoundingMode.DOWN,
-                java.math.RoundingMode.CEILING,
-                java.math.RoundingMode.FLOOR,
-                java.math.RoundingMode.HALF_UP,
-                java.math.RoundingMode.HALF_DOWN,
-                java.math.RoundingMode.HALF_EVEN
-        };
+        java.math.RoundingMode[] roundingModes = {java.math.RoundingMode.UP, java.math.RoundingMode.DOWN, java.math.RoundingMode.CEILING, java.math.RoundingMode.FLOOR, java.math.RoundingMode.HALF_UP, java.math.RoundingMode.HALF_DOWN, java.math.RoundingMode.HALF_EVEN};
 
         Decimal64 decimal = new Decimal64();
         for (int i = 0; i < iterations; i++) {
@@ -664,14 +915,7 @@ public class Decimal64Test {
             try {
                 originalBigDecimal = decimal.toBigDecimal();
             } catch (NumberFormatException e) {
-                String errorMsg = String.format(
-                        "Failed to convert original Decimal64 to BigDecimal at iteration %d:\n" +
-                                "Decimal64: value=0x%016x, scale=%d\n" +
-                                "toString()=%s\n" +
-                                "Error: %s",
-                        i, decimal.getValue(), decimal.getScale(),
-                        decimal, e.getMessage()
-                );
+                String errorMsg = String.format("Failed to convert original Decimal64 to BigDecimal at iteration %d:\n" + "Decimal64: value=0x%016x, scale=%d\n" + "toString()=%s\n" + "Error: %s", i, decimal.getValue(), decimal.getScale(), decimal, e.getMessage());
                 Assert.fail(errorMsg);
                 return; // unreachable but makes compiler happy
             }
@@ -688,38 +932,13 @@ public class Decimal64Test {
                 try {
                     actualBigDecimal = testDecimal.toBigDecimal();
                 } catch (NumberFormatException e) {
-                    String errorMsg = String.format(
-                            "Failed to convert result Decimal64 to BigDecimal at iteration %d:\n" +
-                                    "Original: %s (scale=%d)\n" +
-                                    "Target scale: %d, Mode: %s\n" +
-                                    "Result Decimal64: value=0x%016x, scale=%d\n" +
-                                    "toString()=%s\n" +
-                                    "Error: %s",
-                            i,
-                            originalBigDecimal.toPlainString(), decimal.getScale(),
-                            targetScale, roundingMode,
-                            testDecimal.getValue(), testDecimal.getScale(),
-                            testDecimal, e.getMessage()
-                    );
+                    String errorMsg = String.format("Failed to convert result Decimal64 to BigDecimal at iteration %d:\n" + "Original: %s (scale=%d)\n" + "Target scale: %d, Mode: %s\n" + "Result Decimal64: value=0x%016x, scale=%d\n" + "toString()=%s\n" + "Error: %s", i, originalBigDecimal.toPlainString(), decimal.getScale(), targetScale, roundingMode, testDecimal.getValue(), testDecimal.getScale(), testDecimal, e.getMessage());
                     Assert.fail(errorMsg);
                     return; // unreachable but makes compiler happy
                 }
 
                 if (!expectedBigDecimal.equals(actualBigDecimal)) {
-                    String errorMsg = String.format(
-                            "Rounding mismatch at iteration %d:\n" +
-                                    "Original: %s (scale=%d)\n" +
-                                    "Target scale: %d, Mode: %s\n" +
-                                    "Expected: %s\n" +
-                                    "Actual: %s\n" +
-                                    "Original Decimal64: value=0x%016x, scale=%d",
-                            i,
-                            originalBigDecimal.toPlainString(), decimal.getScale(),
-                            targetScale, roundingMode,
-                            expectedBigDecimal.toPlainString(),
-                            actualBigDecimal.toPlainString(),
-                            decimal.getValue(), decimal.getScale()
-                    );
+                    String errorMsg = String.format("Rounding mismatch at iteration %d:\n" + "Original: %s (scale=%d)\n" + "Target scale: %d, Mode: %s\n" + "Expected: %s\n" + "Actual: %s\n" + "Original Decimal64: value=0x%016x, scale=%d", i, originalBigDecimal.toPlainString(), decimal.getScale(), targetScale, roundingMode, expectedBigDecimal.toPlainString(), actualBigDecimal.toPlainString(), decimal.getValue(), decimal.getScale());
                     Assert.fail(errorMsg);
                 }
 
@@ -738,20 +957,35 @@ public class Decimal64Test {
                 }
 
                 if (!decimal64Threw) {
-                    String errorMsg = String.format(
-                            "BigDecimal threw NumericException but Decimal64 didn't at iteration %d:\n" +
-                                    "Original: %s (scale=%d)\n" +
-                                    "Target scale: %d, Mode: %s\n" +
-                                    "BigDecimal error: %s",
-                            i,
-                            originalBigDecimal.toPlainString(), decimal.getScale(),
-                            targetScale, roundingMode,
-                            e.getMessage()
-                    );
+                    String errorMsg = String.format("BigDecimal threw NumericException but Decimal64 didn't at iteration %d:\n" + "Original: %s (scale=%d)\n" + "Target scale: %d, Mode: %s\n" + "BigDecimal error: %s", i, originalBigDecimal.toPlainString(), decimal.getScale(), targetScale, roundingMode, e.getMessage());
                     Assert.fail(errorMsg);
                 }
             }
         }
+    }
+
+    @Test
+    public void testRoundNull() {
+        Decimal64 a = new Decimal64();
+        a.ofNull();
+        a.round(2, java.math.RoundingMode.HALF_UP);
+        Assert.assertTrue(a.isNull());
+    }
+
+    @Test
+    public void testRoundSameSale() {
+        // No changes should be made
+        Decimal64 a = Decimal64.fromDouble(1.999, 3);
+        a.round(3, java.math.RoundingMode.HALF_UP);
+        Assert.assertEquals("1.999", a.toString());
+    }
+
+    @Test
+    public void testRoundScale() {
+        Decimal64 a = Decimal64.fromLong(-10, 1);
+        a.round(2, RoundingMode.HALF_UP);
+        Assert.assertEquals(-100, a.getValue());
+        Assert.assertEquals(2, a.getScale());
     }
 
     @Test
@@ -776,6 +1010,28 @@ public class Decimal64Test {
         } catch (NumericException e) {
             // Expected
         }
+    }
+
+    @Test
+    public void testSetScale() {
+        Decimal64 a = new Decimal64(12345, 2);
+        a.setScale(1);
+        Assert.assertEquals("1234.5", a.toString());
+    }
+
+    @Test
+    public void testSinkNull() {
+        // Sinking a null value shouldn't print anything
+        StringSink sink = new StringSink();
+        Decimal64.NULL_VALUE.toSink(sink);
+        Assert.assertEquals("", sink.toString());
+    }
+
+    @Test
+    public void testSinkZero() {
+        StringSink sink = new StringSink();
+        Decimal64.ZERO.toSink(sink);
+        Assert.assertEquals("0", sink.toString());
     }
 
     @Test
@@ -812,6 +1068,22 @@ public class Decimal64Test {
         a.subtract(b);
     }
 
+    @Test(expected = NumericException.class)
+    public void testSubtractOverflowMinValue() {
+        Decimal64 res = new Decimal64();
+        res.copyFrom(Decimal64.MIN_VALUE);
+        res.subtract(Decimal64.ONE);
+    }
+
+    @Test
+    public void testSubtractScaleB() {
+        Decimal64 a = Decimal64.fromLong(10, 1);
+        Decimal64 b = Decimal64.fromLong(1, 0);
+        a.subtract(b);
+        Assert.assertEquals(0, a.getValue());
+        Assert.assertEquals(1, a.getScale());
+    }
+
     @Test
     public void testSubtraction() {
         // Same scale subtraction
@@ -844,6 +1116,74 @@ public class Decimal64Test {
     }
 
     @Test
+    public void testToDecimal256Basic() {
+        Decimal64 d64 = Decimal64.fromDouble(123.45, 2);
+        Decimal256 d256 = new Decimal256();
+        d64.toDecimal256(d256);
+
+        Assert.assertEquals(2, d256.getScale());
+        Assert.assertEquals("123.45", d256.toString());
+    }
+
+    @Test
+    public void testToDecimal256MaxValue() {
+        Decimal256 d256 = new Decimal256();
+        Decimal64.MAX_VALUE.toDecimal256(d256);
+
+        Assert.assertEquals(0, d256.getScale());
+        Assert.assertEquals(Decimal64.MAX_VALUE.toString(), d256.toString());
+    }
+
+    @Test
+    public void testToDecimal256MinValue() {
+        Decimal256 d256 = new Decimal256();
+        Decimal64.MIN_VALUE.toDecimal256(d256);
+
+        Assert.assertEquals(0, d256.getScale());
+        Assert.assertEquals(Decimal64.MIN_VALUE.toString(), d256.toString());
+    }
+
+    @Test
+    public void testToDecimal256NegativeValue() {
+        Decimal64 d64 = Decimal64.fromDouble(-987.654, 3);
+        Decimal256 d256 = new Decimal256();
+        d64.toDecimal256(d256);
+
+        Assert.assertEquals(3, d256.getScale());
+        Assert.assertEquals("-987.654", d256.toString());
+    }
+
+    @Test
+    public void testToDecimal256Null() {
+        Decimal64 d64 = new Decimal64();
+        d64.ofNull();
+        Decimal256 d256 = new Decimal256();
+        d64.toDecimal256(d256);
+
+        Assert.assertTrue(d256.isNull());
+    }
+
+    @Test
+    public void testToDecimal256WithHighScale() {
+        Decimal64 d64 = new Decimal64(123456789012345678L, 18);
+        Decimal256 d256 = new Decimal256();
+        d64.toDecimal256(d256);
+
+        Assert.assertEquals(18, d256.getScale());
+        Assert.assertEquals(d64.toString(), d256.toString());
+    }
+
+    @Test
+    public void testToDecimal256Zero() {
+        Decimal64 d64 = Decimal64.fromLong(0, 5);
+        Decimal256 d256 = new Decimal256();
+        d64.toDecimal256(d256);
+
+        Assert.assertEquals(5, d256.getScale());
+        Assert.assertEquals("0.00000", d256.toString());
+    }
+
+    @Test
     public void testToSink() {
         Decimal64 value = new Decimal64(12345, 2);
         StringSink sink = new StringSink();
@@ -851,7 +1191,15 @@ public class Decimal64Test {
         Assert.assertEquals("123.45", sink.toString());
     }
 
-    // Helper methods for fuzz testing accuracy
+    @Test
+    public void testToSinkBasic() {
+        Decimal64 decimal = Decimal64.fromLong(12345, 2);
+        StringSink sink = new StringSink();
+
+        decimal.toSink(sink);
+
+        Assert.assertEquals("123.45", sink.toString());
+    }
 
     private void testAdditionAccuracy(Decimal64 a, Decimal64 b, int iteration) {
         // Test addition accuracy with BigDecimal
@@ -885,8 +1233,7 @@ public class Decimal64Test {
             result.add(b);
 
             // Results should be the same
-            Assert.assertEquals("Static and in-place addition differ at iteration " + iteration,
-                    result.toBigDecimal(), staticResult.toBigDecimal());
+            Assert.assertEquals("Static and in-place addition differ at iteration " + iteration, result.toBigDecimal(), staticResult.toBigDecimal());
 
             BigDecimal actual = result.toBigDecimal();
 
@@ -934,8 +1281,7 @@ public class Decimal64Test {
             result.divide(b, resultScale, RoundingMode.HALF_UP);
 
             // Results should be the same
-            Assert.assertEquals("Static and in-place division differ at iteration " + iteration,
-                    result.toBigDecimal(), staticResult.toBigDecimal());
+            Assert.assertEquals("Static and in-place division differ at iteration " + iteration, result.toBigDecimal(), staticResult.toBigDecimal());
 
             BigDecimal actual = result.toBigDecimal();
 
@@ -944,8 +1290,7 @@ public class Decimal64Test {
                 Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
             }
         } catch (NumericException e) {
-            if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow") ||
-                    e.getMessage().contains("Scale adjustment too large")) {
+            if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow") || e.getMessage().contains("Scale adjustment too large")) {
                 return;
             }
             throw e;
@@ -978,8 +1323,7 @@ public class Decimal64Test {
             result.modulo(b);
 
             // Results should be the same
-            Assert.assertEquals("Static and in-place modulo differ at iteration " + iteration,
-                    result.toBigDecimal(), staticResult.toBigDecimal());
+            Assert.assertEquals("Static and in-place modulo differ at iteration " + iteration, result.toBigDecimal(), staticResult.toBigDecimal());
 
             BigDecimal actual = result.toBigDecimal();
 
@@ -1021,8 +1365,7 @@ public class Decimal64Test {
             result.multiply(b);
 
             // Results should be the same
-            Assert.assertEquals("Static and in-place multiplication differ at iteration " + iteration,
-                    result.toBigDecimal(), staticResult.toBigDecimal());
+            Assert.assertEquals("Static and in-place multiplication differ at iteration " + iteration, result.toBigDecimal(), staticResult.toBigDecimal());
 
             BigDecimal actual = result.toBigDecimal();
 
@@ -1064,8 +1407,7 @@ public class Decimal64Test {
             result.subtract(b);
 
             // Results should be the same
-            Assert.assertEquals("Static and in-place subtraction differ at iteration " + iteration,
-                    result.toBigDecimal(), staticResult.toBigDecimal());
+            Assert.assertEquals("Static and in-place subtraction differ at iteration " + iteration, result.toBigDecimal(), staticResult.toBigDecimal());
 
             BigDecimal actual = result.toBigDecimal();
 

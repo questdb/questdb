@@ -309,7 +309,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
-        Assert.assertEquals(100_000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
+        Assert.assertEquals(10_000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
         Assert.assertTrue(configuration.getCairoConfiguration().isGroupByPresizeEnabled());
         Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getGroupByPresizeMaxCapacity());
         Assert.assertEquals(Numbers.SIZE_1GB, configuration.getCairoConfiguration().getGroupByPresizeMaxHeapSize());
@@ -538,6 +538,28 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testConfigKeysAreValidInDefaultConfs() throws Exception {
+        String[] configFiles = {
+                "../core/src/main/resources/io/questdb/site/conf/server.conf",
+                "../pkg/ami/marketplace/assets/server.conf"
+        };
+
+        Properties properties = new Properties();
+        PropServerConfiguration.PropertyValidator validator = new PropServerConfiguration.PropertyValidator();
+
+        for (String configFile : configFiles) {
+            java.nio.file.Path path = java.nio.file.Paths.get(configFile);
+            if (!java.nio.file.Files.exists(path)) {
+                Assert.fail("Config file not found: " + configFile);
+            }
+
+            try (java.io.BufferedReader reader = java.nio.file.Files.newBufferedReader(path, java.nio.charset.StandardCharsets.UTF_8)) {
+                validateConfigKeys(reader, configFile, properties, validator);
+            }
+        }
+    }
+
+    @Test
     public void testContextPath() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.HTTP_CONTEXT_WEB_CONSOLE.getPropertyPath(), "/context");
@@ -730,9 +752,9 @@ public class PropServerConfigurationTest {
         properties.setProperty("http.net.rcv.buf.size", "10000");
         PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
-        Assert.assertFalse(result.isError);
-        Assert.assertNotEquals(-1, result.message.indexOf("Deprecated settings"));
-        Assert.assertNotEquals(-1, result.message.indexOf(
+        Assert.assertFalse(result.isError());
+        Assert.assertNotEquals(-1, result.message().indexOf("Deprecated settings"));
+        Assert.assertNotEquals(-1, result.message().indexOf(
                 "Replaced by `http.min.net.connection.rcvbuf` and `http.net.connection.rcvbuf`"));
     }
 
@@ -767,7 +789,6 @@ public class PropServerConfigurationTest {
 
         // affinity
         properties.setProperty("shared.worker.count", "2");
-        properties.setProperty("shared.worker.affinity", "2,3");
         env.put("QDB_SHARED_WORKER_COUNT", "3");
         env.put("QDB_SHARED_NETWORK_WORKER_AFFINITY", "5,6,7");
 
@@ -1124,9 +1145,9 @@ public class PropServerConfigurationTest {
         properties.setProperty("invalid.key", "value");
         PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
-        Assert.assertTrue(result.isError);
-        Assert.assertNotEquals(-1, result.message.indexOf("Invalid settings"));
-        Assert.assertNotEquals(-1, result.message.indexOf("* invalid.key"));
+        Assert.assertTrue(result.isError());
+        Assert.assertNotEquals(-1, result.message().indexOf("Invalid settings"));
+        Assert.assertNotEquals(-1, result.message().indexOf("* invalid.key"));
     }
 
     @Test
@@ -1270,9 +1291,9 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.tcp.commit.timeout", "10000");
         PropServerConfiguration.ValidationResult result = validate(properties);
         Assert.assertNotNull(result);
-        Assert.assertTrue(result.isError);
-        Assert.assertNotEquals(-1, result.message.indexOf("Obsolete settings"));
-        Assert.assertNotEquals(-1, result.message.indexOf(
+        Assert.assertTrue(result.isError());
+        Assert.assertNotEquals(-1, result.message().indexOf("Obsolete settings"));
+        Assert.assertNotEquals(-1, result.message().indexOf(
                 "Replaced by `line.tcp.commit.interval.default` and `line.tcp.commit.interval.fraction`"));
     }
 
@@ -2033,6 +2054,31 @@ public class PropServerConfigurationTest {
 
     private PropServerConfiguration.ValidationResult validate(Properties properties) {
         return new PropServerConfiguration.PropertyValidator().validate(properties);
+    }
+
+    private void validateConfigKeys(java.io.BufferedReader reader, String source, Properties properties, PropServerConfiguration.PropertyValidator validator) throws Exception {
+        String line;
+        while ((line = reader.readLine()) != null) {
+            line = line.trim();
+            if (line.startsWith("#") && line.contains("=") && !line.startsWith("##")) {
+                String uncommented = line.substring(1).trim();
+                int equalsIndex = uncommented.indexOf('=');
+                if (equalsIndex > 0) {
+                    String key = uncommented.substring(0, equalsIndex).trim();
+                    String value = uncommented.substring(equalsIndex + 1).trim();
+                    if (!key.contains(".") || key.startsWith("http.redirect") || key.contains(" ")
+                            || key.startsWith("replication") || key.startsWith("acl") || key.contains("tls") || key.startsWith("cold.storage") || key.startsWith("native.")) { // Enterprise confs
+                        continue;
+                    }
+                    properties.clear();
+                    properties.setProperty(key, value);
+                    PropServerConfiguration.ValidationResult result = validator.validate(properties);
+                    if (result != null && result.isError()) {
+                        Assert.fail(String.format("Invalid commented key '%s' found in %s: %s", key, source, result.message()));
+                    }
+                }
+            }
+        }
     }
 
     @NotNull

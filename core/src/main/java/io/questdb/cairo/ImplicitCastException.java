@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
@@ -34,7 +35,8 @@ import org.jetbrains.annotations.Nullable;
 public class ImplicitCastException extends RuntimeException implements FlyweightMessageContainer {
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<ImplicitCastException> tlException = new ThreadLocal<>(ImplicitCastException::new);
-    protected final StringSink message = new StringSink();
+    private final StringSink message = new StringSink();
+    private int position = 0;
 
     public static ImplicitCastException inconvertibleValue(double value, int fromType, int toType) {
         return instance().put("inconvertible value: ")
@@ -94,6 +96,18 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
                 .put(']');
     }
 
+    public static ImplicitCastException inconvertibleValue(Sinkable sinkable, int fromType, int toType) {
+        ImplicitCastException ice = instance();
+        ice.put("inconvertible value: ");
+        sinkable.toSink(ice.message);
+
+        return ice.put(" [")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType))
+                .put(']');
+    }
+
     public static ImplicitCastException inconvertibleValue(Utf8Sequence value, int fromType, int toType) {
         ImplicitCastException ice = instance();
         ice.put("inconvertible value: ");
@@ -125,6 +139,7 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new ImplicitCastException()) != null;
         ex.message.clear();
+        ex.position = 0;
         return ex;
     }
 
@@ -139,11 +154,21 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
     }
 
     @Override
+    public int getPosition() {
+        return position;
+    }
+
+    @Override
     public StackTraceElement[] getStackTrace() {
         StackTraceElement[] result = EMPTY_STACK_TRACE;
         // This is to have correct stack trace reported in CI
         assert (result = super.getStackTrace()) != null;
         return result;
+    }
+
+    public ImplicitCastException position(int position) {
+        this.position = position;
+        return this;
     }
 
     public ImplicitCastException put(long value) {

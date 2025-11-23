@@ -93,7 +93,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Lt Join Fast Scan");
+        sink.type("Lt Join Fast");
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

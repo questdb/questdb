@@ -28,6 +28,9 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -193,6 +196,40 @@ final class Unordered2MapRecord implements MapRecord {
     }
 
     @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        final long addr = addressOfColumn(col);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L)
+        );
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return Unsafe.getUnsafe().getShort(addressOfColumn(col));
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        sink.ofRawAddress(addressOfColumn(col));
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return Unsafe.getUnsafe().getInt(addressOfColumn(col));
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(col));
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return Unsafe.getUnsafe().getByte(addressOfColumn(col));
+    }
+
+    @Override
     public double getDouble(int columnIndex) {
         return Unsafe.getUnsafe().getDouble(addressOfColumn(columnIndex));
     }
@@ -291,7 +328,10 @@ final class Unordered2MapRecord implements MapRecord {
 
     @Override
     public long keyHashCode() {
-        return 0; // no-op
+        // Although this map does not use hash codes, this method is implemented
+        // for the purpose of map sharding, i.e. to spread keys among multiple Unordered2Maps
+        // in case when group by functions, such as count_distinct(), have high cardinality.
+        return Hash.hashShort64(Unsafe.getUnsafe().getShort(startAddress));
     }
 
     public void of(long address) {

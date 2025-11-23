@@ -326,6 +326,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_TEXT_ANALYSIS_MAX_LINES("http.text.analysis.max.lines"),
     HTTP_TEXT_LEXER_STRING_POOL_CAPACITY("http.text.lexer.string.pool.capacity"),
     HTTP_TEXT_TIMESTAMP_ADAPTER_POOL_CAPACITY("http.text.timestamp.adapter.pool.capacity"),
+    HTTP_TEXT_DECIMAL_ADAPTER_POOL_CAPACITY("http.text.decimal.adapter.pool.capacity"),
     HTTP_JSON_QUERY_CONNECTION_LIMIT("http.json.query.connection.limit"),
     HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY("http.json.query.connection.check.frequency"),
     HTTP_JSON_QUERY_FLOAT_SCALE("http.json.query.float.scale"),
@@ -605,6 +606,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED("cairo.sql.column.alias.expression.enabled"),
     CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size"),
     CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled"),
+    CAIRO_FILE_ASYNC_MUNMAP_ENABLED("cairo.file.async.munmap.enabled"),
     CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled");
 
     private static final Map<String, PropertyKey> nameMapping;

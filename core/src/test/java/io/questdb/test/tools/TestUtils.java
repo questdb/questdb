@@ -225,6 +225,15 @@ public final class TestUtils {
         Assert.fail("'" + sequence + "' does not contain either: " + term1 + " or " + term2);
     }
 
+    public static void assertContainsEither(CharSequence sequence, CharSequence... terms) {
+        for (CharSequence term : terms) {
+            if (Chars.contains(sequence, term)) {
+                return;
+            }
+        }
+        Assert.fail("'" + sequence + "' does not contain either: " + String.join(" or ", terms));
+    }
+
     public static void assertCursor(
             CharSequence expected,
             RecordCursor cursor,
@@ -2517,6 +2526,7 @@ public final class TestUtils {
         private boolean skipChecksOnClose;
 
         public LeakCheck() {
+            Files.getMmapCache().asyncMunmap();
             Path.clearThreadLocals();
             CLOSEABLE.forEach(Misc::free);
             mem = Unsafe.getMemUsed();
@@ -2555,6 +2565,8 @@ public final class TestUtils {
                                 ", list: " + Files.getOpenFdDebugInfo()
                 );
             }
+
+            Files.getMmapCache().asyncMunmap();
 
             // Checks that the same tag used for allocation and freeing native memory
             long memAfter = Unsafe.getMemUsed();

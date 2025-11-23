@@ -37,12 +37,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.DirectIntList;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Hash;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
@@ -114,18 +114,20 @@ public class OrderedMap implements Map, Reopenable {
     private final int valueColumnCount;
     private final long valueSize;
     private int free;
+    private long heapAddr; // Heap memory start pointer.
     private long heapLimit; // Heap memory limit pointer.
     private long heapSize;
-    private long heapStart; // Heap memory start pointer.
     private long initialHeapSize;
     private int initialKeyCapacity;
     private long kPos;      // Current key-value memory pointer (contains searched key / pending key-value pair).
     private int keyCapacity;
     private int mask;
     private int nResizes;
-    // Holds [compressed_offset, hash_code] pairs.
+    // Holds a list of [compressed_offset, hash_code] pairs.
     // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory with 0.
-    private DirectIntList offsets;
+    // Lowest 32 bits of hash code can be used to obtain an entry index since
+    // maximum number of entries in the map is limited with 32-bit compressed offsets.
+    private long offsetsAddr;
     private int size = 0;
 
     public OrderedMap(
@@ -179,16 +181,15 @@ public class OrderedMap implements Map, Reopenable {
             this.listMemoryTag = listMemoryTag;
             initialHeapSize = heapSize;
             this.loadFactor = loadFactor;
-            heapStart = kPos = Unsafe.malloc(heapSize, heapMemoryTag);
+            heapAddr = kPos = Unsafe.malloc(heapSize, heapMemoryTag);
             this.heapSize = heapSize;
-            heapLimit = heapStart + heapSize;
+            heapLimit = heapAddr + heapSize;
             this.keyCapacity = (int) (keyCapacity / loadFactor);
             this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);
             mask = this.keyCapacity - 1;
             free = (int) (this.keyCapacity * loadFactor);
-            offsets = new DirectIntList((long) this.keyCapacity << 1, listMemoryTag);
-            offsets.setPos((long) this.keyCapacity << 1);
-            offsets.zero(0);
+            offsetsAddr = Unsafe.malloc((long) this.keyCapacity << 3, listMemoryTag);
+            Vect.memset(offsetsAddr, (long) this.keyCapacity << 3, 0);
             nResizes = 0;
             this.maxResizes = maxResizes;
 
@@ -236,7 +237,7 @@ public class OrderedMap implements Map, Reopenable {
             value2 = new OrderedMapValue(valueSize, valueOffsets);
             value3 = new OrderedMapValue(valueSize, valueOffsets);
 
-            assert keySize + valueSize <= heapLimit - heapStart : "page size is too small to fit a single key";
+            assert keySize + valueSize <= heapLimit - heapAddr : "page size is too small to fit a single key";
             if (keySize == -1) {
                 final OrderedMapVarSizeRecord varSizeRecord = new OrderedMapVarSizeRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
                 record = varSizeRecord;
@@ -258,18 +259,19 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public void clear() {
-        kPos = heapStart;
+        kPos = heapAddr;
         free = (int) (keyCapacity * loadFactor);
         size = 0;
-        offsets.zero(0);
+        Vect.memset(offsetsAddr, (long) keyCapacity << 3, 0);
         nResizes = 0;
     }
 
     @Override
     public void close() {
-        Misc.free(offsets);
-        if (heapStart != 0) {
-            heapStart = Unsafe.free(heapStart, heapSize, heapMemoryTag);
+        if (heapAddr != 0) {
+            offsetsAddr = Unsafe.free(offsetsAddr, (long) keyCapacity << 3, listMemoryTag);
+            keyCapacity = 0;
+            heapAddr = Unsafe.free(heapAddr, heapSize, heapMemoryTag);
             heapLimit = kPos = 0;
             free = 0;
             size = 0;
@@ -284,12 +286,12 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public MapRecordCursor getCursor() {
-        return cursor.init(heapStart, heapLimit, size);
+        return cursor.init(heapAddr, heapLimit, size);
     }
 
     @Override
     public long getHeapSize() {
-        return heapLimit - heapStart;
+        return heapLimit - heapAddr;
     }
 
     @Override
@@ -304,7 +306,7 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public long getUsedHeapSize() {
-        return kPos - heapStart;
+        return kPos - heapAddr;
     }
 
     public int getValueColumnCount() {
@@ -313,7 +315,7 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public boolean isOpen() {
-        return heapStart != 0;
+        return heapAddr != 0;
     }
 
     @Override
@@ -327,7 +329,7 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public void reopen(int keyCapacity, long heapSize) {
-        if (heapStart == 0) {
+        if (heapAddr == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
             initialKeyCapacity = Math.max(Numbers.ceilPow2(keyCapacity), MIN_KEY_CAPACITY);
             initialHeapSize = heapSize;
@@ -336,7 +338,7 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     public void reopen() {
-        if (heapStart == 0) {
+        if (heapAddr == 0) {
             // handles both mem and offsets
             restoreInitialCapacity();
         }
@@ -346,14 +348,12 @@ public class OrderedMap implements Map, Reopenable {
     public void restoreInitialCapacity() {
         if (heapSize != initialHeapSize || keyCapacity != initialKeyCapacity) {
             try {
-                heapStart = kPos = Unsafe.realloc(heapStart, heapLimit - heapStart, heapSize = initialHeapSize, heapMemoryTag);
-                heapLimit = heapStart + initialHeapSize;
-                keyCapacity = initialKeyCapacity;
-                keyCapacity = keyCapacity < MIN_KEY_CAPACITY ? MIN_KEY_CAPACITY : Numbers.ceilPow2(keyCapacity);
+                heapAddr = kPos = Unsafe.realloc(heapAddr, heapLimit - heapAddr, heapSize = initialHeapSize, heapMemoryTag);
+                heapLimit = heapAddr + initialHeapSize;
+                int newKeyCapacity = initialKeyCapacity < MIN_KEY_CAPACITY ? MIN_KEY_CAPACITY : Numbers.ceilPow2(initialKeyCapacity);
+                offsetsAddr = Unsafe.realloc(offsetsAddr, (long) keyCapacity << 3, (long) newKeyCapacity << 3, listMemoryTag);
+                keyCapacity = newKeyCapacity;
                 mask = keyCapacity - 1;
-                offsets.resetCapacity();
-                offsets.setCapacity((long) keyCapacity << 1);
-                offsets.setPos((long) keyCapacity << 1);
                 clear();
             } catch (Throwable t) {
                 close();
@@ -377,12 +377,12 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
-    public MapValue valueAt(long startAddress) {
+    public MapValue valueAt(long startAddr) {
         long keySize = this.keySize;
         if (keySize == -1) {
-            keySize = Unsafe.getUnsafe().getInt(startAddress);
+            keySize = Unsafe.getUnsafe().getInt(startAddr);
         }
-        return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
+        return valueOf(startAddr, startAddr + keyOffset + keySize, false, value);
     }
 
     @Override
@@ -390,34 +390,25 @@ public class OrderedMap implements Map, Reopenable {
         return key.init();
     }
 
-    // Lowest 32 bits of hash code can be used to obtain an entry index since
-    // maximum number of entries in the map is limited with 32-bit compressed offsets.
-    private static int getHashCodeLo(DirectIntList offsets, int index) {
-        return offsets.get(((long) index << 1) | 1);
+    private static int compressOffset(long offset) {
+        return (int) ((offset >> 3) + 1);
     }
 
-    private static long getOffset(DirectIntList offsets, int index) {
-        return ((long) offsets.get((long) index << 1) - 1) << 3;
-    }
-
-    private static void setHashCodeLo(DirectIntList offsets, int index, int hashCodeLo) {
-        offsets.set(((long) index << 1) | 1, hashCodeLo);
-    }
-
-    private static void setOffset(DirectIntList offsets, int index, long offset) {
-        offsets.set((long) index << 1, (int) ((offset >> 3) + 1));
+    private static long decompressOffset(int rawOffset) {
+        return ((long) rawOffset - 1) << 3;
     }
 
     private OrderedMapValue asNew(Key keyWriter, int index, int hashCodeLo, OrderedMapValue value) {
         // Align current pointer to 8 bytes, so that we can store compressed offsets.
-        kPos = Bytes.align8b(keyWriter.appendAddress + valueSize);
-        setOffset(offsets, index, keyWriter.startAddress - heapStart);
-        setHashCodeLo(offsets, index, hashCodeLo);
+        kPos = Bytes.align8b(keyWriter.appendAddr + valueSize);
+        long offsetAddr = offsetsAddr + ((long) index << 3);
+        Unsafe.getUnsafe().putInt(offsetAddr, compressOffset(keyWriter.startAddr - heapAddr));
+        Unsafe.getUnsafe().putInt(offsetAddr + 4, hashCodeLo);
         size++;
         if (--free == 0) {
             rehash();
         }
-        return valueOf(keyWriter.startAddress, keyWriter.appendAddress, true, value);
+        return valueOf(keyWriter.startAddr, keyWriter.appendAddr, true, value);
     }
 
     private void mergeFixedSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc) {
@@ -427,39 +418,41 @@ public class OrderedMap implements Map, Reopenable {
         long alignedEntrySize = Bytes.align8b(entrySize);
 
         OUTER:
-        for (int i = 0, k = (int) (srcMap.offsets.size() >>> 1); i < k; i++) {
-            long offset = getOffset(srcMap.offsets, i);
+        for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
+            long srcP = srcMap.offsetsAddr + ((long) i << 3);
+            long offset = decompressOffset(Unsafe.getUnsafe().getInt(srcP));
             if (offset < 0) {
                 continue;
             }
 
-            long srcStartAddress = srcMap.heapStart + offset;
-            int hashCodeLo = getHashCodeLo(srcMap.offsets, i);
+            long srcStartAddr = srcMap.heapAddr + offset;
+            int hashCodeLo = Unsafe.getUnsafe().getInt(srcP + 4);
             int index = hashCodeLo & mask;
 
             long destOffset;
-            long destStartAddress;
-            while ((destOffset = getOffset(offsets, index)) > -1) {
+            long destP = offsetsAddr + ((long) index << 3);
+            while ((destOffset = decompressOffset(Unsafe.getUnsafe().getInt(destP))) > -1) {
                 if (
-                        hashCodeLo == getHashCodeLo(offsets, index)
-                                && Vect.memeq((destStartAddress = heapStart + destOffset), srcStartAddress, keySize)
+                        hashCodeLo == Unsafe.getUnsafe().getInt(destP + 4)
+                                && Vect.memeq(heapAddr + destOffset, srcStartAddr, keySize)
                 ) {
                     // Match found, merge values.
                     mergeFunc.merge(
-                            valueAt(destStartAddress),
-                            srcMap.valueAt(srcStartAddress)
+                            valueAt(heapAddr + destOffset),
+                            srcMap.valueAt(srcStartAddr)
                     );
                     continue OUTER;
                 }
                 index = (index + 1) & mask;
+                destP = offsetsAddr + ((long) index << 3);
             }
 
             if (kPos + entrySize > heapLimit) {
                 resize(entrySize, kPos);
             }
-            Vect.memcpy(kPos, srcStartAddress, entrySize);
-            setOffset(offsets, index, kPos - heapStart);
-            setHashCodeLo(offsets, index, hashCodeLo);
+            Vect.memcpy(kPos, srcStartAddr, entrySize);
+            Unsafe.getUnsafe().putInt(destP, compressOffset(kPos - heapAddr));
+            Unsafe.getUnsafe().putInt(destP + 4, hashCodeLo);
             kPos += alignedEntrySize;
             size++;
             if (--free == 0) {
@@ -472,42 +465,44 @@ public class OrderedMap implements Map, Reopenable {
         assert keySize == -1;
 
         OUTER:
-        for (int i = 0, k = (int) (srcMap.offsets.size() >>> 1); i < k; i++) {
-            long offset = getOffset(srcMap.offsets, i);
+        for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
+            long srcOffsetAddr = srcMap.offsetsAddr + ((long) i << 3);
+            long offset = decompressOffset(Unsafe.getUnsafe().getInt(srcOffsetAddr));
             if (offset < 0) {
                 continue;
             }
 
-            long srcStartAddress = srcMap.heapStart + offset;
-            int srcKeySize = Unsafe.getUnsafe().getInt(srcStartAddress);
-            int hashCodeLo = getHashCodeLo(srcMap.offsets, i);
+            long srcStartAddr = srcMap.heapAddr + offset;
+            int srcKeySize = Unsafe.getUnsafe().getInt(srcStartAddr);
+            int hashCodeLo = Unsafe.getUnsafe().getInt(srcOffsetAddr + 4);
             int index = hashCodeLo & mask;
 
             long destOffset;
-            long destStartAddress;
-            while ((destOffset = getOffset(offsets, index)) > -1) {
+            long destOffsetAddr = offsetsAddr + ((long) index << 3);
+            while ((destOffset = decompressOffset(Unsafe.getUnsafe().getInt(destOffsetAddr))) > -1) {
                 if (
-                        hashCodeLo == getHashCodeLo(offsets, index)
-                                && Unsafe.getUnsafe().getInt((destStartAddress = heapStart + destOffset)) == srcKeySize
-                                && Vect.memeq(destStartAddress + keyOffset, srcStartAddress + keyOffset, srcKeySize)
+                        hashCodeLo == Unsafe.getUnsafe().getInt(destOffsetAddr + 4)
+                                && Unsafe.getUnsafe().getInt(heapAddr + destOffset) == srcKeySize
+                                && Vect.memeq(heapAddr + destOffset + keyOffset, srcStartAddr + keyOffset, srcKeySize)
                 ) {
                     // Match found, merge values.
                     mergeFunc.merge(
-                            valueAt(destStartAddress),
-                            srcMap.valueAt(srcStartAddress)
+                            valueAt(heapAddr + destOffset),
+                            srcMap.valueAt(srcStartAddr)
                     );
                     continue OUTER;
                 }
                 index = (index + 1) & mask;
+                destOffsetAddr = offsetsAddr + ((long) index << 3);
             }
 
             long entrySize = keyOffset + srcKeySize + valueSize;
             if (kPos + entrySize > heapLimit) {
                 resize(entrySize, kPos);
             }
-            Vect.memcpy(kPos, srcStartAddress, entrySize);
-            setOffset(offsets, index, kPos - heapStart);
-            setHashCodeLo(offsets, index, hashCodeLo);
+            Vect.memcpy(kPos, srcStartAddr, entrySize);
+            Unsafe.getUnsafe().putInt(destOffsetAddr, compressOffset(kPos - heapAddr));
+            Unsafe.getUnsafe().putInt(destOffsetAddr + 4, hashCodeLo);
             kPos = Bytes.align8b(kPos + entrySize);
             size++;
             if (--free == 0) {
@@ -518,22 +513,28 @@ public class OrderedMap implements Map, Reopenable {
 
     private OrderedMapValue probe0(Key keyWriter, int index, int hashCodeLo, long keySize, OrderedMapValue value) {
         long offset;
-        while ((offset = getOffset(offsets, index = (++index & mask))) > -1) {
-            if (hashCodeLo == getHashCodeLo(offsets, index) && keyWriter.eq(offset)) {
-                long startAddress = heapStart + offset;
-                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
+        long offsetAddr = offsetsAddr + ((long) index << 3);
+        while ((offset = decompressOffset(Unsafe.getUnsafe().getInt(offsetAddr))) > -1) {
+            if (hashCodeLo == Unsafe.getUnsafe().getInt(offsetAddr + 4) && keyWriter.eq(offset)) {
+                long startAddr = heapAddr + offset;
+                return valueOf(startAddr, startAddr + keyOffset + keySize, false, value);
             }
+            index = (index + 1) & mask;
+            offsetAddr = offsetsAddr + ((long) index << 3);
         }
         return asNew(keyWriter, index, hashCodeLo, value);
     }
 
     private OrderedMapValue probeReadOnly(Key keyWriter, int index, int hashCodeLo, long keySize, OrderedMapValue value) {
         long offset;
-        while ((offset = getOffset(offsets, index = (++index & mask))) > -1) {
-            if (hashCodeLo == getHashCodeLo(offsets, index) && keyWriter.eq(offset)) {
-                long startAddress = heapStart + offset;
-                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
+        long offsetAddr = offsetsAddr + ((long) index << 3);
+        while ((offset = decompressOffset(Unsafe.getUnsafe().getInt(offsetAddr))) > -1) {
+            if (hashCodeLo == Unsafe.getUnsafe().getInt(offsetAddr + 4) && keyWriter.eq(offset)) {
+                long startAddr = heapAddr + offset;
+                return valueOf(startAddr, startAddr + keyOffset + keySize, false, value);
             }
+            index = (index + 1) & mask;
+            offsetAddr = offsetsAddr + ((long) index << 3);
         }
         return null;
     }
@@ -551,60 +552,63 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         mask = (int) newKeyCapacity - 1;
-        DirectIntList newOffsets = new DirectIntList(newKeyCapacity << 1, listMemoryTag);
-        newOffsets.setPos(newKeyCapacity << 1);
-        newOffsets.zero(0);
+        final long newOffsetsAddr = Unsafe.malloc(newKeyCapacity << 3, listMemoryTag);
+        Vect.memset(newOffsetsAddr, newKeyCapacity << 3, 0);
 
-        for (int i = 0, k = (int) (offsets.size() >>> 1); i < k; i++) {
-            long offset = getOffset(offsets, i);
-            if (offset < 0) {
+        for (int i = 0; i < keyCapacity; i++) {
+            long offsetAddr = offsetsAddr + ((long) i << 3);
+            int rawOffset = Unsafe.getUnsafe().getInt(offsetAddr);
+            if (rawOffset == 0) {
                 continue;
             }
-            int hashCodeLo = getHashCodeLo(offsets, i);
+            int hashCodeLo = Unsafe.getUnsafe().getInt(offsetAddr + 4);
             int index = hashCodeLo & mask;
-            while (getOffset(newOffsets, index) > -1) {
+
+            long newOffsetAddr = newOffsetsAddr + ((long) index << 3);
+            while (Unsafe.getUnsafe().getInt(newOffsetAddr) > 0) {
                 index = (index + 1) & mask;
+                newOffsetAddr = newOffsetsAddr + ((long) index << 3);
             }
-            setOffset(newOffsets, index, offset);
-            setHashCodeLo(newOffsets, index, hashCodeLo);
+            Unsafe.getUnsafe().putInt(newOffsetAddr, rawOffset);
+            Unsafe.getUnsafe().putInt(newOffsetAddr + 4, hashCodeLo);
         }
-        offsets.close();
-        offsets = newOffsets;
+        Unsafe.free(offsetsAddr, (long) keyCapacity << 3, listMemoryTag);
+        offsetsAddr = newOffsetsAddr;
         free += (int) ((newKeyCapacity - keyCapacity) * loadFactor);
         keyCapacity = (int) newKeyCapacity;
     }
 
     // Returns delta between new and old heapStart addresses.
-    private long resize(long entrySize, long appendAddress) {
-        assert appendAddress >= heapStart;
+    private long resize(long entrySize, long appendAddr) {
+        assert appendAddr >= heapAddr;
         if (nResizes == maxResizes) {
             throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
         }
 
         nResizes++;
-        long kCapacity = (heapLimit - heapStart) << 1;
-        long target = appendAddress + entrySize - heapStart;
+        long kCapacity = (heapLimit - heapAddr) << 1;
+        long target = appendAddr + entrySize - heapAddr;
         if (kCapacity < target) {
             kCapacity = Numbers.ceilPow2(target);
         }
         if (kCapacity > MAX_HEAP_SIZE) {
             throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
         }
-        long kAddress = Unsafe.realloc(heapStart, heapSize, kCapacity, heapMemoryTag);
+        long kAddr = Unsafe.realloc(heapAddr, heapSize, kCapacity, heapMemoryTag);
 
         this.heapSize = kCapacity;
-        long delta = kAddress - heapStart;
+        long delta = kAddr - heapAddr;
         kPos += delta;
         assert kPos > 0;
 
-        this.heapStart = kAddress;
-        this.heapLimit = kAddress + kCapacity;
+        this.heapAddr = kAddr;
+        this.heapLimit = kAddr + kCapacity;
 
         return delta;
     }
 
-    private OrderedMapValue valueOf(long startAddress, long valueAddress, boolean newValue, OrderedMapValue value) {
-        return value.of(startAddress, valueAddress, heapLimit, newValue);
+    private OrderedMapValue valueOf(long startAddr, long valueAddr, boolean newValue, OrderedMapValue value) {
+        return value.of(startAddr, valueAddr, heapLimit, newValue);
     }
 
     long keySize() {
@@ -624,26 +628,26 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public long commit() {
-            assert appendAddress <= startAddress + keySize;
+            assert appendAddr <= startAddr + keySize;
             return keySize;
         }
 
         @Override
         public void copyFrom(MapKey srcKey) {
             FixedSizeKey srcFixedKey = (FixedSizeKey) srcKey;
-            copyFromRawKey(srcFixedKey.startAddress, keySize);
+            copyFromRawKey(srcFixedKey.startAddr, keySize);
         }
 
         @Override
         public void copyFromRawKey(long srcPtr, long srcSize) {
             assert srcSize == keySize;
-            Vect.memcpy(appendAddress, srcPtr, srcSize);
-            appendAddress += srcSize;
+            Vect.memcpy(appendAddr, srcPtr, srcSize);
+            appendAddr += srcSize;
         }
 
         @Override
         public long hash() {
-            return Hash.hashMem64(startAddress, keySize);
+            return Hash.hashMem64(startAddr, keySize);
         }
 
         public FixedSizeKey init() {
@@ -664,20 +668,20 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void putBool(boolean value) {
-            Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));
-            appendAddress += 1L;
+            Unsafe.getUnsafe().putByte(appendAddr, (byte) (value ? 1 : 0));
+            appendAddr += 1L;
         }
 
         @Override
         public void putByte(byte value) {
-            Unsafe.getUnsafe().putByte(appendAddress, value);
-            appendAddress += 1L;
+            Unsafe.getUnsafe().putByte(appendAddr, value);
+            appendAddr += 1L;
         }
 
         @Override
         public void putChar(char value) {
-            Unsafe.getUnsafe().putChar(appendAddress, value);
-            appendAddress += 2L;
+            Unsafe.getUnsafe().putChar(appendAddr, value);
+            appendAddr += 2L;
         }
 
         @Override
@@ -686,15 +690,27 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
+        public void putDecimal128(Decimal128 decimal128) {
+            Decimal128.put(decimal128, appendAddr);
+            appendAddr += 16L;
+        }
+
+        @Override
+        public void putDecimal256(Decimal256 decimal256) {
+            Decimal256.put(decimal256, appendAddr);
+            appendAddr += 32L;
+        }
+
+        @Override
         public void putDouble(double value) {
-            Unsafe.getUnsafe().putDouble(appendAddress, value);
-            appendAddress += 8L;
+            Unsafe.getUnsafe().putDouble(appendAddr, value);
+            appendAddr += 8L;
         }
 
         @Override
         public void putFloat(float value) {
-            Unsafe.getUnsafe().putFloat(appendAddress, value);
-            appendAddress += 4L;
+            Unsafe.getUnsafe().putFloat(appendAddr, value);
+            appendAddr += 4L;
         }
 
         @Override
@@ -704,52 +720,52 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void putInt(int value) {
-            Unsafe.getUnsafe().putInt(appendAddress, value);
-            appendAddress += 4L;
+            Unsafe.getUnsafe().putInt(appendAddr, value);
+            appendAddr += 4L;
         }
 
         @Override
         public void putInterval(Interval interval) {
-            Unsafe.getUnsafe().putLong(appendAddress, interval.getLo());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, interval.getHi());
-            appendAddress += 16L;
+            Unsafe.getUnsafe().putLong(appendAddr, interval.getLo());
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES, interval.getHi());
+            appendAddr += 16L;
         }
 
         @Override
         public void putLong(long value) {
-            Unsafe.getUnsafe().putLong(appendAddress, value);
-            appendAddress += 8L;
+            Unsafe.getUnsafe().putLong(appendAddr, value);
+            appendAddr += 8L;
         }
 
         @Override
         public void putLong128(long lo, long hi) {
-            Unsafe.getUnsafe().putLong(appendAddress, lo);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
-            appendAddress += 16L;
+            Unsafe.getUnsafe().putLong(appendAddr, lo);
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES, hi);
+            appendAddr += 16L;
         }
 
         @Override
         public void putLong256(Long256 value) {
-            Unsafe.getUnsafe().putLong(appendAddress, value.getLong0());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getLong1());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, value.getLong3());
-            appendAddress += 32L;
+            Unsafe.getUnsafe().putLong(appendAddr, value.getLong0());
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES, value.getLong1());
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES * 2, value.getLong2());
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES * 3, value.getLong3());
+            appendAddr += 32L;
         }
 
         @Override
         public void putLong256(long l0, long l1, long l2, long l3) {
-            Unsafe.getUnsafe().putLong(appendAddress, l0);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, l1);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, l2);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, l3);
-            appendAddress += 32L;
+            Unsafe.getUnsafe().putLong(appendAddr, l0);
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES, l1);
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES * 2, l2);
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES * 3, l3);
+            appendAddr += 32L;
         }
 
         @Override
         public void putShort(short value) {
-            Unsafe.getUnsafe().putShort(appendAddress, value);
-            appendAddress += 2L;
+            Unsafe.getUnsafe().putShort(appendAddr, value);
+            appendAddr += 2L;
         }
 
         @Override
@@ -774,18 +790,18 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void skip(int bytes) {
-            appendAddress += bytes;
+            appendAddr += bytes;
         }
 
         @Override
         protected boolean eq(long offset) {
-            return Vect.memeq(heapStart + offset, startAddress, keySize);
+            return Vect.memeq(heapAddr + offset, startAddr, keySize);
         }
     }
 
     abstract class Key implements MapKey {
-        protected long appendAddress;
-        protected long startAddress;
+        protected long appendAddr;
+        protected long startAddr;
 
         @Override
         public MapValue createValue() {
@@ -835,20 +851,13 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         public void reset() {
-            startAddress = kPos;
-            appendAddress = kPos + keyOffset;
+            startAddr = kPos;
+            appendAddr = kPos + keyOffset;
         }
 
         private MapValue createValue(long keySize, long hashCode) {
             int hashCodeLo = Numbers.decodeLowInt(hashCode);
             int index = hashCodeLo & mask;
-            long offset = getOffset(offsets, index);
-            if (offset < 0) {
-                return asNew(this, index, hashCodeLo, value);
-            } else if (hashCodeLo == getHashCodeLo(offsets, index) && eq(offset)) {
-                long startAddress = heapStart + offset;
-                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
-            }
             return probe0(this, index, hashCodeLo, keySize, value);
         }
 
@@ -857,24 +866,15 @@ public class OrderedMap implements Map, Reopenable {
             long hashCode = hash();
             int hashCodeLo = Numbers.decodeLowInt(hashCode);
             int index = hashCodeLo & mask;
-            long offset = getOffset(offsets, index);
-
-            if (offset < 0) {
-                return null;
-            } else if (hashCodeLo == getHashCodeLo(offsets, index) && eq(offset)) {
-                long startAddress = heapStart + offset;
-                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
-            } else {
-                return probeReadOnly(this, index, hashCodeLo, keySize, value);
-            }
+            return probeReadOnly(this, index, hashCodeLo, keySize, value);
         }
 
         protected void checkCapacity(long requiredKeySize) {
             long requiredSize = requiredKeySize + valueSize;
-            if (appendAddress + requiredSize > heapLimit) {
-                long delta = resize(requiredSize, appendAddress);
-                startAddress += delta;
-                appendAddress += delta;
+            if (appendAddr + requiredSize > heapLimit) {
+                long delta = resize(requiredSize, appendAddr);
+                startAddr += delta;
+                appendAddr += delta;
             }
         }
 
@@ -888,36 +888,36 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public long commit() {
-            len = appendAddress - startAddress - keyOffset;
-            Unsafe.getUnsafe().putInt(startAddress, (int) len);
+            len = appendAddr - startAddr - keyOffset;
+            Unsafe.getUnsafe().putInt(startAddr, (int) len);
             return len;
         }
 
         @Override
         public void copyFrom(MapKey srcKey) {
             VarSizeKey srcVarKey = (VarSizeKey) srcKey;
-            copyFromRawKey(srcVarKey.startAddress + keyOffset, srcVarKey.len);
+            copyFromRawKey(srcVarKey.startAddr + keyOffset, srcVarKey.len);
         }
 
         @Override
         public void copyFromRawKey(long srcPtr, long srcSize) {
             checkCapacity(srcSize);
-            Vect.memcpy(appendAddress, srcPtr, srcSize);
-            appendAddress += srcSize;
+            Vect.memcpy(appendAddr, srcPtr, srcSize);
+            appendAddr += srcSize;
         }
 
         @Override
         public long hash() {
-            return Hash.hashMem64(startAddress + keyOffset, len);
+            return Hash.hashMem64(startAddr + keyOffset, len);
         }
 
         @Override
         public void putArray(ArrayView value) {
             long byteCount = ArrayTypeDriver.getPlainValueSize(value);
             checkCapacity(byteCount);
-            long writtenBytes = ArrayTypeDriver.appendPlainValue(appendAddress, value);
+            long writtenBytes = ArrayTypeDriver.appendPlainValue(appendAddr, value);
             assert writtenBytes == byteCount;
-            appendAddress += byteCount;
+            appendAddr += byteCount;
         }
 
         @Override
@@ -932,31 +932,31 @@ public class OrderedMap implements Map, Reopenable {
 
                 checkCapacity((int) len);
                 int l = (int) (len - Integer.BYTES);
-                Unsafe.getUnsafe().putInt(appendAddress, l);
-                value.copyTo(appendAddress + Integer.BYTES, 0, l);
-                appendAddress += len;
+                Unsafe.getUnsafe().putInt(appendAddr, l);
+                value.copyTo(appendAddr + Integer.BYTES, 0, l);
+                appendAddr += len;
             }
         }
 
         @Override
         public void putBool(boolean value) {
             checkCapacity(1L);
-            Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));
-            appendAddress += 1;
+            Unsafe.getUnsafe().putByte(appendAddr, (byte) (value ? 1 : 0));
+            appendAddr += 1;
         }
 
         @Override
         public void putByte(byte value) {
             checkCapacity(1L);
-            Unsafe.getUnsafe().putByte(appendAddress, value);
-            appendAddress += 1L;
+            Unsafe.getUnsafe().putByte(appendAddr, value);
+            appendAddr += 1L;
         }
 
         @Override
         public void putChar(char value) {
             checkCapacity(2L);
-            Unsafe.getUnsafe().putChar(appendAddress, value);
-            appendAddress += 2L;
+            Unsafe.getUnsafe().putChar(appendAddr, value);
+            appendAddr += 2L;
         }
 
         @Override
@@ -965,17 +965,31 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
+        public void putDecimal128(Decimal128 decimal128) {
+            checkCapacity(16L);
+            Decimal128.put(decimal128, appendAddr);
+            appendAddr += 16L;
+        }
+
+        @Override
+        public void putDecimal256(Decimal256 decimal256) {
+            checkCapacity(32L);
+            Decimal256.put(decimal256, appendAddr);
+            appendAddr += 32L;
+        }
+
+        @Override
         public void putDouble(double value) {
             checkCapacity(8L);
-            Unsafe.getUnsafe().putDouble(appendAddress, value);
-            appendAddress += 8L;
+            Unsafe.getUnsafe().putDouble(appendAddr, value);
+            appendAddr += 8L;
         }
 
         @Override
         public void putFloat(float value) {
             checkCapacity(4L);
-            Unsafe.getUnsafe().putFloat(appendAddress, value);
-            appendAddress += 4L;
+            Unsafe.getUnsafe().putFloat(appendAddr, value);
+            appendAddr += 4L;
         }
 
         @Override
@@ -986,58 +1000,58 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void putInt(int value) {
             checkCapacity(4L);
-            Unsafe.getUnsafe().putInt(appendAddress, value);
-            appendAddress += 4L;
+            Unsafe.getUnsafe().putInt(appendAddr, value);
+            appendAddr += 4L;
         }
 
         @Override
         public void putInterval(Interval interval) {
             checkCapacity(16L);
-            Unsafe.getUnsafe().putLong(appendAddress, interval.getLo());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, interval.getHi());
-            appendAddress += 16L;
+            Unsafe.getUnsafe().putLong(appendAddr, interval.getLo());
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES, interval.getHi());
+            appendAddr += 16L;
         }
 
         @Override
         public void putLong(long value) {
             checkCapacity(8L);
-            Unsafe.getUnsafe().putLong(appendAddress, value);
-            appendAddress += 8L;
+            Unsafe.getUnsafe().putLong(appendAddr, value);
+            appendAddr += 8L;
         }
 
         @Override
         public void putLong128(long lo, long hi) {
             checkCapacity(16L);
-            Unsafe.getUnsafe().putLong(appendAddress, lo);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
-            appendAddress += 16L;
+            Unsafe.getUnsafe().putLong(appendAddr, lo);
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES, hi);
+            appendAddr += 16L;
         }
 
         @Override
         public void putLong256(Long256 value) {
             checkCapacity(32L);
-            Unsafe.getUnsafe().putLong(appendAddress, value.getLong0());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getLong1());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, value.getLong3());
-            appendAddress += 32L;
+            Unsafe.getUnsafe().putLong(appendAddr, value.getLong0());
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES, value.getLong1());
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES * 2, value.getLong2());
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES * 3, value.getLong3());
+            appendAddr += 32L;
         }
 
         @Override
         public void putLong256(long l0, long l1, long l2, long l3) {
             checkCapacity(32L);
-            Unsafe.getUnsafe().putLong(appendAddress, l0);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, l1);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, l2);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, l3);
-            appendAddress += 32L;
+            Unsafe.getUnsafe().putLong(appendAddr, l0);
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES, l1);
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES * 2, l2);
+            Unsafe.getUnsafe().putLong(appendAddr + Long.BYTES * 3, l3);
+            appendAddr += 32L;
         }
 
         @Override
         public void putShort(short value) {
             checkCapacity(2L);
-            Unsafe.getUnsafe().putShort(appendAddress, value);
-            appendAddress += 2L;
+            Unsafe.getUnsafe().putShort(appendAddr, value);
+            appendAddr += 2L;
         }
 
         @Override
@@ -1049,24 +1063,24 @@ public class OrderedMap implements Map, Reopenable {
 
             int len = value.length();
             checkCapacity(((long) len << 1) + 4L);
-            Unsafe.getUnsafe().putInt(appendAddress, len);
-            appendAddress += 4L;
+            Unsafe.getUnsafe().putInt(appendAddr, len);
+            appendAddr += 4L;
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putChar(appendAddress + ((long) i << 1), value.charAt(i));
+                Unsafe.getUnsafe().putChar(appendAddr + ((long) i << 1), value.charAt(i));
             }
-            appendAddress += (long) len << 1;
+            appendAddr += (long) len << 1;
         }
 
         @Override
         public void putStr(CharSequence value, int lo, int hi) {
             int len = hi - lo;
             checkCapacity(((long) len << 1) + 4L);
-            Unsafe.getUnsafe().putInt(appendAddress, len);
-            appendAddress += 4L;
+            Unsafe.getUnsafe().putInt(appendAddr, len);
+            appendAddr += 4L;
             for (int i = lo; i < hi; i++) {
-                Unsafe.getUnsafe().putChar(appendAddress + ((long) (i - lo) << 1), value.charAt(i));
+                Unsafe.getUnsafe().putChar(appendAddr + ((long) (i - lo) << 1), value.charAt(i));
             }
-            appendAddress += (long) len << 1;
+            appendAddr += (long) len << 1;
         }
 
         @Override
@@ -1078,24 +1092,24 @@ public class OrderedMap implements Map, Reopenable {
 
             int len = value.length();
             checkCapacity(((long) len << 1) + 4L);
-            Unsafe.getUnsafe().putInt(appendAddress, len);
-            appendAddress += 4L;
+            Unsafe.getUnsafe().putInt(appendAddr, len);
+            appendAddr += 4L;
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putChar(appendAddress + ((long) i << 1), Character.toLowerCase(value.charAt(i)));
+                Unsafe.getUnsafe().putChar(appendAddr + ((long) i << 1), Character.toLowerCase(value.charAt(i)));
             }
-            appendAddress += (long) len << 1;
+            appendAddr += (long) len << 1;
         }
 
         @Override
         public void putStrLowerCase(CharSequence value, int lo, int hi) {
             int len = hi - lo;
             checkCapacity(((long) len << 1) + 4L);
-            Unsafe.getUnsafe().putInt(appendAddress, len);
-            appendAddress += 4L;
+            Unsafe.getUnsafe().putInt(appendAddr, len);
+            appendAddr += 4L;
             for (int i = lo; i < hi; i++) {
-                Unsafe.getUnsafe().putChar(appendAddress + ((long) (i - lo) << 1), Character.toLowerCase(value.charAt(i)));
+                Unsafe.getUnsafe().putChar(appendAddr + ((long) (i - lo) << 1), Character.toLowerCase(value.charAt(i)));
             }
-            appendAddress += (long) len << 1;
+            appendAddr += (long) len << 1;
         }
 
         @Override
@@ -1107,26 +1121,26 @@ public class OrderedMap implements Map, Reopenable {
         public void putVarchar(Utf8Sequence value) {
             int byteCount = VarcharTypeDriver.getSingleMemValueByteCount(value);
             checkCapacity(byteCount);
-            VarcharTypeDriver.appendPlainValue(appendAddress, value, false);
-            appendAddress += byteCount;
+            VarcharTypeDriver.appendPlainValue(appendAddr, value, false);
+            appendAddr += byteCount;
         }
 
         @Override
         public void skip(int bytes) {
             checkCapacity(bytes);
-            appendAddress += bytes;
+            appendAddr += bytes;
         }
 
         private void putVarSizeNull() {
             checkCapacity(4L);
-            Unsafe.getUnsafe().putInt(appendAddress, TableUtils.NULL_LEN);
-            appendAddress += 4L;
+            Unsafe.getUnsafe().putInt(appendAddr, TableUtils.NULL_LEN);
+            appendAddr += 4L;
         }
 
         @Override
         protected boolean eq(long offset) {
-            long a = heapStart + offset;
-            long b = startAddress;
+            long a = heapAddr + offset;
+            long b = startAddr;
             // Check the length first.
             if (Unsafe.getUnsafe().getInt(a) != Unsafe.getUnsafe().getInt(b)) {
                 return false;

@@ -41,14 +41,13 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 
-// SELECT * FROM glob('./import/table/file_*.parquet');
-// files('/import') WHERE glob(filename, 'table/file_*.parquet');
-// SelectedRecordCursor <-- GlobStrFunctionFactory <-- FilesRecordCursor
-
 /**
  * Provides a pseudo table returning file data based on a glob pattern.
  */
 public class GlobFilesFunctionFactory implements FunctionFactory {
+    private final FilesFunctionFactory filesFunctionFactory = new FilesFunctionFactory();
+    private final GlobStrFunctionFactory globStrFactory = new GlobStrFunctionFactory();
+
     /**
      * Extracts the non-glob prefix from a glob pattern.
      * <p>
@@ -60,7 +59,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
      * </ul>
      * <p>
      * The function stops at the first glob metacharacter: {@literal *}, ?, [, or ]
-     * It includes the directory separator before the first glob pattern.
+     * It excludes the directory separator before the first glob pattern.
      *
      * @param globPattern the glob pattern string
      * @return the non-glob prefix (everything up to and including the last separator before the first glob char)
@@ -110,6 +109,13 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         if (!Chars.equals(glob, root)) {
             glob = glob.subSequence(root.length(), glob.length());
         }
+
+        if (Chars.isBlank(glob)) {
+            // then it is just a file scan
+            return filesFunctionFactory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
+        }
+
+        // strip leading char
         if (glob.charAt(0) == '/' || glob.charAt(0) == '\\') {
             glob = glob.subSequence(1, glob.length());
         }
@@ -117,12 +123,14 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         ObjList<Function> newArgs = new ObjList<>();
         newArgs.add(new StrConstant(root));
 
-        RecordCursorFactory filesCursor = new FilesFunctionFactory().newInstance(position, newArgs, argPositions, configuration, sqlExecutionContext).getRecordCursorFactory();
+        RecordCursorFactory filesCursor = filesFunctionFactory.newInstance(position, newArgs, argPositions, configuration, sqlExecutionContext).getRecordCursorFactory();
 
         newArgs.set(0, new VarcharColumn(0));
         newArgs.add(new StrConstant(glob));
+        argPositions.add(0);
 
-        Function globFunc = new GlobStrFunctionFactory().newInstance(position, newArgs, argPositions, configuration, sqlExecutionContext);
+        assert newArgs.size() == argPositions.size();
+        Function globFunc = globStrFactory.newInstance(position, newArgs, argPositions, configuration, sqlExecutionContext);
 
         return new CursorFunction(new FilteredRecordCursorFactory(filesCursor, globFunc));
     }

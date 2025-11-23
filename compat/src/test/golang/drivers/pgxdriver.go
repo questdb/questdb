@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	pgxdecimal "github.com/jackc/pgx-shopspring-decimal"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -19,6 +20,7 @@ func (d *PgxDriver) Connect(ctx context.Context, connString string) error {
 		return err
 	}
 	d.conn = conn
+	pgxdecimal.Register(conn.TypeMap())
 	return nil
 }
 

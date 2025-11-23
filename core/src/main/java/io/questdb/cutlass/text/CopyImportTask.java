@@ -50,6 +50,7 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.griffin.engine.functions.columns.ColumnUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -279,6 +280,7 @@ public class CopyImportTask {
             CsvFileIndexer indexer,
             DirectUtf16Sink utf16Sink,
             DirectUtf8Sink utf8Sink,
+            Decimal256 decimal256,
             DirectLongList unmergedIndexes,
             long fileBufAddr,
             long fileBufSize,
@@ -298,7 +300,7 @@ public class CopyImportTask {
             } else if (phase == PHASE_INDEXING) {
                 phaseIndexing.run(indexer, fileBufAddr, fileBufSize);
             } else if (phase == PHASE_PARTITION_IMPORT) {
-                phasePartitionImport.run(lf, fileBufAddr, fileBufSize, utf16Sink, utf8Sink, unmergedIndexes, p1, p2);
+                phasePartitionImport.run(lf, fileBufAddr, fileBufSize, utf16Sink, utf8Sink, decimal256, unmergedIndexes, p1, p2);
             } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
                 phaseSymbolTableMerge.run(p1);
             } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
@@ -891,6 +893,7 @@ public class CopyImportTask {
         private ObjList<TypeAdapter> types;
         private DirectUtf16Sink utf16Sink;
         private DirectUtf8Sink utf8Sink;
+        private Decimal256 decimal256;
         private final CsvTextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
 
         public void clear() {
@@ -914,6 +917,7 @@ public class CopyImportTask {
             this.errors = 0;
 
             this.utf16Sink = null;
+            this.decimal256 = null;
         }
 
         public long getErrors() {
@@ -938,12 +942,14 @@ public class CopyImportTask {
                 long fileBufSize,
                 DirectUtf16Sink utf16Sink,
                 DirectUtf8Sink utf8Sink,
+                Decimal256 decimal256,
                 DirectLongList unmergedIndexes,
                 Path path,
                 Path tmpPath
         ) throws TextException {
             this.utf16Sink = utf16Sink;
             this.utf8Sink = utf8Sink;
+            this.decimal256 = decimal256;
 
             final CairoConfiguration configuration = engine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
@@ -1413,7 +1419,7 @@ public class CopyImportTask {
         ) throws TextException {
             TypeAdapter type = this.types.getQuick(fieldIndex);
             try {
-                type.write(w, fieldIndex, dus, utf16Sink, utf8Sink);
+                type.write(w, fieldIndex, dus, utf16Sink, utf8Sink, decimal256);
             } catch (NumericException | Utf8Exception | ImplicitCastException ignore) {
                 errors++;
                 logError(offset, fieldIndex, dus);

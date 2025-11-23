@@ -57,55 +57,63 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
         setupTestFiles();
     }
 
-
     /**
-     * Test glob() with files() function in WHERE clause - matching by extension.
-     * SELECT * FROM files('/root') WHERE glob(path, '*.csv')
+     * Test files() with ORDER BY diskSize DESC and LIMIT - gets largest files.
+     * SELECT * FROM files('/root') ORDER BY diskSize DESC, path LIMIT 3
      */
     @Test
-    public void testGlobInFilterClause() throws Exception {
-        assertMemoryLeak(() -> {
-            assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
-                            "reports" + File.separator + "2023_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
-                            "reports" + File.separator + "monthly_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
-                            "test.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n",
-                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.csv') order by path"
-            );
-        });
+    public void testFilesOrderByDiskSizeDescLimit() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
+                        "reports" + File.separator + "2023_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
+                        "reports" + File.separator + "monthly_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
+                        "test.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n",
+                "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') order by diskSize desc, path limit 3"
+        ));
     }
 
     /**
-     * Test glob() filter with sql extension.
-     * SELECT * FROM files('/root') WHERE glob(path, '*.sql')
+     * Test files() with ORDER BY modifiedTime and LIMIT.
+     * SELECT * FROM files('/root') ORDER BY modifiedTime LIMIT 2
      */
     @Test
-    public void testGlobFilterSqlOnly() throws Exception {
-        assertMemoryLeak(() -> {
-            assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
-                            "temp" + File.separator + "backup.sql\t45\t45.0 B\t1970-04-26T17:46:40.045Z\n",
-                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.sql') order by path"
-            );
-        });
+    public void testFilesOrderByModifiedTimeLimit() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
+                        "temp" + File.separator + "backup.sql\t45\t45.0 B\t1970-04-26T17:46:40.045Z\n" +
+                        "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n",
+                "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') order by modifiedTime, path limit 2"
+        ));
     }
 
     /**
-     * Test glob() filter with parquet extension.
-     * SELECT * FROM files('/root') WHERE glob(path, '*.parquet')
+     * Test files() with multiple columns in ORDER BY and LIMIT.
+     * SELECT * FROM files('/root') ORDER BY diskSize, path LIMIT 4
      */
     @Test
-    public void testGlobFilterParquetOnly() throws Exception {
-        assertMemoryLeak(() -> {
-            assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
-                            "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
-                            "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
-                            "data" + File.separator + "nested" + File.separator + "deep_file.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
-                            "reports" + File.separator + "2024_report.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n",
-                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.parquet') order by path"
-            );
-        });
+    public void testFilesOrderByMultipleColumnsLimit() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
+                        "temp" + File.separator + "backup.sql\t45\t45.0 B\t1970-04-26T17:46:40.045Z\n" +
+                        "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                        "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                        "data" + File.separator + "nested" + File.separator + "deep_file.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n",
+                "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') order by diskSize, path limit 4"
+        ));
+    }
+
+    /**
+     * Test files() with LIMIT clause - should return only the first N results.
+     * SELECT * FROM files('/root') LIMIT 2
+     */
+    @Test
+    public void testFilesWithLimit() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
+                        "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                        "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n",
+                "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') order by path limit 2"
+        ));
     }
 
     /**
@@ -114,12 +122,106 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
      */
     @Test
     public void testGlobFilterCaseSensitive() throws Exception {
-        assertMemoryLeak(() -> {
-            assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
-                    "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.PARQUET') order by path"
-            );
-        });
+        assertMemoryLeak(() -> assertSql(
+                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
+                "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.PARQUET') order by path"
+        ));
+    }
+
+    /**
+     * Test glob() with ORDER BY path DESC and LIMIT.
+     * Demonstrates ordering by path in reverse and limiting results.
+     * SELECT * FROM files('/root') WHERE glob(path, '*.csv') ORDER BY path DESC LIMIT 2
+     */
+    @Test
+    public void testGlobFilterOrderByPathDescLimit() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
+                        "test.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
+                        "reports" + File.separator + "monthly_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n",
+                "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.csv') order by path desc limit 2"
+        ));
+    }
+
+    /**
+     * Test glob() filter with parquet extension.
+     * SELECT * FROM files('/root') WHERE glob(path, '*.parquet')
+     */
+    @Test
+    public void testGlobFilterParquetOnly() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
+                        "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                        "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                        "data" + File.separator + "nested" + File.separator + "deep_file.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                        "reports" + File.separator + "2024_report.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n",
+                "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.parquet') order by path"
+        ));
+    }
+
+    /**
+     * Test glob() filter with sql extension.
+     * SELECT * FROM files('/root') WHERE glob(path, '*.sql')
+     */
+    @Test
+    public void testGlobFilterSqlOnly() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
+                        "temp" + File.separator + "backup.sql\t45\t45.0 B\t1970-04-26T17:46:40.045Z\n",
+                "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.sql') order by path"
+        ));
+    }
+
+    /**
+     * Test glob() with LIMIT clause combined with WHERE filter.
+     * SELECT * FROM files('/root') WHERE glob(path, '*.parquet') LIMIT 2
+     */
+    @Test
+    public void testGlobFilterWithLimit() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
+                        "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                        "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n",
+                "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.parquet') order by path limit 2"
+        ));
+    }
+
+    /**
+     * Test glob() with files() function in WHERE clause - matching by extension.
+     * SELECT * FROM files('/root') WHERE glob(path, '*.csv')
+     */
+    @Test
+    public void testGlobInFilterClause() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
+                        "reports" + File.separator + "2023_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
+                        "reports" + File.separator + "monthly_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
+                        "test.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n",
+                "select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.csv') order by path"
+        ));
+    }
+
+    /**
+     * Test glob() matching nested paths with LIMIT.
+     * SELECT * FROM files('/root') WHERE glob(path, 'data/*') LIMIT 3
+     */
+    @Test
+    public void testGlobNestedPathWithLimit() throws Exception {
+        assertMemoryLeak(() ->
+                {
+                    String expected = """
+                            path\tdiskSize\tdiskSizeHuman
+                            data/file1.parquet\t256\t256.0 B
+                            data/file2.parquet\t256\t256.0 B
+                            data/nested/deep_file.parquet\t256\t256.0 B
+                            """.replace("/", File.separator);
+
+                    String query = "select path, diskSize, diskSizeHuman from files('" + inputRoot + "') where glob(path, 'data/*') order by path limit 3"
+                            .replace("/", File.separator);
+
+                    assertSql(expected, query);
+                }
+        );
     }
 
     private void createTestFile(String relativePath) {

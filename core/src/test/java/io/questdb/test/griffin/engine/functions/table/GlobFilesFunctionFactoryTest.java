@@ -120,4 +120,88 @@ public class GlobFilesFunctionFactoryTest {
         CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("/abs/path/to/file*.txt");
         assertEquals("/abs/path/to", result);
     }
+
+    @Test
+    public void testExtractNonGlobPrefixEmptyString() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("");
+        assertEquals("", result);
+    }
+
+    @Test
+    public void testExtractNonGlobPrefixWhitespaceOnly() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("   ");
+        assertEquals("", result);
+    }
+
+    @Test
+    public void testExtractNonGlobPrefixOnlyAsterisk() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("*");
+        assertEquals("", result);
+    }
+
+    @Test
+    public void testExtractNonGlobPrefixOnlyQuestionMark() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("?");
+        assertEquals("", result);
+    }
+
+    @Test
+    public void testExtractNonGlobPrefixOnlyOpenBracket() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("[");
+        assertEquals("", result);
+    }
+
+    @Test
+    public void testExtractNonGlobPrefixOnlyCloseBracket() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("]");
+        assertEquals("", result);
+    }
+
+    @Test
+    public void testExtractNonGlobPrefixWithLeadingSlashOnly() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("/");
+        assertEquals("/", result);
+    }
+
+    @Test
+    public void testExtractNonGlobPrefixWithTrailingSlash() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("/path/to/");
+        assertEquals("/path/to/", result);
+    }
+
+    @Test
+    public void testExtractNonGlobPrefixGlobImmediatelyAfterSlash() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("/path/to/*");
+        assertEquals("/path/to", result);
+    }
+
+    @Test
+    public void testExtractNonGlobPrefixBracketPatternWithoutPrefix() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("[abc]file.txt");
+        assertEquals("", result);
+    }
+
+    @Test
+    public void testExtractNonGlobPrefixQuestionMarkPatternWithoutPrefix() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("?file.txt");
+        assertEquals("", result);
+    }
+
+    @Test
+    public void testExtractNonGlobPrefixComplexPath() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("/var/log/app_[0-9]_*.log");
+        assertEquals("/var/log", result);
+    }
+
+    @Test
+    public void testExtractNonGlobPrefixWindowsPath() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("C:\\Users\\data\\*.csv");
+        assertEquals("C:\\Users\\data", result);
+    }
+
+    @Test
+    public void testExtractNonGlobPrefixWindowsPathWithMixedSlashes() {
+        CharSequence result = GlobFilesFunctionFactory.extractNonGlobPrefix("C:\\Users/data\\*.csv");
+        assertEquals("C:\\Users/data", result);
+    }
 }

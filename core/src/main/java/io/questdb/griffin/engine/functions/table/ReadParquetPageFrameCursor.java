@@ -95,6 +95,11 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
+    public long getRemainingRowsInInterval() {
+        return 0L;
+    }
+
+    @Override
     public StaticSymbolTable getSymbolTable(int columnIndex) {
         return null;
     }

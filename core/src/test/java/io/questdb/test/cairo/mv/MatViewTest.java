@@ -1287,16 +1287,16 @@ public class MatViewTest extends AbstractCairoTest {
                     sample by 1d
                     );""";
 
-            // without the hint it does use Fast Scan (=default)
+            // without the hint it does use Fast (=default)
             sink.clear();
             printSql("EXPLAIN " + mvWithoutHint);
-            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
 
-            // LINEAR hint -> does NOT use Fast Scan
+            // LINEAR hint -> does NOT use Fast
             sink.clear();
             printSql("EXPLAIN " + mvWithLinearHint);
             TestUtils.assertContains(sink, "AsOf Join");
-            TestUtils.assertNotContains(sink, "Fast Scan");
+            TestUtils.assertNotContains(sink, "Fast");
 
             // ok, now the real data: first try the view without the hint
             execute(mvWithoutHint);
@@ -3311,6 +3311,11 @@ public class MatViewTest extends AbstractCairoTest {
                     46,
                     "column 'sym' already indexed"
             );
+
+            execute("alter materialized view price_1h alter column sym drop index;");
+            drainQueues();
+            execute("alter materialized view price_1h alter column sym add index;");
+            drainQueues();
 
             String sql = "select * from price_1h where sym = 'eurusd';";
             assertQueryNoLeakCheck(
