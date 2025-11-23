@@ -2855,6 +2855,38 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStringAndVarcharKeyGroupBy2() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, count() FROM tab ORDER BY key",
+                """
+                        key\tcount
+                        k0\t800
+                        k1\t800
+                        k2\t800
+                        k3\t800
+                        k4\t800
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelStringAndVarcharKeyGroupByWithFilter() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, count() FROM tab WHERE value > 0 ORDER BY key",
+                """
+                        key\tcount
+                        k0\t800
+                        k1\t800
+                        k2\t800
+                        k3\t800
+                        k4\t800
+                        """
+        );
+    }
+
+    @Test
     public void testParallelStringAndVarcharKeyGroupByWithLimit() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
