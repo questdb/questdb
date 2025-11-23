@@ -2621,6 +2621,27 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelShortKeyGroupByWithFilter() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT ashort, count_distinct(along) FROM tab " +
+                        "WHERE ashort < 10000 ORDER BY ashort DESC LIMIT 10",
+                """
+                        ashort\tcount_distinct
+                        1024\t2
+                        1023\t4
+                        1022\t7
+                        1020\t6
+                        1019\t5
+                        1018\t1
+                        1017\t2
+                        1016\t1
+                        1015\t4
+                        1014\t1
+                        """
+        );
+    }
+
+    @Test
     public void testParallelShortKeyGroupByWithReadThreadSafeTimestampFilter() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT ashort, count_distinct(along) FROM tab " +
