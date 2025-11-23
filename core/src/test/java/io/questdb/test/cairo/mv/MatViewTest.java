@@ -7097,8 +7097,10 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\tbase_table_name\tview_status\n" +
-                            "price_1h\tbase_price\tvalid\n",
+                    """
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """,
                     "select view_name, base_table_name, view_status from materialized_views",
                     null,
                     false
@@ -7108,8 +7110,10 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
-                            "price_1h\tbase_price\tvalid\t\n",
+                    """
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1h\tbase_price\tvalid\t
+                            """,
                     "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
                     null,
                     false

@@ -170,17 +170,13 @@ public class TableConverter {
             }
 
             final byte walType = ff.readNonNegativeByte(fd, 0);
-            switch (walType) {
-                case TABLE_TYPE_WAL:
-                    // fall through
-                case TABLE_TYPE_VIEW:
-                case TABLE_TYPE_MAT:
-                    return true;
-                case TABLE_TYPE_NON_WAL:
-                    return false;
-                default:
-                    throw CairoException.critical(ff.errno()).put("could not read walType from file [path=").put(path).put(']');
-            }
+            return switch (walType) {
+                // fall through
+                case TABLE_TYPE_WAL, TABLE_TYPE_VIEW, TABLE_TYPE_MAT -> true;
+                case TABLE_TYPE_NON_WAL -> false;
+                default ->
+                        throw CairoException.critical(ff.errno()).put("could not read walType from file [path=").put(path).put(']');
+            };
         } finally {
             ff.close(fd);
         }

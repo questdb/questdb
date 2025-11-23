@@ -44,7 +44,7 @@ public class ViewState {
     }
 
     public CharSequence getInvalidationReason() {
-        return invalidationReason.length() > 0 ? invalidationReason : null;
+        return !invalidationReason.isEmpty() ? invalidationReason : null;
     }
 
     public long getUpdateTimestamp() {

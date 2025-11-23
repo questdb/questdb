@@ -112,7 +112,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         }
         dirNameToTableTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
 
-        // Finish the name registration, table is queriable from this moment.
+        // Finish the name registration, table is queryable from this moment.
         boolean stillLocked = tableNameToTableTokenMap.replace(tableName, LOCKED_TOKEN, tableToken);
         assert stillLocked;
     }

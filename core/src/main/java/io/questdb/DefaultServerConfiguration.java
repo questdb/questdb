@@ -163,13 +163,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         return walApplyPoolConfiguration;
     }
 
-    private static class DefaultWorkerPoolConfiguration implements WorkerPoolConfiguration {
-
-        private final String name;
-
-        private DefaultWorkerPoolConfiguration(String name) {
-            this.name = name;
-        }
+    private record DefaultWorkerPoolConfiguration(String name) implements WorkerPoolConfiguration {
 
         @Override
         public String getPoolName() {

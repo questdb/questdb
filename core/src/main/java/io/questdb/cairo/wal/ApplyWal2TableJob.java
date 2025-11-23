@@ -74,8 +74,8 @@ import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalTxnType.*;
+import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
@@ -493,8 +493,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return;
         }
 
-        if (throwable instanceof CairoException) {
-            CairoException cairoException = (CairoException) throwable;
+        if (throwable instanceof CairoException cairoException) {
             if (cairoException.isOutOfMemory()) {
                 if (txnTracker != null) {
                     txnTracker.getMemPressureControl().onOutOfMemory();

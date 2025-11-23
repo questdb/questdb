@@ -38,45 +38,53 @@ public class ViewQueryTest extends AbstractViewTest {
 
             String query = VIEW1;
             assertQueryAndPlan(
-                    "ts\tk\tred\tv_max\n" +
-                            "1970-01-01T00:01:00.000000Z\tk6\thohoho\t6\n" +
-                            "1970-01-01T00:01:10.000000Z\tk7\thohoho\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\tk8\thohoho\t8\n",
+                    """
+                            ts\tk\tred\tv_max
+                            1970-01-01T00:01:00.000000Z\tk6\thohoho\t6
+                            1970-01-01T00:01:10.000000Z\tk7\thohoho\t7
+                            1970-01-01T00:01:20.000000Z\tk8\thohoho\t8
+                            """,
                     query,
-                    "QUERY PLAN\n" +
-                            "VirtualRecord\n" +
-                            "  functions: [ts,k,'hohoho',v_max]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts,k]\n" +
-                            "      values: [max(v)]\n" +
-                            "      filter: 5<v\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            VirtualRecord
+                              functions: [ts,k,'hohoho',v_max]
+                                Async Group By workers: 1
+                                  keys: [ts,k]
+                                  values: [max(v)]
+                                  filter: 5<v
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table1
+                            """
             );
 
             query = "DECLARE @x := 1, @y := 2 select ts, @x as one, @y * v_max from " + VIEW1 + " where v_max > 6";
             assertQueryAndPlan(
-                    "ts\tone\tcolumn\n" +
-                            "1970-01-01T00:01:10.000000Z\t1\t14\n" +
-                            "1970-01-01T00:01:20.000000Z\t1\t16\n",
+                    """
+                            ts\tone\tcolumn
+                            1970-01-01T00:01:10.000000Z\t1\t14
+                            1970-01-01T00:01:20.000000Z\t1\t16
+                            """,
                     query,
                     null,
                     true,
                     false,
-                    "QUERY PLAN\n" +
-                            "VirtualRecord\n" +
-                            "  functions: [ts,1,2*v_max]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [ts,v_max]\n" +
-                            "        Filter filter: 6<v_max\n" +
-                            "            Async Group By workers: 1\n" +
-                            "              keys: [ts,k]\n" +
-                            "              values: [max(v)]\n" +
-                            "              filter: 5<v\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            VirtualRecord
+                              functions: [ts,1,2*v_max]
+                                VirtualRecord
+                                  functions: [ts,v_max]
+                                    Filter filter: 6<v_max
+                                        Async Group By workers: 1
+                                          keys: [ts,k]
+                                          values: [max(v)]
+                                          filter: 5<v
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: table1
+                            """
             );
         });
     }
@@ -101,37 +109,41 @@ public class ViewQueryTest extends AbstractViewTest {
             createView(VIEW2, query2, TABLE2_2);
 
             assertQueryAndPlan(
-                    "ts\tv_max\n" +
-                            "1970-01-01T00:00:50.000000Z\t5\n" +
-                            "1970-01-01T00:01:20.000000Z\t8\n",
+                    """
+                            ts\tv_max
+                            1970-01-01T00:00:50.000000Z\t5
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
                     "with t2 as (" + VIEW2 + " where v_max > 7 union " + VIEW1 + " where k = 'k5') select t1.ts, v_max from " + TABLE1_2 + " t1 join t2 on t1.v = t2.v_max",
                     "ts",
                     false,
                     true,
-                    "QUERY PLAN\n" +
-                            "SelectedRecord\n" +
-                            "    Hash Join\n" +
-                            "      condition: t2.v_max=t1.v\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: Részvény_áíóúüűöő\n" +
-                            "        Hash\n" +
-                            "            Union\n" +
-                            "                Filter filter: 7<v_max\n" +
-                            "                    Async Group By workers: 1\n" +
-                            "                      keys: [ts,k2]\n" +
-                            "                      values: [max(v)]\n" +
-                            "                      filter: 6<v\n" +
-                            "                        PageFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: Aкции_ягоды\n" +
-                            "                Async Group By workers: 1\n" +
-                            "                  keys: [ts,k]\n" +
-                            "                  values: [max(v)]\n" +
-                            "                  filter: (4<v and k='k5')\n" +
-                            "                    PageFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: Részvény_áíóúüűöő\n"
+                    """
+                            QUERY PLAN
+                            SelectedRecord
+                                Hash Join
+                                  condition: t2.v_max=t1.v
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: Részvény_áíóúüűöő
+                                    Hash
+                                        Union
+                                            Filter filter: 7<v_max
+                                                Async Group By workers: 1
+                                                  keys: [ts,k2]
+                                                  values: [max(v)]
+                                                  filter: 6<v
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: Aкции_ягоды
+                                            Async Group By workers: 1
+                                              keys: [ts,k]
+                                              values: [max(v)]
+                                              filter: (4<v and k='k5')
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: Részvény_áíóúüűöő
+                            """
             );
         });
     }
@@ -146,37 +158,45 @@ public class ViewQueryTest extends AbstractViewTest {
 
             String query = VIEW1;
             assertQueryAndPlan(
-                    "ts\tk\tv_max\n" +
-                            "1970-01-01T00:01:00.000000Z\tk6\t6\n" +
-                            "1970-01-01T00:01:10.000000Z\tk7\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\tk8\t8\n",
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
                     query,
-                    "QUERY PLAN\n" +
-                            "Async Group By workers: 1\n" +
-                            "  keys: [ts,k]\n" +
-                            "  values: [max(v)]\n" +
-                            "  filter: 5<v\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              keys: [ts,k]
+                              values: [max(v)]
+                              filter: 5<v
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
+                            """
             );
 
             query = "select ts, v_max from " + VIEW1;
             assertQueryAndPlan(
-                    "ts\tv_max\n" +
-                            "1970-01-01T00:01:00.000000Z\t6\n" +
-                            "1970-01-01T00:01:10.000000Z\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\t8\n",
+                    """
+                            ts\tv_max
+                            1970-01-01T00:01:00.000000Z\t6
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
                     query,
-                    "QUERY PLAN\n" +
-                            "SelectedRecord\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts,k]\n" +
-                            "      values: [max(v)]\n" +
-                            "      filter: 5<v\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            SelectedRecord
+                                Async Group By workers: 1
+                                  keys: [ts,k]
+                                  values: [max(v)]
+                                  filter: 5<v
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table1
+                            """
             );
         });
     }
@@ -196,10 +216,12 @@ public class ViewQueryTest extends AbstractViewTest {
 
             String query = VIEW1_2;
             assertQueryAndPlan(
-                    "ts\tk\tv_max\n" +
-                            "1970-01-01T00:01:00.000000Z\tk6\t6\n" +
-                            "1970-01-01T00:01:10.000000Z\tk7\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\tk8\t8\n",
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
                     query,
                     "QUERY PLAN\n" +
                             "Async Group By workers: 1\n" +
@@ -213,10 +235,12 @@ public class ViewQueryTest extends AbstractViewTest {
 
             query = "select ts, v_max from " + VIEW1_3;
             assertQueryAndPlan(
-                    "ts\tv_max\n" +
-                            "1970-01-01T00:01:00.000000Z\t6\n" +
-                            "1970-01-01T00:01:10.000000Z\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\t8\n",
+                    """
+                            ts\tv_max
+                            1970-01-01T00:01:00.000000Z\t6
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
                     query,
                     "QUERY PLAN\n" +
                             "SelectedRecord\n" +
@@ -241,41 +265,49 @@ public class ViewQueryTest extends AbstractViewTest {
 
             String query = VIEW1;
             assertQueryAndPlan(
-                    "ts\tk\tv_max\n" +
-                            "1970-01-01T00:01:00.000000Z\tk6\t6\n" +
-                            "1970-01-01T00:01:10.000000Z\tk7\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\tk8\t8\n",
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
                     query,
-                    "QUERY PLAN\n" +
-                            "Async Group By workers: 1\n" +
-                            "  keys: [ts,k]\n" +
-                            "  values: [max(v)]\n" +
-                            "  filter: 5<v\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              keys: [ts,k]
+                              values: [max(v)]
+                              filter: 5<v
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
+                            """
             );
 
             query = "DECLARE @x := 1, @y := 2 select ts, @x as one, @y * v_max from " + VIEW1 + " where v_max > 6";
             assertQueryAndPlan(
-                    "ts\tone\tcolumn\n" +
-                            "1970-01-01T00:01:10.000000Z\t1\t14\n" +
-                            "1970-01-01T00:01:20.000000Z\t1\t16\n",
+                    """
+                            ts\tone\tcolumn
+                            1970-01-01T00:01:10.000000Z\t1\t14
+                            1970-01-01T00:01:20.000000Z\t1\t16
+                            """,
                     query,
                     null,
                     true,
                     false,
-                    "QUERY PLAN\n" +
-                            "VirtualRecord\n" +
-                            "  functions: [ts,1,2*v_max]\n" +
-                            "    Filter filter: 6<v_max\n" +
-                            "        Async Group By workers: 1\n" +
-                            "          keys: [ts,k]\n" +
-                            "          values: [max(v)]\n" +
-                            "          filter: 5<v\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            VirtualRecord
+                              functions: [ts,1,2*v_max]
+                                Filter filter: 6<v_max
+                                    Async Group By workers: 1
+                                      keys: [ts,k]
+                                      values: [max(v)]
+                                      filter: 5<v
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table1
+                            """
             );
         });
     }
@@ -289,24 +321,28 @@ public class ViewQueryTest extends AbstractViewTest {
             createView(VIEW1, query1, TABLE1);
 
             assertQueryAndPlan(
-                    "ts\tv_max\n" +
-                            "1970-01-01T00:01:10.000000Z\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\t8\n",
+                    """
+                            ts\tv_max
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
                     "(select v1.ts, v1.v_max from " + VIEW1 + " v1 where v_max > 6) timestamp(ts)",
                     "ts",
                     true,
                     false,
-                    "QUERY PLAN\n" +
-                            "SelectedRecord\n" +
-                            "    SelectedRecord\n" +
-                            "        Filter filter: 6<v_max\n" +
-                            "            Async Group By workers: 1\n" +
-                            "              keys: [ts,k]\n" +
-                            "              values: [max(v)]\n" +
-                            "              filter: 5<v\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            SelectedRecord
+                                SelectedRecord
+                                    Filter filter: 6<v_max
+                                        Async Group By workers: 1
+                                          keys: [ts,k]
+                                          values: [max(v)]
+                                          filter: 5<v
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: table1
+                            """
             );
         });
     }
@@ -324,150 +360,170 @@ public class ViewQueryTest extends AbstractViewTest {
             createView(VIEW2, query2, TABLE2);
 
             assertQueryAndPlan(
-                    "ts\tv_max\n" +
-                            "1970-01-01T00:00:50.000000Z\t5\n" +
-                            "1970-01-01T00:01:00.000000Z\t6\n" +
-                            "1970-01-01T00:01:10.000000Z\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\t8\n",
+                    """
+                            ts\tv_max
+                            1970-01-01T00:00:50.000000Z\t5
+                            1970-01-01T00:01:00.000000Z\t6
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
                     "select v1.ts, v_max from " + VIEW1 + " v1 join " + TABLE2 + " t2 on t2.v = v1.v_max",
                     null,
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "SelectedRecord\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: t2.v=v1.v_max\n" +
-                            "        Async Group By workers: 1\n" +
-                            "          keys: [ts,k]\n" +
-                            "          values: [max(v)]\n" +
-                            "          filter: 4<v\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: table1\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: table2\n"
+                    """
+                            QUERY PLAN
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: t2.v=v1.v_max
+                                    Async Group By workers: 1
+                                      keys: [ts,k]
+                                      values: [max(v)]
+                                      filter: 4<v
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table1
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table2
+                            """
             );
 
             assertQueryAndPlan(
-                    "ts\tv_max\n" +
-                            "1970-01-01T00:01:10.000000Z\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\t8\n",
+                    """
+                            ts\tv_max
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
                     "select t1.ts, v_max from " + TABLE1 + " t1 join (" + VIEW1 + " where v_max > 6) t2 on t1.v = t2.v_max",
                     "ts",
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "SelectedRecord\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: t2.v_max=t1.v\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: table1\n" +
-                            "        Hash\n" +
-                            "            SelectedRecord\n" +
-                            "                Filter filter: 6<v_max\n" +
-                            "                    Async Group By workers: 1\n" +
-                            "                      keys: [ts,k]\n" +
-                            "                      values: [max(v)]\n" +
-                            "                      filter: 4<v\n" +
-                            "                        PageFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: t2.v_max=t1.v
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table1
+                                    Hash
+                                        SelectedRecord
+                                            Filter filter: 6<v_max
+                                                Async Group By workers: 1
+                                                  keys: [ts,k]
+                                                  values: [max(v)]
+                                                  filter: 4<v
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: table1
+                            """
             );
 
             assertQueryAndPlan(
-                    "ts\tv_max\n" +
-                            "1970-01-01T00:01:10.000000Z\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\t8\n",
+                    """
+                            ts\tv_max
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
                     "with t2 as (" + VIEW1 + " where v_max > 6) select t1.ts, v_max from " + TABLE1 + " t1 join t2 on t1.v = t2.v_max", "ts",
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "SelectedRecord\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: t2.v_max=t1.v\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: table1\n" +
-                            "        Hash\n" +
-                            "            SelectedRecord\n" +
-                            "                Filter filter: 6<v_max\n" +
-                            "                    Async Group By workers: 1\n" +
-                            "                      keys: [ts,k]\n" +
-                            "                      values: [max(v)]\n" +
-                            "                      filter: 4<v\n" +
-                            "                        PageFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: t2.v_max=t1.v
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table1
+                                    Hash
+                                        SelectedRecord
+                                            Filter filter: 6<v_max
+                                                Async Group By workers: 1
+                                                  keys: [ts,k]
+                                                  values: [max(v)]
+                                                  filter: 4<v
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: table1
+                            """
             );
 
             assertQueryAndPlan(
-                    "ts\tk\tv_max\tts1\tk1\tv_max1\n" +
-                            "1970-01-01T00:00:50.000000Z\tk5\t5\t1970-01-01T00:00:50.000000Z\tk5\t5\n" +
-                            "1970-01-01T00:01:00.000000Z\tk6\t6\t1970-01-01T00:01:00.000000Z\tk6\t6\n",
+                    """
+                            ts\tk\tv_max\tts1\tk1\tv_max1
+                            1970-01-01T00:00:50.000000Z\tk5\t5\t1970-01-01T00:00:50.000000Z\tk5\t5
+                            1970-01-01T00:01:00.000000Z\tk6\t6\t1970-01-01T00:01:00.000000Z\tk6\t6
+                            """,
                     VIEW1 + " v11 join " + VIEW1 + " v12 on v_max where v12.v_max < 7",
                     null,
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "SelectedRecord\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: v12.v_max=v11.v_max\n" +
-                            "        Async Group By workers: 1\n" +
-                            "          keys: [ts,k]\n" +
-                            "          values: [max(v)]\n" +
-                            "          filter: 4<v\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: table1\n" +
-                            "        Hash\n" +
-                            "            Filter filter: v_max<7\n" +
-                            "                Async Group By workers: 1\n" +
-                            "                  keys: [ts,k]\n" +
-                            "                  values: [max(v)]\n" +
-                            "                  filter: 4<v\n" +
-                            "                    PageFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: v12.v_max=v11.v_max
+                                    Async Group By workers: 1
+                                      keys: [ts,k]
+                                      values: [max(v)]
+                                      filter: 4<v
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table1
+                                    Hash
+                                        Filter filter: v_max<7
+                                            Async Group By workers: 1
+                                              keys: [ts,k]
+                                              values: [max(v)]
+                                              filter: 4<v
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: table1
+                            """
             );
 
             assertQueryAndPlan(
-                    "ts\tv_max\n" +
-                            "1970-01-01T00:01:10.000000Z\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\t8\n",
+                    """
+                            ts\tv_max
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
                     "with t2 as (" + VIEW1 + " v11 join " + VIEW1 + " v12 on v_max where v12.v_max > 6) select t1.ts, v_max from " + TABLE1 + " t1 join t2 on t1.v = t2.v_max",
                     "ts",
                     false,
                     true,
-                    "QUERY PLAN\n" +
-                            "SelectedRecord\n" +
-                            "    Hash Join\n" +
-                            "      condition: t2.v_max=t1.v\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: table1\n" +
-                            "        Hash\n" +
-                            "            SelectedRecord\n" +
-                            "                Hash Join Light\n" +
-                            "                  condition: v12.v_max=v11.v_max\n" +
-                            "                    Async Group By workers: 1\n" +
-                            "                      keys: [ts,k]\n" +
-                            "                      values: [max(v)]\n" +
-                            "                      filter: 4<v\n" +
-                            "                        PageFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: table1\n" +
-                            "                    Hash\n" +
-                            "                        Filter filter: 6<v_max\n" +
-                            "                            Async Group By workers: 1\n" +
-                            "                              keys: [ts,k]\n" +
-                            "                              values: [max(v)]\n" +
-                            "                              filter: 4<v\n" +
-                            "                                PageFrame\n" +
-                            "                                    Row forward scan\n" +
-                            "                                    Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            SelectedRecord
+                                Hash Join
+                                  condition: t2.v_max=t1.v
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table1
+                                    Hash
+                                        SelectedRecord
+                                            Hash Join Light
+                                              condition: v12.v_max=v11.v_max
+                                                Async Group By workers: 1
+                                                  keys: [ts,k]
+                                                  values: [max(v)]
+                                                  filter: 4<v
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: table1
+                                                Hash
+                                                    Filter filter: 6<v_max
+                                                        Async Group By workers: 1
+                                                          keys: [ts,k]
+                                                          values: [max(v)]
+                                                          filter: 4<v
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: table1
+                            """
             );
         });
     }
@@ -485,94 +541,106 @@ public class ViewQueryTest extends AbstractViewTest {
             createView(VIEW2, query2, TABLE2);
 
             assertQueryAndPlan(
-                    "ts\tk2\tv_max\n" +
-                            "1970-01-01T00:01:20.000000Z\tk2_8\t8\n" +
-                            "1970-01-01T00:00:50.000000Z\tk5\t5\n",
+                    """
+                            ts\tk2\tv_max
+                            1970-01-01T00:01:20.000000Z\tk2_8\t8
+                            1970-01-01T00:00:50.000000Z\tk5\t5
+                            """,
                     VIEW2 + " where v_max > 7 union " + VIEW1 + " where k = 'k5'",
                     null,
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "Union\n" +
-                            "    Filter filter: 7<v_max\n" +
-                            "        Async Group By workers: 1\n" +
-                            "          keys: [ts,k2]\n" +
-                            "          values: [max(v)]\n" +
-                            "          filter: 6<v\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: table2\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts,k]\n" +
-                            "      values: [max(v)]\n" +
-                            "      filter: (4<v and k='k5')\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            Union
+                                Filter filter: 7<v_max
+                                    Async Group By workers: 1
+                                      keys: [ts,k2]
+                                      values: [max(v)]
+                                      filter: 6<v
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table2
+                                Async Group By workers: 1
+                                  keys: [ts,k]
+                                  values: [max(v)]
+                                  filter: (4<v and k='k5')
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table1
+                            """
             );
 
             assertQueryAndPlan(
-                    "ts\tv_max\n" +
-                            "1970-01-01T00:01:10.000000Z\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\t8\n" +
-                            "1970-01-01T00:00:50.000000Z\t5\n",
+                    """
+                            ts\tv_max
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            1970-01-01T00:00:50.000000Z\t5
+                            """,
                     "(select ts, v_max from " + VIEW2 + " where v_max > 6) union (select ts, v_max from " + VIEW1 + " where k = 'k5')",
                     null,
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "Union\n" +
-                            "    SelectedRecord\n" +
-                            "        Filter filter: 6<v_max\n" +
-                            "            Async Group By workers: 1\n" +
-                            "              keys: [ts,k2]\n" +
-                            "              values: [max(v)]\n" +
-                            "              filter: 6<v\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: table2\n" +
-                            "    SelectedRecord\n" +
-                            "        Async Group By workers: 1\n" +
-                            "          keys: [ts,k]\n" +
-                            "          values: [max(v)]\n" +
-                            "          filter: (4<v and k='k5')\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            Union
+                                SelectedRecord
+                                    Filter filter: 6<v_max
+                                        Async Group By workers: 1
+                                          keys: [ts,k2]
+                                          values: [max(v)]
+                                          filter: 6<v
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: table2
+                                SelectedRecord
+                                    Async Group By workers: 1
+                                      keys: [ts,k]
+                                      values: [max(v)]
+                                      filter: (4<v and k='k5')
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table1
+                            """
             );
 
             assertQueryAndPlan(
-                    "ts\tv_max\n" +
-                            "1970-01-01T00:00:50.000000Z\t5\n" +
-                            "1970-01-01T00:01:20.000000Z\t8\n",
+                    """
+                            ts\tv_max
+                            1970-01-01T00:00:50.000000Z\t5
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
                     "with t2 as (" + VIEW2 + " where v_max > 7 union " + VIEW1 + " where k = 'k5') select t1.ts, v_max from " + TABLE1 + " t1 join t2 on t1.v = t2.v_max",
                     "ts",
                     false,
                     true,
-                    "QUERY PLAN\n" +
-                            "SelectedRecord\n" +
-                            "    Hash Join\n" +
-                            "      condition: t2.v_max=t1.v\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: table1\n" +
-                            "        Hash\n" +
-                            "            Union\n" +
-                            "                Filter filter: 7<v_max\n" +
-                            "                    Async Group By workers: 1\n" +
-                            "                      keys: [ts,k2]\n" +
-                            "                      values: [max(v)]\n" +
-                            "                      filter: 6<v\n" +
-                            "                        PageFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: table2\n" +
-                            "                Async Group By workers: 1\n" +
-                            "                  keys: [ts,k]\n" +
-                            "                  values: [max(v)]\n" +
-                            "                  filter: (4<v and k='k5')\n" +
-                            "                    PageFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            SelectedRecord
+                                Hash Join
+                                  condition: t2.v_max=t1.v
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table1
+                                    Hash
+                                        Union
+                                            Filter filter: 7<v_max
+                                                Async Group By workers: 1
+                                                  keys: [ts,k2]
+                                                  values: [max(v)]
+                                                  filter: 6<v
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: table2
+                                            Async Group By workers: 1
+                                              keys: [ts,k]
+                                              values: [max(v)]
+                                              filter: (4<v and k='k5')
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: table1
+                            """
             );
         });
     }
@@ -586,23 +654,27 @@ public class ViewQueryTest extends AbstractViewTest {
             createView(VIEW1, query1, TABLE1);
 
             assertQueryAndPlan(
-                    "ts\tv_max\n" +
-                            "1970-01-01T00:01:10.000000Z\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\t8\n",
+                    """
+                            ts\tv_max
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
                     "select v1.ts, v1.v_max from " + VIEW1 + " v1 where v_max > 6",
                     null,
                     true,
                     false,
-                    "QUERY PLAN\n" +
-                            "SelectedRecord\n" +
-                            "    Filter filter: 6<v_max\n" +
-                            "        Async Group By workers: 1\n" +
-                            "          keys: [ts,k]\n" +
-                            "          values: [max(v)]\n" +
-                            "          filter: 5<v\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            SelectedRecord
+                                Filter filter: 6<v_max
+                                    Async Group By workers: 1
+                                      keys: [ts,k]
+                                      values: [max(v)]
+                                      filter: 5<v
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table1
+                            """
             );
         });
     }

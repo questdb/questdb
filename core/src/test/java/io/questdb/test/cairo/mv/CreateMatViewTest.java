@@ -608,14 +608,16 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day WAL");
 
             final String query =
-                    "  WITH t1 AS (\n" +
-                            "    SELECT ts, ticker, greatest(close, close + 1) as close\n" +
-                            "    FROM stocks_d1_ohlcv\n" +
-                            "  )\n" +
-                            "  SELECT ts, ticker, avg(close)\n" +
-                            "  FROM t1\n" +
-                            "  SAMPLE BY 1d\n" +
-                            "  ORDER BY ticker, ts\n";
+                    """
+                              WITH t1 AS (
+                                SELECT ts, ticker, greatest(close, close + 1) as close
+                                FROM stocks_d1_ohlcv
+                              )
+                              SELECT ts, ticker, avg(close)
+                              FROM t1
+                              SAMPLE BY 1d
+                              ORDER BY ticker, ts
+                            """;
             assertExceptionNoLeakCheck(
                     "create materialized view test_view as (" + query + ") partition by month",
                     39,
@@ -814,9 +816,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
 
             assertQuery(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type\n" +
-                            "2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM\n" +
-                            "1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT\n",
+                    """
+                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
+                            2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM
+                            1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT
+                            """,
                     "tables()",
                     false,
                     false
@@ -863,9 +867,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
             }
 
             assertQuery(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type\n" +
-                            "2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM\n" +
-                            "1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT\n",
+                    """
+                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
+                            2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM
+                            1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT
+                            """,
                     "tables()",
                     false,
                     false
@@ -1978,18 +1984,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 new DdlSerializationTest(
                         "test1",
                         "create materialized view test1 as (" + query + ") partition by day TTL 3 WEEKS",
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH IMMEDIATE AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY TTL 3 WEEKS;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH IMMEDIATE AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY TTL 3 WEEKS;
+                                """
                 ),
                 new DdlSerializationTest(
                         "test2",
                         "create materialized view test2 refresh immediate deferred as (" + query + ") partition by day TTL 3 WEEKS",
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH IMMEDIATE DEFERRED AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY TTL 3 WEEKS;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH IMMEDIATE DEFERRED AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY TTL 3 WEEKS;
+                                """
                 ),
         };
         testShowCreateMaterializedView(tests, "timestamp");
@@ -2002,18 +2012,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 new DdlSerializationTest(
                         "test1",
                         "create materialized view test1 refresh manual as " + query,
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH MANUAL AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH MANUAL AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY;
+                                """
                 ),
                 new DdlSerializationTest(
                         "test2",
                         "create materialized view test2 refresh manual deferred as " + query,
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH MANUAL DEFERRED AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH MANUAL DEFERRED AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY;
+                                """
                 ),
         };
         testShowCreateMaterializedView(tests, "timestamp");
@@ -2159,18 +2173,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 new DdlSerializationTest(
                         "test1",
                         "create materialized view test1 refresh every 7d start '2020-01-01T02:23:59.900000Z' time zone 'Europe/Paris' as " + query,
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH EVERY 7d START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH EVERY 7d START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY;
+                                """
                 ),
                 new DdlSerializationTest(
                         "test2",
                         "create materialized view 'test2' refresh every 7d deferred start '2020-01-01T02:23:59.900000Z' time zone 'Europe/Paris' as " + query,
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH EVERY 7d DEFERRED START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH EVERY 7d DEFERRED START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY;
+                                """
                 ),
         };
         testShowCreateMaterializedView(tests, "timestamp");
@@ -2183,18 +2201,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 new DdlSerializationTest(
                         "test1",
                         "create materialized view test1 refresh every 7d start '2020-01-01T02:23:59.900000Z' time zone 'Europe/Paris' as " + query,
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH EVERY 7d START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH EVERY 7d START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY;
+                                """
                 ),
                 new DdlSerializationTest(
                         "test2",
                         "create materialized view 'test2' refresh every 7d deferred start '2020-01-01T02:23:59.900000000Z' time zone 'Europe/Paris' as " + query,
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH EVERY 7d DEFERRED START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (\n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") PARTITION BY DAY;\n"
+                        """
+                                ddl
+                                CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH EVERY 7d DEFERRED START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (
+                                select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                                ) PARTITION BY DAY;
+                                """
                 ),
         };
         testShowCreateMaterializedView(tests, "timestamp_ns");
@@ -2580,21 +2602,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
         });
     }
 
-    private static class DdlSerializationTest {
-        final String ddl;
-        final String expected;
-        final @Nullable String viewName;
+    private record DdlSerializationTest(@Nullable String viewName, String ddl, String expected) {
+            public DdlSerializationTest(String ddl, String expected) {
+                this(null, ddl, expected);
+            }
 
-        public DdlSerializationTest(String ddl, String expected) {
-            this.viewName = null;
-            this.ddl = ddl;
-            this.expected = expected;
-        }
-
-        public DdlSerializationTest(@Nullable String viewName, String ddl, String expected) {
-            this.viewName = viewName;
-            this.ddl = ddl;
-            this.expected = expected;
-        }
     }
 }

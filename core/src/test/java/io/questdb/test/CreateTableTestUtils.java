@@ -48,12 +48,12 @@ public class CreateTableTestUtils {
         TestUtils.createTable(engine, model);
     }
 
-    public static void createAllTableWithNewTypes(CairoEngine engine, int partitionBy, int timestampType) throws Exception {
+    public static void createAllTableWithNewTypes(CairoEngine engine, int partitionBy, int timestampType) {
         TableModel model = getAllTypesModelWithNewTypes(engine.getConfiguration(), partitionBy, timestampType);
         TestUtils.createTable(engine, model);
     }
 
-    public static void createDecimalsTable(CairoEngine engine, int partitionBy, int timestampType) throws Exception {
+    public static void createDecimalsTable(CairoEngine engine, int partitionBy, int timestampType) {
         TableModel model = getDecimalTypesModel(engine.getConfiguration(), partitionBy, timestampType);
         TestUtils.createTable(engine, model);
     }
@@ -255,7 +255,7 @@ public class CreateTableTestUtils {
                 .col("varchar", ColumnType.VARCHAR); // 11
     }
 
-    public static TableModel getAllTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy, int timestampType) throws Exception {
+    public static TableModel getAllTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy, int timestampType) {
         return new TableModel(configuration, "all2", partitionBy)
                 .col("int", ColumnType.INT)
                 .col("short", ColumnType.SHORT)
@@ -276,7 +276,7 @@ public class CreateTableTestUtils {
                 .timestamp(timestampType);
     }
 
-    public static TableModel getDecimalTypesModel(CairoConfiguration configuration, int partitionBy, int timestampType) throws Exception {
+    public static TableModel getDecimalTypesModel(CairoConfiguration configuration, int partitionBy, int timestampType) {
         return new TableModel(configuration, "decimals", partitionBy)
                 .col("dec8", ColumnType.getDecimalType(2, 1))
                 .col("dec16", ColumnType.getDecimalType(4, 2))

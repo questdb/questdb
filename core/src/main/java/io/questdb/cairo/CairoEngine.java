@@ -379,8 +379,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         viewStateStore.enqueueCompile(tableToken);
                     } catch (Throwable th) {
                         final LogRecord rec = LOG.error().$("could not load view [view=").$(tableToken);
-                        if (th instanceof CairoException) {
-                            final CairoException ce = (CairoException) th;
+                        if (th instanceof CairoException ce) {
                             rec.$(", msg=").$(ce.getFlyweightMessage())
                                     .$(", errno=").$(ce.getErrno());
                         } else {

@@ -44,8 +44,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // psync_cvcontinue sets two bits in the error code to indicate whether the wait timed out (0x100) or there were no waiters (0x200).
     // Error #316 (0x13C) is the timed out bit bitwise OR'd with ETIMEDOUT (60).
     public static final int ERRNO_FILE_READ_TIMEOUT_MACOS = 316;
-    public static final int ERRNO_INVALID_PARAMETER = 22;
-    public static final int ERRNO_INVALID_PARAMETER_WIN = 87;
     public static final int METADATA_VALIDATION = -100;
     public static final int ILLEGAL_OPERATION = METADATA_VALIDATION - 1;
     private static final int TABLE_DROPPED = ILLEGAL_OPERATION - 1;
@@ -179,10 +177,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put("table is dropped [dirName=").put(tableToken.getDirName())
                 .put(", tableName=").put(tableToken.getTableName())
                 .put(']');
-    }
-
-    public static CairoException tableIsEmpty(CharSequence tableName) {
-        return nonCritical().put("table is empty [table=").put(tableName).put(']');
     }
 
     public static CairoException txnApplyBlockError(TableToken tableToken) {

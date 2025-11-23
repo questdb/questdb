@@ -44,8 +44,10 @@ public class CreateDropViewTest extends AbstractViewTest {
         createView(VIEW1, query1);
 
         assertQueryNoLeakCheck(
-                "col\n" +
-                        "42\n",
+                """
+                        col
+                        42
+                        """,
                 VIEW1
         );
     }
@@ -132,16 +134,18 @@ public class CreateDropViewTest extends AbstractViewTest {
             createView(VIEW2, query2, TABLE2);
 
             assertQueryNoLeakCheck(
-                    "ts\tk\tk2\tv\n" +
-                            "1970-01-01T00:00:00.000000Z\tk0\tk2_0\t0\n" +
-                            "1970-01-01T00:00:10.000000Z\tk1\tk2_1\t1\n" +
-                            "1970-01-01T00:00:20.000000Z\tk2\tk2_2\t2\n" +
-                            "1970-01-01T00:00:30.000000Z\tk3\tk2_3\t3\n" +
-                            "1970-01-01T00:00:40.000000Z\tk4\tk2_4\t4\n" +
-                            "1970-01-01T00:00:50.000000Z\tk5\tk2_5\t5\n" +
-                            "1970-01-01T00:01:00.000000Z\tk6\tk2_6\t6\n" +
-                            "1970-01-01T00:01:10.000000Z\tk7\tk2_7\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\tk8\tk2_8\t8\n",
+                    """
+                            ts\tk\tk2\tv
+                            1970-01-01T00:00:00.000000Z\tk0\tk2_0\t0
+                            1970-01-01T00:00:10.000000Z\tk1\tk2_1\t1
+                            1970-01-01T00:00:20.000000Z\tk2\tk2_2\t2
+                            1970-01-01T00:00:30.000000Z\tk3\tk2_3\t3
+                            1970-01-01T00:00:40.000000Z\tk4\tk2_4\t4
+                            1970-01-01T00:00:50.000000Z\tk5\tk2_5\t5
+                            1970-01-01T00:01:00.000000Z\tk6\tk2_6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\tk2_7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\tk2_8\t8
+                            """,
                     TABLE1,
                     "ts",
                     true,
@@ -149,16 +153,18 @@ public class CreateDropViewTest extends AbstractViewTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\tk\tk2\tv\n" +
-                            "1970-01-01T00:00:00.000000Z\tk0\tk2_0\t0\n" +
-                            "1970-01-01T00:00:10.000000Z\tk1\tk2_1\t1\n" +
-                            "1970-01-01T00:00:20.000000Z\tk2\tk2_2\t2\n" +
-                            "1970-01-01T00:00:30.000000Z\tk3\tk2_3\t3\n" +
-                            "1970-01-01T00:00:40.000000Z\tk4\tk2_4\t4\n" +
-                            "1970-01-01T00:00:50.000000Z\tk5\tk2_5\t5\n" +
-                            "1970-01-01T00:01:00.000000Z\tk6\tk2_6\t6\n" +
-                            "1970-01-01T00:01:10.000000Z\tk7\tk2_7\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\tk8\tk2_8\t8\n",
+                    """
+                            ts\tk\tk2\tv
+                            1970-01-01T00:00:00.000000Z\tk0\tk2_0\t0
+                            1970-01-01T00:00:10.000000Z\tk1\tk2_1\t1
+                            1970-01-01T00:00:20.000000Z\tk2\tk2_2\t2
+                            1970-01-01T00:00:30.000000Z\tk3\tk2_3\t3
+                            1970-01-01T00:00:40.000000Z\tk4\tk2_4\t4
+                            1970-01-01T00:00:50.000000Z\tk5\tk2_5\t5
+                            1970-01-01T00:01:00.000000Z\tk6\tk2_6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\tk2_7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\tk2_8\t8
+                            """,
                     TABLE2,
                     "ts",
                     true,
@@ -166,18 +172,22 @@ public class CreateDropViewTest extends AbstractViewTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\tk\tv_max\n" +
-                            "1970-01-01T00:00:50.000000Z\tk5\t5\n" +
-                            "1970-01-01T00:01:00.000000Z\tk6\t6\n" +
-                            "1970-01-01T00:01:10.000000Z\tk7\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\tk8\t8\n",
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:00:50.000000Z\tk5\t5
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
                     VIEW1
             );
 
             assertQueryNoLeakCheck(
-                    "ts\tk2\tv_max\n" +
-                            "1970-01-01T00:01:10.000000Z\tk2_7\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\tk2_8\t8\n",
+                    """
+                            ts\tk2\tv_max
+                            1970-01-01T00:01:10.000000Z\tk2_7\t7
+                            1970-01-01T00:01:20.000000Z\tk2_8\t8
+                            """,
                     VIEW2
             );
         });
@@ -201,75 +211,91 @@ public class CreateDropViewTest extends AbstractViewTest {
             createView(VIEW4, query4, TABLE1, VIEW1);
 
             assertQueryAndPlan(
-                    "ts\tk\tv_max\n" +
-                            "1970-01-01T00:00:50.000000Z\tk5\t5\n" +
-                            "1970-01-01T00:01:00.000000Z\tk6\t6\n" +
-                            "1970-01-01T00:01:10.000000Z\tk7\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\tk8\t8\n",
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:00:50.000000Z\tk5\t5
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
                     VIEW1,
-                    "QUERY PLAN\n" +
-                            "Async Group By workers: 1\n" +
-                            "  keys: [ts,k]\n" +
-                            "  values: [max(v)]\n" +
-                            "  filter: 4<v\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              keys: [ts,k]
+                              values: [max(v)]
+                              filter: 4<v
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
+                            """
             );
 
             assertQueryAndPlan(
-                    "ts\tk\tv_max\n" +
-                            "1970-01-01T00:01:10.000000Z\tk7\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\tk8\t8\n",
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
                     VIEW2,
                     null,
                     true,
                     false,
-                    "QUERY PLAN\n" +
-                            "Filter filter: 6<v_max\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts,k]\n" +
-                            "      values: [max(v)]\n" +
-                            "      filter: 4<v\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            Filter filter: 6<v_max
+                                Async Group By workers: 1
+                                  keys: [ts,k]
+                                  values: [max(v)]
+                                  filter: 4<v
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table1
+                            """
             );
 
             assertQueryAndPlan(
-                    "ts\tk\tv_max\n" +
-                            "1970-01-01T00:01:20.000000Z\tk8\t8\n",
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
                     VIEW3,
                     null,
                     true,
                     false,
                     // can optimizer remove the redundant 6<v_max filter?
-                    "QUERY PLAN\n" +
-                            "Filter filter: (6<v_max and 7<v_max)\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts,k]\n" +
-                            "      values: [max(v)]\n" +
-                            "      filter: 4<v\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            Filter filter: (6<v_max and 7<v_max)
+                                Async Group By workers: 1
+                                  keys: [ts,k]
+                                  values: [max(v)]
+                                  filter: 4<v
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table1
+                            """
             );
 
             assertQueryAndPlan(
-                    "date_trunc\tv_avg\n" +
-                            "1970-01-01T00:00:00.000000Z\t6.5\n",
+                    """
+                            date_trunc\tv_avg
+                            1970-01-01T00:00:00.000000Z\t6.5
+                            """,
                     VIEW4,
-                    "QUERY PLAN\n" +
-                            "GroupBy vectorized: false\n" +
-                            "  keys: [date_trunc]\n" +
-                            "  values: [avg(v_max)]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts,k]\n" +
-                            "      values: [max(v)]\n" +
-                            "      filter: 4<v\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: table1\n"
+                    """
+                            QUERY PLAN
+                            GroupBy vectorized: false
+                              keys: [date_trunc]
+                              values: [avg(v_max)]
+                                Async Group By workers: 1
+                                  keys: [ts,k]
+                                  values: [max(v)]
+                                  filter: 4<v
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table1
+                            """
             );
         });
     }
@@ -279,13 +305,17 @@ public class CreateDropViewTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE VIEW foo AS (DECLARE @x := 1, @y := 2 SELECT @x + @y)");
             assertSql(
-                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\n" +
-                            "foo\tDECLARE @x := 1, @y := 2 SELECT @x + @y\tfoo~1\t\tvalid\n",
+                    """
+                            view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status
+                            foo\tDECLARE @x := 1, @y := 2 SELECT @x + @y\tfoo~1\t\tvalid
+                            """,
                     "select view_name, view_sql, view_table_dir_name, invalidation_reason, view_status from views()"
             );
             assertSql(
-                    "column\n" +
-                            "3\n",
+                    """
+                            column
+                            3
+                            """,
                     "foo"
             );
         });
@@ -304,18 +334,22 @@ public class CreateDropViewTest extends AbstractViewTest {
             createView(VIEW2, query2, TABLE2);
 
             assertQueryNoLeakCheck(
-                    "ts\tk\tv_max\n" +
-                            "1970-01-01T00:00:50.000000Z\tk5\t5\n" +
-                            "1970-01-01T00:01:00.000000Z\tk6\t6\n" +
-                            "1970-01-01T00:01:10.000000Z\tk7\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\tk8\t8\n",
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:00:50.000000Z\tk5\t5
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
                     VIEW1
             );
 
             assertQueryNoLeakCheck(
-                    "ts\tv_max\n" +
-                            "1970-01-01T00:01:10.000000Z\t7\n" +
-                            "1970-01-01T00:01:20.000000Z\t8\n",
+                    """
+                            ts\tv_max
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
                     "select ts, v_max from " + VIEW2
             );
 
@@ -340,10 +374,12 @@ public class CreateDropViewTest extends AbstractViewTest {
             final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
             execute("create view test as (" + query + ")");
             assertQueryNoLeakCheck(
-                    "ddl\n" +
-                            "CREATE VIEW 'test' AS ( \n" +
-                            "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                            ");\n",
+                    """
+                            ddl
+                            CREATE VIEW 'test' AS (\s
+                            select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                            );
+                            """,
                     "show create view test",
                     null,
                     false

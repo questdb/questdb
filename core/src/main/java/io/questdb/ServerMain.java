@@ -48,9 +48,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
 import io.questdb.std.Misc;
-import io.questdb.std.MmapCache;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.filewatch.FileWatcher;
 import org.jetbrains.annotations.NotNull;
@@ -62,9 +60,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static io.questdb.PropertyKey.EXPORT_WORKER_COUNT;
-import static io.questdb.PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT;
-import static io.questdb.PropertyKey.VIEW_COMPILER_WORKER_COUNT;
+import static io.questdb.PropertyKey.*;
 
 public class ServerMain implements Closeable {
     private final Bootstrap bootstrap;

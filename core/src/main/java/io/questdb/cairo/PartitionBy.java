@@ -105,24 +105,16 @@ public final class PartitionBy {
     }
 
     public static String toString(int partitionBy) {
-        switch (partitionBy) {
-            case DAY:
-                return "DAY";
-            case MONTH:
-                return "MONTH";
-            case YEAR:
-                return "YEAR";
-            case HOUR:
-                return "HOUR";
-            case WEEK:
-                return "WEEK";
-            case NONE:
-                return "NONE";
-            case NOT_APPLICABLE:
-                return "N/A";
-            default:
-                return "UNKNOWN";
-        }
+        return switch (partitionBy) {
+            case DAY -> "DAY";
+            case MONTH -> "MONTH";
+            case YEAR -> "YEAR";
+            case HOUR -> "HOUR";
+            case WEEK -> "WEEK";
+            case NONE -> "NONE";
+            case NOT_APPLICABLE -> "N/A";
+            default -> "UNKNOWN";
+        };
     }
 
     public static int ttlUnitFromString(CharSequence name, int start, int limit) {
