@@ -56,8 +56,10 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cutlass.http.SendAndReceiveRequestBuilder;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -75,6 +77,7 @@ import static io.questdb.test.tools.TestUtils.assertContains;
 
 @RunWith(Parameterized.class)
 public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
+    private static final LogCapture capture = new LogCapture();
     private final TestTimestampType timestampType;
 
     public MatViewReloadOnRestartTest(TestTimestampType timestampType) {
@@ -89,9 +92,18 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @Before
+    @Override
     public void setUp() {
         super.setUp();
+        capture.start();
         TestUtils.unchecked(() -> createDummyConfiguration());
+    }
+
+    @After
+    @Override
+    public void tearDown() throws Exception {
+        capture.stop();
+        super.tearDown();
     }
 
     @Test
@@ -102,12 +114,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false"
             )) {
-                executeWithRewriteTimestamp(
-                        main1,
-                        "create table base_price (" +
-                                "sym varchar, price double, ts #TIMESTAMP" +
-                                ") timestamp(ts) partition by DAY WAL"
-                );
+                executeWithRewriteTimestamp(main1);
 
                 createMatView(main1);
 
@@ -153,9 +160,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     assertSql(main1, replaceExpectedTimestamp(expected), "price_1h order by ts, sym");
 
                     assertLineError(Transport.HTTP, main1, refreshJob, replaceExpectedTimestamp(expected));
-                    // TODO(eugene): how to check the error for TCP/UDP?
-                    //assertLineError(Transport.UDP, main1, refreshJob, replaceExpectedTimestamp(expected));
-                    //assertLineError(Transport.TCP, main1, refreshJob, replaceExpectedTimestamp(expected));
+                    assertLineError(Transport.UDP, main1, refreshJob, replaceExpectedTimestamp(expected));
+                    assertLineError(Transport.TCP, main1, refreshJob, replaceExpectedTimestamp(expected));
                 }
 
                 new SendAndReceiveRequestBuilder().withPort(HTTP_PORT).execute(
@@ -207,12 +213,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     testClock,
                     PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD.getEnvVarName(), "10s"
             )) {
-                executeWithRewriteTimestamp(
-                        main1,
-                        "create table base_price (" +
-                                "sym varchar, price double, ts #TIMESTAMP" +
-                                ") timestamp(ts) partition by DAY WAL"
-                );
+                executeWithRewriteTimestamp(main1);
 
                 execute(
                         main1,
@@ -321,12 +322,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startMainPortsDisabled()) {
-                executeWithRewriteTimestamp(
-                        main1,
-                        "create table base_price (" +
-                                "sym varchar, price double, ts #TIMESTAMP" +
-                                ") timestamp(ts) partition by DAY WAL"
-                );
+                executeWithRewriteTimestamp(main1);
 
                 createMatView(main1);
 
@@ -405,12 +401,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsReloadOnServerStartAppliedAllWal() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startMainPortsDisabled()) {
-                executeWithRewriteTimestamp(
-                        main1,
-                        "create table base_price (" +
-                                "sym varchar, price double, ts #TIMESTAMP" +
-                                ") timestamp(ts) partition by DAY WAL"
-                );
+                executeWithRewriteTimestamp(main1);
 
                 createMatView(main1);
 
@@ -501,12 +492,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             String viewDirName;
             try (final TestServerMain main1 = startMainPortsDisabled()) {
-                executeWithRewriteTimestamp(
-                        main1,
-                        "create table base_price (" +
-                                "sym varchar, price double, ts #TIMESTAMP" +
-                                ") timestamp(ts) partition by DAY WAL"
-                );
+                executeWithRewriteTimestamp(main1);
 
                 createMatView(main1);
 
@@ -555,12 +541,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsReloadOnServerStartInvalidState() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startMainPortsDisabled()) {
-                executeWithRewriteTimestamp(
-                        main1,
-                        "create table base_price (" +
-                                "sym varchar, price double, ts #TIMESTAMP" +
-                                ") timestamp(ts) partition by DAY WAL"
-                );
+                executeWithRewriteTimestamp(main1);
 
                 createMatView(main1);
 
@@ -657,12 +638,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsReloadOnServerStartMissingBaseTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startMainPortsDisabled()) {
-                executeWithRewriteTimestamp(
-                        main1,
-                        "create table base_price (" +
-                                "sym varchar, price double, ts #TIMESTAMP" +
-                                ") timestamp(ts) partition by DAY WAL"
-                );
+                executeWithRewriteTimestamp(main1);
 
                 createMatView(main1);
 
@@ -711,12 +687,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsReloadOnServerStartNonWalBaseTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startMainPortsDisabled()) {
-                executeWithRewriteTimestamp(
-                        main1,
-                        "create table base_price (" +
-                                "sym varchar, price double, ts #TIMESTAMP" +
-                                ") timestamp(ts) partition by DAY WAL"
-                );
+                executeWithRewriteTimestamp(main1);
 
                 createMatView(main1);
 
@@ -775,12 +746,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     """;
 
             try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
-                executeWithRewriteTimestamp(
-                        main1,
-                        "create table base_price (" +
-                                "sym varchar, price double, ts #TIMESTAMP" +
-                                ") timestamp(ts) partition by DAY WAL"
-                );
+                executeWithRewriteTimestamp(main1);
 
                 execute(
                         main1,
@@ -844,12 +810,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     """;
 
             try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
-                executeWithRewriteTimestamp(
-                        main1,
-                        "create table base_price (" +
-                                "sym varchar, price double, ts #TIMESTAMP" +
-                                ") timestamp(ts) partition by DAY WAL"
-                );
+                executeWithRewriteTimestamp(main1);
 
                 execute(
                         main1,
@@ -952,12 +913,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             final String firstExpected = "sym\tprice\tts\n";
 
             try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
-                executeWithRewriteTimestamp(
-                        main1,
-                        "create table base_price (" +
-                                "sym varchar, price double, ts #TIMESTAMP" +
-                                ") timestamp(ts) partition by DAY WAL"
-                );
+                executeWithRewriteTimestamp(main1);
 
                 execute(
                         main1,
@@ -1118,10 +1074,13 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     .doubleColumn("price", 1.330)
                     .atNow();
             sender.flush();
-            Assert.fail("exception expected");
         } catch (LineSenderException e) {
             assertContains(e.getMessage(), "cannot modify materialized view");
         }
+
+        // TCP/UDP does not throw exception when error is detected, but logs the error
+        // we can assert for all transports that the error is logged
+        capture.waitFor("error in line 1: table: price_1h; cannot modify materialized view: price_1h");
 
         refreshJob.run(0);
         drainWalQueue(main.getEngine());
@@ -1147,7 +1106,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         };
     }
 
-    private void executeWithRewriteTimestamp(TestServerMain serverMain, String sql) {
+    private void executeWithRewriteTimestamp(TestServerMain serverMain) {
+        String sql = "create table base_price (" +
+                "sym varchar, price double, ts #TIMESTAMP" +
+                ") timestamp(ts) partition by DAY WAL";
         sql = sql.replaceAll("#TIMESTAMP", timestampType.getTypeName());
         execute(serverMain, sql);
     }

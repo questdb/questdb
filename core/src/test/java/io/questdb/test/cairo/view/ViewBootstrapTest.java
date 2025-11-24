@@ -311,9 +311,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             sender.flush();
         }
 
-        // TCP disconnects the client when error is detected
-        capture.waitFor("tcp-line-server disconnected");
-        capture.assertLogged("could not process line data 1 [table=instruments, msg=cannot modify view [view=instruments], errno=-1]");
+        // TCP disconnects the client when error is detected, and logs the error
+        capture.waitFor("could not process line data 1 [table=instruments, msg=cannot modify view [view=instruments], errno=-1]");
     }
 
     @Test
