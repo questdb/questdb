@@ -63,8 +63,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
-import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertEquals;
+import static io.questdb.test.tools.TestUtils.*;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 import static java.net.HttpURLConnection.HTTP_OK;
 import static org.junit.Assert.*;
@@ -635,6 +635,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     private static void assertSqlFailureViaPG(String sql, String expectedErrorMessage) {
         try {
             runSqlViaPG(sql);
+            fail("Expected SQLException missing");
         } catch (SQLException e) {
             assertContains(e.getMessage(), expectedErrorMessage);
         }
