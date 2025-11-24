@@ -494,13 +494,6 @@ public final class ColumnType {
      * Checks if a value of {@code fromType} can be converted to {@code toType} through any available conversion,
      * including both safe (widening) and unsafe (narrowing) conversions.
      * <p>
-     * This method returns true if EITHER of the following is true:
-     * <ul>
-     *   <li>{@link #isToSameOrWider(int, int)} - Safe conversion that preserves precision</li>
-     *   <li>{@link #isNarrowingCast(int, int)} - Unsafe conversion that may lose data</li>
-     * </ul>
-     * </p>
-     * <p>
      * <strong>Warning:</strong> When this function returns true it does not imply that you can treat <code>fromType</code>
      * as if it was the <code>toType</code>. It merely says a conversion is possible, but it might require wrapping the
      * <code>from</code> function with a casting function.
