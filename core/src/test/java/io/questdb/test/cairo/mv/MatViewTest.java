@@ -2204,6 +2204,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
             // copy
             assertCannotModifyMatView("copy price_1h from 'test-numeric-headers.csv' with header true");
             // rename table
@@ -2231,9 +2232,6 @@ public class MatViewTest extends AbstractCairoTest {
             assertCannotModifyMatView("truncate table price_1h");
             // vacuum
             assertCannotModifyMatView("vacuum table price_1h");
-
-            // drop
-            assertSqlError("drop table price_1h", "table name expected, got view or materialized view name");
         });
     }
 
@@ -5765,7 +5763,7 @@ public class MatViewTest extends AbstractCairoTest {
             final String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Iran'";
             final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T00:15:00.000000Z");
             final long step = timestampType.getDriver().fromMicros(6 * 60000000);
-            final int N = 100;
+            final int N = 110;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
 
@@ -5781,7 +5779,8 @@ public class MatViewTest extends AbstractCairoTest {
                     2021-03-28T11:00:00.000000Z\t10
                     2021-03-28T12:00:00.000000Z\t10
                     2021-03-28T13:00:00.000000Z\t10
-                    2021-03-28T14:00:00.000000Z\t7
+                    2021-03-28T14:00:00.000000Z\t10
+                    2021-03-28T15:00:00.000000Z\t7
                     """;
 
             final String out = "select to_timezone(k, 'Iran') k, c";
@@ -5798,7 +5797,7 @@ public class MatViewTest extends AbstractCairoTest {
             final long startTs = timestampType.getDriver().parseFloorLiteral("2021-03-28T00:15:00.000000Z");
             final long step = timestampType.getDriver().fromMicros(6 * 60000000);
             final int N = 100;
-            final int K = 5;
+            final int K = 4;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
 
             final String expected = """
@@ -6516,6 +6515,25 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTryingToDropMatViewAsTable() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            try {
+                execute("drop table price_1h");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage().contains("table name expected, got view or materialized view name"));
+            }
+        });
+    }
+
+    @Test
     public void testTtl() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -6765,14 +6783,6 @@ public class MatViewTest extends AbstractCairoTest {
             execute(updateSql);
         } catch (SqlException e) {
             Assert.assertTrue(e.getMessage().contains("cannot modify materialized view"));
-        }
-    }
-
-    private static void assertSqlError(String badSql, String expectedErrorMessage) {
-        try {
-            execute(badSql);
-        } catch (SqlException e) {
-            Assert.assertTrue(e.getMessage().contains(expectedErrorMessage));
         }
     }
 
@@ -7069,51 +7079,6 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "price_1h\tbase_price\tinvalid\t" + invalidationReason + "\n",
-                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
-                    null,
-                    false
-            );
-        });
-    }
-
-    private void testBaseTableNoInvalidateOnOperation(String operationSql) throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym varchar, price double, amount int, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
-
-            execute(
-                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
-            );
-            drainQueues();
-
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
-            drainQueues();
-
-            assertQueryNoLeakCheck(
-                    """
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """,
-                    "select view_name, base_table_name, view_status from materialized_views",
-                    null,
-                    false
-            );
-
-            execute(operationSql);
-            drainQueues();
-
-            assertQueryNoLeakCheck(
-                    """
-                            view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tvalid\t
-                            """,
                     "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
                     null,
                     false
@@ -7636,11 +7601,7 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private void updateViewIncrementally(String viewQuery, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally(viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", startTs, step, N, K);
-    }
-
-    private void updateViewIncrementally(String viewQuery, String columns, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally("x_view", viewQuery, columns, null, startTs, step, N, K);
+        updateViewIncrementally("x_view", viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", null, startTs, step, N, K);
     }
 
     private void updateViewIncrementally(String viewName, String viewQuery, String columns, @Nullable String index, long startTs, long step, int N, int K) throws SqlException {
