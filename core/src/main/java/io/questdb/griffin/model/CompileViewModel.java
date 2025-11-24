@@ -56,6 +56,7 @@ public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
 
     @Override
     public CharSequence getTableName() {
+        assert viewExpr != null;
         return viewExpr.token;
     }
 
@@ -74,6 +75,7 @@ public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
+        assert viewExpr != null;
         sink.putAscii("compile view ");
         sink.put(viewExpr.token);
     }
