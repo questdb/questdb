@@ -66,6 +66,31 @@ public class SqlValidationTest extends AbstractCairoTest {
                                 "alter table xyz rename column a to b"
                         );
 
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"ALTER TABLE\"}",
+                                "alter table abc resume wal"
+                        );
+
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"ALTER TABLE\"}",
+                                "alter table abc suspend wal"
+                        );
+
+
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"ALTER TABLE\"}",
+                                "alter table abc set type wal"
+                        );
+
+                        testHttpClient.assertGet(
+                                "/api/v1/sql/validate",
+                                "{\"queryType\":\"VACUUM\"}",
+                                "vacuum table abc"
+                        );
+
                         // cancel query should not error out, it doesn't cancel anything actually
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",

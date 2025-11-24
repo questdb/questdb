@@ -1667,6 +1667,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        if (executionContext.isValidationOnly()) {
+            compiledQuery.ofAlter(null);
+            return;
+        }
+
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null || (!isTableKeyword(tok) && !isMaterializedKeyword(tok))) {
             compileAlterExt(executionContext, tok);
@@ -3362,6 +3367,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         boolean partitionsKeyword = isPartitionsKeyword(tok);
         if (partitionsKeyword || isTableKeyword(tok)) {
             tok = expectToken(lexer, "table name");
+            if (executionContext.isValidationOnly()) {
+                compiledQuery.ofVacuum();
+                return;
+            }
             assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition());
             int tableNamePos = lexer.lastTokenPosition();
