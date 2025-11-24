@@ -476,7 +476,7 @@ public final class ColumnType {
                 || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can widen to SHORT
                 || (fromTag == TIMESTAMP && toTag == LONG)  // Temporal to numeric
                 || (fromTag == DATE && toTag == LONG)  // Temporal to numeric
-                || (fromTag == STRING && (toTag >= BYTE && toTag <= DOUBLE && toTag != DATE && toTag != TIMESTAMP));  // String parsing to numeric (excluding temporal)
+                || ((fromTag == STRING || fromTag == VARCHAR) && (toTag >= BYTE && toTag <= DOUBLE && toTag != DATE && toTag != TIMESTAMP));  // String-ish parsing to numeric (excluding temporal)
     }
 
     /**

@@ -28,11 +28,15 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.constants.*;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.Set;
 
 public class ColumnTypeTest {
     public short getExpectedTag(int precision) {
@@ -136,48 +140,41 @@ public class ColumnTypeTest {
     }
 
     @Test
-    public void testIsDecimalInvalid() {
-        Assert.assertFalse(ColumnType.isDecimal(ColumnType.BOOLEAN));
-        Assert.assertFalse(ColumnType.isDecimal(ColumnType.DOUBLE));
-        Assert.assertFalse(ColumnType.isDecimal(ColumnType.VARCHAR));
-        Assert.assertFalse(ColumnType.isDecimal(ColumnType.INTERVAL));
-        Assert.assertFalse(ColumnType.isDecimal(ColumnType.GEOHASH));
-    }
-
-    @Test
     public void testIsBuiltInWideningCastContract() {
         // Contract: if isBuiltInWideningCast(from, to) returns true,
         // then calling the corresponding getter on a Function of type 'from'
         // to retrieve value as type 'to' must NOT throw UnsupportedOperationException
 
-        final short[] types = {
-                ColumnType.BOOLEAN,
-                ColumnType.BYTE,
-                ColumnType.SHORT,
-                ColumnType.CHAR,
-                ColumnType.INT,
-                ColumnType.LONG,
-                ColumnType.DATE,
-                ColumnType.TIMESTAMP,
-                ColumnType.FLOAT,
-                ColumnType.DOUBLE,
-                ColumnType.STRING,
-                ColumnType.NULL
-        };
+        Set<Short> unsupportedTypes = Set.of(
+                ColumnType.UNDEFINED,
+                ColumnType.VAR_ARG, // special marker, not really a type
+                ColumnType.RECORD,
+                ColumnType.CURSOR,
+                ColumnType.REGCLASS,
+                ColumnType.REGPROCEDURE,
+                ColumnType.ARRAY_STRING,
+                ColumnType.PARAMETER
+        );
+
+        short allTypesLowerBoundInc = ColumnType.UNDEFINED + 1;
+        short allTypesUpperBoundEx = ColumnType.NULL;
 
         int violations = 0;
         int unexpectedlySupported = 0;
         StringBuilder violationDetails = new StringBuilder();
         StringBuilder unexpectedlySupportedDetails = new StringBuilder();
 
-        for (short fromType : types) {
-            for (short toType : types) {
+        for (short fromType = allTypesLowerBoundInc; fromType < allTypesUpperBoundEx; fromType++) {
+            if (unsupportedTypes.contains(fromType)) {
+                continue;
+            }
+            for (short toType = allTypesLowerBoundInc; toType < allTypesUpperBoundEx; toType++) {
+                if (unsupportedTypes.contains(toType)) {
+                    continue;
+                }
+
                 boolean isBuiltInWidening = ColumnType.isBuiltInWideningCast(fromType, toType);
                 Function testFunc = createTestFunction(fromType);
-
-                if (testFunc == null) {
-                    continue; // Skip types we can't test
-                }
 
                 boolean throwsUnsupported = false;
                 String exceptionMessage = null;
@@ -230,27 +227,13 @@ public class ColumnTypeTest {
         }
     }
 
-    private Function createTestFunction(short type) {
-        return switch (type) {
-            case ColumnType.BOOLEAN -> BooleanConstant.TRUE;
-            case ColumnType.BYTE -> new ByteConstant((byte) 42);
-            case ColumnType.SHORT -> new ShortConstant((short) 42);
-            case ColumnType.CHAR -> new CharConstant('A');
-            case ColumnType.INT -> new IntConstant(42);
-            case ColumnType.LONG -> new LongConstant(42L);
-            case ColumnType.DATE -> new DateConstant(42L);
-            case ColumnType.TIMESTAMP -> new TimestampConstant(42L, ColumnType.TIMESTAMP_MICRO);
-            case ColumnType.FLOAT -> new FloatConstant(42.0f);
-            case ColumnType.DOUBLE -> new DoubleConstant(42.0);
-            case ColumnType.STRING -> new StrConstant("42");
-            case ColumnType.NULL -> NullConstant.NULL;
-            default -> null;
-        };
-    }
-
     @Test
-    public void foo() {
-        Assert.assertFalse(ColumnType.isAssignableFrom(ColumnType.BOOLEAN, ColumnType.INT));
+    public void testIsDecimalInvalid() {
+        Assert.assertFalse(ColumnType.isDecimal(ColumnType.BOOLEAN));
+        Assert.assertFalse(ColumnType.isDecimal(ColumnType.DOUBLE));
+        Assert.assertFalse(ColumnType.isDecimal(ColumnType.VARCHAR));
+        Assert.assertFalse(ColumnType.isDecimal(ColumnType.INTERVAL));
+        Assert.assertFalse(ColumnType.isDecimal(ColumnType.GEOHASH));
     }
 
     private void callGetterForType(Function func, short type) {
@@ -266,6 +249,66 @@ public class ColumnTypeTest {
             case ColumnType.FLOAT -> func.getFloat(null);
             case ColumnType.DOUBLE -> func.getDouble(null);
             case ColumnType.STRING -> func.getStrA(null);
+            case ColumnType.SYMBOL -> func.getSymbol(null);
+            case ColumnType.LONG256 -> func.getLong256A(null);
+            case ColumnType.GEOBYTE -> func.getGeoByte(null);
+            case ColumnType.GEOSHORT -> func.getGeoShort(null);
+            case ColumnType.GEOINT -> func.getGeoInt(null);
+            case ColumnType.GEOLONG -> func.getGeoLong(null);
+            case ColumnType.BINARY -> func.getBin(null);
+            case ColumnType.UUID, ColumnType.LONG128 -> func.getLong128Lo(null);
+            case ColumnType.GEOHASH -> func.getGeoLong(null);
+            case ColumnType.IPv4 -> func.getIPv4(null);
+            case ColumnType.VARCHAR -> func.getVarcharA(null);
+            case ColumnType.ARRAY -> func.getArray(null);
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL -> func.getDecimal8(null);
+            case ColumnType.DECIMAL16 -> func.getDecimal16(null);
+            case ColumnType.DECIMAL32 -> func.getDecimal32(null);
+            case ColumnType.DECIMAL64 -> func.getDecimal64(null);
+            case ColumnType.DECIMAL128 -> func.getDecimal128(null, new Decimal128());
+            case ColumnType.DECIMAL256 -> func.getDecimal256(null, new Decimal256());
+            case ColumnType.INTERVAL -> func.getInterval(null);
+            default ->
+                    throw new AssertionError("Unexpected type [type=" + ColumnType.nameOf(type) + ", id=" + type + ']');
         }
+    }
+
+    private Function createTestFunction(short type) {
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.BOOLEAN -> BooleanConstant.TRUE;
+            case ColumnType.BYTE -> new ByteConstant((byte) 42);
+            case ColumnType.SHORT -> new ShortConstant((short) 42);
+            case ColumnType.CHAR -> new CharConstant('A');
+            case ColumnType.INT -> new IntConstant(42);
+            case ColumnType.LONG -> new LongConstant(42L);
+            case ColumnType.DATE -> new DateConstant(42L);
+            case ColumnType.TIMESTAMP -> new TimestampConstant(42L, ColumnType.TIMESTAMP_MICRO);
+            case ColumnType.FLOAT -> new FloatConstant(42.0f);
+            case ColumnType.DOUBLE -> new DoubleConstant(42.0);
+            case ColumnType.STRING -> new StrConstant("42");
+            case ColumnType.NULL -> NullConstant.NULL;
+            case ColumnType.SYMBOL -> new SymbolConstant("sym", 0);
+            case ColumnType.LONG256 -> new Long256Constant(0, 0, 0, 0);
+            case ColumnType.GEOBYTE -> GeoByteConstant.NULL;
+            case ColumnType.GEOSHORT -> GeoShortConstant.NULL;
+            case ColumnType.GEOINT -> GeoIntConstant.NULL;
+            case ColumnType.GEOLONG -> GeoLongConstant.NULL;
+            case ColumnType.BINARY -> NullBinConstant.INSTANCE;
+            case ColumnType.UUID, ColumnType.LONG128 -> Long128Constant.NULL;
+            case ColumnType.GEOHASH -> GeoLongConstant.NULL;
+            case ColumnType.IPv4 -> IPv4Constant.NULL;
+            case ColumnType.VARCHAR -> new VarcharConstant("42");
+            case ColumnType.ARRAY -> new NullArrayConstant(ColumnType.DOUBLE);
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL ->
+                    new Decimal8Constant((byte) 0, ColumnType.getDecimalType(2, 0));
+            case ColumnType.DECIMAL16 -> new Decimal16Constant((short) 0, ColumnType.getDecimalType(4, 0));
+            case ColumnType.DECIMAL32 -> new Decimal32Constant(0, ColumnType.getDecimalType(8, 0));
+            case ColumnType.DECIMAL64 -> new Decimal64Constant(0, ColumnType.getDecimalType(16, 0));
+            case ColumnType.DECIMAL128 -> new Decimal128Constant(0, 0, ColumnType.getDecimalType(34, 0));
+            case ColumnType.DECIMAL256 -> new Decimal256Constant(0, 0, 0, 0, ColumnType.getDecimalType(76, 0));
+            case ColumnType.INTERVAL -> IntervalConstant.TIMESTAMP_MICRO_NULL;
+            default ->
+                    throw new AssertionError("Unexpected type [type=" + ColumnType.nameOf(type) + ", id=" + type + ']');
+        };
     }
 }
