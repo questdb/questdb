@@ -7521,7 +7521,6 @@ public class SampleByTest extends AbstractCairoTest {
                             2024-01-01T00:05:00.000000Z	12	12.0
                             2024-01-01T00:06:00.000000Z	12	12.0
                             2024-01-01T00:07:00.000000Z	13	13.0
-                            
                             """,
                     """
                               WITH imputed AS ( \s
