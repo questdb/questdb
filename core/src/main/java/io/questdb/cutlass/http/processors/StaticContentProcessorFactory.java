@@ -27,7 +27,7 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 
 public class StaticContentProcessorFactory implements HttpRequestHandlerFactory {
     private final HttpFullFatServerConfiguration httpConfiguration;
@@ -37,7 +37,7 @@ public class StaticContentProcessorFactory implements HttpRequestHandlerFactory 
     }
 
     @Override
-    public ObjList<String> getUrls() {
+    public ObjHashSet<String> getUrls() {
         return httpConfiguration.getContextPathDefault();
     }
 

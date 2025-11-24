@@ -30,6 +30,7 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DefaultDdlListener;
@@ -46,6 +47,8 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -59,12 +62,15 @@ import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.Response;
 import io.questdb.cutlass.text.CopyImportRequestJob;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
+import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -97,6 +103,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -738,6 +745,72 @@ public final class TestUtils {
             Os.sleep(nextSleepingTimeMillis);
             nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
         }
+    }
+
+    public static void assertException(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            CharSequence expectedMessage,
+            int expectedPosition,
+            MutableCharSink<?> sink
+    ) throws SqlException {
+        try {
+            assertException(
+                    engine,
+                    sqlExecutionContext,
+                    false,
+                    sql,
+                    sink
+            );
+            Assert.fail();
+        } catch (CairoException | SqlException e) {
+            assertContains(e.getMessage(), expectedMessage);
+            Assert.assertEquals(expectedPosition, e.getPosition());
+        }
+    }
+
+    public static void assertException(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            boolean fullFatJoins,
+            CharSequence sql,
+            MutableCharSink<?> sink
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(fullFatJoins);
+            CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
+            if (cq.getRecordCursorFactory() != null) {
+                try (
+                        RecordCursorFactory factory = cq.getRecordCursorFactory();
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    sink.clear();
+                    Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        // ignore the output, we're looking for an error
+                        println(record, factory.getMetadata(), sink);
+                        sink.clear();
+                    }
+                }
+            } else if (cq.getOperation() != null) {
+                try (
+                        Operation op = cq.getOperation();
+                        OperationFuture fut = op.execute(sqlExecutionContext, null)
+                ) {
+                    fut.await();
+                }
+            } else {
+                // make sure to close update/insert operation
+                try (
+                        UpdateOperation ignore = cq.getUpdateOperation();
+                        InsertOperation ignored = cq.popInsertOperation()
+                ) {
+                    CairoEngine.execute(compiler, sql, sqlExecutionContext, null);
+                }
+            }
+        }
+        Assert.fail("SQL statement should have failed");
     }
 
     public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
@@ -1510,6 +1583,7 @@ public final class TestUtils {
     }
 
     public static void execute(Connection conn, String sql, String... bindVars) throws SQLException {
+        //noinspection SqlSourceToSinkFlow
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {
             for (int i = 0; i < bindVars.length; i++) {
                 stmt.setString(i + 1, bindVars[i]);

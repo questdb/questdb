@@ -42,7 +42,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PlainSocketFactory;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
@@ -168,8 +168,10 @@ public class HttpServerTest extends AbstractTest {
             assert requestHandler != null;
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
-                public ObjList<String> getUrls() {
-                    return new ObjList<>("/service");
+                public ObjHashSet<String> getUrls() {
+                    return new ObjHashSet<>() {{
+                        add("/service");
+                    }};
                 }
 
                 @Override
