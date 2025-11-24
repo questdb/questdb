@@ -110,8 +110,12 @@ public class ActiveConnectionTracker {
                 return ilpActiveConnections;
             case PROCESSOR_EXPORT:
                 return exportActiveConnections;
-            default:
+            case PROCESSOR_JSON:
                 return jsonActiveConnections;
+            case PROCESSOR_OTHER:
+                throw new UnsupportedOperationException();
+            default:
+                throw new UnsupportedOperationException();
         }
     }
 
@@ -119,8 +123,10 @@ public class ActiveConnectionTracker {
         switch (processorName) {
             case PROCESSOR_ILP:
                 return metrics.lineMetrics().httpConnectionCountGauge();
-            default:
+            case PROCESSOR_JSON:
                 return metrics.jsonQueryMetrics().connectionCountGauge();
+            default:
+                throw new UnsupportedOperationException();
         }
     }
 }
