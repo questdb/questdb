@@ -955,7 +955,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     processorName = processor.getName();
                     incrementActiveConnections(getFd());
                     processor = checkConnectionLimit(processor);
-                    connectionCounted = true;
                 }
 
                 final long contentLength = headerParser.getContentLength();
