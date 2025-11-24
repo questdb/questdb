@@ -461,19 +461,17 @@ public final class ColumnType {
         final short fromTag = tagOf(fromType);
         final short toTag = tagOf(toType);
 
-        // Numeric widening chain: BYTE → SHORT → INT → LONG → FLOAT → DOUBLE
-        // Excludes DATE(7), TIMESTAMP(8) (temporal types), and CHAR(4) (special case)
-        boolean isNumericWidening = (fromTag >= BYTE && toTag >= BYTE && toTag <= DOUBLE
-                && fromTag < toTag
-                && fromTag != DATE && fromTag != TIMESTAMP && fromTag != CHAR
-                && toTag != DATE && toTag != TIMESTAMP && toTag != CHAR);
+        boolean isNumericWidening = (fromTag >= BYTE && toTag >= BYTE && toTag <= DOUBLE && fromTag < toTag)
+                && (fromTag != BYTE || (toTag != CHAR && toTag != DATE && toTag != TIMESTAMP)) // exception #1: cannot widen byte to char/temporal
+                && (fromTag != SHORT || (toTag != DATE && toTag != TIMESTAMP)) // exception #2: cannot widen short to temporal
+                && (fromTag != CHAR || (toTag != DATE && toTag != TIMESTAMP)); // exception #3: cannot widen char to temporal
 
         return isNumericWidening
                 || fromTag == NULL
-                || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can widen to SHORT
-                || (fromTag == TIMESTAMP && toTag == LONG)  // Temporal to numeric
-                || (fromTag == DATE && toTag == LONG)  // Temporal to numeric
-                || ((fromTag == STRING || fromTag == VARCHAR) && (toTag >= BYTE && toTag <= DOUBLE && toTag != DATE && toTag != TIMESTAMP));  // String-ish parsing to numeric (excluding temporal)
+                || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can converted to SHORT
+                || (fromTag == TIMESTAMP && toTag == LONG)  // Temporal to long
+                || (fromTag == DATE && toTag == LONG)  // Temporal to long
+                || ((fromTag == STRING || fromTag == VARCHAR) && (toTag >= BYTE && toTag <= DOUBLE));  // String-ish parsing to numeric
     }
 
     /**
