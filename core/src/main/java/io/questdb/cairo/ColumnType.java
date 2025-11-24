@@ -496,7 +496,8 @@ public final class ColumnType {
      * <p>
      * <strong>Warning:</strong> When this function returns true it does not imply that you can treat <code>fromType</code>
      * as if it was the <code>toType</code>. It merely says a conversion is possible, but it might require wrapping the
-     * <code>from</code> function with a casting function.
+     * <code>from</code> function with a casting function. If you fail to add a casting function where required, then
+     * you will get UnsupportedOperationException at runtime!
      *
      * @param fromType the source column type
      * @param toType   the target column type
