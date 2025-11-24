@@ -225,7 +225,7 @@ public class DirectLongHashSetTest {
             set.add(2);
             set.add(0);
 
-            io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
+            StringSink sink = new StringSink();
             set.toSink(sink);
             Assert.assertEquals("[-2,-1,0,1,2]", sink.toString());
         }

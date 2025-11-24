@@ -257,7 +257,7 @@ public class InTest extends AbstractCairoTest {
         assertQueryAndPlan(
                 "count\n889\n",
                 "Count\n" +
-                        "    Async Filter workers: 1\n" +
+                        "    Async JIT Filter workers: 1\n" +
                         "      filter: action in [-2,-1,0]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
@@ -271,7 +271,7 @@ public class InTest extends AbstractCairoTest {
         assertQueryAndPlan(
                 "count\n1000\n",
                 "Count\n" +
-                        "    Async Filter workers: 1\n" +
+                        "    Async JIT Filter workers: 1\n" +
                         "      filter: action in [null,-2,-1,0]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
@@ -290,7 +290,7 @@ public class InTest extends AbstractCairoTest {
         assertQueryAndPlan(
                 "count\n1000\n",
                 "Count\n" +
-                        "    Async Filter workers: 1\n" +
+                        "    Async JIT Filter workers: 1\n" +
                         "      filter: action in [null,-2,-1,0]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
