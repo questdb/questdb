@@ -279,7 +279,7 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence token
     ) {
         try {
-            toSink0(host, port, url, sql, sink, username, password, token, null, null);
+            toSink0(host, port, url, sql, sink, username, password, token, null, "200");
             TestUtils.assertContains(sink.asAsciiCharSequence(), expectedResponse);
         } finally {
             if (!keepConnection) {
@@ -291,13 +291,10 @@ public class TestHttpClient implements QuietCloseable {
     public void assertGetContains(
             CharSequence url,
             CharSequence expectedResponse,
-            @Nullable CharSequenceObjHashMap<String> queryParams,
-            @Nullable CharSequence username,
-            @Nullable CharSequence password,
-            int port
+            @Nullable CharSequenceObjHashMap<String> queryParams
     ) {
         try {
-            HttpClient.Request req = httpClient.newRequest("localhost", port);
+            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
             req.GET().url(url);
 
             if (queryParams != null) {
@@ -307,7 +304,7 @@ public class TestHttpClient implements QuietCloseable {
                 }
             }
 
-            reqToSink(req, sink, username, password, null, null);
+            reqToSink(req, sink, null, null, null, null);
             TestUtils.assertContains(sink.toString(), expectedResponse);
         } finally {
             if (!keepConnection) {
@@ -516,7 +513,7 @@ public class TestHttpClient implements QuietCloseable {
         return statusCode;
     }
 
-    protected String reqToSinkUtf8Params(
+    protected void reqToSinkUtf8Params(
             HttpClient.Request req,
             MutableUtf8Sink sink,
             @Nullable CharSequence username,
@@ -531,7 +528,7 @@ public class TestHttpClient implements QuietCloseable {
             }
         }
 
-        return reqToSink0(req, sink, username, password, token);
+        reqToSink0(req, sink, username, password, token);
     }
 
     protected void toSink0(
