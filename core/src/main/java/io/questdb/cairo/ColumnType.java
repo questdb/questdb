@@ -443,22 +443,46 @@ public final class ColumnType {
         return columnType == ColumnType.BOOLEAN;
     }
 
+    /**
+     * Checks if a type conversion can be performed using built-in Function getters without a cast wrapper.
+     * <p>
+     * This method returns true when the Function base class for {@code fromType} already implements
+     * the getter method for {@code toType}, eliminating the need for a cast wrapper function.
+     * </p>
+     * <p>
+     * <b>Important:</b> This method is intentionally conservative. Some Function base classes implement
+     * additional getters beyond standard widening (e.g., BooleanFunction has getInt(), CharFunction has
+     * getByte()), but this method returns false for such conversions. These conversions either:
+     * <ul>
+     *   <li>May lose precision (e.g., CHAR → BYTE can overflow)</li>
+     *   <li>Cross type families (e.g., BOOLEAN → INT, DATE ↔ TIMESTAMP)</li>
+     *   <li>Should use explicit cast wrappers for clarity (e.g., STRING → TIMESTAMP)</li>
+     * </ul>
+     * </p>
+     *
+     * @param fromType the source column type
+     * @param toType   the target column type
+     * @return true if conversion can use built-in getter without a wrapper, false otherwise
+     * @see #isToSameOrWider(int, int) for safe conversions that may require a cast wrapper
+     * @see #isNarrowingCast(int, int) for lossy conversions requiring explicit cast
+     */
     public static boolean isBuiltInWideningCast(int fromType, int toType) {
-        // This method returns true when a cast is not needed from type to type
-        // because of the way typed functions are implemented.
-        // For example IntFunction has getDouble() method implemented and does not need
-        // additional wrap function to CAST to double.
-        // This is usually case for widening conversions.
-        fromType = tagOf(fromType);
-        toType = tagOf(toType);
-        return (fromType >= BYTE && toType >= BYTE && toType <= DOUBLE && fromType < toType) || fromType == NULL
-                // char can be short and short can be char for symmetry
-                || (fromType == CHAR && toType == SHORT)
-                // Same with bytes and booleans
-                || (fromType == BYTE && toType == BOOLEAN)
-                || (fromType == TIMESTAMP && toType == LONG)
-                || (fromType == DATE && toType == LONG)
-                || (fromType == STRING && (toType >= BYTE && toType <= DOUBLE));
+        final short fromTag = tagOf(fromType);
+        final short toTag = tagOf(toType);
+
+        // Numeric widening chain: BYTE → SHORT → INT → LONG → FLOAT → DOUBLE
+        // Excludes DATE(7), TIMESTAMP(8) (temporal types), and CHAR(4) (special case)
+        boolean isNumericWidening = (fromTag >= BYTE && toTag >= BYTE && toTag <= DOUBLE
+                && fromTag < toTag
+                && fromTag != DATE && fromTag != TIMESTAMP && fromTag != CHAR
+                && toTag != DATE && toTag != TIMESTAMP && toTag != CHAR);
+
+        return isNumericWidening
+                || fromTag == NULL
+                || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can widen to SHORT
+                || (fromTag == TIMESTAMP && toTag == LONG)  // Temporal to numeric
+                || (fromTag == DATE && toTag == LONG)  // Temporal to numeric
+                || (fromTag == STRING && (toTag >= BYTE && toTag <= DOUBLE && toTag != DATE && toTag != TIMESTAMP));  // String parsing to numeric (excluding temporal)
     }
 
     /**

@@ -25,6 +25,9 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.std.Decimals;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
@@ -139,5 +142,130 @@ public class ColumnTypeTest {
         Assert.assertFalse(ColumnType.isDecimal(ColumnType.VARCHAR));
         Assert.assertFalse(ColumnType.isDecimal(ColumnType.INTERVAL));
         Assert.assertFalse(ColumnType.isDecimal(ColumnType.GEOHASH));
+    }
+
+    @Test
+    public void testIsBuiltInWideningCastContract() {
+        // Contract: if isBuiltInWideningCast(from, to) returns true,
+        // then calling the corresponding getter on a Function of type 'from'
+        // to retrieve value as type 'to' must NOT throw UnsupportedOperationException
+
+        final short[] types = {
+                ColumnType.BOOLEAN,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.CHAR,
+                ColumnType.INT,
+                ColumnType.LONG,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.STRING,
+                ColumnType.NULL
+        };
+
+        int violations = 0;
+        int unexpectedlySupported = 0;
+        StringBuilder violationDetails = new StringBuilder();
+        StringBuilder unexpectedlySupportedDetails = new StringBuilder();
+
+        for (short fromType : types) {
+            for (short toType : types) {
+                boolean isBuiltInWidening = ColumnType.isBuiltInWideningCast(fromType, toType);
+                Function testFunc = createTestFunction(fromType);
+
+                if (testFunc == null) {
+                    continue; // Skip types we can't test
+                }
+
+                boolean throwsUnsupported = false;
+                String exceptionMessage = null;
+
+                try {
+                    callGetterForType(testFunc, toType);
+                } catch (ImplicitCastException e) {
+                    // ImplicitCastException means the conversion is supported but the value failed
+                    // This is acceptable - types are compatible, just this specific value can't convert
+                    // Example: CHAR 'A' -> BYTE throws ImplicitCastException, but CHAR -> BYTE is supported
+                } catch (UnsupportedOperationException e) {
+                    // UnsupportedOperationException means the types are fundamentally incompatible
+                    throwsUnsupported = true;
+                    exceptionMessage = e.getMessage();
+                }
+
+                // Check contract violation: isBuiltInWidening claims true but getter throws
+                if (isBuiltInWidening && throwsUnsupported) {
+                    violations++;
+                    violationDetails.append(String.format(
+                            "\n  VIOLATION: isBuiltInWideningCast(%s, %s) = true, but getter throws UnsupportedOperationException: %s",
+                            ColumnType.nameOf(fromType),
+                            ColumnType.nameOf(toType),
+                            exceptionMessage
+                    ));
+                }
+
+                // Check inverse: getter works but isBuiltInWidening returns false
+                // This is informational - might indicate missing optimization or intentional design
+                if (!isBuiltInWidening && !throwsUnsupported && fromType != toType) {
+                    unexpectedlySupported++;
+                    unexpectedlySupportedDetails.append(String.format(
+                            "\n  INFO: isBuiltInWideningCast(%s, %s) = false, but getter works without UnsupportedOperationException",
+                            ColumnType.nameOf(fromType),
+                            ColumnType.nameOf(toType)
+                    ));
+                }
+            }
+        }
+
+        if (violations > 0) {
+            Assert.fail("Found " + violations + " contract violations:" + violationDetails);
+        }
+
+        // Print informational findings
+        if (unexpectedlySupported > 0) {
+            System.out.println("\n=== Informational: Getters that work but aren't marked as isBuiltInWideningCast ===");
+            System.out.println("Found " + unexpectedlySupported + " cases:" + unexpectedlySupportedDetails);
+            System.out.println("\nThese conversions work but may require cast wrappers or are intentionally not optimized.");
+        }
+    }
+
+    private Function createTestFunction(short type) {
+        return switch (type) {
+            case ColumnType.BOOLEAN -> BooleanConstant.TRUE;
+            case ColumnType.BYTE -> new ByteConstant((byte) 42);
+            case ColumnType.SHORT -> new ShortConstant((short) 42);
+            case ColumnType.CHAR -> new CharConstant('A');
+            case ColumnType.INT -> new IntConstant(42);
+            case ColumnType.LONG -> new LongConstant(42L);
+            case ColumnType.DATE -> new DateConstant(42L);
+            case ColumnType.TIMESTAMP -> new TimestampConstant(42L, ColumnType.TIMESTAMP_MICRO);
+            case ColumnType.FLOAT -> new FloatConstant(42.0f);
+            case ColumnType.DOUBLE -> new DoubleConstant(42.0);
+            case ColumnType.STRING -> new StrConstant("42");
+            case ColumnType.NULL -> NullConstant.NULL;
+            default -> null;
+        };
+    }
+
+    @Test
+    public void foo() {
+        Assert.assertFalse(ColumnType.isAssignableFrom(ColumnType.BOOLEAN, ColumnType.INT));
+    }
+
+    private void callGetterForType(Function func, short type) {
+        switch (type) {
+            case ColumnType.BOOLEAN -> func.getBool(null);
+            case ColumnType.BYTE -> func.getByte(null);
+            case ColumnType.SHORT -> func.getShort(null);
+            case ColumnType.CHAR -> func.getChar(null);
+            case ColumnType.INT -> func.getInt(null);
+            case ColumnType.LONG -> func.getLong(null);
+            case ColumnType.DATE -> func.getDate(null);
+            case ColumnType.TIMESTAMP -> func.getTimestamp(null);
+            case ColumnType.FLOAT -> func.getFloat(null);
+            case ColumnType.DOUBLE -> func.getDouble(null);
+            case ColumnType.STRING -> func.getStrA(null);
+        }
     }
 }
