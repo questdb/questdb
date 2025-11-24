@@ -1318,6 +1318,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isValidationOnly() {
+            return sqlExecutionContext.isValidationOnly();
+        }
+
+        @Override
         public boolean isWalApplication() {
             return sqlExecutionContext.isWalApplication();
         }

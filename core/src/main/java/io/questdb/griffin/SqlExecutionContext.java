@@ -216,6 +216,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isTimestampRequired();
 
+    boolean isValidationOnly();
+
     default boolean isUninterruptible() {
         return false;
     }

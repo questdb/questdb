@@ -1667,6 +1667,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        if (executionContext.isValidationOnly()) {
+            compiledQuery.ofAlter(null);
+            return;
+        }
+
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null || (!isTableKeyword(tok) && !isMaterializedKeyword(tok))) {
             compileAlterExt(executionContext, tok);
@@ -2260,8 +2265,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
             }
             try {
-                if (!executionContext.getCairoEngine().getQueryRegistry().cancel(queryId, executionContext)) {
-                    throw SqlException.$(position, "query to cancel not found in registry [id=").put(queryId).put(']');
+                if (!executionContext.isValidationOnly()) {
+                    if (!executionContext.getCairoEngine().getQueryRegistry().cancel(queryId, executionContext)) {
+                        throw SqlException.$(position, "query to cancel not found in registry [id=").put(queryId).put(']');
+                    }
                 }
             } catch (CairoException e) {
                 throw SqlException.$(position, e.getFlyweightMessage());
@@ -2278,10 +2285,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok = expectToken(lexer, "'create' or 'release'");
 
         if (isCreateKeyword(tok)) {
-            engine.checkpointCreate(executionContext);
+            if (!executionContext.isValidationOnly()) {
+                engine.checkpointCreate(executionContext);
+            }
             compiledQuery.ofCheckpointCreate();
         } else if (Chars.equalsLowerCaseAscii(tok, "release")) {
-            engine.checkpointRelease();
+            if (!executionContext.isValidationOnly()) {
+                engine.checkpointRelease();
+            }
             compiledQuery.ofCheckpointRelease();
         } else {
             throw SqlException.position(lexer.lastTokenPosition()).put("'create' or 'release' expected");
@@ -2876,10 +2887,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
 
         if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
-            engine.snapshotCreate(executionContext);
+            if (!executionContext.isValidationOnly()) {
+                engine.snapshotCreate(executionContext);
+            }
             compiledQuery.ofCheckpointCreate();
         } else if (Chars.equalsLowerCaseAscii(tok, "complete")) {
-            engine.checkpointRelease();
+            if (!executionContext.isValidationOnly()) {
+                engine.checkpointRelease();
+            }
             compiledQuery.ofCheckpointRelease();
         } else {
             throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
@@ -3004,20 +3019,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to refresh materialized view");
         }
 
-        executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
+        if (!executionContext.isValidationOnly()) {
+            executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
 
-        final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
-        if (fullRefresh) {
-            matViewStateStore.enqueueFullRefresh(matViewToken);
-        } else if (from != Numbers.LONG_NULL) {
-            matViewStateStore.enqueueRangeRefresh(matViewToken, from, to);
-        } else {
-            matViewStateStore.enqueueIncrementalRefresh(matViewToken);
+            final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
+            if (fullRefresh) {
+                matViewStateStore.enqueueFullRefresh(matViewToken);
+            } else if (from != Numbers.LONG_NULL) {
+                matViewStateStore.enqueueRangeRefresh(matViewToken, from, to);
+            } else {
+                matViewStateStore.enqueueIncrementalRefresh(matViewToken);
+            }
         }
         compiledQuery.ofRefreshMatView();
     }
 
     private void compileReindex(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+
+        if (executionContext.isValidationOnly()) {
+            compiledQuery.ofRepair();
+            return;
+        }
+
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null || !isTableKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "TABLE expected");
@@ -3096,6 +3119,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileTruncate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+
+        if (executionContext.isValidationOnly()) {
+            compiledQuery.ofTruncate();
+            return;
+        }
+
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
 
@@ -3265,19 +3294,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 case ExecutionModel.RENAME_TABLE:
-                    sqlId = queryRegistry.register(sqlText, executionContext);
-                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
-                    checkMatViewModification(executionModel);
-                    final RenameTableModel rtm = (RenameTableModel) executionModel;
-                    engine.rename(
-                            executionContext.getSecurityContext(),
-                            path,
-                            mem,
-                            unquote(rtm.getFrom().token),
-                            renamePath,
-                            unquote(rtm.getTo().token)
-                    );
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    if (!executionContext.isValidationOnly()) {
+                        sqlId = queryRegistry.register(sqlText, executionContext);
+                        QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                        checkMatViewModification(executionModel);
+                        final RenameTableModel rtm = (RenameTableModel) executionModel;
+                        engine.rename(
+                                executionContext.getSecurityContext(),
+                                path,
+                                mem,
+                                unquote(rtm.getFrom().token),
+                                renamePath,
+                                unquote(rtm.getTo().token)
+                        );
+                        QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    }
                     compiledQuery.ofRenameTable();
                     break;
                 case ExecutionModel.UPDATE:
@@ -3336,6 +3367,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         boolean partitionsKeyword = isPartitionsKeyword(tok);
         if (partitionsKeyword || isTableKeyword(tok)) {
             tok = expectToken(lexer, "table name");
+            if (executionContext.isValidationOnly()) {
+                compiledQuery.ofVacuum();
+                return;
+            }
             assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition());
             int tableNamePos = lexer.lastTokenPosition();
@@ -4708,17 +4743,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CharSequence tok = SqlUtil.fetchNext(lexer);
             if (tok != null) {
                 if (isTableKeyword(tok)) {
-                    sqlTableBackup(executionContext);
+                    if (!executionContext.isValidationOnly()) {
+                        sqlTableBackup(executionContext);
+                    } else {
+                        compiledQuery.ofBackupTable();
+                    }
                     return;
                 }
                 if (isDatabaseKeyword(tok)) {
-                    sqlDatabaseBackup(executionContext);
+                    if (!executionContext.isValidationOnly()) {
+                        sqlDatabaseBackup(executionContext);
+                    } else {
+                        compiledQuery.ofBackupTable();
+                    }
                     return;
                 }
                 if (isMaterializedKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok != null && isViewKeyword(tok)) {
-                        sqlTableBackup(executionContext);
+                        if (!executionContext.isValidationOnly()) {
+                            sqlTableBackup(executionContext);
+                        } else {
+                            compiledQuery.ofBackupTable();
+                        }
                         return;
                     }
                 }

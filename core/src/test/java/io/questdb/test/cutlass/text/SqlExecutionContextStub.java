@@ -228,6 +228,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isValidationOnly() {
+        return false;
+    }
+
+    @Override
     public boolean isWalApplication() {
         return false;
     }

@@ -610,6 +610,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size"),
     CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled"),
     CAIRO_FILE_ASYNC_MUNMAP_ENABLED("cairo.file.async.munmap.enabled"),
+    CAIRO_RMDIR_MAX_DEPTH("cairo.rmdir.max.depth"),
     CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled");
 
     private static final Map<String, PropertyKey> nameMapping;

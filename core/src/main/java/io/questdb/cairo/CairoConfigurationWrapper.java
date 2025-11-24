@@ -747,6 +747,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getRmdirMaxDepth() {
+        return getDelegate().getRmdirMaxDepth();
+    }
+
+    @Override
     public int getRndFunctionMemoryMaxPages() {
         return getDelegate().getRndFunctionMemoryMaxPages();
     }

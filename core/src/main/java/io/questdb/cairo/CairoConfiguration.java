@@ -466,6 +466,8 @@ public interface CairoConfiguration {
 
     int getRepeatMigrationsFromVersion();
 
+    int getRmdirMaxDepth();
+
     int getRndFunctionMemoryMaxPages();
 
     int getRndFunctionMemoryPageSize();
