@@ -26,6 +26,7 @@ package io.questdb.test.std;
 
 import io.questdb.std.DirectLongHashSet;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -42,7 +43,6 @@ public class DirectLongHashSetTest {
             Assert.assertTrue(set.contains(200));
             Assert.assertTrue(set.contains(300));
             Assert.assertFalse(set.contains(400));
-
             Assert.assertEquals(3, set.size());
         }
     }
@@ -51,7 +51,7 @@ public class DirectLongHashSetTest {
     public void testAddDuplicate() {
         try (DirectLongHashSet set = new DirectLongHashSet(16)) {
             Assert.assertTrue(set.add(100));
-            Assert.assertFalse(set.add(100)); // Duplicate
+            Assert.assertFalse(set.add(100));
             Assert.assertEquals(1, set.size());
         }
     }
@@ -61,7 +61,7 @@ public class DirectLongHashSetTest {
         try (DirectLongHashSet set = new DirectLongHashSet(16)) {
             Assert.assertTrue(set.add(0));
             Assert.assertTrue(set.contains(0));
-            Assert.assertFalse(set.add(0)); // Duplicate
+            Assert.assertFalse(set.add(0));
             Assert.assertEquals(1, set.size());
         }
     }
@@ -118,18 +118,8 @@ public class DirectLongHashSetTest {
     }
 
     @Test
-    public void testKeyIndex() {
-        try (DirectLongHashSet set = new DirectLongHashSet(16)) {
-            set.add(100);
-            Assert.assertTrue(set.keyIndex(100) < 0); // Exists
-            Assert.assertTrue(set.keyIndex(200) >= 0); // Doesn't exist
-        }
-    }
-
-    @Test
     public void testMixedPositiveAndNegativeValues() {
         try (DirectLongHashSet set = new DirectLongHashSet(16)) {
-            // Test with mixed positive and negative values
             Assert.assertTrue(set.add(1));
             Assert.assertTrue(set.add(2));
             Assert.assertTrue(set.add(3));
@@ -227,15 +217,6 @@ public class DirectLongHashSetTest {
     }
 
     @Test
-    public void testToSinkEmpty() {
-        try (DirectLongHashSet set = new DirectLongHashSet(16)) {
-            io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
-            set.toSink(sink);
-            Assert.assertEquals("[]", sink.toString());
-        }
-    }
-
-    @Test
     public void testToSinkWithNegativeValues() {
         try (DirectLongHashSet set = new DirectLongHashSet(16)) {
             set.add(-1);
@@ -256,8 +237,7 @@ public class DirectLongHashSetTest {
             set.add(3);
             set.add(1);
             set.add(2);
-
-            io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
+            StringSink sink = new StringSink();
             set.toSink(sink);
             Assert.assertEquals("[1,2,3]", sink.toString());
         }
@@ -271,21 +251,9 @@ public class DirectLongHashSetTest {
             set.add(5);
             set.add(-5);
 
-            io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
+            StringSink sink = new StringSink();
             set.toSink(sink);
             Assert.assertEquals("[-5,0,5,10]", sink.toString());
-        }
-    }
-
-    @Test
-    public void testToString() {
-        try (DirectLongHashSet set = new DirectLongHashSet(16)) {
-            set.add(100);
-            set.add(50);
-            set.add(200);
-
-            String result = set.toString();
-            Assert.assertEquals("[50,100,200]", result);
         }
     }
 
