@@ -200,10 +200,6 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
-            table.setToParquetHoursOrMonths(TableUtils.getToParquetHoursOrMonths(metaMem));
-            table.setDropNativeHoursOrMonths(TableUtils.getDropNativeHoursOrMonths(metaMem));
-            table.setDropLocalHoursOrMonths(TableUtils.getDropLocalHoursOrMonths(metaMem));
-            table.setDropRemoteHoursOrMonths(TableUtils.getDropRemoteHoursOrMonths(metaMem));
             table.setSoftLinkFlag(isSoftLink);
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);

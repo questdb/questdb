@@ -98,7 +98,6 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    // todo: should this be changed to 2 ???
     public static final short META_FORMAT_MINOR_VERSION_LATEST = 1;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
@@ -114,12 +113,6 @@ public final class TableUtils {
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
-    public static final long META_OFFSET_TO_PARQUET_HOURS_OR_MONTHS = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
-    public static final long META_OFFSET_DROP_NATIVE_HOURS_OR_MONTHS = META_OFFSET_TO_PARQUET_HOURS_OR_MONTHS + 4; // INT
-    // todo: this could be merged with TTL
-    //  could be stored at the same place, and existing TTL settings would automatically migrate to this 
-    public static final long META_OFFSET_DROP_LOCAL_HOURS_OR_MONTHS = META_OFFSET_DROP_NATIVE_HOURS_OR_MONTHS + 4; // INT
-    public static final long META_OFFSET_DROP_REMOTE_HOURS_OR_MONTHS = META_OFFSET_DROP_LOCAL_HOURS_OR_MONTHS + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -2061,24 +2054,8 @@ public final class TableUtils {
         return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4);
     }
 
-    static int getDropLocalHoursOrMonths(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_DROP_LOCAL_HOURS_OR_MONTHS) : 0;
-    }
-
-    static int getDropNativeHoursOrMonths(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_DROP_NATIVE_HOURS_OR_MONTHS) : 0;
-    }
-
-    static int getDropRemoteHoursOrMonths(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_DROP_REMOTE_HOURS_OR_MONTHS) : 0;
-    }
-
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
-    }
-
-    static int getToParquetHoursOrMonths(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_TO_PARQUET_HOURS_OR_MONTHS) : 0;
     }
 
     static int getTtlHoursOrMonths(MemoryR metaMem) {
