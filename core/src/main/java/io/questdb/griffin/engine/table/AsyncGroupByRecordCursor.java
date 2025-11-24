@@ -42,7 +42,6 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
@@ -62,7 +61,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 class AsyncGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
-    private final ObjList<GroupByFunction> groupByFunctions;
     private final AtomicBooleanCircuitBreaker mergeCircuitBreaker; // used to signal cancellation to merge shard workers
     private final SOUnboundedCountDownLatch mergeDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
     private final AtomicInteger mergeStartedCounter = new AtomicInteger();
@@ -80,11 +78,9 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     public AsyncGroupByRecordCursor(
             CairoEngine engine,
-            ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             MessageBus messageBus
     ) {
-        this.groupByFunctions = groupByFunctions;
         this.recordFunctions = recordFunctions;
         this.messageBus = messageBus;
         recordA = new VirtualRecord(recordFunctions);
@@ -103,7 +99,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            Misc.clearObjList(groupByFunctions);
             mapCursor = Misc.free(mapCursor);
 
             if (frameSequence != null) {
@@ -310,7 +305,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             // How do we get to the end? If we consume our own queue there is chance we will be consuming
             // aggregation tasks not related to this execution (we work in concurrent environment).
             // To deal with that we need to check our latch.
-
             while (!mergeDoneLatch.done(queuedCount)) {
                 if (circuitBreaker.checkIfTripped()) {
                     mergeCircuitBreaker.cancel();
