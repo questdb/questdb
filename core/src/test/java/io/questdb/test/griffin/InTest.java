@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -239,6 +240,55 @@ public class InTest extends AbstractCairoTest {
                 "ts",
                 true,
                 false
+        );
+    }
+
+    @Test
+    public void testIntInWithNegativeValues() throws Exception {
+        execute("CREATE TABLE anomaly_log AS (" +
+                "SELECT " +
+                "  timestamp_sequence('2025-10-24', 3600000000L) ts, " +
+                "  rnd_symbol('S3', 'O1', 'O2') type, " +
+                "  rnd_int(1, 3, 0) risk, " +
+                "  rnd_int(-2, -1, 3) action " +
+                "FROM long_sequence(100)" +
+                ") TIMESTAMP(ts) PARTITION BY MONTH");
+        assertQuery(
+                "count\n93\n",
+                "SELECT count(*) FROM anomaly_log " +
+                        "WHERE ts BETWEEN '2025-10-24 00:00:00.0' AND '2025-11-24 23:59:59.999' " +
+                        "AND type IN ('S3', 'O1', 'O2') " +
+                        "AND risk IN (1, 2, 3) " +
+                        "AND action IN (-1, -2) ",
+                null,
+                false,
+                true
+        );
+        assertQuery(
+                "count\n100\n",
+                "SELECT count(*) FROM anomaly_log " +
+                        "WHERE ts BETWEEN '2025-10-24 00:00:00.0' AND '2025-11-24 23:59:59.999' " +
+                        "AND type IN ('S3', 'O1', 'O2') " +
+                        "AND risk IN (1, 2, 3) " +
+                        "AND action IN (-1, -2, null) ",
+                null,
+                false,
+                true
+        );
+
+        bindVariableService.setInt("a", -1);
+        bindVariableService.setInt("b", -2);
+        bindVariableService.setInt("c", Numbers.INT_NULL);
+        assertQuery(
+                "count\n100\n",
+                "SELECT count(*) FROM anomaly_log " +
+                        "WHERE ts BETWEEN '2025-10-24 00:00:00.0' AND '2025-11-24 23:59:59.999' " +
+                        "AND type IN ('S3', 'O1', 'O2') " +
+                        "AND risk IN (1, 2, 3) " +
+                        "AND action IN (:a, :b, :c) ",
+                null,
+                false,
+                true
         );
     }
 

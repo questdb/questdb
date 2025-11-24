@@ -115,7 +115,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                                     2)
                     );
                 default:
-                    LongHashSet inVals = new LongHashSet((int) ((argCount / LongHashSet.DEFAULT_LOAD_FACTOR)));
+                    LongHashSet inVals = new LongHashSet((int) (argCount / LongHashSet.DEFAULT_LOAD_FACTOR), LongHashSet.DEFAULT_LOAD_FACTOR, Long.MAX_VALUE);
                     parseToLong(args, argPositions, inVals);
                     return new InLongConstFunction(args.getQuick(0), inVals);
             }
@@ -214,7 +214,7 @@ public class InLongFunctionFactory implements FunctionFactory {
             // value functions also contain key function at 0 index.
             this.valueFunctions = valueFunctions;
             this.valueFunctionPositions = valueFunctionPositions;
-            this.inSet = new LongHashSet((int) ((valueFunctions.size() - 1) / LongHashSet.DEFAULT_LOAD_FACTOR));
+            this.inSet = new LongHashSet((int) ((valueFunctions.size() - 1) / LongHashSet.DEFAULT_LOAD_FACTOR), LongHashSet.DEFAULT_LOAD_FACTOR, Long.MAX_VALUE);
         }
 
         @Override
