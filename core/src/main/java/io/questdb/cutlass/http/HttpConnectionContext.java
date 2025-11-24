@@ -828,7 +828,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private void decrementActiveConnections(long fd) {
         if (processorName != null && connectionCounted) {
             long activeConnections = activeConnectionTracker.dec(processorName);
-            LOG.info().$("decrementing active connections [name=").$(processorName)
+            LOG.debug().$("decrementing active connections [name=").$(processorName)
                     .$(", activeConnections=").$(activeConnections)
                     .$(", fd=").$(fd)
                     .I$();
@@ -952,6 +952,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
 
                 if (!connectionCounted && !processor.ignoreConnectionLimitCheck()) {
+                    processorName = processor.getName();
                     incrementActiveConnections(getFd());
                     processor = checkConnectionLimit(processor);
                     connectionCounted = true;
@@ -1052,11 +1053,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private void incrementActiveConnections(long fd) {
         if (processorName != null && !connectionCounted) {
             long activeConnections = activeConnectionTracker.inc(processorName);
-            LOG.info().$("incrementing active connections [name=").$(processorName)
+            LOG.debug().$("incrementing active connections [name=").$(processorName)
                     .$(", activeConnections=").$(activeConnections)
                     .$(", fd=").$(fd)
                     .I$();
-            processorName = null;
         }
         connectionCounted = true;
     }
