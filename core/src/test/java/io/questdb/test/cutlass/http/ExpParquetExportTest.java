@@ -944,7 +944,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     assertEventually(() ->
                             Assert.assertEquals(
                                     0,
-                                    serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_EXPORT
+                                    serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_EXPORT_HTTP
                                     )
                             )
                     );
@@ -961,7 +961,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                     // Http server may take time to close the connection, so we need to wait
                                     // until the active connection count is less than the limit
                                     connectionExpCount.incrementAndGet();
-                                    while (serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_EXPORT) + connectionExpCount.get() > requestExpLimit) {
+                                    while (serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_EXPORT_HTTP) + connectionExpCount.get() > requestExpLimit) {
                                         Os.pause();
                                     }
 

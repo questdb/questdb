@@ -455,7 +455,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         final int connectionLimit = activeConnectionTracker.getLimit(processorName);
         if (connectionLimit != ActiveConnectionTracker.UNLIMITED) {
             assert processorName != null;
-            final long numOfConnections = activeConnectionTracker.incrementActiveConnection(processorName);
+            final long numOfConnections = activeConnectionTracker.get(processorName);
             if (numOfConnections > connectionLimit) {
                 rejectProcessor.getMessageSink()
                         .put("exceeded connection limit [name=").put(processorName)
@@ -463,8 +463,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         .put(", connectionLimit=").put(connectionLimit)
                         .put(", fd=").put(getFd())
                         .put(']');
-                activeConnectionTracker.decrementActiveConnection(processorName);
-                processorName = null;
+                decrementActiveConnections(getFd());
                 forceDisconnectOnComplete = true;
                 return rejectProcessor.withShutdownWrite().reject(HTTP_TOO_MANY_REQUESTS);
             }
@@ -475,7 +474,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         .put(", connectionLimit=").put(connectionLimit)
                         .put(", fd=").put(getFd())
                         .put(']');
-                activeConnectionTracker.decrementActiveConnection(processorName);
+                activeConnectionTracker.dec(processorName);
                 processorName = null;
                 forceDisconnectOnComplete = true;
                 return rejectProcessor.withShutdownWrite().reject(HTTP_TOO_MANY_REQUESTS);
@@ -827,9 +826,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private void decrementActiveConnections(long fd) {
-        if (processorName != null) {
-            long activeConnections = activeConnectionTracker.decrementActiveConnection(processorName);
-            LOG.debug().$("decrementing active connections [name=").$(processorName)
+        if (processorName != null && connectionCounted) {
+            long activeConnections = activeConnectionTracker.dec(processorName);
+            LOG.info().$("decrementing active connections [name=").$(processorName)
                     .$(", activeConnections=").$(activeConnections)
                     .$(", fd=").$(fd)
                     .I$();
@@ -953,6 +952,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
 
                 if (!connectionCounted && !processor.ignoreConnectionLimitCheck()) {
+                    incrementActiveConnections(getFd());
                     processor = checkConnectionLimit(processor);
                     connectionCounted = true;
                 }
@@ -1047,6 +1047,18 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             LOG.error().$("spurious write request [fd=").$(getFd()).I$();
         }
         return false;
+    }
+
+    private void incrementActiveConnections(long fd) {
+        if (processorName != null && !connectionCounted) {
+            long activeConnections = activeConnectionTracker.inc(processorName);
+            LOG.info().$("incrementing active connections [name=").$(processorName)
+                    .$(", activeConnections=").$(activeConnections)
+                    .$(", fd=").$(fd)
+                    .I$();
+            processorName = null;
+        }
+        connectionCounted = true;
     }
 
     private boolean keepConnectionAlive() {
