@@ -27,16 +27,20 @@ package io.questdb.cutlass.http;
 import io.questdb.FactoryProvider;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 
 public interface HttpServerConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
 
-    default ObjList<String> getContextPathMetrics() {
-        return new ObjList<>("/metrics");
+    default ObjHashSet<String> getContextPathMetrics() {
+        return new ObjHashSet<>() {{
+            add("/metrics");
+        }};
     }
 
-    default ObjList<String> getContextPathStatus() {
-        return new ObjList<>(getHttpContextConfiguration().getMetrics().isEnabled() ? "/status" : "*");
+    default ObjHashSet<String> getContextPathStatus() {
+        return new ObjHashSet<>() {{
+            add(getHttpContextConfiguration().getMetrics().isEnabled() ? "/status" : "*");
+        }};
     }
 
     FactoryProvider getFactoryProvider();

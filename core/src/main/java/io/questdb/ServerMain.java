@@ -49,7 +49,6 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.Clock;
-import io.questdb.std.filewatch.FileWatcher;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -69,7 +68,6 @@ public class ServerMain implements Closeable {
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
     protected PGServer pgServer;
-    private FileWatcher fileWatcher;
     private HttpServer httpServer;
     private Thread hydrateMetadataThread;
     private boolean initialized;
@@ -180,7 +178,6 @@ public class ServerMain implements Closeable {
             engine.signalClose();
             if (initialized) {
                 workerPoolManager.halt();
-                fileWatcher = Misc.free(fileWatcher);
             }
             freeOnExit.close();
         }

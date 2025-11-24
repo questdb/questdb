@@ -47,6 +47,7 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.std.Chars;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -181,8 +182,10 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                             if (server != null) {
                                 server.bind(new HttpRequestHandlerFactory() {
                                     @Override
-                                    public ObjList<String> getUrls() {
-                                        return new ObjList<>(ILP_TEST_PATH);
+                                    public ObjHashSet<String> getUrls() {
+                                        return new ObjHashSet<>() {{
+                                            add(ILP_TEST_PATH);
+                                        }};
                                     }
 
                                     @Override
@@ -323,8 +326,10 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                             if (server != null) {
                                 server.bind(new HttpRequestHandlerFactory() {
                                     @Override
-                                    public ObjList<String> getUrls() {
-                                        return new ObjList<>(EXEC_TEST_URI);
+                                    public ObjHashSet<String> getUrls() {
+                                        return new ObjHashSet<>() {{
+                                            add(EXEC_TEST_URI);
+                                        }};
                                     }
 
                                     @Override
