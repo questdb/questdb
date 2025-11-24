@@ -158,7 +158,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     }
 
     private static boolean isIndexArg(int argType) {
-        return ColumnType.isBuiltInWideningCast(argType, ColumnType.LONG);
+        return ColumnType.isSameOrBuiltInWideningCast(argType, ColumnType.LONG);
     }
 
     private static void validateIndexArgs(ObjList<Function> args, IntList argPositions) throws SqlException {

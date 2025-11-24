@@ -65,7 +65,7 @@ public class LeadDateFunctionFactory extends AbstractWindowFunctionFactory {
                 configuration,
                 sqlExecutionContext,
                 (defaultValue) -> {
-                    if (!ColumnType.isBuiltInWideningCast(defaultValue.getType(), ColumnType.DATE)) {
+                    if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), ColumnType.DATE)) {
                         throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to date");
                     }
                 },

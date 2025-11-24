@@ -79,9 +79,9 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
             if (
                     argCount > 2
-                            && ColumnType.isBuiltInWideningCast((countFunc = args.getQuick(0)).getType(), ColumnType.LONG)
-                            && ColumnType.isBuiltInWideningCast((seedLoFunc = args.getQuick(1)).getType(), ColumnType.LONG)
-                            && ColumnType.isBuiltInWideningCast((seedHiFunc = args.getQuick(2)).getType(), ColumnType.LONG)
+                            && ColumnType.isSameOrBuiltInWideningCast((countFunc = args.getQuick(0)).getType(), ColumnType.LONG)
+                            && ColumnType.isSameOrBuiltInWideningCast((seedLoFunc = args.getQuick(1)).getType(), ColumnType.LONG)
+                            && ColumnType.isSameOrBuiltInWideningCast((seedHiFunc = args.getQuick(2)).getType(), ColumnType.LONG)
             ) {
                 return new CursorFunction(
                         new SeedingLongSequenceCursorFactory(

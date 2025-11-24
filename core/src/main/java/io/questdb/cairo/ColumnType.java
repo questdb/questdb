@@ -573,6 +573,13 @@ public final class ColumnType {
         return nonPersistedTypes.excludes(columnType);
     }
 
+    public static boolean isSameOrBuiltInWideningCast(int fromType, int toType) {
+        if (fromType == toType) {
+            return true;
+        }
+        return isBuiltInWideningCast(fromType, toType);
+    }
+
     public static boolean isString(int columnType) {
         return columnType == STRING;
     }
