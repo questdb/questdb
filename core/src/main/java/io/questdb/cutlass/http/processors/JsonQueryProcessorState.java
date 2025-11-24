@@ -643,7 +643,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         switch (ColumnType.tagOf(columnType)) {
             // list of explicitly supported types, to be keep in sync with doQueryRecord()
 
-            // we use a while-list since if we add a new type to QuestDB,
+            // we use a whitelist since if we add a new type to QuestDB,
             // the support has to be explicitly added to the JSON REST API
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
