@@ -3973,7 +3973,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void executeCreateView(CreateViewOperation createViewOp, SqlExecutionContext executionContext) throws SqlException {
         final long sqlId = queryRegistry.register(createViewOp.getSqlText(), executionContext);
-        final long beginNanos = configuration.getMicrosecondClock().getTicks();
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createViewOp.getSqlText(), executionContext, false);
         try {
             final int status = executionContext.getTableStatus(path, createViewOp.getTableName());
