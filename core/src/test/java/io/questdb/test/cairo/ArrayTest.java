@@ -146,7 +146,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SELECT arr1[1, 999_999_999_999] FROM tango",
                     15, "int overflow on array index [dim=2, index=999999999999]");
             assertExceptionNoLeakCheck("SELECT arr1[1, true] FROM tango",
-                    15, "invalid type for array access [type=1]");
+                    15, "invalid type for array access [type=BOOLEAN]");
             assertExceptionNoLeakCheck("SELECT arr1[1, 1, 1] FROM tango",
                     15, "too many array access arguments [nDims=2, nArgs=3]");
             assertExceptionNoLeakCheck("SELECT arr1[0] FROM tango",
