@@ -786,11 +786,13 @@ public final class ColumnType {
     private static boolean isImplicitParsingCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
         return switch (fromType) {
-            case CHAR -> toTag == GEOBYTE && getGeoHashBits(toType) < 6;
+            case CHAR -> (toTag == GEOBYTE && getGeoHashBits(toType) < 6) || (toTag == DATE || toTag == TIMESTAMP);
             case STRING, VARCHAR -> switch (toTag) {
                 case GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256 -> true;
                 default -> false;
             };
+            case BYTE -> toTag == CHAR || toTag == DATE || toTag == TIMESTAMP;
+            case SHORT -> toTag == DATE || toTag == TIMESTAMP;
             case SYMBOL -> toTag == TIMESTAMP;
             default -> false;
         };
