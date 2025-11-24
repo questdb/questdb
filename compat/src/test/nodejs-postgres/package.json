@@ -8,7 +8,7 @@
   },
   "private": true,
   "dependencies": {
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^4.1.1",
     "postgres": "^3.4.5"
   }
 }
