@@ -35,8 +35,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.DirectLongHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.LongHashSet;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -115,9 +117,14 @@ public class InLongFunctionFactory implements FunctionFactory {
                                     2)
                     );
                 default:
-                    LongHashSet inVals = new LongHashSet((int) (argCount / LongHashSet.DEFAULT_LOAD_FACTOR), LongHashSet.DEFAULT_LOAD_FACTOR, Long.MAX_VALUE);
-                    parseToLong(args, argPositions, inVals);
-                    return new InLongConstFunction(args.getQuick(0), inVals);
+                    DirectLongHashSet inVals = new DirectLongHashSet((int) (argCount / DirectLongHashSet.DEFAULT_LOAD_FACTOR), DirectLongHashSet.DEFAULT_LOAD_FACTOR, MemoryTag.NATIVE_FUNC_RSS);
+                    try {
+                        parseToLong(args, argPositions, inVals);
+                        return new InLongConstFunction(args.getQuick(0), inVals);
+                    } catch (Throwable e) {
+                        Misc.free(inVals);
+                        throw e;
+                    }
             }
         }
 
@@ -134,7 +141,7 @@ public class InLongFunctionFactory implements FunctionFactory {
     private static void parseToLong(
             ObjList<Function> args,
             IntList argPositions,
-            LongHashSet outLongSet
+            DirectLongHashSet outLongSet
     ) throws SqlException {
         for (int i = 1, n = args.size(); i < n; i++) {
             outLongSet.add(parseValue(argPositions, args.getQuick(i), i));
@@ -174,12 +181,18 @@ public class InLongFunctionFactory implements FunctionFactory {
     }
 
     private static class InLongConstFunction extends NegatableBooleanFunction implements UnaryFunction {
-        private final LongHashSet inSet;
+        private final DirectLongHashSet inSet;
         private final Function tsFunc;
 
-        public InLongConstFunction(Function tsFunc, LongHashSet inSet) {
+        public InLongConstFunction(Function tsFunc, DirectLongHashSet inSet) {
             this.tsFunc = tsFunc;
             this.inSet = inSet;
+        }
+
+        @Override
+        public void close() {
+            UnaryFunction.super.close();
+            Misc.free(inSet);
         }
 
         @Override
@@ -204,7 +217,7 @@ public class InLongFunctionFactory implements FunctionFactory {
     }
 
     private static class InLongRuntimeConstFunction extends NegatableBooleanFunction implements MultiArgFunction {
-        private final LongHashSet inSet;
+        private final DirectLongHashSet inSet;
         private final Function keyFunc;
         private final IntList valueFunctionPositions;
         private final ObjList<Function> valueFunctions;
@@ -214,12 +227,18 @@ public class InLongFunctionFactory implements FunctionFactory {
             // value functions also contain key function at 0 index.
             this.valueFunctions = valueFunctions;
             this.valueFunctionPositions = valueFunctionPositions;
-            this.inSet = new LongHashSet((int) ((valueFunctions.size() - 1) / LongHashSet.DEFAULT_LOAD_FACTOR), LongHashSet.DEFAULT_LOAD_FACTOR, Long.MAX_VALUE);
+            this.inSet = new DirectLongHashSet((int) ((valueFunctions.size() - 1) / DirectLongHashSet.DEFAULT_LOAD_FACTOR), DirectLongHashSet.DEFAULT_LOAD_FACTOR, MemoryTag.NATIVE_FUNC_RSS);
         }
 
         @Override
         public ObjList<Function> args() {
             return valueFunctions;
+        }
+
+        @Override
+        public void close() {
+            MultiArgFunction.super.close();
+            Misc.free(inSet);
         }
 
         @Override

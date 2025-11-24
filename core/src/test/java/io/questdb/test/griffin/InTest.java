@@ -244,33 +244,40 @@ public class InTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntInWithNegativeValues() throws Exception {
+    public void testIntInWithSentinelValues() throws Exception {
         execute("CREATE TABLE anomaly_log AS (" +
                 "SELECT " +
                 "  timestamp_sequence('2025-10-24', 3600000000L) ts, " +
                 "  rnd_symbol('S3', 'O1', 'O2') type, " +
                 "  rnd_int(1, 3, 0) risk, " +
-                "  rnd_int(-2, -1, 3) action " +
-                "FROM long_sequence(100)" +
+                "  rnd_int(-2, 0, 3) action " +
+                "FROM long_sequence(1000)" +
                 ") TIMESTAMP(ts) PARTITION BY MONTH");
-        assertQuery(
-                "count\n93\n",
+
+        assertQueryAndPlan(
+                "count\n889\n",
+                "Count\n" +
+                        "    Async Filter workers: 1\n" +
+                        "      filter: action in [-2,-1,0]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: anomaly_log\n",
                 "SELECT count(*) FROM anomaly_log " +
-                        "WHERE ts BETWEEN '2025-10-24 00:00:00.0' AND '2025-11-24 23:59:59.999' " +
-                        "AND type IN ('S3', 'O1', 'O2') " +
-                        "AND risk IN (1, 2, 3) " +
-                        "AND action IN (-1, -2) ",
+                        "where action IN (-2, 0, -1) ",
                 null,
                 false,
                 true
         );
-        assertQuery(
-                "count\n100\n",
+        assertQueryAndPlan(
+                "count\n1000\n",
+                "Count\n" +
+                        "    Async Filter workers: 1\n" +
+                        "      filter: action in [null,-2,-1,0]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: anomaly_log\n",
                 "SELECT count(*) FROM anomaly_log " +
-                        "WHERE ts BETWEEN '2025-10-24 00:00:00.0' AND '2025-11-24 23:59:59.999' " +
-                        "AND type IN ('S3', 'O1', 'O2') " +
-                        "AND risk IN (1, 2, 3) " +
-                        "AND action IN (-1, -2, null) ",
+                        "where action IN (null, -2, 0, -1) ",
                 null,
                 false,
                 true
@@ -278,14 +285,19 @@ public class InTest extends AbstractCairoTest {
 
         bindVariableService.setInt("a", -1);
         bindVariableService.setInt("b", -2);
-        bindVariableService.setInt("c", Numbers.INT_NULL);
-        assertQuery(
-                "count\n100\n",
+        bindVariableService.setInt("c", 0);
+        bindVariableService.setInt("d", Numbers.INT_NULL);
+        assertQueryAndPlan(
+                "count\n1000\n",
+                "Count\n" +
+                        "    Async Filter workers: 1\n" +
+                        "      filter: action in [null,-2,-1,0]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: anomaly_log\n",
                 "SELECT count(*) FROM anomaly_log " +
-                        "WHERE ts BETWEEN '2025-10-24 00:00:00.0' AND '2025-11-24 23:59:59.999' " +
-                        "AND type IN ('S3', 'O1', 'O2') " +
-                        "AND risk IN (1, 2, 3) " +
-                        "AND action IN (:a, :b, :c) ",
+                        "where action IN (:a, :b, :c, :d) ",
+
                 null,
                 false,
                 true
