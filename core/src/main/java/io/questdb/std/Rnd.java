@@ -447,6 +447,16 @@ public class Rnd {
         }
     }
 
+    public <T> void shuffle(T[] array) {
+        for (int i = 1, n = array.length; i < n; i++) {
+            int swapTarget = nextInt(i + 1);
+
+            T tmp = array[i];
+            array[i] = array[swapTarget];
+            array[swapTarget] = tmp;
+        }
+    }
+
     public void syncWith(Rnd other) {
         this.s0 = other.s0;
         this.s1 = other.s1;

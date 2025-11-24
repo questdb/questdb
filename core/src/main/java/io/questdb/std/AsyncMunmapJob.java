@@ -22,20 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.filewatch;
+package io.questdb.std;
 
-public interface LinuxAccessorFacade {
-    int inotifyAddWatch(long fd, long pathPtr, int flags);
+import io.questdb.mp.Job;
+import org.jetbrains.annotations.NotNull;
 
-    int inotifyInit();
+public final class AsyncMunmapJob implements Job {
 
-    short inotifyRmWatch(long fd, int wd);
+    private final MmapCache cache;
 
-    long pipe();
+    public AsyncMunmapJob() {
+        this.cache = Files.getMmapCache();
+    }
 
-    int readEvent(long fd, long buf, int bufSize);
-
-    int readPipe(long fd);
-
-    int writePipe(long fd);
+    @Override
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+        return cache.asyncMunmap();
+    }
 }

@@ -28,9 +28,11 @@ import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -199,5 +201,32 @@ public class LowerCaseUtf8SequenceObjHashMapTest {
             Utf8String key = new Utf8String(sb.toString());
             Assert.assertEquals(i, (int) map.get(key));
         }
+    }
+
+    @Test
+    public void testPutImmutableRetainsKeyIdentity() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (DirectUtf8Sink directUtf8Sink = new DirectUtf8Sink(8)) {
+                LowerCaseUtf8SequenceObjHashMap<Integer> map = new LowerCaseUtf8SequenceObjHashMap<>();
+
+                directUtf8Sink.put("foo");
+                Utf8String utf8String = new Utf8String("foo");
+
+                Assert.assertTrue(map.putImmutable(directUtf8Sink, 1));
+                Assert.assertEquals(1, (int) map.get(utf8String));
+                int idx = map.keyIndex(utf8String);
+
+                Assert.assertSame(directUtf8Sink, map.keyAt(idx));
+                Assert.assertSame(directUtf8Sink, map.keys().get(0));
+
+                Assert.assertFalse(map.putImmutable(utf8String, 2));
+                Assert.assertEquals(2, (int) map.get(directUtf8Sink));
+
+                map.remove(directUtf8Sink);
+                Assert.assertEquals(0, map.size());
+            }
+        });
+
+
     }
 }

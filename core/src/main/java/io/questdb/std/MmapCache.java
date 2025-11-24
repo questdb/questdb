@@ -25,17 +25,58 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
 
 /**
  * Thread-safe cache for memory-mapped file regions with reference counting.
  * Reuses existing mappings for the same file when possible to reduce system calls.
  */
-public class MmapCache {
+public final class MmapCache {
+    public static final MmapCache INSTANCE = new MmapCache();
+
+    private static final Log LOG = LogFactory.getLog(MmapCache.class);
     private static final int MAX_RECORD_POOL_CAPACITY = 16 * 1024;
+    private static final int MUNMAP_QUEUE_CAPACITY = 8 * 1024;
     private final LongObjHashMap<MmapCacheRecord> mmapAddrCache = new LongObjHashMap<>();
     private final LongObjHashMap<MmapCacheRecord> mmapFileCache = new LongObjHashMap<>();
+    private final MCSequence munmapConsumerSequence;
+    private final MPSequence munmapProducesSequence;
+    private final RingQueue<MunmapTask> munmapTaskRingQueue;
     private final ObjStack<MmapCacheRecord> recordPool = new ObjStack<>();
     private long mmapReuseCount = 0;
+
+    private MmapCache() {
+        munmapTaskRingQueue = new RingQueue<>(MunmapTask::new, MUNMAP_QUEUE_CAPACITY);
+        munmapProducesSequence = new MPSequence(munmapTaskRingQueue.getCycle());
+        munmapConsumerSequence = new MCSequence(munmapTaskRingQueue.getCycle());
+        munmapProducesSequence.then(munmapConsumerSequence).then(munmapProducesSequence);
+    }
+
+    /**
+     * Process accumulated unmap requests.
+     * This method is not thread safe! It's meant to be called from a synchronized job - one per Server.
+     *
+     * @return true if at least one mapping was unmapped, false otherwise.
+     */
+    public boolean asyncMunmap() {
+        boolean useful = false;
+        long cursor;
+        do {
+            cursor = munmapConsumerSequence.next();
+            if (cursor > -1) {
+                useful = true;
+                munmapTaskConsumer(munmapTaskRingQueue.get(cursor));
+                munmapConsumerSequence.done(cursor);
+            } else if (cursor == -2) {
+                Os.pause();
+            }
+        } while (cursor != -1);
+        return useful;
+    }
 
     /**
      * Maps file region into memory, reusing existing mapping if available.
@@ -302,15 +343,17 @@ public class MmapCache {
         return address;
     }
 
-    private static void unmap0(long address, long len, int memoryTag) {
-        int result = Files.munmap0(address, len);
+    private static void munmapTaskConsumer(MunmapTask task) {
+        int result = Files.munmap0(task.address, task.size);
         if (result != -1) {
-            Unsafe.recordMemAlloc(-len, memoryTag);
+            Unsafe.recordMemAlloc(-task.size, task.memoryTag);
         } else {
-            throw CairoException.critical(Os.errno())
-                    .put("munmap failed [address=").put(address)
-                    .put(", len=").put(len)
-                    .put(", memoryTag=").put(memoryTag).put(']');
+            int errno = Os.errno();
+            LOG.critical().$("munmap failed [address=").$(task.address)
+                    .$(", size=").$(task.size)
+                    .$(", tag=").$(MemoryTag.nameOf(task.memoryTag))
+                    .$(", errno=").$(errno)
+                    .I$();
         }
     }
 
@@ -321,6 +364,37 @@ public class MmapCache {
             return rec;
         }
         return new MmapCacheRecord(fd, fileCacheKey, len, address, 1, memoryTag);
+    }
+
+    private void unmap0(long address, long len, int memoryTag) {
+        if (Files.ASYNC_MUNMAP_ENABLED) {
+            // sequence returning -2 -> we lost a CAS race. we do a cheap retry
+            // sequence returning -1 -> the queue is full. then it's cheaper to do the munmap ourserlves
+            long seq;
+            while ((seq = munmapProducesSequence.next()) == -2) {
+                Os.pause();
+            }
+
+            if (seq > -1) {
+                MunmapTask task = munmapTaskRingQueue.get(seq);
+                task.address = address;
+                task.size = len;
+                task.memoryTag = memoryTag;
+                munmapProducesSequence.done(seq);
+                return;
+            } else {
+                LOG.info().$("async munmap queue is full").$();
+            }
+        }
+        int result = Files.munmap0(address, len);
+        if (result != -1) {
+            Unsafe.recordMemAlloc(-len, memoryTag);
+        } else {
+            throw CairoException.critical(Os.errno())
+                    .put("munmap failed [address=").put(address)
+                    .put(", len=").put(len)
+                    .put(", memoryTag=").put(memoryTag).put(']');
+        }
     }
 
     /**
@@ -351,5 +425,11 @@ public class MmapCache {
             this.count = count;
             this.memoryTag = memoryTag;
         }
+    }
+
+    private static class MunmapTask {
+        private long address;
+        private int memoryTag;
+        private long size;
     }
 }

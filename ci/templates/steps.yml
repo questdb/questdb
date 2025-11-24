@@ -3,6 +3,10 @@ steps:
     fetchDepth: 1
     lfs: false
     submodules: false
+  - bash: |
+      rm -rf /tmp/junit* /tmp/surefire-agent /tmp/libquestdbr* /tmp/libqdbsqllogic*
+    displayName: "Cleanup dangling test artifacts from /tmp"
+    condition: startsWith(variables['poolName'], 'hetzner-')
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
     condition: |

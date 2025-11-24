@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2025 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,47 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.filewatch;
+package io.questdb.griffin.engine.functions.groupby;
 
-public final class LinuxAccessorFacadeImpl implements LinuxAccessorFacade {
-    public static final LinuxAccessorFacadeImpl INSTANCE = new LinuxAccessorFacadeImpl();
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-    private LinuxAccessorFacadeImpl() {
-
+public class LastNotNullArrayGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "last_not_null(D[])";
     }
 
     @Override
-    public int inotifyAddWatch(long fd, long pathPtr, int flags) {
-        return LinuxAccessor.inotifyAddWatch(fd, pathPtr, flags);
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
-    public int inotifyInit() {
-        return LinuxAccessor.inotifyInit();
-    }
-
-    @Override
-    public short inotifyRmWatch(long fd, int wd) {
-        return LinuxAccessor.inotifyRmWatch(fd, wd);
-    }
-
-    @Override
-    public long pipe() {
-        return LinuxAccessor.pipe();
-    }
-
-    @Override
-    public int readEvent(long fd, long buf, int bufSize) {
-        return LinuxAccessor.readEvent(fd, buf, bufSize);
-    }
-
-    @Override
-    public int readPipe(long fd) {
-        return LinuxAccessor.readPipe(fd);
-    }
-
-    @Override
-    public int writePipe(long fd) {
-        return LinuxAccessor.writePipe(fd);
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new LastNotNullArrayGroupByFunction(args.getQuick(0));
     }
 }
