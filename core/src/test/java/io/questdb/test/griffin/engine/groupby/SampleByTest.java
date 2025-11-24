@@ -7472,6 +7472,74 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByWithOnlyOneFillOption() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE weather ( ts TIMESTAMP, temperature DOUBLE, humidity INTEGER ) TIMESTAMP(ts);");
+            execute("""
+                    INSERT INTO weather (ts, temperature, humidity) VALUES
+                        ('2024-01-01T00:00:00Z', 10.0, 10),
+                        ('2024-01-01T00:03:00Z', 11.5, 11),
+                        ('2024-01-01T00:04:00Z', 12.0, 12),
+                        ('2024-01-01T00:07:00Z', 13.0, 13);
+                    """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts	humidity
+                            2024-01-01T00:00:00.000000Z	10
+                            2024-01-01T00:01:00.000000Z	10
+                            2024-01-01T00:02:00.000000Z	10
+                            2024-01-01T00:03:00.000000Z	11
+                            2024-01-01T00:04:00.000000Z	12
+                            2024-01-01T00:05:00.000000Z	12
+                            2024-01-01T00:06:00.000000Z	12
+                            2024-01-01T00:07:00.000000Z	13
+                            """,
+                    """
+                              WITH imputed AS ( \s
+                                SELECT \s
+                                    ts,
+                                    last(temperature) AS temperature,
+                                    last(humidity) As humidity\s
+                                FROM weather
+                                SAMPLE BY 1m FILL(PREV)
+                            )
+                            SELECT ts, humidity
+                            FROM imputed
+                            """,
+                    "ts"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts	humidity	temperature
+                            2024-01-01T00:00:00.000000Z	10	10.0
+                            2024-01-01T00:01:00.000000Z	10	10.0
+                            2024-01-01T00:02:00.000000Z	10	10.0
+                            2024-01-01T00:03:00.000000Z	11	11.5
+                            2024-01-01T00:04:00.000000Z	12	12.0
+                            2024-01-01T00:05:00.000000Z	12	12.0
+                            2024-01-01T00:06:00.000000Z	12	12.0
+                            2024-01-01T00:07:00.000000Z	13	13.0
+                            """,
+                    """
+                              WITH imputed AS ( \s
+                                SELECT \s
+                                    ts,
+                                    last(temperature) AS temperature,
+                                    last(humidity) As humidity\s
+                                FROM weather
+                                SAMPLE BY 1m FILL(PREV)
+                            )
+                            SELECT ts, humidity, temperature
+                            FROM imputed
+                            """,
+                    "ts"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByWithOrderByDescTimestamp() throws Exception {
         assertQuery(
                 """

@@ -39,6 +39,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
@@ -696,6 +697,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     if (!ex.isTableDoesNotExist()) {
                         throw ex;
                     }
+                } catch (TableReferenceOutOfDateException ex) {
+                    // Fall through to refresh table token and retry.
                 } catch (CairoException ex) {
                     if (!ex.isTableDoesNotExist()) {
                         throw ex;
@@ -704,7 +707,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 TableToken tableToken = tableWriter.getTableToken();
 
-                // Getting to here means we got Table Does Not Exist SQL or Cairo Exception.
+                // Getting to here means we got Table Does Not Exist SQL, TableReferenceOutOfDateException or CairoException.
                 // Table may be renamed or dropped while processing the WAL transaction.
                 // Need to refresh the table token and retry.
                 TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
