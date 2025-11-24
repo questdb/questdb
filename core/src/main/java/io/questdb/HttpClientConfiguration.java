@@ -74,7 +74,7 @@ public interface HttpClientConfiguration {
     }
 
     default int getTimeout() {
-        return 60_000;
+        return 600_000;
     }
 
     default int getWaitQueueCapacity() {

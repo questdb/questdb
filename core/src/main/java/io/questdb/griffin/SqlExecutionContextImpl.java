@@ -94,6 +94,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
+    private boolean validationOnly = false;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int sharedQueryWorkerCount) {
         assert sharedQueryWorkerCount >= 0;
@@ -333,6 +334,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isValidationOnly() {
+        return validationOnly;
+    }
+
+    @Override
     public boolean isWalApplication() {
         return false;
     }
@@ -358,6 +364,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
         this.allowNonDeterministicFunction = true;
+        this.validationOnly = false;
         this.referencedViews.clear();
     }
 
@@ -429,6 +436,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setUseSimpleCircuitBreaker(boolean value) {
         this.useSimpleCircuitBreaker = value;
+    }
+
+    public void setValidationOnly(boolean validationOnly) {
+        this.validationOnly = validationOnly;
     }
 
     @Override

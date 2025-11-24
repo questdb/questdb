@@ -652,11 +652,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getParquetExportCopyReportFrequencyLines() {
-        return getDelegate().getParquetExportCopyReportFrequencyLines();
-    }
-
-    @Override
     public int getParquetExportCompressionCodec() {
         return getDelegate().getParquetExportCompressionCodec();
     }
@@ -664,6 +659,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getParquetExportCompressionLevel() {
         return getDelegate().getParquetExportCompressionLevel();
+    }
+
+    @Override
+    public int getParquetExportCopyReportFrequencyLines() {
+        return getDelegate().getParquetExportCopyReportFrequencyLines();
     }
 
     @Override
@@ -677,13 +677,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getParquetExportVersion() {
-        return getDelegate().getParquetExportVersion();
+    public CharSequence getParquetExportTableNamePrefix() {
+        return getDelegate().getParquetExportTableNamePrefix();
     }
 
     @Override
-    public CharSequence getParquetExportTableNamePrefix() {
-        return getDelegate().getParquetExportTableNamePrefix();
+    public int getParquetExportVersion() {
+        return getDelegate().getParquetExportVersion();
     }
 
     @Override
@@ -749,6 +749,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getRepeatMigrationsFromVersion() {
         return getDelegate().getRepeatMigrationsFromVersion();
+    }
+
+    @Override
+    public int getRmdirMaxDepth() {
+        return getDelegate().getRmdirMaxDepth();
     }
 
     @Override

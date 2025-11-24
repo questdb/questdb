@@ -81,7 +81,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -224,14 +224,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
-    private final ObjList<String> httpContextPathExec = new ObjList<>();
-    private final ObjList<String> httpContextPathExport = new ObjList<>();
-    private final ObjList<String> httpContextPathILP = new ObjList<>();
-    private final ObjList<String> httpContextPathILPPing = new ObjList<>();
-    private final ObjList<String> httpContextPathImport = new ObjList<>();
-    private final ObjList<String> httpContextPathSettings = new ObjList<>();
-    private final ObjList<String> httpContextPathTableStatus = new ObjList<>();
-    private final ObjList<String> httpContextPathWarnings = new ObjList<>();
+    private final ObjHashSet<String> httpContextPathSqlExecute = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathSqlValidate = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathExport = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathILP = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathILPPing = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathImport = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathSettings = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathTableStatus = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathWarnings = new ObjHashSet<>();
     private final String httpContextWebConsole;
     private final long httpExportTimeout;
     private final boolean httpFrozenClock;
@@ -389,6 +390,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double rerunExponentialWaitMultiplier;
     private final int rerunInitialWaitQueueSize;
     private final int rerunMaxProcessingQueueSize;
+    private final int rmdirMaxDepth;
     private final int rndFunctionMemoryMaxPages;
     private final int rndFunctionMemoryPageSize;
     private final int rollBufferLimit;
@@ -1057,7 +1059,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXPORT, this.httpContextPathExport, httpContextWebConsole + "/exp");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_SETTINGS, this.httpContextPathSettings, httpContextWebConsole + "/settings");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_TABLE_STATUS, this.httpContextPathTableStatus, httpContextWebConsole + "/chk");
-            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, httpContextWebConsole + "/exec");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathSqlExecute, httpContextWebConsole + "/exec", httpContextWebConsole + "/api/v1/sql/execute");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
 
             // If any REST services that the Web Console depends on are overridden,
@@ -1080,7 +1082,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             httpContextPathExport.add(httpContextWebConsole + "/exp");
             httpContextPathSettings.add(httpContextWebConsole + "/settings");
             httpContextPathTableStatus.add(httpContextWebConsole + "/chk");
-            httpContextPathExec.add(httpContextWebConsole + "/exec");
+            httpContextPathSqlExecute.add(httpContextWebConsole + "/exec");
+            httpContextPathSqlExecute.add(httpContextWebConsole + "/api/v1/sql/execute");
+            httpContextPathSqlValidate.add(httpContextWebConsole + "/api/v1/sql/validate");
             httpContextPathWarnings.add(httpContextWebConsole + "/warnings");
 
             // read the redirect map
@@ -1554,6 +1558,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (asyncMunmapEnabled && Os.isWindows()) {
                 throw new ServerConfigurationException("Async munmap is not supported on Windows");
             }
+            this.rmdirMaxDepth = getInt(properties, env, PropertyKey.CAIRO_RMDIR_MAX_DEPTH, 5);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     DateFormatFactory.INSTANCE,
@@ -2392,8 +2397,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     protected int getQueueCapacity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int defaultValue) throws ServerConfigurationException {
         final int value = getInt(properties, env, key, defaultValue);
-        if (!Numbers.isPow2(value)) {
-            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Value must be power of 2, e.g. 1,2,4,8,16,32,64...");
+        if (!Numbers.isPow2(value) && value != 0) {
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Value must be 0 or a power of 2, e.g. 0,1,2,4,8,16,32,64...");
         }
         return value;
     }
@@ -2428,7 +2433,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             Properties properties,
             @Nullable Map<String, String> env,
             ConfigPropertyKey key,
-            ObjList<String> target,
+            ObjHashSet<String> target,
             String... defaultValue
     ) throws ServerConfigurationException {
         String envCandidate = key.getEnvVarName();
@@ -3660,6 +3665,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getRmdirMaxDepth() {
+            return rmdirMaxDepth;
+        }
+
+        @Override
         public int getRndFunctionMemoryMaxPages() {
             return rndFunctionMemoryMaxPages;
         }
@@ -4695,42 +4705,47 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public ObjList<String> getContextPathExec() {
-            return httpContextPathExec;
+        public ObjHashSet<String> getContextPathExec() {
+            return httpContextPathSqlExecute;
         }
 
         @Override
-        public ObjList<String> getContextPathExport() {
+        public ObjHashSet<String> getContextPathSqlValidation() {
+            return httpContextPathSqlValidate;
+        }
+
+        @Override
+        public ObjHashSet<String> getContextPathExport() {
             return httpContextPathExport;
         }
 
         @Override
-        public ObjList<String> getContextPathILP() {
+        public ObjHashSet<String> getContextPathILP() {
             return httpContextPathILP;
         }
 
         @Override
-        public ObjList<String> getContextPathILPPing() {
+        public ObjHashSet<String> getContextPathILPPing() {
             return httpContextPathILPPing;
         }
 
         @Override
-        public ObjList<String> getContextPathImport() {
+        public ObjHashSet<String> getContextPathImport() {
             return httpContextPathImport;
         }
 
         @Override
-        public ObjList<String> getContextPathSettings() {
+        public ObjHashSet<String> getContextPathSettings() {
             return httpContextPathSettings;
         }
 
         @Override
-        public ObjList<String> getContextPathTableStatus() {
+        public ObjHashSet<String> getContextPathTableStatus() {
             return httpContextPathTableStatus;
         }
 
         @Override
-        public ObjList<String> getContextPathWarnings() {
+        public ObjHashSet<String> getContextPathWarnings() {
             return httpContextPathWarnings;
         }
 
