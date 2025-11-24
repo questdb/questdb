@@ -452,13 +452,7 @@ public final class ColumnType {
      * <p>
      * <b>Important:</b> This method is intentionally conservative. Some Function base classes implement
      * additional getters beyond standard widening (e.g., BooleanFunction has getInt(), CharFunction has
-     * getByte()), but this method returns false for such conversions. These conversions either:
-     * <ul>
-     *   <li>May lose precision (e.g., CHAR → BYTE can overflow)</li>
-     *   <li>Cross type families (e.g., BOOLEAN → INT, DATE ↔ TIMESTAMP)</li>
-     *   <li>Should use explicit cast wrappers for clarity (e.g., STRING → TIMESTAMP)</li>
-     * </ul>
-     * </p>
+     * getByte()), but this method returns false for such conversions.
      *
      * @param fromType the source column type
      * @param toType   the target column type
