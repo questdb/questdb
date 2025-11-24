@@ -37,9 +37,12 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -1564,17 +1567,34 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyWithSameOutput() throws Exception {
-        assertMemoryLeak(() -> {
+        AtomicBoolean pause = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (pause.get() && Utf8s.containsAscii(to, "output8")) {
+                    while (pause.get()) {
+                        Os.sleep(100);
+                    }
+                }
+                return super.rename(from, to);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table values (1, 'test')");
+            drainWalQueue();
 
             CopyExportRunnable stmt = () -> {
+                pause.set(true);
                 runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
                 try {
                     runAndFetchCopyExportID("copy test_table to 'output9' with format parquet statistics_enabled true", sqlExecutionContext);
-                    Assert.fail("Expected failure due to ongoing export to same directory");
+                    Assert.fail("Expected failure due to duplicate sql statement");
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getMessage(), "duplicate sql statement: test_table");
+                } finally {
+                    pause.set(false);
                 }
             };
 
@@ -1593,17 +1613,33 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyWithSameSql() throws Exception {
-        assertMemoryLeak(() -> {
+        AtomicBoolean pause = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (pause.get() && Utf8s.containsAscii(to, "output8")) {
+                    while (pause.get()) {
+                        Os.sleep(100);
+                    }
+                }
+                return super.rename(from, to);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table values (1, 'test')");
 
             CopyExportRunnable stmt = () -> {
+                pause.set(true);
                 runAndFetchCopyExportID("copy (select x from test_table) to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
                 try {
                     runAndFetchCopyExportID("copy (select y from test_table) to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
                     Assert.fail("Expected failure due to ongoing export to same directory");
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getMessage(), "duplicate export path: output8");
+                } finally {
+                    pause.set(false);
                 }
             };
 
@@ -1625,15 +1661,31 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyWithSameTable() throws Exception {
-        assertMemoryLeak(() -> {
+        AtomicBoolean pause = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (pause.get() && Utf8s.containsAscii(to, "output8")) {
+                    while (pause.get()) {
+                        Os.sleep(100);
+                    }
+                }
+                return super.rename(from, to);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table values (1, 'test')");
+            pause.set(true);
             runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
             try {
                 runAndFetchCopyExportID("copy test_table to 'output9' with format parquet statistics_enabled true", sqlExecutionContext);
                 Assert.fail("Expected failure due to ongoing export to same sql statement");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getMessage(), "duplicate sql statement: test_table");
+            } finally {
+                pause.set(false);
             }
 
             CopyExportRunnable test = () ->
