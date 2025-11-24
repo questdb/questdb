@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2025 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,20 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.filewatch;
+package io.questdb.std;
 
-public interface LinuxAccessorFacade {
-    int inotifyAddWatch(long fd, long pathPtr, int flags);
+import io.questdb.std.str.Path;
 
-    int inotifyInit();
+/**
+ * Provides a thread-local Path instance for security-sensitive file operations.
+ * Used to create isolated copies of paths to prevent modification during
+ * potentially dangerous operations like recursive directory removal.
+ */
+public class SecurePath {
+    static final io.questdb.std.ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
 
-    short inotifyRmWatch(long fd, int wd);
-
-    long pipe();
-
-    int readEvent(long fd, long buf, int bufSize);
-
-    int readPipe(long fd);
-
-    int writePipe(long fd);
+    public static void clearThreadLocals() {
+        PATH.close();
+    }
 }

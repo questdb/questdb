@@ -4321,7 +4321,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // but TopDownColumns may have different order and count with BottomUpColumns.
         // Need to reorganize sampleByFill according to the position relationship between
         // TopDownColumns and BottomUpColumns to ensure correct fill value alignment.
-        if (fillCount != 0 && model.getTopDownColumns().size() != 0) {
+        if (fillCount > 1 && model.getTopDownColumns().size() != 0) {
             tempColumnsList.clear();
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                 final QueryColumn column = model.getBottomUpColumns().getQuick(i);
