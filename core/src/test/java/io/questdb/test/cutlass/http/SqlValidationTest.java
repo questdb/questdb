@@ -237,7 +237,8 @@ public class SqlValidationTest extends AbstractCairoTest {
                     rnd_geohash(8) col_geohash_byte,
                     rnd_geohash(16) col_geohash_short,
                     rnd_geohash(32) col_geohash_int,
-                    array[rnd_double(), rnd_double(), rnd_double()] col_array
+                    array[rnd_double(), rnd_double(), rnd_double()] col_array,
+                    rnd_decimal(7,1,2) col_decimal,
                   from long_sequence(1000)
                 ) timestamp(col_timestamp) partition by month
                 """
@@ -272,7 +273,8 @@ public class SqlValidationTest extends AbstractCairoTest {
                                                 "{\"name\":\"col_geohash_byte\",\"type\":\"GEOHASH(8b)\"}," +
                                                 "{\"name\":\"col_geohash_short\",\"type\":\"GEOHASH(16b)\"}," +
                                                 "{\"name\":\"col_geohash_int\",\"type\":\"GEOHASH(32b)\"}," +
-                                                "{\"name\":\"col_array\",\"type\":\"ARRAY\",\"dim\":1,\"elemType\":\"DOUBLE\"}" +
+                                                "{\"name\":\"col_array\",\"type\":\"ARRAY\",\"dim\":1,\"elemType\":\"DOUBLE\"}," +
+                                                "{\"name\":\"col_decimal\",\"type\":\"DECIMAL(7,1)\"}" +
                                                 "],\"timestamp\":13}",
                                         "select * from xyz limit 10"
                                 );

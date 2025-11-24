@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -248,48 +247,10 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     }
 
     private void addColumnTypeAndName(RecordMetadata metadata, int i) {
-        int columnType = metadata.getColumnType(i);
-        String columnName = metadata.getColumnName(i);
-
-        switch (ColumnType.tagOf(columnType)) {
-            // list of explicitly supported types, to be keep in sync with doQueryRecord()
-
-            // we use a whitelist since if we add a new type to QuestDB,
-            // the support has to be explicitly added to the JSON REST API
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.DOUBLE:
-            case ColumnType.FLOAT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.SHORT:
-            case ColumnType.CHAR:
-            case ColumnType.STRING:
-            case ColumnType.VARCHAR:
-            case ColumnType.SYMBOL:
-            case ColumnType.BINARY:
-            case ColumnType.LONG256:
-            case ColumnType.GEOBYTE:
-            case ColumnType.GEOSHORT:
-            case ColumnType.GEOINT:
-            case ColumnType.GEOLONG:
-            case ColumnType.RECORD:
-            case ColumnType.NULL:
-            case ColumnType.UUID:
-            case ColumnType.IPv4:
-            case ColumnType.INTERVAL:
-            case ColumnType.ARRAY:
-                break;
-            default:
-                throw CairoException.nonCritical().put("column type not supported [column=").put(columnName).put(", type=").put(ColumnType.nameOf(columnType)).put(']');
-        }
-
-        int flags = GeoHashes.getBitFlags(columnType);
+        final int columnType = metadata.getColumnType(i);
         this.columnTypesAndFlags.add(columnType);
-        this.columnTypesAndFlags.add(flags);
-        this.columnNames.add(columnName);
+        this.columnTypesAndFlags.add(GeoHashes.getBitFlags(columnType));
+        this.columnNames.add(metadata.getColumnName(i));
     }
 
     private void doQueryMetadata(HttpChunkedResponse response, int columnCount) {
