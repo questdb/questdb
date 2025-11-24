@@ -503,14 +503,15 @@ public final class ColumnType {
      * </ul>
      * </p>
      * <p>
-     * Warning: When this function returns true it does not imply that you can treat fromType as toType.
-     * It merely says a conversion is possible, but it might require wrapping the from function with a casting function.
+     * <strong>Warning:</strong> When this function returns true it does not imply that you can treat <code>fromType</code>
+     * as if it was the <code>toType</code>. It merely says a conversion is possible, but it might require wrapping the
+     * <code>from</code> function with a casting function.
      *
      * @param fromType the source column type
      * @param toType   the target column type
      * @return true if any conversion (safe or unsafe) is possible, false otherwise
      * @see #isBuiltInWideningCast(int, int) for conversions that don't need cast wrappers
-     * @see #isToSameOrWider(int, int) for safe conversions that preserve precision
+     * @see #isToSameOrWider(int, int) for safe conversions that preserve precision or range
      * @see #isNarrowingCast(int, int) for explicitly narrowing conversions
      */
     public static boolean isConvertibleFrom(int fromType, int toType) {
