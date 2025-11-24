@@ -48,9 +48,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final IntList columnOrderList = new IntList();
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
-    private int dropLocalHoursOrMonths;
-    private int dropNativeHoursOrMonths;
-    private int dropRemoteHoursOrMonths;
     private boolean isCopy;
     private boolean isSoftLink;
     private int maxUncommittedRows;
@@ -63,7 +60,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private int plen;
     private int tableId;
     private TableToken tableToken;
-    private int toParquetHoursOrMonths;
     private TableReaderMetadataTransitionIndex transitionIndex;
     private MemoryMR transitionMeta;
     private int ttlHoursOrMonths;
@@ -152,21 +148,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public int getDropLocalHoursOrMonths() {
-        return dropLocalHoursOrMonths;
-    }
-
-    @Override
-    public int getDropNativeHoursOrMonths() {
-        return dropNativeHoursOrMonths;
-    }
-
-    @Override
-    public int getDropRemoteHoursOrMonths() {
-        return dropRemoteHoursOrMonths;
-    }
-
-    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
     }
@@ -214,11 +195,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public TableToken getTableToken() {
         return tableToken;
-    }
-
-    @Override
-    public int getToParquetHoursOrMonths() {
-        return toParquetHoursOrMonths;
     }
 
     @Override
@@ -320,10 +296,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = mem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
-        this.dropNativeHoursOrMonths = TableUtils.getDropNativeHoursOrMonths(mem);
-        this.dropLocalHoursOrMonths = TableUtils.getDropLocalHoursOrMonths(mem);
-        this.dropRemoteHoursOrMonths = TableUtils.getDropRemoteHoursOrMonths(mem);
-        this.toParquetHoursOrMonths = TableUtils.getToParquetHoursOrMonths(mem);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
 
@@ -389,10 +361,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.o3MaxLag = newMetaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         this.walEnabled = newMetaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
-        this.dropNativeHoursOrMonths = TableUtils.getDropNativeHoursOrMonths(newMetaMem);
-        this.dropLocalHoursOrMonths = TableUtils.getDropLocalHoursOrMonths(newMetaMem);
-        this.dropRemoteHoursOrMonths = TableUtils.getDropRemoteHoursOrMonths(newMetaMem);
-        this.toParquetHoursOrMonths = TableUtils.getToParquetHoursOrMonths(newMetaMem);
 
         int shiftLeft = 0, existingIndex = 0;
         TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);

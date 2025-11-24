@@ -3020,7 +3020,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUncommittedPartitionLifecycle() throws Exception {
+    public void testUncommittedEnforceTtl() throws Exception {
         String tango = "tango";
         TableModel model = new TableModel(configuration, tango, PartitionBy.HOUR)
                 .timestamp("ts", timestampType)
@@ -3038,7 +3038,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 """, ColumnType.nameOf(timestampType)), "tango");
         try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
             writer.newRow(timestampDriver.fromHours(2) + 1).append();
-            writer.enforceStoragePolicy();
+            writer.enforceTtl();
             writer.commit();
         }
         assertSql(replaceTimestampSuffix("""

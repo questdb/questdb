@@ -551,10 +551,6 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
-            table.setToParquetHoursOrMonths(tableMetadata.getToParquetHoursOrMonths());
-            table.setDropNativeHoursOrMonths(tableMetadata.getDropNativeHoursOrMonths());
-            table.setDropLocalHoursOrMonths(tableMetadata.getDropLocalHoursOrMonths());
-            table.setDropRemoteHoursOrMonths(tableMetadata.getDropRemoteHoursOrMonths());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 

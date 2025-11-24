@@ -73,17 +73,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
-    public final static short SET_STORAGE_POLICY = SET_MAT_VIEW_REFRESH + 1; // 26
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
-    private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
     // to exception message using TableUtils.setSinkForPartition.
-    private final LongList extraInfo;
+    protected final LongList extraInfo;
+    private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     private final ObjCharSequenceList extraStrInfo;
+    protected short command;
     private CharSequenceList activeExtraStrInfo;
-    private short command;
     private MemoryFCRImpl deserializeMem;
     private boolean keepMatViewsValid;
 
@@ -95,30 +94,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this.extraInfo = extraInfo;
         this.extraStrInfo = new ObjCharSequenceList(extraStrInfo);
         this.command = DO_NOTHING;
-    }
-
-    public static AlterOperation deepCloneOf(AlterOperation other) {
-        LongList extraInfo = new LongList(other.extraInfo);
-        ObjList<CharSequence> charSequenceObjList = new ObjList<>(other.extraStrInfo.size());
-        for (int i = 0, n = other.extraStrInfo.size(); i < n; i++) {
-            charSequenceObjList.add(Chars.toString(other.extraStrInfo.getStrA(i)));
-        }
-
-        AlterOperation alterOperation = new AlterOperation(extraInfo, charSequenceObjList);
-        alterOperation.command = other.command;
-        alterOperation.tableToken = other.tableToken;
-        alterOperation.tableNamePosition = other.tableNamePosition;
-
-        if (other.activeExtraStrInfo == other.extraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
-        } else if (other.activeExtraStrInfo == other.directExtraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.directExtraStrInfo;
-        } else {
-            assert false;
-        }
-        alterOperation.init(other.getCmdType(), other.getCommandName(), other.tableToken, other.getTableId(), other.getTableVersion(), other.tableNamePosition);
-
-        return alterOperation;
     }
 
     public static long getFlags(boolean indexed, boolean dedupKey) {
@@ -143,102 +118,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             if (queryRegistry != null) {
                 queryId = queryRegistry.register(sqlText, sqlExecutionContext);
             }
-            switch (command) {
-                case ADD_COLUMN:
-                    applyAddColumn(svc);
-                    break;
-                case DROP_COLUMN:
-                    if (!contextAllowsAnyStructureChanges) {
-                        throw AlterTableContextException.INSTANCE;
-                    }
-                    applyDropColumn(svc);
-                    break;
-                case RENAME_COLUMN:
-                    if (!contextAllowsAnyStructureChanges) {
-                        throw AlterTableContextException.INSTANCE;
-                    }
-                    applyRenameColumn(svc);
-                    break;
-                case DROP_PARTITION:
-                    applyDropPartition(svc);
-                    break;
-                case CONVERT_PARTITION_TO_PARQUET:
-                    applyConvertPartition(svc, true);
-                    break;
-                case CONVERT_PARTITION_TO_NATIVE:
-                    applyConvertPartition(svc, false);
-                    break;
-                case DETACH_PARTITION:
-                    applyDetachPartition(svc);
-                    break;
-                case ATTACH_PARTITION:
-                    applyAttachPartition(svc);
-                    break;
-                case FORCE_DROP_PARTITION:
-                    applyDropPartitionForce(svc);
-                    break;
-                case ADD_INDEX:
-                    applyAddIndex(svc);
-                    break;
-                case DROP_INDEX:
-                    applyDropIndex(svc);
-                    break;
-                case ADD_SYMBOL_CACHE:
-                    applySetSymbolCache(svc, true);
-                    break;
-                case REMOVE_SYMBOL_CACHE:
-                    applySetSymbolCache(svc, false);
-                    break;
-                case SET_PARAM_MAX_UNCOMMITTED_ROWS:
-                    applyParamUncommittedRows(svc);
-                    break;
-                case SET_PARAM_COMMIT_LAG:
-                    applyParamO3MaxLag(svc);
-                    break;
-                case SET_TTL:
-                    applyTtl(svc);
-                    break;
-                case SET_STORAGE_POLICY:
-                    applyStoragePolicy(svc);
-                    break;
-                case RENAME_TABLE:
-                    applyRenameTable(svc);
-                    break;
-                case SQUASH_PARTITIONS:
-                    squashPartitions(svc);
-                    break;
-                case SET_DEDUP_ENABLE:
-                    keepMatViewsValid = enableDeduplication(svc);
-                    break;
-                case SET_DEDUP_DISABLE:
-                    svc.disableDeduplication();
-                    break;
-                case CHANGE_COLUMN_TYPE:
-                    if (!contextAllowsAnyStructureChanges) {
-                        throw AlterTableContextException.INSTANCE;
-                    }
-                    changeColumnType(svc);
-                    break;
-                case CHANGE_SYMBOL_CAPACITY:
-                    changeSymbolCapacity(svc);
-                    break;
-                case SET_MAT_VIEW_REFRESH_LIMIT:
-                    setMatViewRefreshLimit(svc);
-                    break;
-                case SET_MAT_VIEW_REFRESH_TIMER:
-                    // legacy operation, kept for compat purposes
-                    setMatViewRefreshTimer(svc);
-                    break;
-                case SET_MAT_VIEW_REFRESH:
-                    setMatViewRefresh(svc);
-                    break;
-                default:
-                    LOG.error()
-                            .$("invalid alter table command [code=").$(command)
-                            .$(" ,table=").$(svc.getTableToken())
-                            .I$();
-                    throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
-            }
+            doApply(svc, contextAllowsAnyStructureChanges);
         } catch (EntryUnavailableException ex) {
             throw ex;
         } catch (CairoException e) {
@@ -272,6 +152,30 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         extraInfo.clear();
         keepMatViewsValid = false;
         clearCommandCorrelationId();
+    }
+
+    public AlterOperation deepClone() {
+        LongList extraInfo = new LongList(this.extraInfo);
+        ObjList<CharSequence> charSequenceObjList = new ObjList<>(this.extraStrInfo.size());
+        for (int i = 0, n = this.extraStrInfo.size(); i < n; i++) {
+            charSequenceObjList.add(Chars.toString(this.extraStrInfo.getStrA(i)));
+        }
+
+        AlterOperation alterOperation = newInstance(extraInfo, charSequenceObjList);
+        alterOperation.command = this.command;
+        alterOperation.tableToken = this.tableToken;
+        alterOperation.tableNamePosition = this.tableNamePosition;
+
+        if (this.activeExtraStrInfo == this.extraStrInfo) {
+            alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
+        } else if (this.activeExtraStrInfo == this.directExtraStrInfo) {
+            alterOperation.activeExtraStrInfo = alterOperation.directExtraStrInfo;
+        } else {
+            assert false;
+        }
+        alterOperation.init(this.getCmdType(), this.getCommandName(), this.tableToken, this.getTableId(), this.getTableVersion(), this.tableNamePosition);
+
+        return alterOperation;
     }
 
     @Override
@@ -636,29 +540,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         );
     }
 
-    private void applyStoragePolicy(MetadataService svc) {
-        final int toParquetHoursOrMonths = (int) extraInfo.get(0);
-        final int dropNativeHoursOrMonths = (int) extraInfo.get(1);
-        final int dropLocalHoursOrMonths = (int) extraInfo.get(2);
-        final int dropRemoteHoursOrMonths = (int) extraInfo.get(3);
-        try {
-            svc.setStoragePolicy(toParquetHoursOrMonths, dropNativeHoursOrMonths, dropLocalHoursOrMonths, dropRemoteHoursOrMonths);
-        } catch (CairoException e) {
-            e.position(tableNamePosition);
-            throw e;
-        }
-    }
-
-    private void applyTtl(MetadataService svc) {
-        final int ttlHoursOrMonths = (int) extraInfo.get(0);
-        try {
-            svc.setMetaTtl(ttlHoursOrMonths);
-        } catch (CairoException e) {
-            e.position(tableNamePosition);
-            throw e;
-        }
-    }
-
     private void changeColumnType(MetadataService svc) {
         if (activeExtraStrInfo.size() != 1) {
             throw CairoException.nonCritical().put("invalid change column type alter statement");
@@ -754,6 +635,116 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void squashPartitions(MetadataService svc) {
         svc.squashPartitions();
+    }
+
+    protected void applyTtl(MetadataService svc) {
+        final int ttlHoursOrMonths = (int) extraInfo.get(0);
+        try {
+            svc.setMetaTtl(ttlHoursOrMonths);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
+    protected void doApply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
+        switch (command) {
+            case ADD_COLUMN:
+                applyAddColumn(svc);
+                break;
+            case DROP_COLUMN:
+                if (!contextAllowsAnyStructureChanges) {
+                    throw AlterTableContextException.INSTANCE;
+                }
+                applyDropColumn(svc);
+                break;
+            case RENAME_COLUMN:
+                if (!contextAllowsAnyStructureChanges) {
+                    throw AlterTableContextException.INSTANCE;
+                }
+                applyRenameColumn(svc);
+                break;
+            case DROP_PARTITION:
+                applyDropPartition(svc);
+                break;
+            case CONVERT_PARTITION_TO_PARQUET:
+                applyConvertPartition(svc, true);
+                break;
+            case CONVERT_PARTITION_TO_NATIVE:
+                applyConvertPartition(svc, false);
+                break;
+            case DETACH_PARTITION:
+                applyDetachPartition(svc);
+                break;
+            case ATTACH_PARTITION:
+                applyAttachPartition(svc);
+                break;
+            case FORCE_DROP_PARTITION:
+                applyDropPartitionForce(svc);
+                break;
+            case ADD_INDEX:
+                applyAddIndex(svc);
+                break;
+            case DROP_INDEX:
+                applyDropIndex(svc);
+                break;
+            case ADD_SYMBOL_CACHE:
+                applySetSymbolCache(svc, true);
+                break;
+            case REMOVE_SYMBOL_CACHE:
+                applySetSymbolCache(svc, false);
+                break;
+            case SET_PARAM_MAX_UNCOMMITTED_ROWS:
+                applyParamUncommittedRows(svc);
+                break;
+            case SET_PARAM_COMMIT_LAG:
+                applyParamO3MaxLag(svc);
+                break;
+            case SET_TTL:
+                applyTtl(svc);
+                break;
+            case RENAME_TABLE:
+                applyRenameTable(svc);
+                break;
+            case SQUASH_PARTITIONS:
+                squashPartitions(svc);
+                break;
+            case SET_DEDUP_ENABLE:
+                keepMatViewsValid = enableDeduplication(svc);
+                break;
+            case SET_DEDUP_DISABLE:
+                svc.disableDeduplication();
+                break;
+            case CHANGE_COLUMN_TYPE:
+                if (!contextAllowsAnyStructureChanges) {
+                    throw AlterTableContextException.INSTANCE;
+                }
+                changeColumnType(svc);
+                break;
+            case CHANGE_SYMBOL_CAPACITY:
+                changeSymbolCapacity(svc);
+                break;
+            case SET_MAT_VIEW_REFRESH_LIMIT:
+                setMatViewRefreshLimit(svc);
+                break;
+            case SET_MAT_VIEW_REFRESH_TIMER:
+                // legacy operation, kept for compat purposes
+                setMatViewRefreshTimer(svc);
+                break;
+            case SET_MAT_VIEW_REFRESH:
+                setMatViewRefresh(svc);
+                break;
+            default:
+                LOG.error()
+                        .$("invalid alter table command [code=").$(command)
+                        .$(" ,table=").$(svc.getTableToken())
+                        .I$();
+                throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
+        }
+    }
+
+    protected AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
     }
 
     interface CharSequenceList extends Mutable {

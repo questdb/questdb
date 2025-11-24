@@ -34,18 +34,6 @@ public interface TableStructure {
 
     int getColumnType(int columnIndex);
 
-    default int getDropLocalHoursOrMonths() {
-        return 0;
-    }
-
-    default int getDropNativeHoursOrMonths() {
-        return 0;
-    }
-
-    default int getDropRemoteHoursOrMonths() {
-        return 0;
-    }
-
     int getIndexBlockCapacity(int columnIndex);
 
     default MatViewDefinition getMatViewDefinition() {
@@ -65,10 +53,6 @@ public interface TableStructure {
     CharSequence getTableName();
 
     int getTimestampIndex();
-
-    default int getToParquetHoursOrMonths() {
-        return 0;
-    }
 
     /**
      * Returns the time-to-live (TTL) of the data in this table:

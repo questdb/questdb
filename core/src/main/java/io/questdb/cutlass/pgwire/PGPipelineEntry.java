@@ -52,7 +52,6 @@ import io.questdb.griffin.CompiledQueryImpl;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
@@ -3321,7 +3320,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
                 ensureCompiledQuery();
-                compiledQuery.ofAlter(AlterOperation.deepCloneOf(cq.getAlterOperation()));
+                compiledQuery.ofAlter(cq.getAlterOperation().deepClone());
                 compiledQuery.withSqlText(cq.getSqlText());
                 sqlTag = TAG_OK;
                 break;

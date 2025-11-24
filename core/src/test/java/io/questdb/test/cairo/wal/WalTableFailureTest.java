@@ -917,7 +917,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
                     @Override
                     public SqlExecutionContext getSqlExecutionContext() {
-                        return sqlExecutionContext;
+                        return AbstractCairoTest.sqlExecutionContext;
                     }
 
                     @Override
@@ -1119,7 +1119,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 writer.apply(new UpdateOperation(tableName, 1, 22, 1) {
                     @Override
                     public SqlExecutionContext getSqlExecutionContext() {
-                        return sqlExecutionContext;
+                        return AbstractCairoTest.sqlExecutionContext;
                     }
                 });
                 Assert.fail();

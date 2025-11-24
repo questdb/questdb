@@ -200,13 +200,21 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getFirstNativePartitionTimestamp() {
+        return getFirstNativePartitionTimestamp(-1L);
+    }
+
+    public long getFirstNativePartitionTimestamp(long offset) {
         int index;
         for (index = 0; index < getPartitionCount(); index++) {
             if (!isPartitionParquet(index)) {
-                break;
+                final long partitionTimestamp = attachedPartitions.getQuick(index * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
+                if (partitionTimestamp > offset) {
+                    return partitionTimestamp;
+                }
             }
         }
-        return attachedPartitions.getQuick(index * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
+        // we should never be here, because the active partition is always native
+        throw CairoException.critical(0).put("could not find native partition");
     }
 
     public long getFixedRowCount() {

@@ -1926,10 +1926,6 @@ public final class TableUtils {
         mem.putBool(tableStruct.isWalEnabled());
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
-        mem.putInt(tableStruct.getToParquetHoursOrMonths());
-        mem.putInt(tableStruct.getDropNativeHoursOrMonths());
-        mem.putInt(tableStruct.getDropLocalHoursOrMonths());
-        mem.putInt(tableStruct.getDropRemoteHoursOrMonths());
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -2087,13 +2083,6 @@ public final class TableUtils {
 
     static int getTtlHoursOrMonths(MemoryR metaMem) {
         return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
-    }
-
-    static boolean hasStoragePolicy(TableMetadata metadata) {
-        return metadata.getToParquetHoursOrMonths() != 0 ||
-                metadata.getDropNativeHoursOrMonths() != 0 ||
-                metadata.getDropLocalHoursOrMonths() != 0 ||
-                metadata.getDropRemoteHoursOrMonths() != 0;
     }
 
     static boolean isColumnDedupKey(MemoryR metaMem, int columnIndex) {
