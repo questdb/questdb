@@ -112,6 +112,15 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
+     * Returns recorded cardinality for hash set based functions such as count_distinct().
+     * <p>
+     * A prior {@link #resetStats()} call should be made to reset the counter before computing any values.
+     */
+    default long getCardinalityStat() {
+        return 0;
+    }
+
+    /**
      * Returns the compute batch argument function for this group by function.
      */
     default Function getComputeBatchArg() {
@@ -204,6 +213,13 @@ public interface GroupByFunction extends Function, Mutable {
      */
     default void merge(MapValue destValue, MapValue srcValue) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Reset statistics for functions that support cardinality counter. After calling this method and prior
+     * to any compute calls, {@link #getCardinalityStat()} will return 0.
+     */
+    default void resetStats() {
     }
 
     default void setAllocator(GroupByAllocator allocator) {
