@@ -3389,17 +3389,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         sqlId = queryRegistry.register(sqlText, executionContext);
                         QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                         checkViewModification(executionModel);
-                    checkMatViewModification(executionModel);
-                    final RenameTableModel rtm = (RenameTableModel) executionModel;
-                    engine.rename(
-                            executionContext.getSecurityContext(),
-                            path,
-                            mem,
-                            unquote(rtm.getFrom().token),
-                            renamePath,
-                            unquote(rtm.getTo().token)
-                    );
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);}
+                        checkMatViewModification(executionModel);
+                        final RenameTableModel rtm = (RenameTableModel) executionModel;
+                        engine.rename(
+                                executionContext.getSecurityContext(),
+                                path,
+                                mem,
+                                unquote(rtm.getFrom().token),
+                                renamePath,
+                                unquote(rtm.getTo().token)
+                        );
+                        QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    }
                     compiledQuery.ofRenameTable();
                     break;
                 case ExecutionModel.UPDATE:

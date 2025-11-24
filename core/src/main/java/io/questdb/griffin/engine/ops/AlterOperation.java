@@ -800,22 +800,22 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private record ObjCharSequenceList(ObjList<CharSequence> strings) implements CharSequenceList {
 
         @Override
-            public void clear() {
-                strings.clear();
-            }
-
-            public CharSequence getStrA(int i) {
-                return strings.get(i);
-            }
-
-            @Override
-            public CharSequence getStrB(int i) {
-                return strings.get(i);
-            }
-
-            @Override
-            public int size() {
-                return strings.size();
-            }
+        public void clear() {
+            strings.clear();
         }
+
+        public CharSequence getStrA(int i) {
+            return strings.get(i);
+        }
+
+        @Override
+        public CharSequence getStrB(int i) {
+            return strings.get(i);
+        }
+
+        @Override
+        public int size() {
+            return strings.size();
+        }
+    }
 }
