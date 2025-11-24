@@ -65,7 +65,7 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
                 configuration,
                 sqlExecutionContext,
                 (defaultValue) -> {
-                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), ColumnType.LONG)) {
+                    if (!ColumnType.isConvertibleFrom(defaultValue.getType(), ColumnType.LONG)) {
                         throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to long");
                     }
                 },

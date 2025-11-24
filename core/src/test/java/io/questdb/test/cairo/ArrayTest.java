@@ -875,6 +875,22 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBadSlicingTypeFailsGracefully() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tango AS (SELECT ARRAY[
+                       [ [ 1,  2,  3], [ 4,  5,  6], [ 7,  8,  9] ],
+                       [ [10, 11, 12], [13, 14, 15], [16, 17, 18] ],
+                       [ [19, 20, 21], [22, 23, 24], [25, 26, 27] ]
+                    ] arr from long_sequence(1)););
+                    """);
+            assertExceptionNoLeakCheck("SELECT arr[1, 3.0] subarr FROM tango;",
+                    14, "invalid type for array access [type=DOUBLE]"
+            );
+        });
+    }
+
+    @Test
     public void testBasicArithmetic1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
@@ -2114,6 +2130,15 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRndArrayBadTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck("select rnd_double_array(1, 100.0, 10), rnd_varchar() from long_sequence(5);",
+                    27, "nanRate must be an integer"
+            );
+        });
+    }
+
+    @Test
     public void testRndDoubleArray() throws Exception {
         assertMemoryLeak(() -> {
             assertSql("rnd_double_array\n[0.08486964232560668,0.299199045961845]\n",
@@ -2646,11 +2671,11 @@ public class ArrayTest extends AbstractCairoTest {
                 if (!ColumnType.isSupportedArrayElementType(j)) {
                     continue;
                 }
-                Assert.assertTrue(ColumnType.isAssignableFrom(
+                Assert.assertTrue(ColumnType.isConvertibleFrom(
                         ColumnType.encodeArrayType(j, i),
                         ColumnType.encodeArrayType(j, i)
                 ));
-                Assert.assertTrue(ColumnType.isAssignableFrom(
+                Assert.assertTrue(ColumnType.isConvertibleFrom(
                         ColumnType.NULL,
                         ColumnType.encodeArrayType(j, i)
                 ));
@@ -2663,9 +2688,9 @@ public class ArrayTest extends AbstractCairoTest {
                     continue;
                 }
                 // not assignable from scalar to any array
-                Assert.assertFalse(ColumnType.isAssignableFrom(j, ColumnType.encodeArrayType(j, i)));
+                Assert.assertFalse(ColumnType.isConvertibleFrom(j, ColumnType.encodeArrayType(j, i)));
                 // ... nor the other way around
-                Assert.assertFalse(ColumnType.isAssignableFrom(ColumnType.encodeArrayType(j, i), j));
+                Assert.assertFalse(ColumnType.isConvertibleFrom(ColumnType.encodeArrayType(j, i), j));
             }
         }
     }

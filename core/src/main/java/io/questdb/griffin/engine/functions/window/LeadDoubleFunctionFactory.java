@@ -65,7 +65,7 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 configuration,
                 sqlExecutionContext,
                 (defaultValue) -> {
-                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), ColumnType.DOUBLE)) {
+                    if (!ColumnType.isConvertibleFrom(defaultValue.getType(), ColumnType.DOUBLE)) {
                         throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to double");
                     }
                 },

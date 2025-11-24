@@ -761,7 +761,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private static boolean isTimestampUpdateCast(int from, int to) {
-        return ColumnType.isTimestamp(to) && ColumnType.isAssignableFrom(from, to);
+        return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
     }
 
     private int addColumnWithType(
@@ -2780,7 +2780,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(index);
-                    if (ColumnType.isAssignableFrom(fromType, toType)) {
+                    if (ColumnType.isConvertibleFrom(fromType, toType)) {
                         listColumnFilter.add(index + 1);
                     } else {
                         throw SqlException.inconvertibleTypes(
@@ -2836,7 +2836,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 for (int i = 0; i < n; i++) {
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(i);
-                    if (ColumnType.isAssignableFrom(fromType, toType)) {
+                    if (ColumnType.isConvertibleFrom(fromType, toType)) {
                         continue;
                     }
 
@@ -4035,8 +4035,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 int tableColumnType = tableColumnTypes.get(tableColumnIndex);
 
                 if (virtualColumnType != tableColumnType && !isIPv4UpdateCast(virtualColumnType, tableColumnType) && !isTimestampUpdateCast(virtualColumnType, tableColumnType)) {
-                    if (!ColumnType.isSymbolOrString(tableColumnType) || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.STRING)) {
-                        if (tableColumnType != ColumnType.VARCHAR || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.VARCHAR)) {
+                    if (!ColumnType.isSymbolOrString(tableColumnType) || !ColumnType.isConvertibleFrom(virtualColumnType, ColumnType.STRING)) {
+                        if (tableColumnType != ColumnType.VARCHAR || !ColumnType.isConvertibleFrom(virtualColumnType, ColumnType.VARCHAR)) {
                             // get column position
                             ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
                             throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "", tableColumnType, updateColumnName);
@@ -4095,7 +4095,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             function.assignType(columnType, bindVariableService);
         }
 
-        if (ColumnType.isAssignableFrom(function.getType(), columnType)) {
+        if (ColumnType.isConvertibleFrom(function.getType(), columnType)) {
             if (metadataColumnIndex == metadataTimestampIndex) {
                 return;
             }

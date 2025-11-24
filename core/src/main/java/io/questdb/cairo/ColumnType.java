@@ -431,10 +431,6 @@ public final class ColumnType {
         return isArray(columnType) && (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0;
     }
 
-    public static boolean isAssignableFrom(int fromType, int toType) {
-        return isToSameOrWider(fromType, toType) || isNarrowingCast(fromType, toType);
-    }
-
     public static boolean isBinary(int columnType) {
         return columnType == BINARY;
     }
@@ -452,7 +448,8 @@ public final class ColumnType {
      * <p>
      * <b>Important:</b> This method is intentionally conservative. Some Function base classes implement
      * additional getters beyond standard widening (e.g., BooleanFunction has getInt(), CharFunction has
-     * getByte()), but this method returns false for such conversions.
+     * getByte()), but this method returns false for such conversions. This is to avoid implicit casting
+     * in SQL where it could be surprising for users.
      *
      * @param fromType the source column type
      * @param toType   the target column type
@@ -493,6 +490,31 @@ public final class ColumnType {
     public static boolean isComparable(int columnType) {
         short typeTag = tagOf(columnType);
         return typeTag != BINARY && typeTag != INTERVAL && typeTag != ARRAY;
+    }
+
+    /**
+     * Checks if a value of {@code fromType} can be converted to {@code toType} through any available conversion,
+     * including both safe (widening) and unsafe (narrowing) conversions.
+     * <p>
+     * This method returns true if EITHER of the following is true:
+     * <ul>
+     *   <li>{@link #isToSameOrWider(int, int)} - Safe conversion that preserves precision</li>
+     *   <li>{@link #isNarrowingCast(int, int)} - Unsafe conversion that may lose data</li>
+     * </ul>
+     * </p>
+     * <p>
+     * Warning: When this function returns true it does not imply that you can treat fromType as toType.
+     * It merely says a conversion is possible, but it might require wrapping the from function with a casting function.
+     *
+     * @param fromType the source column type
+     * @param toType   the target column type
+     * @return true if any conversion (safe or unsafe) is possible, false otherwise
+     * @see #isBuiltInWideningCast(int, int) for conversions that don't need cast wrappers
+     * @see #isToSameOrWider(int, int) for safe conversions that preserve precision
+     * @see #isNarrowingCast(int, int) for explicitly narrowing conversions
+     */
+    public static boolean isConvertibleFrom(int fromType, int toType) {
+        return isToSameOrWider(fromType, toType) || isNarrowingCast(fromType, toType);
     }
 
     public static boolean isCursor(int columnType) {
