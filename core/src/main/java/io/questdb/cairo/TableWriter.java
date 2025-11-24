@@ -1962,7 +1962,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void enforceTtl() {
         if (metadata.getPartitionBy() == PartitionBy.NONE) {
-            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
+            LOG.error().$("TTL set on a non-partitioned table. Ignoring").$();
             return;
         }
 
