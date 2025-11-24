@@ -466,6 +466,102 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testJsonConnectionCounterDoesNotGoNegativeWithConcurrentExports() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = new TestServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                // Create a test table
+                try (final HttpClient client = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    client.newRequest("localhost", serverMain.getHttpServerPort())
+                            .GET()
+                            .url("/exec")
+                            .query("query", "CREATE TABLE test_json_conn_table AS SELECT x::int as id, 'test_' || x as name FROM long_sequence(100)")
+                            .send()
+                            .close();
+                }
+
+                // Run concurrent exports and JSON queries to stress test connection counting
+                final int numExportThreads = 4;
+                final int numJsonThreads = 3;
+                final int requestsPerThread = 5;
+                final AtomicInteger errors = new AtomicInteger();
+                final ObjList<Thread> threads = new ObjList<>();
+
+                // Start export threads
+                for (int i = 0; i < numExportThreads; i++) {
+                    Thread thread = new Thread(() -> {
+                        try {
+                            for (int n = 0; n < requestsPerThread; n++) {
+                                try (TestHttpClient client = new TestHttpClient()) {
+                                    client.port = serverMain.getHttpServerPort();
+                                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
+                                    params.put("fmt", "parquet");
+                                    params.put("query", "test_json_conn_table");
+                                    client.assertGetParquet("/exp", 105, params, null);
+                                }
+                            }
+                        } catch (Exception e) {
+                            LOG.error().$(e.getMessage()).$();
+                            errors.incrementAndGet();
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    });
+                    threads.add(thread);
+                }
+
+                // Start JSON query threads
+                for (int i = 0; i < numJsonThreads; i++) {
+                    Thread thread = new Thread(() -> {
+                        try {
+                            for (int n = 0; n < requestsPerThread; n++) {
+                                try (final HttpClient client = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                                    client.newRequest("localhost", serverMain.getHttpServerPort())
+                                            .GET()
+                                            .url("/exec")
+                                            .query("query", "SELECT * FROM test_json_conn_table LIMIT 50")
+                                            .send()
+                                            .close();
+                                }
+                            }
+                        } catch (Exception e) {
+                            LOG.error().$(e.getMessage()).$();
+                            errors.incrementAndGet();
+                        }
+                    });
+                    threads.add(thread);
+                }
+
+                // Start all threads
+                for (int i = 0; i < threads.size(); i++) {
+                    threads.getQuick(i).start();
+                }
+
+                // Wait for all threads to complete
+                try {
+                    for (int i = 0; i < threads.size(); i++) {
+                        threads.getQuick(i).join();
+                    }
+
+                    // Wait a bit for all connections to close
+                    Os.sleep(100);
+
+                    assertEventually(() -> {
+                        // Final check: connection count should be 0
+                        long finalJsonConnectionCount = serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_JSON);
+                        Assert.assertEquals("JSON connection count should be 0 after all requests complete", 0, finalJsonConnectionCount);
+                    });
+                } finally {
+                    threads.clear();
+                }
+
+                Assert.assertEquals("No errors should occur during concurrent export/json operations", 0, errors.get());
+            }
+        });
+    }
+
+    @Test
     public void testOnParquetPartition() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
