@@ -479,21 +479,26 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     final int requestsPerThread = 5;
                     final AtomicInteger errors = new AtomicInteger();
                     final ObjList<Thread> threads = new ObjList<>();
+                    final CyclicBarrier expBarrier = new CyclicBarrier(numExportThreads);
+                    final CyclicBarrier jsonBarrier = new CyclicBarrier(numJsonThreads);
 
                     // Start export threads
                     for (int i = 0; i < numExportThreads; i++) {
                         Thread thread = new Thread(() -> {
+                            TestUtils.await(expBarrier);
                             try {
-                                for (int n = 0; n < requestsPerThread; n++) {
-                                    try (TestHttpClient client = new TestHttpClient()) {
-                                        client.port = testHttpClient.port;
-                                        CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
+                                try (TestHttpClient client = new TestHttpClient()) {
+                                    client.port = testHttpClient.port;
+                                    client.setKeepConnection(true);
+                                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
+                                    for (int n = 0; n < requestsPerThread; n++) {
+                                        params.clear();
                                         params.put("fmt", "parquet");
                                         params.put("query", "test_json_conn_table");
                                         client.assertGetParquet("/exp", 926, params, null);
                                     }
                                 }
-                            } catch (Exception e) {
+                            } catch (Throwable e) {
                                 LOG.error().$(e.getMessage()).$();
                                 errors.incrementAndGet();
                             } finally {
@@ -506,9 +511,10 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     // Start JSON query threads
                     for (int i = 0; i < numJsonThreads; i++) {
                         Thread thread = new Thread(() -> {
+                            TestUtils.await(jsonBarrier);
                             try {
-                                for (int n = 0; n < requestsPerThread; n++) {
-                                    try (final HttpClient client = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                                try (final HttpClient client = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                                    for (int n = 0; n < requestsPerThread; n++) {
                                         try (var respHeaders = client.newRequest("localhost", testHttpClient.port)
                                                 .GET()
                                                 .url("/exec")
@@ -518,7 +524,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                         }
                                     }
                                 }
-                            } catch (Exception e) {
+                            } catch (Throwable e) {
                                 LOG.error().$(e.getMessage()).$();
                                 errors.incrementAndGet();
                             }
