@@ -6527,6 +6527,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             try {
                 execute("drop table price_1h");
+                Assert.fail("Expected exception missing");
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage().contains("table name expected, got view or materialized view name"));
             }
