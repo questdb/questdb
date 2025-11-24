@@ -149,7 +149,7 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
             TestUtils.writeStringToFile(temp, "abcde");
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path().of(temp.getAbsolutePath())) {
                 Assert.assertTrue(Files.exists(path.$()));
                 Assert.assertEquals(5, Files.length(path.$()));
@@ -687,7 +687,7 @@ public class FilesTest {
 
     @Test
     public void testMixedIOConcurrent() throws Exception {
-        final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         // This test aims to follow write pattern possible when handling O3 tasks.
         // Concurrent mmap-based writes and pwrite() may break read-your-write
@@ -1077,6 +1077,21 @@ public class FilesTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testRecursiveRmdirLimit() throws IOException {
+        var ff = new FilesFacadeImpl();
+        temporaryFolder.newFolder("a", "b");
+
+        try (Path path = new Path().of(temporaryFolder.getRoot().getAbsolutePath()).concat("a")) {
+            temporaryFolder.newFolder("a", ".download", "table", "wal", "segment");
+
+            Assert.assertTrue(ff.rmdir(path));
+
+            temporaryFolder.newFolder("a", ".download", "table", "wal", "segment", "extra");
+            Assert.assertFalse(ff.rmdir(path));
+        }
     }
 
     @Test
