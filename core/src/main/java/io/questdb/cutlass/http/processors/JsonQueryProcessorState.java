@@ -346,7 +346,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void onResumeConfirmation(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
         response.bookmark();
-        response.put('{')
+        response.putAscii('{')
                 .putAsciiQuoted("ddl").putAscii(':').putAsciiQuoted("OK")
                 .putAscii('}');
         queryState = QUERY_DONE;
@@ -356,9 +356,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void onResumeInsertConfirmation(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
         response.bookmark();
-        response.put('{')
+        response.putAscii('{')
                 .putAsciiQuoted("dml").putAscii(':').putAsciiQuoted("OK")
-                .put('}');
+                .putAscii('}');
         queryState = QUERY_DONE;
         readyForNextRequest(getHttpConnectionContext());
         response.sendChunk(true);
@@ -366,10 +366,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void onResumeUpdateConfirmation(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
         response.bookmark();
-        response.put('{')
+        response.putAscii('{')
                 .putAsciiQuoted("dml").putAscii(':').putAsciiQuoted("OK").putAscii(',')
                 .putAsciiQuoted("updated").putAscii(':').put(updateRecords)
-                .put('}');
+                .putAscii('}');
         queryState = QUERY_DONE;
         readyForNextRequest(getHttpConnectionContext());
         response.sendChunk(true);
@@ -728,8 +728,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             response.putAscii('{')
                     .putAsciiQuoted("name").putAscii(':').putQuote().escapeJsonStr(columnNames.getQuick(columnIndex)).putQuote().putAscii(',');
             if (ColumnType.tagOf(columnType) == ColumnType.ARRAY) {
-                response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted("ARRAY").put(',');
-                response.putAsciiQuoted("dim").putAscii(':').put(ColumnType.decodeWeakArrayDimensionality(columnType)).put(',');
+                response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted("ARRAY").putAscii(',');
+                response.putAsciiQuoted("dim").putAscii(':').put(ColumnType.decodeWeakArrayDimensionality(columnType)).putAscii(',');
                 response.putAsciiQuoted("elemType").putAscii(':').putAsciiQuoted(ColumnType.nameOf(ColumnType.decodeArrayElementType(columnType)));
             } else {
                 response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType));
@@ -1226,7 +1226,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     void onResumeEmptyQuery(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
         response.bookmark();
         String noticeOrError = getApiVersion() >= 2 ? "notice" : "error";
-        response.put('{')
+        response.putAscii('{')
                 .putAsciiQuoted(noticeOrError).putAscii(':').putAsciiQuoted("empty query")
                 .putAscii(",")
                 .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(getQuery()).putQuote()
