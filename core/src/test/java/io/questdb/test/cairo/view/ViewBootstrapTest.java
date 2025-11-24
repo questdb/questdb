@@ -63,8 +63,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
-import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
+import static io.questdb.test.tools.TestUtils.assertEquals;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 import static java.net.HttpURLConnection.HTTP_OK;
 import static org.junit.Assert.*;
@@ -244,17 +244,21 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
         assertSqlViaPG(
                 VIEW1,
-                "ts[TIMESTAMP],k[VARCHAR],v_max[BIGINT]\n" +
-                        "1970-01-01 00:00:50.0,k5,5\n" +
-                        "1970-01-01 00:01:00.0,k6,6\n" +
-                        "1970-01-01 00:01:10.0,k7,7\n" +
-                        "1970-01-01 00:01:20.0,k8,8\n"
+                """
+                        ts[TIMESTAMP],k[VARCHAR],v_max[BIGINT]
+                        1970-01-01 00:00:50.0,k5,5
+                        1970-01-01 00:01:00.0,k6,6
+                        1970-01-01 00:01:10.0,k7,7
+                        1970-01-01 00:01:20.0,k8,8
+                        """
         );
         assertSqlViaPG(
                 VIEW2,
-                "ts[TIMESTAMP],k2[VARCHAR],v_max[BIGINT]\n" +
-                        "1970-01-01 00:01:10.0,k2_7,7\n" +
-                        "1970-01-01 00:01:20.0,k2_8,8\n"
+                """
+                        ts[TIMESTAMP],k2[VARCHAR],v_max[BIGINT]
+                        1970-01-01 00:01:10.0,k2_7,7
+                        1970-01-01 00:01:20.0,k2_8,8
+                        """
         );
 
         // restart and check that the views are still working
@@ -263,17 +267,21 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
 
         assertSqlViaPG(
                 VIEW1,
-                "ts[TIMESTAMP],k[VARCHAR],v_max[BIGINT]\n" +
-                        "1970-01-01 00:00:50.0,k5,5\n" +
-                        "1970-01-01 00:01:00.0,k6,6\n" +
-                        "1970-01-01 00:01:10.0,k7,7\n" +
-                        "1970-01-01 00:01:20.0,k8,8\n"
+                """
+                        ts[TIMESTAMP],k[VARCHAR],v_max[BIGINT]
+                        1970-01-01 00:00:50.0,k5,5
+                        1970-01-01 00:01:00.0,k6,6
+                        1970-01-01 00:01:10.0,k7,7
+                        1970-01-01 00:01:20.0,k8,8
+                        """
         );
         assertSqlViaPG(
                 VIEW2,
-                "ts[TIMESTAMP],k2[VARCHAR],v_max[BIGINT]\n" +
-                        "1970-01-01 00:01:10.0,k2_7,7\n" +
-                        "1970-01-01 00:01:20.0,k2_8,8\n"
+                """
+                        ts[TIMESTAMP],k2[VARCHAR],v_max[BIGINT]
+                        1970-01-01 00:01:10.0,k2_7,7
+                        1970-01-01 00:01:20.0,k2_8,8
+                        """
         );
     }
 
@@ -517,11 +525,13 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         // existing view still readable
         assertSqlViaPG(
                 VIEW1 + " order by ts",
-                "ts[TIMESTAMP],k[VARCHAR],v_max[BIGINT]\n" +
-                        "1970-01-01 00:00:50.0,k5,5\n" +
-                        "1970-01-01 00:01:00.0,k6,6\n" +
-                        "1970-01-01 00:01:10.0,k7,7\n" +
-                        "1970-01-01 00:01:20.0,k8,8\n"
+                """
+                        ts[TIMESTAMP],k[VARCHAR],v_max[BIGINT]
+                        1970-01-01 00:00:50.0,k5,5
+                        1970-01-01 00:01:00.0,k6,6
+                        1970-01-01 00:01:10.0,k7,7
+                        1970-01-01 00:01:20.0,k8,8
+                        """
         );
 
         // cannot create new view via PG

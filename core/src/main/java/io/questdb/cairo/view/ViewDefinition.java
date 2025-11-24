@@ -133,7 +133,7 @@ public class ViewDefinition implements Mutable {
         long offset = 0;
 
         final CharSequence viewSql = block.getStr(offset);
-        if (viewSql == null || viewSql.length() == 0) {
+        if (viewSql == null || viewSql.isEmpty()) {
             throw CairoException.critical(0)
                     .put("view SQL is empty [view=")
                     .put(viewToken.getTableName())

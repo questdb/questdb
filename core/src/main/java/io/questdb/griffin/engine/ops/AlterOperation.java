@@ -333,18 +333,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     @Override
     public boolean isStructural() {
-        switch (command) {
-            case ADD_COLUMN:
-            case RENAME_COLUMN:
-            case DROP_COLUMN:
-            case RENAME_TABLE:
-            case SET_DEDUP_DISABLE:
-            case SET_DEDUP_ENABLE:
-            case CHANGE_COLUMN_TYPE:
-                return true;
-            default:
-                return false;
-        }
+        return switch (command) {
+            case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, RENAME_TABLE, SET_DEDUP_DISABLE, SET_DEDUP_ENABLE,
+                 CHANGE_COLUMN_TYPE -> true;
+            default -> false;
+        };
     }
 
     @Override
@@ -355,22 +348,15 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
         // Table rename is not in the list since it's handled by the engine directly. That's because the invalidation
         // looks up dependent views by table name which has already changed at this point, not directory name.
-        switch (command) {
-            case DROP_COLUMN:
-                return "drop column operation";
-            case RENAME_COLUMN:
-                return "rename column operation";
-            case CHANGE_COLUMN_TYPE:
-                return "change column type operation";
-            case DROP_PARTITION:
-                return "drop partition operation";
-            case DETACH_PARTITION:
-                return "detach partition operation";
-            case ATTACH_PARTITION:
-                return "attach partition operation";
-            default:
-                return null;
-        }
+        return switch (command) {
+            case DROP_COLUMN -> "drop column operation";
+            case RENAME_COLUMN -> "rename column operation";
+            case CHANGE_COLUMN_TYPE -> "change column type operation";
+            case DROP_PARTITION -> "drop partition operation";
+            case DETACH_PARTITION -> "detach partition operation";
+            case ATTACH_PARTITION -> "attach partition operation";
+            default -> null;
+        };
     }
 
     public AlterOperation of(
@@ -399,7 +385,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             boolean dedupKey
     ) {
         of(AlterOperation.ADD_COLUMN, tableToken, tableId, tableNamePosition);
-        assert columnName != null && columnName.length() > 0;
+        assert columnName != null && !columnName.isEmpty();
         extraStrInfo.strings.add(Chars.toString(columnName));
         extraInfo.add(columnType);
         extraInfo.add(symbolCapacity);
@@ -411,7 +397,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     public void ofRenameTable(TableToken fromTableToken, CharSequence toTableName) {
         of(AlterOperation.RENAME_TABLE, fromTableToken, fromTableToken.getTableId(), 0);
-        assert toTableName != null && toTableName.length() > 0;
+        assert toTableName != null && !toTableName.isEmpty();
         extraStrInfo.strings.add(fromTableToken.getTableName());
         extraStrInfo.strings.add(toTableName);
     }
@@ -448,15 +434,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     @Override
     public boolean shouldCompileDependentViews() {
-        switch (command) {
-            case ADD_COLUMN:
-            case RENAME_COLUMN:
-            case DROP_COLUMN:
-            case CHANGE_COLUMN_TYPE:
-                return true;
-            default:
-                return false;
-        }
+        return switch (command) {
+            case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, CHANGE_COLUMN_TYPE -> true;
+            default -> false;
+        };
     }
 
     @Override
@@ -816,30 +797,25 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private static class ObjCharSequenceList implements CharSequenceList {
-        private final ObjList<CharSequence> strings;
-
-        public ObjCharSequenceList(ObjList<CharSequence> strings) {
-            this.strings = strings;
-        }
+    private record ObjCharSequenceList(ObjList<CharSequence> strings) implements CharSequenceList {
 
         @Override
-        public void clear() {
-            strings.clear();
-        }
+            public void clear() {
+                strings.clear();
+            }
 
-        public CharSequence getStrA(int i) {
-            return strings.get(i);
-        }
+            public CharSequence getStrA(int i) {
+                return strings.get(i);
+            }
 
-        @Override
-        public CharSequence getStrB(int i) {
-            return strings.get(i);
-        }
+            @Override
+            public CharSequence getStrB(int i) {
+                return strings.get(i);
+            }
 
-        @Override
-        public int size() {
-            return strings.size();
+            @Override
+            public int size() {
+                return strings.size();
+            }
         }
-    }
 }

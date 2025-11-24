@@ -495,7 +495,6 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {
                 isOpen = true;
-                recordChain.reopen();
                 recordChain.setSymbolTableResolver(this);
                 reopenTrees();
                 reopen(allFunctions);

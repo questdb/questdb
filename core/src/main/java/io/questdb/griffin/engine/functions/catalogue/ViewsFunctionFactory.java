@@ -174,20 +174,14 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStrA(int col) {
-                    switch (col) {
-                        case COLUMN_VIEW_NAME:
-                            return viewDefinition.getViewToken().getTableName();
-                        case COLUMN_VIEW_SQL:
-                            return viewDefinition.getViewSql();
-                        case COLUMN_TABLE_DIR_NAME:
-                            return viewDefinition.getViewToken().getDirName();
-                        case COLUMN_VIEW_STATUS:
-                            return getViewStatus();
-                        case COLUMN_INVALIDATION_REASON:
-                            return viewState.getInvalidationReason();
-                        default:
-                            return null;
-                    }
+                    return switch (col) {
+                        case COLUMN_VIEW_NAME -> viewDefinition.getViewToken().getTableName();
+                        case COLUMN_VIEW_SQL -> viewDefinition.getViewSql();
+                        case COLUMN_TABLE_DIR_NAME -> viewDefinition.getViewToken().getDirName();
+                        case COLUMN_VIEW_STATUS -> getViewStatus();
+                        case COLUMN_INVALIDATION_REASON -> viewState.getInvalidationReason();
+                        default -> null;
+                    };
                 }
 
                 @Override

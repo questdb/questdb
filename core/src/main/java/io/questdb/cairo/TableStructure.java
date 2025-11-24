@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.view.ViewDefinition;
-import io.questdb.std.Numbers;
 
 public interface TableStructure {
 

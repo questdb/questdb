@@ -60,10 +60,12 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     null,
                     true,
                     false,
-                    "QUERY PLAN\n" +
-                            "Sort\n" +
-                            "  keys: [view_name]\n" +
-                            "    views()\n"
+                    """
+                            QUERY PLAN
+                            Sort
+                              keys: [view_name]
+                                views()
+                            """
             );
 
             compileView(VIEW1);
@@ -97,18 +99,22 @@ public class ViewInvalidationTest extends AbstractViewTest {
             assertViewState(VIEW3, expectedErrorMessage);
 
             assertQueryAndPlan(
-                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
-                            "view1\tselect ts, k, max(v) as value from table1 where v > 4\tview1~3\ttable does not exist [table=table1]\tinvalid\t2025-06-19T15:00:01.000000Z\n" +
-                            "view2\tselect ts, k, min(v) as value from table2 where v > 6\tview2~4\t\tvalid\t2025-06-19T15:00:00.000000Z\n" +
-                            "view3\tview1 union view2\tview3~5\ttable does not exist [table=table1]\tinvalid\t2025-06-19T15:00:01.000000Z\n",
+                    """
+                            view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time
+                            view1\tselect ts, k, max(v) as value from table1 where v > 4\tview1~3\ttable does not exist [table=table1]\tinvalid\t2025-06-19T15:00:01.000000Z
+                            view2\tselect ts, k, min(v) as value from table2 where v > 6\tview2~4\t\tvalid\t2025-06-19T15:00:00.000000Z
+                            view3\tview1 union view2\tview3~5\ttable does not exist [table=table1]\tinvalid\t2025-06-19T15:00:01.000000Z
+                            """,
                     "views() order by view_name",
                     null,
                     true,
                     false,
-                    "QUERY PLAN\n" +
-                            "Sort\n" +
-                            "  keys: [view_name]\n" +
-                            "    views()\n"
+                    """
+                            QUERY PLAN
+                            Sort
+                              keys: [view_name]
+                                views()
+                            """
             );
 
             compileView(VIEW1, expectedErrorMessage);
@@ -142,18 +148,22 @@ public class ViewInvalidationTest extends AbstractViewTest {
             assertViewState(VIEW3);
 
             assertQueryAndPlan(
-                    "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
-                            "view1\tselect ts, k, max(v) as value from table1 where v > 4\tview1~3\t\tvalid\t2025-06-19T15:00:05.000000Z\n" +
-                            "view2\tselect ts, k, min(v) as value from table2 where v > 6\tview2~4\t\tvalid\t2025-06-19T15:00:00.000000Z\n" +
-                            "view3\tview1 union view2\tview3~5\t\tvalid\t2025-06-19T15:00:05.000000Z\n",
+                    """
+                            view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time
+                            view1\tselect ts, k, max(v) as value from table1 where v > 4\tview1~3\t\tvalid\t2025-06-19T15:00:05.000000Z
+                            view2\tselect ts, k, min(v) as value from table2 where v > 6\tview2~4\t\tvalid\t2025-06-19T15:00:00.000000Z
+                            view3\tview1 union view2\tview3~5\t\tvalid\t2025-06-19T15:00:05.000000Z
+                            """,
                     "views() order by view_name",
                     null,
                     true,
                     false,
-                    "QUERY PLAN\n" +
-                            "Sort\n" +
-                            "  keys: [view_name]\n" +
-                            "    views()\n"
+                    """
+                            QUERY PLAN
+                            Sort
+                              keys: [view_name]
+                                views()
+                            """
             );
 
             compileView(VIEW1);
@@ -222,8 +232,10 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     null,
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "views()\n"
+                    """
+                            QUERY PLAN
+                            views()
+                            """
             );
 
             compileView(VIEW1);
@@ -246,8 +258,10 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     null,
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "views()\n"
+                    """
+                            QUERY PLAN
+                            views()
+                            """
             );
 
             compileView(VIEW1, "table does not exist [table=" + TABLE1 + "]");
@@ -272,8 +286,10 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     null,
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "views()\n"
+                    """
+                            QUERY PLAN
+                            views()
+                            """
             );
 
             compileView(VIEW1);
@@ -348,8 +364,10 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     null,
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "views()\n"
+                    """
+                            QUERY PLAN
+                            views()
+                            """
             );
 
             compileView(VIEW1);
@@ -372,8 +390,10 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     null,
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "views()\n"
+                    """
+                            QUERY PLAN
+                            views()
+                            """
             );
 
             compileView(VIEW1, "table does not exist [table=" + TABLE1_2 + "]");
@@ -396,8 +416,10 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     null,
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "views()\n"
+                    """
+                            QUERY PLAN
+                            views()
+                            """
             );
 
             compileView(VIEW1);
@@ -425,8 +447,10 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     null,
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "views()\n"
+                    """
+                            QUERY PLAN
+                            views()
+                            """
             );
 
             compileView(VIEW1);
@@ -449,8 +473,10 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     null,
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "views()\n"
+                    """
+                            QUERY PLAN
+                            views()
+                            """
             );
 
             compileView(VIEW1, expectedErrorMessage);
@@ -473,8 +499,10 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     null,
                     false,
                     false,
-                    "QUERY PLAN\n" +
-                            "views()\n"
+                    """
+                            QUERY PLAN
+                            views()
+                            """
             );
 
             compileView(VIEW1);

@@ -3313,6 +3313,11 @@ public class MatViewTest extends AbstractCairoTest {
                     "column 'sym' already indexed"
             );
 
+            execute("alter materialized view price_1h alter column sym drop index;");
+            drainQueues();
+            execute("alter materialized view price_1h alter column sym add index;");
+            drainQueues();
+
             String sql = "select * from price_1h where sym = 'eurusd';";
             assertQueryNoLeakCheck(
                     """
@@ -7092,8 +7097,10 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\tbase_table_name\tview_status\n" +
-                            "price_1h\tbase_price\tvalid\n",
+                    """
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """,
                     "select view_name, base_table_name, view_status from materialized_views",
                     null,
                     false
@@ -7103,8 +7110,10 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQueryNoLeakCheck(
-                    "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
-                            "price_1h\tbase_price\tvalid\t\n",
+                    """
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1h\tbase_price\tvalid\t
+                            """,
                     "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
                     null,
                     false

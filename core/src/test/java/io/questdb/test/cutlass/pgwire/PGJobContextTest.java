@@ -11975,6 +11975,38 @@ create table tab as (
     }
 
     @Test
+    public void testUuidBindingVariableInFilter() throws Exception {
+        sharedQueryWorkerCount = 2; // enable parallel filters and JIT
+        try {
+            assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+                try (PreparedStatement stmt = connection.prepareStatement("""
+                        create table x as (select
+                        rnd_uuid4() u,
+                        timestamp_sequence(400000000000, 500000000) ts
+                        from long_sequence(100)) timestamp(ts) partition by day
+                        """)) {
+                    stmt.execute();
+                }
+
+                drainWalQueue();
+
+                try (PreparedStatement stmt = connection.prepareStatement("select u from x where u = ?")) {
+                    stmt.setObject(1, UUID.fromString("76fb2001-fe5d-4b09-acea-66fbe47c5e39"));
+                    try (ResultSet resultSet = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet("""
+                                u[OTHER]
+                                76fb2001-fe5d-4b09-acea-66fbe47c5e39
+                                """, sink, resultSet);
+                    }
+                }
+            });
+        } finally {
+            sharedQueryWorkerCount = 0;
+        }
+    }
+
+    @Test
     public void testUuidType_insertIntoUUIDColumn() throws Exception {
         skipOnWalRun();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {

@@ -42,24 +42,27 @@ import org.jetbrains.annotations.Nullable;
 
 public class LineHttpSenderV3 extends LineHttpSenderV2 {
 
-    public LineHttpSenderV3(ObjList<String> hosts,
-                            IntList ports,
-                            String path,
-                            HttpClientConfiguration clientConfiguration,
-                            ClientTlsConfiguration tlsConfig,
-                            @Nullable HttpClient client,
-                            int autoFlushRows,
-                            String authToken,
-                            String username,
-                            String password,
-                            int maxNameLength,
-                            long maxRetriesNanos,
-                            int maxBackoffMillis,
-                            long minRequestThroughput,
-                            long flushIntervalNanos,
-                            int currentAddressIndex,
-                            Rnd rnd) {
-        super(hosts,
+    public LineHttpSenderV3(
+            ObjList<String> hosts,
+            IntList ports,
+            String path,
+            HttpClientConfiguration clientConfiguration,
+            ClientTlsConfiguration tlsConfig,
+            @Nullable HttpClient client,
+            int autoFlushRows,
+            String authToken,
+            String username,
+            String password,
+            int maxNameLength,
+            long maxRetriesNanos,
+            int maxBackoffMillis,
+            long minRequestThroughput,
+            long flushIntervalNanos,
+            int currentAddressIndex,
+            Rnd rnd
+    ) {
+        super(
+                hosts,
                 ports,
                 path,
                 clientConfiguration,
@@ -75,27 +78,31 @@ public class LineHttpSenderV3 extends LineHttpSenderV2 {
                 minRequestThroughput,
                 flushIntervalNanos,
                 currentAddressIndex,
-                rnd);
+                rnd
+        );
     }
 
     @SuppressWarnings("unused")
-    protected LineHttpSenderV3(String host,
-                               int port,
-                               String path,
-                               HttpClientConfiguration clientConfiguration,
-                               ClientTlsConfiguration tlsConfig,
-                               HttpClient client,
-                               int autoFlushRows,
-                               String authToken,
-                               String username,
-                               String password,
-                               int maxNameLength,
-                               long maxRetriesNanos,
-                               int maxBackoffMillis,
-                               long minRequestThroughput,
-                               long flushIntervalNanos,
-                               Rnd rnd) {
-        super(host,
+    protected LineHttpSenderV3(
+            String host,
+            int port,
+            String path,
+            HttpClientConfiguration clientConfiguration,
+            ClientTlsConfiguration tlsConfig,
+            HttpClient client,
+            int autoFlushRows,
+            String authToken,
+            String username,
+            String password,
+            int maxNameLength,
+            long maxRetriesNanos,
+            int maxBackoffMillis,
+            long minRequestThroughput,
+            long flushIntervalNanos,
+            Rnd rnd
+    ) {
+        super(
+                host,
                 port,
                 path,
                 clientConfiguration,
@@ -110,7 +117,8 @@ public class LineHttpSenderV3 extends LineHttpSenderV2 {
                 maxBackoffMillis,
                 minRequestThroughput,
                 flushIntervalNanos,
-                rnd);
+                rnd
+        );
     }
 
     @Override
@@ -128,10 +136,9 @@ public class LineHttpSenderV3 extends LineHttpSenderV2 {
 
     @Override
     public Sender decimalColumn(CharSequence name, Decimal256 value) {
-        if (value.isNull()) {
+        if (value == null || value.isNull()) {
             return this;
         }
-
         var request = writeFieldName(name)
                 .putAscii('=')
                 .put(LineTcpParser.ENTITY_TYPE_DECIMAL)
@@ -146,10 +153,9 @@ public class LineHttpSenderV3 extends LineHttpSenderV2 {
 
     @Override
     public Sender decimalColumn(CharSequence name, Decimal128 value) {
-        if (value.isNull()) {
+        if (value == null || value.isNull()) {
             return this;
         }
-
         var request = writeFieldName(name)
                 .putAscii('=')
                 .put(LineTcpParser.ENTITY_TYPE_DECIMAL)
@@ -162,10 +168,9 @@ public class LineHttpSenderV3 extends LineHttpSenderV2 {
 
     @Override
     public Sender decimalColumn(CharSequence name, Decimal64 value) {
-        if (value.isNull()) {
+        if (value == null || value.isNull()) {
             return this;
         }
-
         var request = writeFieldName(name)
                 .putAscii('=')
                 .put(LineTcpParser.ENTITY_TYPE_DECIMAL)

@@ -203,14 +203,11 @@ public class TablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public boolean getBool(int col) {
-                    switch (col) {
-                        case WAL_ENABLED_COLUMN:
-                            return table.isWalEnabled();
-                        case DEDUP_NAME_COLUMN:
-                            return table.hasDedup();
-                        default:
-                            return false;
-                    }
+                    return switch (col) {
+                        case WAL_ENABLED_COLUMN -> table.isWalEnabled();
+                        case DEDUP_NAME_COLUMN -> table.hasDedup();
+                        default -> false;
+                    };
                 }
 
                 @Override
@@ -247,28 +244,24 @@ public class TablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStrA(int col) {
-                    switch (col) {
-                        case TABLE_NAME:
-                            return table.getTableName();
-                        case PARTITION_BY_COLUMN:
-                            return table.getPartitionByName();
-                        case TTL_UNIT_COLUMN:
-                            return getTtlUnit(table.getTtlHoursOrMonths());
-                        case DESIGNATED_TIMESTAMP_COLUMN:
-                            return table.getTimestampName();
-                        case DIRECTORY_NAME_COLUMN:
+                    return switch (col) {
+                        case TABLE_NAME -> table.getTableName();
+                        case PARTITION_BY_COLUMN -> table.getPartitionByName();
+                        case TTL_UNIT_COLUMN -> getTtlUnit(table.getTtlHoursOrMonths());
+                        case DESIGNATED_TIMESTAMP_COLUMN -> table.getTimestampName();
+                        case DIRECTORY_NAME_COLUMN -> {
                             if (table.isSoftLink()) {
                                 if (lazyStringSink == null) {
                                     lazyStringSink = new StringSink();
                                 }
                                 lazyStringSink.clear();
                                 lazyStringSink.put(table.getDirectoryName()).put(" (->)");
-                                return lazyStringSink;
+                                yield lazyStringSink;
                             }
-                            return table.getDirectoryName();
-                        default:
-                            return null;
-                    }
+                            yield table.getDirectoryName();
+                        }
+                        default -> null;
+                    };
                 }
 
                 @Override

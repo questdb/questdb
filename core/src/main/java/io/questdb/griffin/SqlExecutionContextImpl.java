@@ -61,6 +61,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
+    private final ObjList<ViewDefinition> referencedViews = new ObjList<>();
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
     private final Decimal64 decimal64 = new Decimal64();

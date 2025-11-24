@@ -143,7 +143,6 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
     protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;
-            slaveChain.reopen();
             joinKeyMap.reopen();
         }
         this.masterCursor = masterCursor;

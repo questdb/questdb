@@ -27,7 +27,6 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewDependencyList;
-import io.questdb.mp.Queue;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;

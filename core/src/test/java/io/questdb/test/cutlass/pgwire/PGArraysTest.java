@@ -430,8 +430,10 @@ public class PGArraysTest extends BasePGTest {
                 stmt.setInt(1, 1);
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet("x[DOUBLE],y[DOUBLE]\n" +
-                                    "1.0,2.0\n",
+                    assertResultSet("""
+                                    x[DOUBLE],y[DOUBLE]
+                                    1.0,2.0
+                                    """,
                             sink,
                             rs
                     );
@@ -724,6 +726,7 @@ public class PGArraysTest extends BasePGTest {
         String result = buildArrayResult2d(dimLen1, dimLen2) + '\n';
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
             try (Statement stmt = conn.createStatement()) {
+                //noinspection SqlSourceToSinkFlow
                 stmt.execute("CREATE TABLE tango AS (SELECT x n, " + literal + " arr FROM long_sequence(9))");
             }
             try (PreparedStatement stmt = conn.prepareStatement("SELECT n, arr[2:,2:] arr FROM tango")) {
@@ -755,6 +758,7 @@ public class PGArraysTest extends BasePGTest {
         String literal = buildArrayLiteral1d(elemCount);
         String result = buildArrayResult1d(elemCount) + '\n';
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            //noinspection SqlSourceToSinkFlow
             try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + literal + " arr FROM long_sequence(9)")) {
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
