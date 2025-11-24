@@ -2603,9 +2603,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     private record DdlSerializationTest(@Nullable String viewName, String ddl, String expected) {
-            public DdlSerializationTest(String ddl, String expected) {
-                this(null, ddl, expected);
-            }
-
+        public DdlSerializationTest(String ddl, String expected) {
+            this(null, ddl, expected);
+        }
     }
 }
