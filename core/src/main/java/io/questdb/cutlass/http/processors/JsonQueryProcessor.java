@@ -819,7 +819,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             state.info().$("Bad UTF8 encoding").$();
             HttpChunkedResponse response = context.getChunkedResponse();
             state.storeBadUtf8();
-            JsonQueryProcessor.header(response, context, keepAliveHeader, HTTP_BAD_REQUEST);
+            header(response, context, keepAliveHeader, HTTP_BAD_REQUEST);
             state.onResumeBadUtf8(response);
             return false;
         }

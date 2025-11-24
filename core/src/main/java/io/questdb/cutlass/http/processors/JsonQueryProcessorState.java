@@ -89,16 +89,17 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_SUFFIX = QUERY_RECORD_SUFFIX + 1; // 7
     static final int QUERY_SEND_RECORDS_LOOP = QUERY_SUFFIX + 1; // 8
     static final int QUERY_RECORD_PREFIX = QUERY_SEND_RECORDS_LOOP + 1; // 9
-    static final int QUERY_ERROR = QUERY_RECORD_PREFIX + 1; // 17
-    static final int QUERY_DONE = QUERY_ERROR + 1;
-    static final int QUERY_BAD_UTF8 = QUERY_DONE + 1;
-    static final int QUERY_EMPTY_QUERY = QUERY_BAD_UTF8 + 1;
-    static final int QUERY_CONFIRMATION = QUERY_EMPTY_QUERY + 1;
-    static final int QUERY_INSERT_CONFIRMATION = QUERY_CONFIRMATION + 1;
-    static final int QUERY_UPDATE_CONFIRMATION = QUERY_INSERT_CONFIRMATION + 1;
+    static final int QUERY_ERROR = QUERY_RECORD_PREFIX + 1; // 10
+    static final int QUERY_DONE = QUERY_ERROR + 1; // 11
+    static final int QUERY_BAD_UTF8 = QUERY_DONE + 1; // 12
+    static final int QUERY_EMPTY_QUERY = QUERY_BAD_UTF8 + 1; // 13
+    static final int QUERY_CONFIRMATION = QUERY_EMPTY_QUERY + 1; // 14
+    static final int QUERY_INSERT_CONFIRMATION = QUERY_CONFIRMATION + 1; // 15
+    static final int QUERY_UPDATE_CONFIRMATION = QUERY_INSERT_CONFIRMATION + 1; // 16
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
+    private final StringSink columnNameSink = new StringSink();
     private final ObjList<String> columnNames = new ObjList<>();
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
@@ -111,7 +112,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
-    private final StringSink stringSink = new StringSink();
     private byte apiVersion = DEFAULT_API_VERSION;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
@@ -197,7 +197,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             recordCursorFactory = null;
         }
         query.clear();
-        stringSink.clear();
+        columnNameSink.clear();
         queryState = QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
         columnValueFullySent = true;
@@ -688,13 +688,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private boolean addSunkColumnToOutput(RecordMetadata metadata) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        int columnIndex = metadata.getColumnIndexQuiet(stringSink);
+        int columnIndex = metadata.getColumnIndexQuiet(columnNameSink);
         if (columnIndex == RecordMetadata.COLUMN_NOT_FOUND) {
-            info().$("column not found: '").$safe(stringSink).$('\'').$();
+            info().$("column not found: '").$safe(columnNameSink).$('\'').$();
             HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
 
             storeError("column not found: '");
-            errorMessage.put(stringSink).putAscii('\'');
+            errorMessage.put(columnNameSink).putAscii('\'');
 
             JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
             onResumeError(response);
@@ -1037,7 +1037,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         while (rawLo < rawHi) {
             byte b = Unsafe.getUnsafe().getByte(rawLo);
             if (b < 0) {
-                int n = Utf8s.utf8DecodeMultiByte(rawLo, rawHi, b, stringSink);
+                int n = Utf8s.utf8DecodeMultiByte(rawLo, rawHi, b, columnNameSink);
                 if (n == -1) {
                     // Invalid code point
                     return 0;
@@ -1048,7 +1048,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 rawLo++;
                 if (escaped) {
                     escaped = false;
-                    stringSink.put((char) b);
+                    columnNameSink.put((char) b);
                     continue;
                 }
 
@@ -1059,7 +1059,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 } else if (!quoted && b == ',') {
                     return rawLo;
                 } else {
-                    stringSink.put((char) b);
+                    columnNameSink.put((char) b);
                 }
             }
         }
@@ -1175,7 +1175,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             long rawLo = columnNames.lo();
             final long rawHi = columnNames.hi();
             while (rawLo < rawHi) {
-                stringSink.clear();
+                columnNameSink.clear();
                 rawLo = parseNextColumnName(rawLo, rawHi);
                 if (rawLo <= 0) {
                     info().$("utf8 error when decoding column list '").$safe(columnNames).$('\'').$();
@@ -1186,7 +1186,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     return false;
                 }
 
-                if (stringSink.isEmpty()) {
+                if (columnNameSink.isEmpty()) {
                     info().$("empty column in query parameter '").$(URL_PARAM_COLS).$(": ").$safe(columnNames).$('\'').$();
                     HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
                     storeError("empty column in query parameter");
