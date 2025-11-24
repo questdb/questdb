@@ -1361,15 +1361,16 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
 
             currentMicros = parseFloorPartialTimestamp("2002-01-01T12:00:00.000000Z");
-            final long expectedStart = parseFloorPartialTimestamp("2002-01-01T12:00:00.000000Z");
-            final String query = "select ts, max(v) as v_max from " + TABLE1 + " sample by 10s";
+            // +2h due to the time zone
+            final long expectedStart = parseFloorPartialTimestamp("2002-01-01T14:00:00.000000Z");
+            final String query = "select ts, max(v) as v_max from " + TABLE1 + " sample by 10s align to calendar time zone 'Europe/Sofia'";
             execute(
                     "CREATE MATERIALIZED VIEW test REFRESH PERIOD (SAMPLE BY INTERVAL) AS (" +
                             query +
                             ") PARTITION BY MONTH;"
             );
-            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 10, 's', null, null, 0, 0, (char) 0, expectedStart, null, 10, 's', 0, (char) 0);
-            assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 10, 's', null, null, 0, 0, (char) 0, expectedStart, null, 10, 's', 0, (char) 0);
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 10, 's', "Europe/Sofia", null, 0, 0, (char) 0, expectedStart, "Europe/Sofia", 10, 's', 0, (char) 0);
+            assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 10, 's', "Europe/Sofia", null, 0, 0, (char) 0, expectedStart, "Europe/Sofia", 10, 's', 0, (char) 0);
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertEquals(0, metadata.getTimestampIndex());
@@ -1408,9 +1409,14 @@ public class CreateMatViewTest extends AbstractCairoTest {
                                 "as (select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00'))"
                 ),
                 new DdlSerializationTest(
-                        "create materialized view 'test5' refresh period (sample by interval) as (" + query + ")",
+                        "CREATE MATERIALIZED VIEW 'test5' REFRESH PERIOD (SAMPLE BY INTERVAL) as (" + query + ")",
                         "create materialized view test5 with base " + TABLE1 + " refresh immediate period (sample by interval) " +
                                 "as (select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00'))"
+                ),
+                new DdlSerializationTest(
+                        "CREATE MATERIALIZED VIEW 'test5' REFRESH PERIOD (SAMPLE BY INTERVAL) as (" + query + " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin')",
+                        "create materialized view test5 with base " + TABLE1 + " refresh immediate period (sample by interval) " +
+                                "as (select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar time zone 'Europe/Berlin' with offset '00:00'))"
                 ),
         };
         testModelToSink(tests);

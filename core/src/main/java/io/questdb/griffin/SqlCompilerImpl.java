@@ -1885,15 +1885,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     SqlParser.validateMatViewPeriodDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
                                     tok = expectToken(lexer, "')'");
                                 }
-
-                                if (!Chars.equals(tok, ')')) {
-                                    throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
-                                }
                             } else if (isSampleKeyword(tok)) {
                                 // REFRESH ... PERIOD(SAMPLE BY INTERVAL)
                                 // Align the period to the SAMPLE BY bucket.
                                 expectKeyword(lexer, "by");
                                 expectKeyword(lexer, "interval");
+                                tok = expectToken(lexer, "')'");
+
                                 length = (int) Math.min(viewDefinition.getSamplingInterval(), Integer.MAX_VALUE);
                                 lengthUnit = viewDefinition.getSamplingIntervalUnit();
                                 validateMatViewPeriodLength(length, lengthUnit, lexer.lastTokenPosition());
@@ -1908,7 +1906,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 tzRulesMicros = viewDefinition.getTzRules();
                                 if (viewDefinition.getTimeZoneOffset() != null) {
                                     final long val = Dates.parseOffset(viewDefinition.getTimeZoneOffset());
-                                    if (val != 0 && val != Numbers.LONG_NULL) {
+                                    if (val == Numbers.LONG_NULL) {
+                                        throw SqlException.position(lexer.lastTokenPosition()).put("invalid offset: ").put(viewDefinition.getTimeZoneOffset());
+                                    }
+                                    if (Numbers.decodeLowInt(val) != 0) {
                                         throw SqlException.position(lexer.lastTokenPosition()).put("PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
                                     }
                                 }
@@ -1921,6 +1922,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
                             timerStartUs = periodSamplerMicros.round(nowLocalMicros);
 
+                            if (!Chars.equals(tok, ')')) {
+                                throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
+                            }
                             tok = SqlUtil.fetchNext(lexer);
                         } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                             if (tok != null && isStartKeyword(tok)) {
