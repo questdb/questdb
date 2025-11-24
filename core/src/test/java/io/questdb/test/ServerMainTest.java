@@ -64,6 +64,42 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testAsyncMunmap() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Map<String, String> env = new HashMap<>(System.getenv());
+                env.put(PropertyKey.CAIRO_FILE_ASYNC_MUNMAP_ENABLED.getEnvVarName(), "true");
+
+                Bootstrap bootstrap;
+                try {
+                    bootstrap = new Bootstrap(
+                            new DefaultBootstrapConfiguration() {
+                                @Override
+                                public Map<String, String> getEnv() {
+                                    return env;
+                                }
+                            },
+                            getServerMainArgs()
+                    );
+                } catch (Bootstrap.BootstrapException ex) {
+                    if (!Os.isWindows()) {
+                        throw ex;
+                    }
+                    TestUtils.assertContains(ex.getMessage(), "Async munmap is not supported on Windows");
+                    return;
+                }
+
+                Assert.assertFalse(Os.isWindows());
+                try (final ServerMain serverMain = new ServerMain(bootstrap)) {
+                    serverMain.start();
+                }
+            } finally {
+                Files.ASYNC_MUNMAP_ENABLED = false;
+            }
+        });
+    }
+
+    @Test
     public void testPgWirePort() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
@@ -367,7 +403,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.topk.enabled\tQDB_CAIRO_SQL_PARALLEL_TOPK_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.parallel.groupby.sharding.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.groupby.sharding.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.presize.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.presize.max.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY\t100000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.presize.max.heap.size\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE\t1073741824\tdefault\tfalse\tfalse\n" +
@@ -418,6 +454,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.wal.inactive.writer.ttl\tQDB_CAIRO_WAL_INACTIVE_WRITER_TTL\t120000\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.max.lag.txn.count\tQDB_CAIRO_WAL_MAX_LAG_TXN_COUNT\t-1\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.max.segment.file.descriptors.cache\tQDB_CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE\t30\tdefault\tfalse\tfalse\n" +
+                                    "cairo.file.async.munmap.enabled\tQDB_CAIRO_FILE_ASYNC_MUNMAP_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.max.lag.size\tQDB_CAIRO_WAL_MAX_LAG_SIZE\t78643200\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.purge.interval\tQDB_CAIRO_WAL_PURGE_INTERVAL\t30000\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.recreate.distressed.sequencer.attempts\tQDB_CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS\t3\tdefault\tfalse\tfalse\n" +

@@ -40,114 +40,116 @@ import java.util.Collection;
  */
 @RunWith(Parameterized.class)
 public class ClickBenchTest extends AbstractCairoTest {
-    private static final String DDL = "CREATE TABLE hits\n" +
-            "(\n" +
-            "    WatchID long,\n" +
-            "    JavaEnable byte,\n" +
-            "    Title varchar,\n" +
-            "    GoodEvent byte,\n" +
-            "    EventTime timestamp,\n" +
-            "    Eventdate date,\n" +
-            "    CounterID int,\n" +
-            "    ClientIP ipv4,\n" +
-            "    RegionID int,\n" +
-            "    UserID long,\n" +
-            "    CounterClass byte,\n" +
-            "    OS short,\n" +
-            "    UserAgent short,\n" +
-            "    URL varchar,\n" +
-            "    Referer varchar,\n" +
-            "    IsRefresh byte,\n" +
-            "    RefererCategoryID short,\n" +
-            "    RefererRegionID int,\n" +
-            "    URLCategoryID short,\n" +
-            "    URLRegionID int,\n" +
-            "    ResolutionWidth short,\n" +
-            "    ResolutionHeight short,\n" +
-            "    ResolutionDepth short,\n" +
-            "    FlashMajor byte,\n" +
-            "    FlashMinor byte,\n" +
-            "    FlashMinor2 symbol,\n" +
-            "    NetMajor byte,\n" +
-            "    NetMinor byte,\n" +
-            "    UserAgentMajor short,\n" +
-            "    UserAgentMinor symbol,\n" +
-            "    CookieEnable byte,\n" +
-            "    JavascriptEnable byte,\n" +
-            "    IsMobile byte,\n" +
-            "    MobilePhone short,\n" +
-            "    MobilePhoneModel symbol,\n" +
-            "    Params symbol,\n" +
-            "    IPNetworkID int,\n" +
-            "    TraficSourceID int,\n" +
-            "    SearchEngineID short,\n" +
-            "    SearchPhrase varchar,\n" +
-            "    AdvEngineID short,\n" +
-            "    IsArtifical byte,\n" +
-            "    WindowClientWidth short,\n" +
-            "    WindowClientHeight short,\n" +
-            "    ClientTimeZone short,\n" +
-            "    ClientEventTime timestamp,\n" +
-            "    SilverlightVersion1 byte,\n" +
-            "    SilverlightVersion2 byte,\n" +
-            "    SilverlightVersion3 short,\n" +
-            "    SilverlightVersion4 byte,\n" +
-            "    PageCharset symbol,\n" +
-            "    CodeVersion short,\n" +
-            "    IsLink byte,\n" +
-            "    IsDownload byte,\n" +
-            "    IsNotBounce byte,\n" +
-            "    FUniqID long,\n" +
-            "    OriginalURL varchar,\n" +
-            "    HID int,\n" +
-            "    IsOldCounter byte,\n" +
-            "    IsEvent byte,\n" +
-            "    IsParameter byte,\n" +
-            "    DontCountHits byte,\n" +
-            "    WithHash byte,\n" +
-            "    HitColor char,\n" +
-            "    LocalEventTime timestamp,\n" +
-            "    Age byte,\n" +
-            "    Sex byte,\n" +
-            "    Income byte,\n" +
-            "    Interests short,\n" +
-            "    Robotness short,\n" +
-            "    RemoteIP int,\n" +
-            "    WindowName int,\n" +
-            "    OpenerName int,\n" +
-            "    HistoryLength short,\n" +
-            "    BrowserLanguage symbol,\n" +
-            "    BrowserCountry symbol,\n" +
-            "    SocialNetwork symbol,\n" +
-            "    SocialAction symbol,\n" +
-            "    HTTPError byte,\n" +
-            "    SendTiming int,\n" +
-            "    DNSTiming int,\n" +
-            "    ConnectTiming int,\n" +
-            "    ResponseStartTiming int,\n" +
-            "    ResponseEndTiming int,\n" +
-            "    FetchTiming int,\n" +
-            "    SocialSourceNetworkID short,\n" +
-            "    SocialSourcePage varchar,\n" +
-            "    ParamPrice long,\n" +
-            "    ParamOrderID symbol,\n" +
-            "    ParamCurrency symbol,\n" +
-            "    ParamCurrencyID short,\n" +
-            "    OpenstatServiceName symbol,\n" +
-            "    OpenstatCampaignID symbol,\n" +
-            "    OpenstatAdID varchar,\n" +
-            "    OpenstatSourceID symbol,\n" +
-            "    UTMSource symbol,\n" +
-            "    UTMMedium symbol,\n" +
-            "    UTMCampaign symbol,\n" +
-            "    UTMContent symbol,\n" +
-            "    UTMTerm symbol,\n" +
-            "    FromTag symbol,\n" +
-            "    HasGCLID byte,\n" +
-            "    RefererHash long,\n" +
-            "    URLHash long,\n" +
-            "    CLID int\n" +
-            ") TIMESTAMP(EventTime) PARTITION BY DAY;\n";
+    private static final String DDL = """
+            CREATE TABLE hits
+            (
+                WatchID long,
+                JavaEnable byte,
+                Title varchar,
+                GoodEvent byte,
+                EventTime timestamp,
+                Eventdate date,
+                CounterID int,
+                ClientIP ipv4,
+                RegionID int,
+                UserID long,
+                CounterClass byte,
+                OS short,
+                UserAgent short,
+                URL varchar,
+                Referer varchar,
+                IsRefresh byte,
+                RefererCategoryID short,
+                RefererRegionID int,
+                URLCategoryID short,
+                URLRegionID int,
+                ResolutionWidth short,
+                ResolutionHeight short,
+                ResolutionDepth short,
+                FlashMajor byte,
+                FlashMinor byte,
+                FlashMinor2 symbol,
+                NetMajor byte,
+                NetMinor byte,
+                UserAgentMajor short,
+                UserAgentMinor symbol,
+                CookieEnable byte,
+                JavascriptEnable byte,
+                IsMobile byte,
+                MobilePhone short,
+                MobilePhoneModel symbol,
+                Params symbol,
+                IPNetworkID int,
+                TraficSourceID int,
+                SearchEngineID short,
+                SearchPhrase varchar,
+                AdvEngineID short,
+                IsArtifical byte,
+                WindowClientWidth short,
+                WindowClientHeight short,
+                ClientTimeZone short,
+                ClientEventTime timestamp,
+                SilverlightVersion1 byte,
+                SilverlightVersion2 byte,
+                SilverlightVersion3 short,
+                SilverlightVersion4 byte,
+                PageCharset symbol,
+                CodeVersion short,
+                IsLink byte,
+                IsDownload byte,
+                IsNotBounce byte,
+                FUniqID long,
+                OriginalURL varchar,
+                HID int,
+                IsOldCounter byte,
+                IsEvent byte,
+                IsParameter byte,
+                DontCountHits byte,
+                WithHash byte,
+                HitColor char,
+                LocalEventTime timestamp,
+                Age byte,
+                Sex byte,
+                Income byte,
+                Interests short,
+                Robotness short,
+                RemoteIP int,
+                WindowName int,
+                OpenerName int,
+                HistoryLength short,
+                BrowserLanguage symbol,
+                BrowserCountry symbol,
+                SocialNetwork symbol,
+                SocialAction symbol,
+                HTTPError byte,
+                SendTiming int,
+                DNSTiming int,
+                ConnectTiming int,
+                ResponseStartTiming int,
+                ResponseEndTiming int,
+                FetchTiming int,
+                SocialSourceNetworkID short,
+                SocialSourcePage varchar,
+                ParamPrice long,
+                ParamOrderID symbol,
+                ParamCurrency symbol,
+                ParamCurrencyID short,
+                OpenstatServiceName symbol,
+                OpenstatCampaignID symbol,
+                OpenstatAdID varchar,
+                OpenstatSourceID symbol,
+                UTMSource symbol,
+                UTMMedium symbol,
+                UTMCampaign symbol,
+                UTMContent symbol,
+                UTMTerm symbol,
+                FromTag symbol,
+                HasGCLID byte,
+                RefererHash long,
+                URLHash long,
+                CLID int
+            ) TIMESTAMP(EventTime) PARTITION BY DAY;
+            """;
     private static final Log LOG = LogFactory.getLog(ClickBenchTest.class);
     private final boolean aliasExpressionsEnabled;
     private final TestCase[] testCases;
@@ -158,328 +160,384 @@ public class ClickBenchTest extends AbstractCairoTest {
                 new TestCase(
                         "Q0",
                         "SELECT COUNT(*) FROM hits;",
-                        "Count\n" +
-                                "    PageFrame\n" +
-                                "        Row forward scan\n" +
-                                "        Frame forward scan on: hits\n"
+                        """
+                                Count
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q1",
                         "SELECT COUNT(*) FROM hits WHERE AdvEngineID <> 0;",
-                        "Count\n" +
-                                "    Async JIT Filter workers: 1\n" +
-                                "      filter: AdvEngineID!=0\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Count
+                                    Async JIT Filter workers: 1
+                                      filter: AdvEngineID!=0
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q2",
                         "SELECT SUM(AdvEngineID), COUNT(*), AVG(ResolutionWidth) FROM hits;",
-                        "GroupBy vectorized: true workers: 1\n" +
-                                "  values: [sum(AdvEngineID),count(*),avg(ResolutionWidth)]\n" +
-                                "    PageFrame\n" +
-                                "        Row forward scan\n" +
-                                "        Frame forward scan on: hits\n"
+                        """
+                                GroupBy vectorized: true workers: 1
+                                  values: [sum(AdvEngineID),count(*),avg(ResolutionWidth)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q3",
                         "SELECT AVG(UserID) FROM hits;",
-                        "GroupBy vectorized: true workers: 1\n" +
-                                "  values: [avg(UserID)]\n" +
-                                "    PageFrame\n" +
-                                "        Row forward scan\n" +
-                                "        Frame forward scan on: hits\n"
+                        """
+                                GroupBy vectorized: true workers: 1
+                                  values: [avg(UserID)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q4",
                         "SELECT count_distinct(UserID) FROM hits;",
-                        "Count\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [UserID]\n" +
-                                "      filter: UserID!=null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Count
+                                    Async JIT Group By workers: 1
+                                      keys: [UserID]
+                                      filter: UserID!=null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q5",
                         "SELECT count_distinct(SearchPhrase) FROM hits;",
-                        "Count\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [SearchPhrase]\n" +
-                                "      filter: SearchPhrase is not null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Count
+                                    Async JIT Group By workers: 1
+                                      keys: [SearchPhrase]
+                                      filter: SearchPhrase is not null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q6",
                         "SELECT MIN(EventDate), MAX(EventDate) FROM hits;",
-                        "GroupBy vectorized: true workers: 1\n" +
-                                "  values: [min(EventDate),max(EventDate)]\n" +
-                                "    PageFrame\n" +
-                                "        Row forward scan\n" +
-                                "        Frame forward scan on: hits\n"
+                        """
+                                GroupBy vectorized: true workers: 1
+                                  values: [min(EventDate),max(EventDate)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q7",
                         "SELECT AdvEngineID, COUNT(*) AS c FROM hits WHERE AdvEngineID <> 0 GROUP BY AdvEngineID ORDER BY c DESC;",
-                        "Radix sort light\n" +
-                                "  keys: [c desc]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [AdvEngineID]\n" +
-                                "      values: [count(*)]\n" +
-                                "      filter: AdvEngineID!=0\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Radix sort light
+                                  keys: [c desc]
+                                    Async JIT Group By workers: 1
+                                      keys: [AdvEngineID]
+                                      values: [count(*)]
+                                      filter: AdvEngineID!=0
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q8",
                         "SELECT RegionID, count_distinct(UserID) AS u FROM hits GROUP BY RegionID ORDER BY u DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [u desc]\n" +
-                                "    Async Group By workers: 1\n" +
-                                "      keys: [RegionID]\n" +
-                                "      values: [count_distinct(UserID)]\n" +
-                                "      filter: null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [u desc]
+                                    Async Group By workers: 1
+                                      keys: [RegionID]
+                                      values: [count_distinct(UserID)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q9",
                         "SELECT RegionID, SUM(AdvEngineID), COUNT(*) AS c, AVG(ResolutionWidth), count_distinct(UserID) FROM hits GROUP BY RegionID ORDER BY c DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [c desc]\n" +
-                                "    Async Group By workers: 1\n" +
-                                "      keys: [RegionID]\n" +
-                                "      values: [sum(AdvEngineID),count(*),avg(ResolutionWidth),count_distinct(UserID)]\n" +
-                                "      filter: null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [c desc]
+                                    Async Group By workers: 1
+                                      keys: [RegionID]
+                                      values: [sum(AdvEngineID),count(*),avg(ResolutionWidth),count_distinct(UserID)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q10",
                         "SELECT MobilePhoneModel, count_distinct(UserID) AS u FROM hits WHERE MobilePhoneModel IS NOT NULL GROUP BY MobilePhoneModel ORDER BY u DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [u desc]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [MobilePhoneModel]\n" +
-                                "      values: [count_distinct(UserID)]\n" +
-                                "      filter: MobilePhoneModel is not null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [u desc]
+                                    Async JIT Group By workers: 1
+                                      keys: [MobilePhoneModel]
+                                      values: [count_distinct(UserID)]
+                                      filter: MobilePhoneModel is not null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q11",
                         "SELECT MobilePhone, MobilePhoneModel, count_distinct(UserID) AS u FROM hits WHERE MobilePhoneModel IS NOT NULL GROUP BY MobilePhone, MobilePhoneModel ORDER BY u DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [u desc]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [MobilePhone,MobilePhoneModel]\n" +
-                                "      values: [count_distinct(UserID)]\n" +
-                                "      filter: MobilePhoneModel is not null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [u desc]
+                                    Async JIT Group By workers: 1
+                                      keys: [MobilePhone,MobilePhoneModel]
+                                      values: [count_distinct(UserID)]
+                                      filter: MobilePhoneModel is not null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q12",
                         "SELECT SearchPhrase, COUNT(*) AS c FROM hits WHERE SearchPhrase IS NOT NULL GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [c desc]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [SearchPhrase]\n" +
-                                "      values: [count(*)]\n" +
-                                "      filter: SearchPhrase is not null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [c desc]
+                                    Async JIT Group By workers: 1
+                                      keys: [SearchPhrase]
+                                      values: [count(*)]
+                                      filter: SearchPhrase is not null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q13",
                         "SELECT SearchPhrase, count_distinct(UserID) AS u FROM hits WHERE SearchPhrase IS NOT NULL GROUP BY SearchPhrase ORDER BY u DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [u desc]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [SearchPhrase]\n" +
-                                "      values: [count_distinct(UserID)]\n" +
-                                "      filter: SearchPhrase is not null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [u desc]
+                                    Async JIT Group By workers: 1
+                                      keys: [SearchPhrase]
+                                      values: [count_distinct(UserID)]
+                                      filter: SearchPhrase is not null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q14",
                         "SELECT SearchEngineID, SearchPhrase, COUNT(*) AS c FROM hits WHERE SearchPhrase IS NOT NULL GROUP BY SearchEngineID, SearchPhrase ORDER BY c DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [c desc]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [SearchEngineID,SearchPhrase]\n" +
-                                "      values: [count(*)]\n" +
-                                "      filter: SearchPhrase is not null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [c desc]
+                                    Async JIT Group By workers: 1
+                                      keys: [SearchEngineID,SearchPhrase]
+                                      values: [count(*)]
+                                      filter: SearchPhrase is not null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q15",
                         "SELECT UserID, COUNT(*) AS c FROM hits GROUP BY UserID ORDER BY c DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [c desc]\n" +
-                                "    Async Group By workers: 1\n" +
-                                "      keys: [UserID]\n" +
-                                "      values: [count(*)]\n" +
-                                "      filter: null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [c desc]
+                                    Async Group By workers: 1
+                                      keys: [UserID]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q16",
                         "SELECT UserID, SearchPhrase, COUNT(*) AS c FROM hits GROUP BY UserID, SearchPhrase ORDER BY c DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [c desc]\n" +
-                                "    Async Group By workers: 1\n" +
-                                "      keys: [UserID,SearchPhrase]\n" +
-                                "      values: [count(*)]\n" +
-                                "      filter: null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [c desc]
+                                    Async Group By workers: 1
+                                      keys: [UserID,SearchPhrase]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q17",
                         "SELECT UserID, SearchPhrase, COUNT(*) FROM hits GROUP BY UserID, SearchPhrase LIMIT 10;",
-                        "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                                "    Async Group By workers: 1\n" +
-                                "      keys: [UserID,SearchPhrase]\n" +
-                                "      values: [count(*)]\n" +
-                                "      filter: null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Limit lo: 10 skip-over-rows: 0 limit: 0
+                                    Async Group By workers: 1
+                                      keys: [UserID,SearchPhrase]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q18",
                         "SELECT UserID, extract(minute FROM EventTime) AS m, SearchPhrase, COUNT(*) AS c FROM hits GROUP BY UserID, m, SearchPhrase ORDER BY c DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [c desc]\n" +
-                                "    VirtualRecord\n" +
-                                "      functions: [UserID,m,SearchPhrase,c]\n" +
-                                "        Async Group By workers: 1\n" +
-                                "          keys: [UserID,m,SearchPhrase]\n" +
-                                "          values: [count(*)]\n" +
-                                "          filter: null\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [c desc]
+                                    VirtualRecord
+                                      functions: [UserID,m,SearchPhrase,c]
+                                        Async Group By workers: 1
+                                          keys: [UserID,m,SearchPhrase]
+                                          values: [count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q19",
                         "SELECT UserID FROM hits WHERE UserID = 435090932899640449;",
-                        "Async JIT Filter workers: 1\n" +
-                                "  filter: UserID=435090932899640449L\n" +
-                                "    PageFrame\n" +
-                                "        Row forward scan\n" +
-                                "        Frame forward scan on: hits\n"
+                        """
+                                Async JIT Filter workers: 1
+                                  filter: UserID=435090932899640449L
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q20",
                         "SELECT COUNT(*) FROM hits WHERE URL LIKE '%google%';",
-                        "Count\n" +
-                                "    Async Filter workers: 1\n" +
-                                "      filter: URL like %google%\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Count
+                                    Async Filter workers: 1
+                                      filter: URL like %google%
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q21",
                         "SELECT SearchPhrase, MIN(URL), COUNT(*) AS c FROM hits WHERE URL LIKE '%google%' AND SearchPhrase IS NOT NULL GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [c desc]\n" +
-                                "    Async Group By workers: 1\n" +
-                                "      keys: [SearchPhrase]\n" +
-                                "      values: [min(URL),count(*)]\n" +
-                                "      filter: (URL like %google% and SearchPhrase is not null)\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [c desc]
+                                    Async Group By workers: 1
+                                      keys: [SearchPhrase]
+                                      values: [min(URL),count(*)]
+                                      filter: (URL like %google% and SearchPhrase is not null)
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q22",
                         "SELECT SearchPhrase, MIN(URL), MIN(Title), COUNT(*) AS c, count_distinct(UserID) FROM hits WHERE Title LIKE '%Google%' AND URL NOT LIKE '%.google.%' AND SearchPhrase IS NOT NULL GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [c desc]\n" +
-                                "    Async Group By workers: 1\n" +
-                                "      keys: [SearchPhrase]\n" +
-                                "      values: [min(URL),min(Title),count(*),count_distinct(UserID)]\n" +
-                                "      filter: (Title like %Google% and not (URL like %.google.%) and SearchPhrase is not null)\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [c desc]
+                                    Async Group By workers: 1
+                                      keys: [SearchPhrase]
+                                      values: [min(URL),min(Title),count(*),count_distinct(UserID)]
+                                      filter: (Title like %Google% and not (URL like %.google.%) and SearchPhrase is not null)
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q23",
                         "SELECT * FROM hits WHERE URL LIKE '%google%' ORDER BY EventTime LIMIT 10;",
-                        "Async Filter workers: 1\n" +
-                                "  limit: 10\n" +
-                                "  filter: URL like %google%\n" +
-                                "    PageFrame\n" +
-                                "        Row forward scan\n" +
-                                "        Frame forward scan on: hits\n"
+                        """
+                                Async Filter workers: 1
+                                  limit: 10
+                                  filter: URL like %google%
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q24",
                         "SELECT SearchPhrase FROM hits WHERE SearchPhrase IS NOT NULL ORDER BY EventTime LIMIT 10;",
-                        "SelectedRecord\n" +
-                                "    Async JIT Filter workers: 1\n" +
-                                "      limit: 10\n" +
-                                "      filter: SearchPhrase is not null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                SelectedRecord
+                                    Async JIT Filter workers: 1
+                                      limit: 10
+                                      filter: SearchPhrase is not null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q25",
                         "SELECT SearchPhrase FROM hits WHERE SearchPhrase IS NOT NULL ORDER BY SearchPhrase LIMIT 10;",
-                        "Async JIT Top K lo: 10 workers: 1\n" +
-                                "  filter: SearchPhrase is not null\n" +
-                                "  keys: [SearchPhrase]\n" +
-                                "    PageFrame\n" +
-                                "        Row forward scan\n" +
-                                "        Frame forward scan on: hits\n"
+                        """
+                                Async JIT Top K lo: 10 workers: 1
+                                  filter: SearchPhrase is not null
+                                  keys: [SearchPhrase]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q26",
                         "SELECT SearchPhrase FROM hits WHERE SearchPhrase IS NOT NULL ORDER BY EventTime, SearchPhrase LIMIT 10;",
-                        "SelectedRecord\n" +
-                                "    Sort light lo: 10 partiallySorted: true\n" +
-                                "      keys: [EventTime, SearchPhrase]\n" +
-                                "        Async JIT Filter workers: 1\n" +
-                                "          filter: SearchPhrase is not null\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: hits\n"
+                        """
+                                SelectedRecord
+                                    Sort light lo: 10 partiallySorted: true
+                                      keys: [EventTime, SearchPhrase]
+                                        Async JIT Filter workers: 1
+                                          filter: SearchPhrase is not null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q27",
                         "SELECT * FROM (SELECT CounterID, AVG(length(URL)) AS l, COUNT(*) AS c FROM hits WHERE URL IS NOT NULL GROUP BY CounterID) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
-                        "Sort light lo: 25\n" +
-                                "  keys: [l desc]\n" +
-                                "    Filter filter: 100000<c\n" +
-                                "        Async JIT Group By workers: 1\n" +
-                                "          keys: [CounterID]\n" +
-                                "          values: [avg(length(URL)),count(*)]\n" +
-                                "          filter: URL is not null\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: hits\n"
+                        """
+                                Sort light lo: 25
+                                  keys: [l desc]
+                                    Filter filter: 100000<c
+                                        Async JIT Group By workers: 1
+                                          keys: [CounterID]
+                                          values: [avg(length(URL)),count(*)]
+                                          filter: URL is not null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q28",
@@ -515,184 +573,210 @@ public class ClickBenchTest extends AbstractCairoTest {
                 new TestCase(
                         "Q30",
                         "SELECT SearchEngineID, ClientIP, COUNT(*) AS c, SUM(IsRefresh), AVG(ResolutionWidth) FROM hits WHERE SearchPhrase IS NOT NULL GROUP BY SearchEngineID, ClientIP ORDER BY c DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [c desc]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [SearchEngineID,ClientIP]\n" +
-                                "      values: [count(*),sum(IsRefresh),avg(ResolutionWidth)]\n" +
-                                "      filter: SearchPhrase is not null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [c desc]
+                                    Async JIT Group By workers: 1
+                                      keys: [SearchEngineID,ClientIP]
+                                      values: [count(*),sum(IsRefresh),avg(ResolutionWidth)]
+                                      filter: SearchPhrase is not null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q31",
                         "SELECT WatchID, ClientIP, COUNT(*) AS c, SUM(IsRefresh), AVG(ResolutionWidth) FROM hits WHERE SearchPhrase IS NOT NULL GROUP BY WatchID, ClientIP ORDER BY c DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [c desc]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [WatchID,ClientIP]\n" +
-                                "      values: [count(*),sum(IsRefresh),avg(ResolutionWidth)]\n" +
-                                "      filter: SearchPhrase is not null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [c desc]
+                                    Async JIT Group By workers: 1
+                                      keys: [WatchID,ClientIP]
+                                      values: [count(*),sum(IsRefresh),avg(ResolutionWidth)]
+                                      filter: SearchPhrase is not null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q32",
                         "SELECT WatchID, ClientIP, COUNT(*) AS c, SUM(IsRefresh), AVG(ResolutionWidth) FROM hits GROUP BY WatchID, ClientIP ORDER BY c DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [c desc]\n" +
-                                "    Async Group By workers: 1\n" +
-                                "      keys: [WatchID,ClientIP]\n" +
-                                "      values: [count(*),sum(IsRefresh),avg(ResolutionWidth)]\n" +
-                                "      filter: null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [c desc]
+                                    Async Group By workers: 1
+                                      keys: [WatchID,ClientIP]
+                                      values: [count(*),sum(IsRefresh),avg(ResolutionWidth)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q33",
                         "SELECT URL, COUNT(*) AS c FROM hits ORDER BY c DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [c desc]\n" +
-                                "    Async Group By workers: 1\n" +
-                                "      keys: [URL]\n" +
-                                "      values: [count(*)]\n" +
-                                "      filter: null\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [c desc]
+                                    Async Group By workers: 1
+                                      keys: [URL]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q34",
                         "SELECT 1, URL, COUNT(*) AS c FROM hits ORDER BY c DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [c desc]\n" +
-                                "    VirtualRecord\n" +
-                                "      functions: [1,URL,c]\n" +
-                                "        Async Group By workers: 1\n" +
-                                "          keys: [URL]\n" +
-                                "          values: [count(*)]\n" +
-                                "          filter: null\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: hits\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [c desc]
+                                    VirtualRecord
+                                      functions: [1,URL,c]
+                                        Async Group By workers: 1
+                                          keys: [URL]
+                                          values: [count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q35",
                         "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c FROM hits GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3 ORDER BY c DESC LIMIT 10;",
-                        "VirtualRecord\n" +
-                                "  functions: [ClientIP,ClientIP-1,ClientIP-2,ClientIP-3,c]\n" +
-                                "    Long Top K lo: 10\n" +
-                                "      keys: [c desc]\n" +
-                                "        Async Group By workers: 1\n" +
-                                "          keys: [ClientIP]\n" +
-                                "          values: [count(*)]\n" +
-                                "          filter: null\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Frame forward scan on: hits\n"
+                        """
+                                VirtualRecord
+                                  functions: [ClientIP,ClientIP-1,ClientIP-2,ClientIP-3,c]
+                                    Long Top K lo: 10
+                                      keys: [c desc]
+                                        Async Group By workers: 1
+                                          keys: [ClientIP]
+                                          values: [count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: hits
+                                """
                 ),
                 new TestCase(
                         "Q36",
                         "SELECT URL, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND DontCountHits = 0 AND IsRefresh = 0 AND URL IS NOT NULL GROUP BY URL ORDER BY PageViews DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [PageViews desc]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [URL]\n" +
-                                "      values: [count(*)]\n" +
-                                "      filter: (CounterID=62 and DontCountHits=0 and IsRefresh=0 and URL is not null)\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Interval forward scan on: hits\n" +
-                                "              intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [PageViews desc]
+                                    Async JIT Group By workers: 1
+                                      keys: [URL]
+                                      values: [count(*)]
+                                      filter: (CounterID=62 and DontCountHits=0 and IsRefresh=0 and URL is not null)
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: hits
+                                              intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
+                                """
                 ),
                 new TestCase(
                         "Q37",
                         "SELECT Title, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND DontCountHits = 0 AND IsRefresh = 0 AND Title IS NOT NULL GROUP BY Title ORDER BY PageViews DESC LIMIT 10;",
-                        "Long Top K lo: 10\n" +
-                                "  keys: [PageViews desc]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [Title]\n" +
-                                "      values: [count(*)]\n" +
-                                "      filter: (CounterID=62 and DontCountHits=0 and IsRefresh=0 and Title is not null)\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Interval forward scan on: hits\n" +
-                                "              intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
+                        """
+                                Long Top K lo: 10
+                                  keys: [PageViews desc]
+                                    Async JIT Group By workers: 1
+                                      keys: [Title]
+                                      values: [count(*)]
+                                      filter: (CounterID=62 and DontCountHits=0 and IsRefresh=0 and Title is not null)
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: hits
+                                              intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
+                                """
                 ),
                 new TestCase(
                         "Q38",
                         "SELECT URL, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND IsLink <> 0 AND IsDownload = 0 GROUP BY URL ORDER BY PageViews DESC LIMIT 1000, 1010;",
-                        "Sort light lo: 1000 hi: 1010\n" +
-                                "  keys: [PageViews desc]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [URL]\n" +
-                                "      values: [count(*)]\n" +
-                                "      filter: (CounterID=62 and IsRefresh=0 and IsLink!=0 and IsDownload=0)\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Interval forward scan on: hits\n" +
-                                "              intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
+                        """
+                                Sort light lo: 1000 hi: 1010
+                                  keys: [PageViews desc]
+                                    Async JIT Group By workers: 1
+                                      keys: [URL]
+                                      values: [count(*)]
+                                      filter: (CounterID=62 and IsRefresh=0 and IsLink!=0 and IsDownload=0)
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: hits
+                                              intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
+                                """
                 ),
                 new TestCase(
                         "Q39",
                         "SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL AS Dst, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, Dst ORDER BY PageViews DESC LIMIT 1000, 1010;",
-                        "Sort light lo: 1000 hi: 1010\n" +
-                                "  keys: [PageViews desc]\n" +
-                                "    VirtualRecord\n" +
-                                "      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]\n" +
-                                "        Async JIT Group By workers: 1\n" +
-                                "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]\n" +
-                                "          values: [count(*)]\n" +
-                                "          filter: (CounterID=62 and IsRefresh=0)\n" +
-                                "            PageFrame\n" +
-                                "                Row forward scan\n" +
-                                "                Interval forward scan on: hits\n" +
-                                "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
+                        """
+                                Sort light lo: 1000 hi: 1010
+                                  keys: [PageViews desc]
+                                    VirtualRecord
+                                      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]
+                                        Async JIT Group By workers: 1
+                                          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]
+                                          values: [count(*)]
+                                          filter: (CounterID=62 and IsRefresh=0)
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: hits
+                                                  intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
+                                """
                 ),
                 new TestCase(
                         "Q40",
                         "SELECT URLHash, EventDate, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6) AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventDate ORDER BY PageViews DESC LIMIT 100, 110;",
-                        "Sort light lo: 100 hi: 110\n" +
-                                "  keys: [PageViews desc]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [URLHash,EventDate]\n" +
-                                "      values: [count(*)]\n" +
-                                "      filter: (CounterID=62 and IsRefresh=0 and TraficSourceID in [-1,6] and RefererHash=3594120000172545465L)\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Interval forward scan on: hits\n" +
-                                "              intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
+                        """
+                                Sort light lo: 100 hi: 110
+                                  keys: [PageViews desc]
+                                    Async JIT Group By workers: 1
+                                      keys: [URLHash,EventDate]
+                                      values: [count(*)]
+                                      filter: (CounterID=62 and IsRefresh=0 and TraficSourceID in [-1,6] and RefererHash=3594120000172545465L)
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: hits
+                                              intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
+                                """
                 ),
                 new TestCase(
                         "Q41",
                         "SELECT WindowClientWidth, WindowClientHeight, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND DontCountHits = 0 AND URLHash = 2868770270353813622 GROUP BY WindowClientWidth, WindowClientHeight ORDER BY PageViews DESC LIMIT 10000, 10010;",
-                        "Sort light lo: 10000 hi: 10010\n" +
-                                "  keys: [PageViews desc]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [WindowClientWidth,WindowClientHeight]\n" +
-                                "      values: [count(*)]\n" +
-                                "      filter: (CounterID=62 and IsRefresh=0 and DontCountHits=0 and URLHash=2868770270353813622L)\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Interval forward scan on: hits\n" +
-                                "              intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
+                        """
+                                Sort light lo: 10000 hi: 10010
+                                  keys: [PageViews desc]
+                                    Async JIT Group By workers: 1
+                                      keys: [WindowClientWidth,WindowClientHeight]
+                                      values: [count(*)]
+                                      filter: (CounterID=62 and IsRefresh=0 and DontCountHits=0 and URLHash=2868770270353813622L)
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: hits
+                                              intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
+                                """
                 ),
                 new TestCase(
                         "Q42",
                         "SELECT EventTime AS M, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-14T00:00:00Z' AND EventTime <= '2013-07-15T23:59:59Z' AND IsRefresh = 0 AND DontCountHits = 0 SAMPLE BY 1m ALIGN TO CALENDAR ORDER BY M LIMIT 1000, 1010;",
-                        "Sort light lo: 1000 hi: 1010\n" +
-                                "  keys: [M]\n" +
-                                "    Async JIT Group By workers: 1\n" +
-                                "      keys: [M]\n" +
-                                "      values: [count(*)]\n" +
-                                "      filter: (CounterID=62 and IsRefresh=0 and DontCountHits=0)\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Interval forward scan on: hits\n" +
-                                "              intervals: [(\"2013-07-14T00:00:00.000000Z\",\"2013-07-15T23:59:59.000000Z\")]\n"
+                        """
+                                Sort light lo: 1000 hi: 1010
+                                  keys: [M]
+                                    Async JIT Group By workers: 1
+                                      keys: [M]
+                                      values: [count(*)]
+                                      filter: (CounterID=62 and IsRefresh=0 and DontCountHits=0)
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: hits
+                                              intervals: [("2013-07-14T00:00:00.000000Z","2013-07-15T23:59:59.000000Z")]
+                                """
                 ),
         };
     }

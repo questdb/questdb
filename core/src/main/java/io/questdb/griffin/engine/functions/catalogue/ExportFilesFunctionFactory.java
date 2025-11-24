@@ -76,7 +76,7 @@ public class ExportFilesFunctionFactory implements FunctionFactory {
     public static class ExportFilesCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(ExportFilesCursorFactory.class);
         private final FilesRecordCursor cursor;
-        private final Path exportPath = new Path(MemoryTag.NATIVE_FUNC_RSS);
+        private final Path exportPath = new Path(MemoryTag.NATIVE_PATH);
 
         public ExportFilesCursorFactory(CairoConfiguration configuration) {
             super(ImportFilesFunctionFactory.METADATA);

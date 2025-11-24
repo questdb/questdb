@@ -146,6 +146,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String acceptingWrites;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
+    private final boolean asyncMunmapEnabled;
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -1526,6 +1527,10 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.dbRoot));
             this.fileDescriptorCacheEnabled = getBoolean(properties, env, PropertyKey.CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED, true);
+            this.asyncMunmapEnabled = getBoolean(properties, env, PropertyKey.CAIRO_FILE_ASYNC_MUNMAP_ENABLED, false);
+            if (asyncMunmapEnabled && Os.isWindows()) {
+                throw new ServerConfigurationException("Async munmap is not supported on Windows");
+            }
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     DateFormatFactory.INSTANCE,
@@ -1821,7 +1826,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             final int defaultReduceQueueCapacity = queryWorkers > 0 ? Math.min(2 * queryWorkers, 64) : 0;
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
-            this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100_000);
+            this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 10_000);
             this.cairoGroupByPresizeEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED, true);
             this.cairoGroupByPresizeMaxCapacity = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY, 100_000_000);
             this.cairoGroupByPresizeMaxHeapSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE, Numbers.SIZE_1GB);
@@ -2625,6 +2630,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE
             );
             registerObsolete("cairo.sql.asof.join.fast");
+            registerObsolete("shared.worker.affinity", PropertyKey.SHARED_NETWORK_WORKER_AFFINITY, PropertyKey.SHARED_QUERY_WORKER_AFFINITY, PropertyKey.SHARED_WRITE_WORKER_AFFINITY);
 
             registerDeprecated(
                     PropertyKey.HTTP_MIN_BIND_TO,
@@ -2975,6 +2981,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getAllowTableRegistrySharedWrite() {
             return allowTableRegistrySharedWrite;
+        }
+
+        @Override
+        public boolean getAsyncMunmapEnabled() {
+            return asyncMunmapEnabled;
         }
 
         @Override
