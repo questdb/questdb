@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 /**
