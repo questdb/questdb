@@ -351,6 +351,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewFailPeriodIntervalCombinedWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select ts, avg(v) from " + TABLE1 + " sample by 30m align to calendar with offset '00:10'";
+            assertExceptionNoLeakCheck(
+                    "create materialized view test refresh period(sample by interval) as (" + query + ") partition by day",
+                    40,
+                    "PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET"
+            );
+        });
+    }
+
+    @Test
     public void testCreateMatViewFailsOnUnionWithNonBaseTable() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1342,6 +1356,29 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreatePeriodMatView3() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            currentMicros = parseFloorPartialTimestamp("2002-01-01T12:00:00.000000Z");
+            final long expectedStart = parseFloorPartialTimestamp("2002-01-01T12:00:00.000000Z");
+            final String query = "select ts, max(v) as v_max from " + TABLE1 + " sample by 10s";
+            execute(
+                    "CREATE MATERIALIZED VIEW test REFRESH PERIOD (SAMPLE BY INTERVAL) AS (" +
+                            query +
+                            ") PARTITION BY MONTH;"
+            );
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 10, 's', null, null, 0, 0, (char) 0, expectedStart, null, 10, 's', 0, (char) 0);
+            assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 10, 's', null, null, 0, 0, (char) 0, expectedStart, null, 10, 's', 0, (char) 0);
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertFalse(metadata.isDedupKey(0));
+            }
+        });
+    }
+
+    @Test
     public void testCreatePeriodMatViewModelToSink() throws Exception {
         final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
         final DdlSerializationTest[] tests = new DdlSerializationTest[]{
@@ -1368,6 +1405,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 new DdlSerializationTest(
                         "CREATE MATERIALIZED VIEW 'test4' REFRESH MANUAL DEFERRED PERIOD (LENGTH 60m) AS (" + query + ")",
                         "create materialized view test4 with base " + TABLE1 + " refresh manual deferred period (length 60m) " +
+                                "as (select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00'))"
+                ),
+                new DdlSerializationTest(
+                        "create materialized view 'test5' refresh period (sample by interval) as (" + query + ")",
+                        "create materialized view test5 with base " + TABLE1 + " refresh immediate period (sample by interval) " +
                                 "as (select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00'))"
                 ),
         };

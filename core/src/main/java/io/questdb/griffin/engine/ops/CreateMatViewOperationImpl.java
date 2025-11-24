@@ -487,7 +487,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
             if (timeZoneOffset != null) {
                 final long val = Dates.parseOffset(timeZoneOffset);
-                if (val != 0 && val != Numbers.LONG_NULL) {
+                if (val == Numbers.LONG_NULL) {
+                    throw SqlException.position(intervalPos).put("invalid offset: ").put(timeZoneOffset);
+                }
+                if (Numbers.decodeLowInt(val) != 0) {
                     throw SqlException.position(intervalPos).put("PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
                 }
             }

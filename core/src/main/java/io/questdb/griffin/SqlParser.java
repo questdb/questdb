@@ -1106,10 +1106,6 @@ public class SqlParser {
                         tok = tok(lexer, "')'");
                     }
 
-                    if (!Chars.equals(tok, ')')) {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
-                    }
-
                     // Period timer start is at the boundary of the current period.
                     final long nowMicros = configuration.getMicrosecondClock().getTicks();
                     final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
@@ -1121,6 +1117,8 @@ public class SqlParser {
                     // REFRESH ... PERIOD(SAMPLE BY INTERVAL)
                     expectTok(lexer, "by");
                     expectTok(lexer, "interval");
+                    tok = tok(lexer, "')'");
+
                     mvOpBuilder.setTimer(null, 0, every, everyUnit);
                     // Set length to -1 to define the period later, once we parse the query.
                     mvOpBuilder.setPeriodLength(-1, (char) 0, 0, (char) 0);
@@ -1128,6 +1126,9 @@ public class SqlParser {
                     throw SqlException.position(lexer.lastTokenPosition()).put("'length' or 'sample' expected");
                 }
 
+                if (!Chars.equals(tok, ')')) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
+                }
                 tok = tok(lexer, "'as'");
             } else if (!isAsKeyword(tok)) {
                 // REFRESH EVERY <interval> [START '<datetime>' [TIME ZONE '<timezone>']]
