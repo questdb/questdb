@@ -33,6 +33,7 @@ import io.questdb.cairo.view.ViewState;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
@@ -76,9 +77,9 @@ class AbstractViewTest extends AbstractCairoTest {
             final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = viewDefinition.getDependencies();
             assertNotNull(dependencies);
             assertEquals(expectedDependencies.length, dependencies.size());
-            for (int i = 0, n = expectedDependencies.length; i < n; i++) {
-                if (!dependencies.contains(expectedDependencies[i])) {
-                    fail(expectedDependencies[i] + " not in " + dependencies);
+            for (String expectedDependency : expectedDependencies) {
+                if (!dependencies.contains(expectedDependency)) {
+                    fail(expectedDependency + " not in " + dependencies);
                 }
             }
         }
@@ -132,12 +133,26 @@ class AbstractViewTest extends AbstractCairoTest {
         return engine.getViewGraph().getViewDefinition(viewToken);
     }
 
-    void assertQueryAndPlan(String expected, String query, String expectedPlan) throws Exception {
-        assertQueryAndPlan(expected, query, null, true, true, expectedPlan);
+    void assertQueryAndPlan(String expected, String query, String expectedPlan, String... expectedReferencedViews) throws Exception {
+        assertQueryAndPlan(expected, query, null, true, true, expectedPlan, expectedReferencedViews);
     }
 
-    void assertQueryAndPlan(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, String expectedPlan) throws Exception {
+    void assertQueryAndPlan(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, String expectedPlan, String... expectedReferencedViews) throws Exception {
+        sqlExecutionContext.reset();
         assertQueryNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize);
+
+        // assert referenced views
+        final LowerCaseCharSequenceHashSet expectedRefViews = new LowerCaseCharSequenceHashSet();
+        for (String expectedReferencedView : expectedReferencedViews) {
+            expectedRefViews.add(expectedReferencedView);
+        }
+        final ObjList<ViewDefinition> referencedViews = sqlExecutionContext.getReferencedViews();
+        for (int i = 0; i < referencedViews.size(); i++) {
+            final ViewDefinition viewDefinition = referencedViews.get(i);
+            assertTrue(expectedRefViews.remove(viewDefinition.getViewToken().getTableName()) > -1);
+        }
+        assertEquals(0, expectedRefViews.size());
+
         assertQueryNoLeakCheck(expectedPlan, "explain " + query, null, false, true);
     }
 

@@ -228,7 +228,8 @@ public class CreateDropViewTest extends AbstractViewTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1
             );
 
             assertQueryAndPlan(
@@ -251,7 +252,8 @@ public class CreateDropViewTest extends AbstractViewTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1, VIEW2
             );
 
             assertQueryAndPlan(
@@ -263,7 +265,6 @@ public class CreateDropViewTest extends AbstractViewTest {
                     null,
                     true,
                     false,
-                    // can optimizer remove the redundant 6<v_max filter?
                     """
                             QUERY PLAN
                             Filter filter: (6<v_max and 7<v_max)
@@ -274,7 +275,8 @@ public class CreateDropViewTest extends AbstractViewTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1, VIEW2, VIEW3
             );
 
             assertQueryAndPlan(
@@ -295,7 +297,8 @@ public class CreateDropViewTest extends AbstractViewTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1, VIEW4
             );
         });
     }

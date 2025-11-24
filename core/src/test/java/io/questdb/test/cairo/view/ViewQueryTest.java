@@ -56,7 +56,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1
             );
 
             query = "DECLARE @x := 1, @y := 2 select ts, @x as one, @y * v_max from " + VIEW1 + " where v_max > 6";
@@ -84,7 +85,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1
             );
         });
     }
@@ -143,7 +145,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: Részvény_áíóúüűöő
-                            """
+                            """,
+                    VIEW1, VIEW2
             );
         });
     }
@@ -174,7 +177,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1
             );
 
             query = "select ts, v_max from " + VIEW1;
@@ -196,7 +200,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1
             );
         });
     }
@@ -230,7 +235,8 @@ public class ViewQueryTest extends AbstractViewTest {
                             "  filter: 5<v\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: " + TABLE1_1 + "\n"
+                            "        Frame forward scan on: " + TABLE1_1 + "\n",
+                    VIEW1
             );
 
             query = "select ts, v_max from " + VIEW1_3;
@@ -250,7 +256,8 @@ public class ViewQueryTest extends AbstractViewTest {
                             "      filter: 5<v\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: " + TABLE1_1 + "\n"
+                            "            Frame forward scan on: " + TABLE1_1 + "\n",
+                    VIEW1
             );
         });
     }
@@ -281,7 +288,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1
             );
 
             query = "DECLARE @x := 1, @y := 2 select ts, @x as one, @y * v_max from " + VIEW1 + " where v_max > 6";
@@ -307,7 +315,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1
             );
         });
     }
@@ -342,7 +351,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1
             );
         });
     }
@@ -355,9 +365,6 @@ public class ViewQueryTest extends AbstractViewTest {
 
             final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
             createView(VIEW1, query1, TABLE1);
-
-            final String query2 = "select ts, k2, max(v) as v_max from " + TABLE2 + " where v > 6";
-            createView(VIEW2, query2, TABLE2);
 
             assertQueryAndPlan(
                     """
@@ -387,7 +394,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: table2
-                            """
+                            """,
+                    VIEW1
             );
 
             assertQueryAndPlan(
@@ -418,7 +426,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1
             );
 
             assertQueryAndPlan(
@@ -448,7 +457,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1
             );
 
             assertQueryAndPlan(
@@ -482,7 +492,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1
             );
 
             assertQueryAndPlan(
@@ -523,7 +534,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                                             PageFrame
                                                                 Row forward scan
                                                                 Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1
             );
         });
     }
@@ -568,7 +580,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1, VIEW2
             );
 
             assertQueryAndPlan(
@@ -602,7 +615,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1, VIEW2
             );
 
             assertQueryAndPlan(
@@ -640,7 +654,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1, VIEW2
             );
         });
     }
@@ -674,7 +689,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: table1
-                            """
+                            """,
+                    VIEW1
             );
         });
     }

@@ -355,7 +355,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void recordViews(ObjList<ViewDefinition> viewDefinitions) {
-        referencedViews.addAll(viewDefinitions);
+        for (int i = 0, n = viewDefinitions.size(); i < n; i++) {
+            final ViewDefinition viewDefinition = viewDefinitions.getQuick(i);
+            if (!referencedViews.contains(viewDefinition)) {
+                referencedViews.add(viewDefinition);
+            }
+        }
     }
 
     @Override

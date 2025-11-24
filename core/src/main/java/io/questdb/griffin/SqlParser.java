@@ -42,9 +42,9 @@ import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
-import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilderImpl;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
@@ -3136,7 +3136,6 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        clearRecordedViews();
         lexer.unparseLast();
         final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls);
         final CharSequence tok = optTok(lexer);
@@ -4451,6 +4450,7 @@ public class SqlParser {
         viewLexers.clear();
         digit = 1;
         traversalAlgo.clear();
+        clearRecordedViews();
     }
 
     ExpressionNode expr(
