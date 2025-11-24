@@ -1243,7 +1243,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             throw PeerDisconnectedException.INSTANCE;
         }
 
-        state.storeError(errorMessage, errorPosition);
+        state.storeError(errorPosition, errorMessage);
         response.status(400, CONTENT_TYPE_JSON);
         response.headers().setKeepAlive(configuration.getKeepAliveHeader());
         response.sendHeader();

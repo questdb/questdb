@@ -49,6 +49,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     final StringSink fileName = new StringSink();
     final StringSink sqlText = new StringSink();
     private final CopyExportResult copyExportResult;
+    private final StringSink errorMessage = new StringSink();
     private final ExportModel exportModel = new ExportModel();
     private final FilesFacade filesFacade;
     private final HttpConnectionContext httpConnectionContext;
@@ -76,7 +77,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long stop;
     boolean waitingForCopy;
     private CreateTableOperation createParquetOp;
-    private CharSequence errorMessage;
     private int errorPosition;
     private String parquetExportTableName;
     private boolean queryCacheable = false;
@@ -124,7 +124,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         exportModel.clear();
         cleanupParquetState();
         copyExportResult.clear();
-        errorMessage = null;
+        errorMessage.clear();
         errorPosition = 0;
     }
 
@@ -179,7 +179,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         response.bookmark();
         response.putAscii('{')
                 .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(sqlText).putQuote().putAscii(',')
-                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(errorMessage != null ? errorMessage : "").putQuote().putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(errorMessage).putQuote().putAscii(',')
                 .putAsciiQuoted("position").putAscii(':').put(errorPosition)
                 .putAscii('}');
         queryState = ExportQueryProcessor.QUERY_DONE;
@@ -191,9 +191,10 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         this.queryCacheable = queryCacheable;
     }
 
-    void storeError(CharSequence errorMessage, int errorPosition) {
+    void storeError(int errorPosition, CharSequence errorMessage) {
         this.queryState = ExportQueryProcessor.QUERY_SEND_ERROR;
-        this.errorMessage = errorMessage;
         this.errorPosition = errorPosition;
+        this.errorMessage.clear();
+        this.errorMessage.put(errorMessage);
     }
 }
