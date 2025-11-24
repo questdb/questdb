@@ -2562,8 +2562,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             " timestamp(ts) partition by day wal;"
             );
 
-            for (int i = 0, n = queries.length; i < n; i++) {
-                execute(queries[i]);
+            for (String query : queries) {
+                execute(query);
             }
         });
     }
