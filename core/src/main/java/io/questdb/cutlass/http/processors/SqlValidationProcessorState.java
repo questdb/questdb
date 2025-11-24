@@ -254,7 +254,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         switch (ColumnType.tagOf(columnType)) {
             // list of explicitly supported types, to be keep in sync with doQueryRecord()
 
-            // we use a while-list since if we add a new type to QuestDB
+            // we use a whitelist since if we add a new type to QuestDB,
             // the support has to be explicitly added to the JSON REST API
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
@@ -303,8 +303,8 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
             response.putAscii('{')
                     .putAsciiQuoted("name").putAscii(':').putQuote().escapeJsonStr(columnNames.getQuick(columnIndex)).putQuote().putAscii(',');
             if (ColumnType.tagOf(columnType) == ColumnType.ARRAY) {
-                response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted("ARRAY").put(',');
-                response.putAsciiQuoted("dim").putAscii(':').put(ColumnType.decodeArrayDimensionality(columnType)).put(',');
+                response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted("ARRAY").putAscii(',');
+                response.putAsciiQuoted("dim").putAscii(':').put(ColumnType.decodeArrayDimensionality(columnType)).putAscii(',');
                 response.putAsciiQuoted("elemType").putAscii(':').putAsciiQuoted(ColumnType.nameOf(ColumnType.decodeArrayElementType(columnType)));
             } else {
                 response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType));
@@ -373,9 +373,6 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
 
     boolean of(RecordCursorFactory factory) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         try (factory) {
-            // Enable column pre-touch in REST API only when LIMIT K,N is not specified since when limit is defined
-            // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
-            // Make sure to use the override flag to avoid affecting the explain plan.
             final RecordMetadata metadata = factory.getMetadata();
             this.queryTimestampIndex = metadata.getTimestampIndex();
             this.columnNames.clear();
@@ -406,7 +403,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
     void onResumeEmptyQuery(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
         response.bookmark();
         String noticeOrError = getApiVersion() >= 2 ? "notice" : "error";
-        response.put('{')
+        response.putAscii('{')
                 .putAsciiQuoted(noticeOrError).putAscii(':').putAsciiQuoted("empty query")
                 .putAscii(",")
                 .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(getQuery()).putQuote()
@@ -432,7 +429,7 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
 
     void onResumeSendConfirmation(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
         response.bookmark();
-        response.put('{')
+        response.putAscii('{')
                 .putAsciiQuoted("queryType").putAscii(':').putAsciiQuoted(queryTypeStringConfirmation)
                 .putAscii('}');
         validationState = VALIDATION_DONE;
