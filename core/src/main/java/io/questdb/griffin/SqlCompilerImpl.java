@@ -1741,7 +1741,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final boolean sizeInferred;
 
                     tok = SqlUtil.fetchNext(lexer);
-                    if (tok == null) {
+                    if (tok == null || isSemicolon(tok)) {
                         indexValueBlockSize = estimateIndexValueBlockSizeFromReader(configuration, executionContext, matViewToken, columnIndex);
                         sizeInferred = true;
                     } else {

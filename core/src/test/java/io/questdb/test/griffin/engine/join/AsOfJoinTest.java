@@ -1835,6 +1835,42 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetStaticSymbolTable() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("""
+                            CREATE TABLE trades (
+                                symbol SYMBOL,
+                                side SYMBOL,
+                                price DOUBLE,
+                                amount DOUBLE,
+                                timestamp TIMESTAMP
+                            ) timestamp(timestamp) PARTITION BY HOUR
+                            """,
+                    leftTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO trades VALUES
+                      ('HRK', 'sell', 1.11, 2.0, '2025-11-01T01'),
+                      ('HRK', 'buy', 1.11, 3.0, '2025-11-01T02');
+                    """);
+            assertQuery("""
+                    bid_ts	symbol	bid_size	ask_price	ask_size
+                    2025-11-01T02:00:00.000000Z	HRK	3.0	2.22	2.0
+                    """, """
+                    WITH bids AS (
+                      SELECT timestamp AS bid_ts, symbol, amount AS bid_size
+                      FROM trades WHERE side = 'buy'
+                    ), asks AS  (
+                     SELECT timestamp AS ask_ts, symbol, amount AS ask_size, avg(price*amount) AS ask_price
+                     FROM trades WHERE side = 'sell'
+                     SAMPLE BY 1s
+                    )
+                    SELECT bid_ts, bids.symbol, bid_size, ask_price, ask_size
+                    FROM bids ASOF JOIN asks ON (symbol)
+                    """, null, "bid_ts", false, false);
+        });
+    }
+
+    @Test
     public void testImplicitTimestampPropagationWontCauseAmbiguity() throws Exception {
         assertMemoryLeak(() -> {
             String leftTsTypeName = leftTableTimestampType.getTypeName();

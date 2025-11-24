@@ -3342,6 +3342,11 @@ public class MatViewTest extends AbstractCairoTest {
                     "column 'sym' already indexed"
             );
 
+            execute("alter materialized view price_1h alter column sym drop index;");
+            drainQueues();
+            execute("alter materialized view price_1h alter column sym add index;");
+            drainQueues();
+
             String sql = "select * from price_1h where sym = 'eurusd';";
             assertQueryNoLeakCheck(
                     """
