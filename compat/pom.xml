@@ -35,8 +35,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.deploy.skip>true</maven.deploy.skip>
         <maven.javadoc.skip>true</maven.javadoc.skip>
-        <maven.compiler.source>11</maven.compiler.source>
-        <maven.compiler.target>11</maven.compiler.target>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
     </properties>
@@ -57,7 +57,7 @@
         <dependency>
             <groupId>org.eclipse.jetty</groupId>
             <artifactId>jetty-server</artifactId>
-            <version>9.4.55.v20240627</version>
+            <version>12.0.12</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -152,16 +152,4 @@
             </plugins>
         </pluginManagement>
     </build>
-
-    <profiles>
-        <profile>
-            <id>java11+</id>
-            <properties>
-                <questdb.artifactid>questdb</questdb.artifactid>
-            </properties>
-            <activation>
-                <jdk>(1.8,)</jdk>
-            </activation>
-        </profile>
-    </profiles>
 </project>

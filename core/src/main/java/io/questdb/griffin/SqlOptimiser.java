@@ -7308,7 +7308,9 @@ public class SqlOptimiser implements Mutable {
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
-            authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            if (!sqlExecutionContext.isValidationOnly()) {
+                authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            }
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed
