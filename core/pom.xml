@@ -630,7 +630,7 @@
                 <javac.compile.target>${javac.target}</javac.compile.target>
             </properties>
             <activation>
-                <jdk>(16,)</jdk>
+                <jdk>(17,)</jdk>
             </activation>
             <dependencies>
                 <dependency>

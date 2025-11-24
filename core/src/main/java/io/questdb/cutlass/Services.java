@@ -38,6 +38,7 @@ import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
+import io.questdb.cutlass.http.processors.SqlValidationProcessor;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
@@ -51,7 +52,7 @@ import io.questdb.cutlass.pgwire.PGHexTestsCircuitBreakRegistry;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
@@ -106,6 +107,12 @@ public class Services {
                 sharedQueryWorkerCount
         );
 
+        HttpServer.HttpRequestHandlerBuilder sqlValidationProcessorBuilder = () -> new SqlValidationProcessor(
+                httpServerConfiguration.getJsonQueryProcessorConfiguration(),
+                cairoEngine,
+                sharedQueryWorkerCount
+        );
+
         HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
                 cairoEngine,
                 httpServerConfiguration
@@ -117,7 +124,8 @@ public class Services {
                 cairoEngine,
                 sharedQueryWorkerCount,
                 jsonQueryProcessorBuilder,
-                ilpV2WriteProcessorBuilder
+                ilpV2WriteProcessorBuilder,
+                sqlValidationProcessorBuilder
         );
         return server;
     }
@@ -205,7 +213,7 @@ public class Services {
         server.bind(
                 new HttpRequestHandlerFactory() {
                     @Override
-                    public ObjList<String> getUrls() {
+                    public ObjHashSet<String> getUrls() {
                         return configuration.getContextPathStatus();
                     }
 
@@ -225,7 +233,7 @@ public class Services {
             server.bind(
                     new HttpRequestHandlerFactory() {
                         @Override
-                        public ObjList<String> getUrls() {
+                        public ObjHashSet<String> getUrls() {
                             return configuration.getContextPathMetrics();
                         }
 
