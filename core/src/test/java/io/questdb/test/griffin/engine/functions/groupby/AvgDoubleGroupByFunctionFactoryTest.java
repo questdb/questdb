@@ -33,9 +33,18 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testAll() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 """
-                        max\tavg\tsum\tstddev_samp
-                        10\t5.5\t55\t3.0276503540974917
-                        """, "select max(x), avg(x), sum(x), stddev_samp(x) from long_sequence(10)"
+                        max	avg	weighted_avg	sum	stddev_samp	weighted_stddev_samp
+                        10	5.5	7.0	55	3.0276503540974917	2.6220221204253784
+                        """, """
+                        SELECT
+                            max(x),
+                            avg(x),
+                            weighted_avg(x, x),
+                            sum(x),
+                            stddev_samp(x),
+                            weighted_stddev_samp(x, x)
+                        FROM long_sequence(10)
+                        """
         ));
     }
 
@@ -88,6 +97,80 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                     "ts",
                     true,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testWeightedAvg() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql(
+                    """
+                            weighted_avg	sum_over_sum
+                            7.0	7
+                            """, """
+                            SELECT
+                                weighted_avg(x, x),
+                                sum(x * x) / sum(x) sum_over_sum
+                            FROM long_sequence(10)
+                            """
+            );
+            assertSql(
+                    """
+                            weighted_avg
+                            4.999999999999999
+                            """,
+                    "SELECT weighted_avg(5.0, rnd_double()) FROM long_sequence(10)\n"
+            );
+        });
+    }
+
+    @Test
+    public void testWeightedAvgZeroWeight() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql(
+                    """
+                            weighted_avg
+                            null
+                            """,
+                    "SELECT weighted_avg(x, 0) FROM long_sequence(10)"
+            );
+            assertSql(
+                    """
+                            weighted_avg
+                            7.0
+                            """,
+                    """
+                            SELECT weighted_avg(
+                                x,
+                                CASE WHEN x = 7 THEN 1 ELSE 0 END
+                            ) FROM long_sequence(10)
+                            """
+            );
+            assertSql(
+                    """
+                            weighted_avg
+                            null
+                            """,
+                    "SELECT weighted_avg(x, x - 6) FROM long_sequence(11)"
+            );
+        });
+    }
+
+    @Test
+    public void testWeightedStddevZero() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql(
+                    """
+                            weighted_stddev_samp
+                            0.0
+                            """, "SELECT weighted_stddev_samp(1, 1) FROM long_sequence(10)"
+            );
+            assertSql(
+                    """
+                            weighted_stddev_samp
+                            0.0
+                            """, "SELECT weighted_stddev_samp(1, 1) FROM long_sequence(10)"
             );
         });
     }
