@@ -62,6 +62,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     boolean countRows = false;
     RecordCursor cursor;
     char delimiter = ',';
+    boolean descending;
     boolean firstParquetWriteCall = true;
     boolean hasNext;
     RecordMetadata metadata;

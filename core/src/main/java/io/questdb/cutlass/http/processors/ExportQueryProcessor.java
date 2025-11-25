@@ -199,7 +199,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     boolean runQuery = true;
                     boolean canStreamExportParquet = state.getExportModel().isParquetFormat() && CopyExportContext.canStreamExportParquet(state.recordCursorFactory);
                     final int order = state.recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-
+                    state.descending = order == ORDER_DESC;
                     for (int retries = 0; runQuery; retries++) {
                         try {
                             state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
@@ -650,12 +650,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.getExportModel().isStatisticsEnabled(),
                         state.getExportModel().getParquetVersion(),
                         state.getExportModel().isRawArrayEncoding(),
+                        state.descending,
                         state.pageFrameCursor,
                         state.metadata,
                         this
                 );
 
                 serialParquetExporter.of(task);
+                task.setUpStreamPartitionParquetExporter();
                 state.serialExporterInit = true;
                 serialParquetExporter.process();
             } finally {
@@ -742,7 +744,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
                         if (state.getExportResult().getPath().size() != 0) {
                             state.queryState = QUERY_PARQUET_FILE_SEND_INIT;
-                        } else {
+                        } else { // stream exported all data in onWrite calls
                             state.queryState = QUERY_PARQUET_FILE_SEND_COMPLETE;
                         }
                         break;

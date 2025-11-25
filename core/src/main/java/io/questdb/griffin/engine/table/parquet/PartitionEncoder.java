@@ -48,6 +48,7 @@ public class PartitionEncoder {
             int columnNamesSize,
             long columnMetadataPtr,
             int timestampIndex,
+            boolean descending,
             long compressionCodec,
             boolean statisticsEnabled,
             boolean rawArrayEncoding,

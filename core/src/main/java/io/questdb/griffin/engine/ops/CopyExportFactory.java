@@ -177,6 +177,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         statisticsEnabled,
                         parquetVersion,
                         rawArrayEncoding,
+                        false,
                         null,
                         null,
                         null

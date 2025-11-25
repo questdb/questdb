@@ -56,6 +56,7 @@ public class CopyExportRequestTask implements Mutable {
     private int compressionLevel;
     private @Nullable CreateTableOperation createOp;
     private int dataPageSize;
+    private boolean descending;
     private CopyExportContext.ExportTaskEntry entry;
     private CharSequence fileName;
     private @Nullable RecordMetadata metadata;
@@ -87,6 +88,7 @@ public class CopyExportRequestTask implements Mutable {
         writeCallback = null;
         metadata = null;
         streamPartitionParquetExporter.clear();
+        descending = false;
     }
 
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
@@ -105,7 +107,7 @@ public class CopyExportRequestTask implements Mutable {
         return entry.getId();
     }
 
-    public CreateTableOperation getCreateOp() {
+    public @Nullable CreateTableOperation getCreateOp() {
         return createOp;
     }
 
@@ -121,11 +123,11 @@ public class CopyExportRequestTask implements Mutable {
         return fileName;
     }
 
-    public RecordMetadata getMetadata() {
+    public @Nullable RecordMetadata getMetadata() {
         return metadata;
     }
 
-    public PageFrameCursor getPageFrameCursor() {
+    public @Nullable PageFrameCursor getPageFrameCursor() {
         return pageFrameCursor;
     }
 
@@ -133,7 +135,7 @@ public class CopyExportRequestTask implements Mutable {
         return parquetVersion;
     }
 
-    public CopyExportResult getResult() {
+    public @Nullable CopyExportResult getResult() {
         return result;
     }
 
@@ -153,8 +155,12 @@ public class CopyExportRequestTask implements Mutable {
         return tableName;
     }
 
-    public WriteParquetCallBack getWriteCallback() {
+    public @Nullable WriteParquetCallBack getWriteCallback() {
         return writeCallback;
+    }
+
+    public boolean isDescending() {
+        return descending;
     }
 
     public boolean isRawArrayEncoding() {
@@ -178,6 +184,7 @@ public class CopyExportRequestTask implements Mutable {
             boolean statisticsEnabled,
             int parquetVersion,
             boolean rawArrayEncoding,
+            boolean descending,
             PageFrameCursor pageFrameCursor, // for streaming export
             RecordMetadata metadata,
             WriteParquetCallBack writeCallback
@@ -195,6 +202,7 @@ public class CopyExportRequestTask implements Mutable {
         this.parquetVersion = parquetVersion;
         this.rawArrayEncoding = rawArrayEncoding;
         this.createOp = createOp;
+        this.descending = descending;
         this.pageFrameCursor = pageFrameCursor;
         this.metadata = metadata;
         this.writeCallback = writeCallback;
@@ -331,6 +339,7 @@ public class CopyExportRequestTask implements Mutable {
                             columnNames.size(),
                             columnMetadata.getAddress(),
                             metadata.getTimestampIndex(),
+                            descending,
                             ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                             statisticsEnabled,
                             rawArrayEncoding,

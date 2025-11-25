@@ -458,6 +458,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_createStream
     col_names_len: jint,
     col_meta_data: *const i64,
     timestamp_index: jint,
+    timestamp_descending: jboolean,
     compression_codec: jlong,
     statistics_enabled: jboolean,
     raw_array_encoding: jboolean,
@@ -498,8 +499,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_createStream
                         None
                     }
                 });
-        let sorting_columns =
-            local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)]);
+        let sorting_columns = local_timestamp_index
+            .map(|i| vec![SortingColumn::new(i, timestamp_descending != 0, false)]);
 
         let (parquet_schema, additional_data) = crate::parquet_write::schema::to_parquet_schema(
             &partition_template,
