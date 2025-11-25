@@ -598,24 +598,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case CompiledQuery.EXPLAIN:
                 case CompiledQuery.SELECT:
                 case CompiledQuery.PSEUDO_SELECT:
-                case CompiledQuery.INSERT:
-                case CompiledQuery.INSERT_AS_SELECT:
-                case CompiledQuery.UPDATE:
-                case CompiledQuery.ALTER:
-                    copyParameterValuesToBindVariableService(
-                            sqlExecutionContext,
-                            bindVariableCharacterStore,
-                            directUtf8String,
-                            binarySequenceParamsPool
-                    );
-                    break;
-                default:
-                    break;
-            }
-            switch (this.sqlType) {
-                case CompiledQuery.EXPLAIN:
-                case CompiledQuery.SELECT:
-                case CompiledQuery.PSEUDO_SELECT:
                     msgExecuteSelect(sqlExecutionContext, transactionState, pendingWriters, taiPool, maxRecompileAttempts);
                     break;
                 case CompiledQuery.INSERT:
@@ -1124,135 +1106,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlTextHasSecret = blueprint.sqlTextHasSecret;
         this.tai = blueprint.tai;
         this.tas = blueprint.tas;
-    }
-
-    private void copyParameterValuesToBindVariableService(
-            SqlExecutionContext sqlExecutionContext,
-            CharacterStore characterStore,
-            @Transient DirectUtf8String directUtf8String,
-            @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool
-    ) throws PGMessageProcessingException, SqlException {
-        // Bind variables have to be configured for the cursor.
-        // We have stored the following:
-        // - outTypeDescriptionTypeOIDs - OIDS of the parameter types, these are all types present in the SQL
-        // - outTypeDescriptionType - QuestDB native types, as inferred by SQL compiler
-        // - parameter values - list of parameter values supplied by the client; this list may be
-        //                      incomplete insofar as being shorter than the list of bind variables. The values
-        //                      are read from the parameter value arena.
-        // - parameter format codes - list of switches, prescribing how to read the parameter values. Again,
-        //                      nothing is stopping the client from sending more or less codes than the
-        //                      parameter values.
-
-        // Considering all the above, we are performing a 3-way merge of the existing states.
-        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
-        bindVariableService.clear();
-        long lo = parameterValueArenaPtr;
-        long msgLimit = parameterValueArenaHi;
-        for (int i = 0, n = outParameterTypeDescriptionTypes.size(); i < n; i++) {
-            // lower 32 bits = native type, higher 32 bits = pgwire type
-            long encodedType = outParameterTypeDescriptionTypes.getQuick(i);
-
-            // define binding variable. we have to use the exact type as was inferred by the compiler. we cannot use
-            // pgwire equivalent. why? some QuestDB native types do not have exact equivalent in pgwire so we approximate
-            // them by using the most similar/suitable type
-            // example: there is no 8-bit unsigned integer in pgwire, but there is a 'byte' type in QuestDB.
-            //          so we use int2 in pgwire for binding variables inferred as 'byte'. however, int2 is also
-            //          used for 'short' binding variables. when we are defining a binding variable we use the
-            //          exact type previously provided by sql compiler. if we drive everything by 'pgwire' types
-            //          then pgwire int2 would define a 'short binding variable. however if the compiled plan
-            //          expect 'byte' then it will call 'function.getByte()' and 'shortFunction.getByte()' throws
-            //          unsupported operation exception.
-            int nativeType = Numbers.decodeLowInt(encodedType);
-            bindVariableService.define(i, nativeType, 0);
-
-            if (i >= msgBindParameterValueCount) {
-                // client did not set this binding variable, keep it unset (=null)
-                continue;
-            }
-
-            // read value from the arena
-            final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
-            lo += Integer.BYTES;
-            if (valueSize == -1) {
-                // value is not provided, assume NULL
-                continue;
-            }
-
-            // value must remain within message limit. this will never happen with a well-functioning client, but
-            // a non-compliant client could send us rubbish or a bad actor could try to crash the server.
-            if (lo + valueSize > msgLimit) {
-                throw kaput()
-                        .put("bind variable value is beyond the message limit [variableIndex=").put(i)
-                        .put(", valueSize=").put(valueSize).put(']');
-            }
-
-            // when type is unspecified, we are assuming that bind variable has not been used in the SQL
-            // e.g. something like this "select * from tab where a = $1 and b = $5". E.g.  there is a gap
-            // in the bind variable sequence. Because of the gap, our compiler could not define types - there is
-            // no usage in SQL, bing variables are left out to be NULL.
-            // Now the client is sending values in those bind variables - we can ignore them, provided variables
-            // are unused.
-            if (encodedType != PG_UNSPECIFIED) {
-                // read the pgwire protocol types
-                if (msgBindParameterFormatCodes.get(i)) {
-                    // beware, pgwire type is encoded as big endian
-                    // that's why we use X_PG_INT4 and not just PG_INT4
-                    int pgWireType = Numbers.decodeHighInt(encodedType);
-                    switch (pgWireType) {
-                        case X_PG_INT4:
-                            setBindVariableAsInt(i, lo, valueSize, bindVariableService);
-                            break;
-                        case X_PG_INT8:
-                            setBindVariableAsLong(i, lo, valueSize, bindVariableService);
-                            break;
-                        case X_PG_TIMESTAMP:
-                        case X_PG_TIMESTAMP_TZ:
-                            setBindVariableAsTimestamp(i, lo, valueSize, bindVariableService);
-                            break;
-                        case X_PG_INT2:
-                            setBindVariableAsShort(i, lo, valueSize, bindVariableService);
-                            break;
-                        case X_PG_FLOAT8:
-                            setBindVariableAsDouble(i, lo, valueSize, bindVariableService);
-                            break;
-                        case X_PG_FLOAT4:
-                            setBindVariableAsFloat(i, lo, valueSize, bindVariableService);
-                            break;
-                        case X_PG_CHAR:
-                            setBindVariableAsChar(i, lo, valueSize, bindVariableService, characterStore);
-                            break;
-                        case X_PG_DATE:
-                            setBindVariableAsDate(i, lo, valueSize, bindVariableService);
-                            break;
-                        case X_PG_BOOL:
-                            setBindVariableAsBoolean(i, lo, valueSize, bindVariableService);
-                            break;
-                        case X_PG_BYTEA:
-                            setBindVariableAsBin(i, lo, valueSize, bindVariableService, binarySequenceParamsPool);
-                            break;
-                        case X_PG_UUID:
-                            setUuidBindVariable(i, lo, valueSize, bindVariableService);
-                            break;
-                        case X_PG_ARR_INT8:
-                        case X_PG_ARR_FLOAT8:
-                            setBindVariableAsArray(i, lo, valueSize, msgLimit, bindVariableService);
-                            break;
-                        case X_PG_NUMERIC:
-                            setDecimalBindVariable(sqlExecutionContext, i, lo, valueSize, bindVariableService, nativeType);
-                            break;
-                        default:
-                            // before we bind a string, we need to define the type of the variable
-                            // so the binding process can cast the string as required
-                            setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, directUtf8String);
-                            break;
-                    }
-                } else {
-                    // read as a string
-                    setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, directUtf8String);
-                }
-            }
-            lo += valueSize;
-        }
     }
 
     private void copyPgResultSetColumnTypesAndNames() {
@@ -3414,6 +3267,135 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         arrayViewPool.clear();
     }
 
+    void copyParameterValuesToBindVariableService(
+            SqlExecutionContext sqlExecutionContext,
+            CharacterStore characterStore,
+            @Transient DirectUtf8String directUtf8String,
+            @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool
+    ) throws PGMessageProcessingException, SqlException {
+        // Bind variables have to be configured for the cursor.
+        // We have stored the following:
+        // - outTypeDescriptionTypeOIDs - OIDS of the parameter types, these are all types present in the SQL
+        // - outTypeDescriptionType - QuestDB native types, as inferred by SQL compiler
+        // - parameter values - list of parameter values supplied by the client; this list may be
+        //                      incomplete insofar as being shorter than the list of bind variables. The values
+        //                      are read from the parameter value arena.
+        // - parameter format codes - list of switches, prescribing how to read the parameter values. Again,
+        //                      nothing is stopping the client from sending more or less codes than the
+        //                      parameter values.
+
+        // Considering all the above, we are performing a 3-way merge of the existing states.
+        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+        bindVariableService.clear();
+        long lo = parameterValueArenaPtr;
+        long msgLimit = parameterValueArenaHi;
+        for (int i = 0, n = outParameterTypeDescriptionTypes.size(); i < n; i++) {
+            // lower 32 bits = native type, higher 32 bits = pgwire type
+            long encodedType = outParameterTypeDescriptionTypes.getQuick(i);
+
+            // define binding variable. we have to use the exact type as was inferred by the compiler. we cannot use
+            // pgwire equivalent. why? some QuestDB native types do not have exact equivalent in pgwire so we approximate
+            // them by using the most similar/suitable type
+            // example: there is no 8-bit unsigned integer in pgwire, but there is a 'byte' type in QuestDB.
+            //          so we use int2 in pgwire for binding variables inferred as 'byte'. however, int2 is also
+            //          used for 'short' binding variables. when we are defining a binding variable we use the
+            //          exact type previously provided by sql compiler. if we drive everything by 'pgwire' types
+            //          then pgwire int2 would define a 'short binding variable. however if the compiled plan
+            //          expect 'byte' then it will call 'function.getByte()' and 'shortFunction.getByte()' throws
+            //          unsupported operation exception.
+            int nativeType = Numbers.decodeLowInt(encodedType);
+            bindVariableService.define(i, nativeType, 0);
+
+            if (i >= msgBindParameterValueCount) {
+                // client did not set this binding variable, keep it unset (=null)
+                continue;
+            }
+
+            // read value from the arena
+            final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
+            lo += Integer.BYTES;
+            if (valueSize == -1) {
+                // value is not provided, assume NULL
+                continue;
+            }
+
+            // value must remain within message limit. this will never happen with a well-functioning client, but
+            // a non-compliant client could send us rubbish or a bad actor could try to crash the server.
+            if (lo + valueSize > msgLimit) {
+                throw kaput()
+                        .put("bind variable value is beyond the message limit [variableIndex=").put(i)
+                        .put(", valueSize=").put(valueSize).put(']');
+            }
+
+            // when type is unspecified, we are assuming that bind variable has not been used in the SQL
+            // e.g. something like this "select * from tab where a = $1 and b = $5". E.g.  there is a gap
+            // in the bind variable sequence. Because of the gap, our compiler could not define types - there is
+            // no usage in SQL, bing variables are left out to be NULL.
+            // Now the client is sending values in those bind variables - we can ignore them, provided variables
+            // are unused.
+            if (encodedType != PG_UNSPECIFIED) {
+                // read the pgwire protocol types
+                if (msgBindParameterFormatCodes.get(i)) {
+                    // beware, pgwire type is encoded as big endian
+                    // that's why we use X_PG_INT4 and not just PG_INT4
+                    int pgWireType = Numbers.decodeHighInt(encodedType);
+                    switch (pgWireType) {
+                        case X_PG_INT4:
+                            setBindVariableAsInt(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_INT8:
+                            setBindVariableAsLong(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_TIMESTAMP:
+                        case X_PG_TIMESTAMP_TZ:
+                            setBindVariableAsTimestamp(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_INT2:
+                            setBindVariableAsShort(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_FLOAT8:
+                            setBindVariableAsDouble(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_FLOAT4:
+                            setBindVariableAsFloat(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_CHAR:
+                            setBindVariableAsChar(i, lo, valueSize, bindVariableService, characterStore);
+                            break;
+                        case X_PG_DATE:
+                            setBindVariableAsDate(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_BOOL:
+                            setBindVariableAsBoolean(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_BYTEA:
+                            setBindVariableAsBin(i, lo, valueSize, bindVariableService, binarySequenceParamsPool);
+                            break;
+                        case X_PG_UUID:
+                            setUuidBindVariable(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_ARR_INT8:
+                        case X_PG_ARR_FLOAT8:
+                            setBindVariableAsArray(i, lo, valueSize, msgLimit, bindVariableService);
+                            break;
+                        case X_PG_NUMERIC:
+                            setDecimalBindVariable(sqlExecutionContext, i, lo, valueSize, bindVariableService, nativeType);
+                            break;
+                        default:
+                            // before we bind a string, we need to define the type of the variable
+                            // so the binding process can cast the string as required
+                            setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, directUtf8String);
+                            break;
+                    }
+                } else {
+                    // read as a string
+                    setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, directUtf8String);
+                }
+            }
+            lo += valueSize;
+        }
+    }
+
     void copyStateFrom(PGPipelineEntry that) {
         stateParse = that.stateParse;
         stateBind = that.stateBind;
@@ -3456,5 +3438,28 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     boolean msgParseReconcileParameterTypes(TypeContainer typeContainer) {
         assert msgParseParameterTypeOIDs.size() <= Short.MAX_VALUE;
         return msgParseReconcileParameterTypes((short) msgParseParameterTypeOIDs.size(), typeContainer);
+    }
+
+    boolean populateBindingServiceIfNeeded(SqlExecutionContext sqlExecutionContext,
+                                           CharacterStore bindVariableCharacterStore,
+                                           @Transient DirectUtf8String directUtf8String,
+                                           @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool) throws PGMessageProcessingException, SqlException {
+        if (isError()) {
+            return false;
+        }
+        return switch (this.sqlType) {
+            case CompiledQuery.EXPLAIN, CompiledQuery.SELECT, CompiledQuery.PSEUDO_SELECT, CompiledQuery.INSERT,
+                 CompiledQuery.INSERT_AS_SELECT, CompiledQuery.UPDATE, CompiledQuery.ALTER -> {
+                copyParameterValuesToBindVariableService(
+                        sqlExecutionContext,
+                        bindVariableCharacterStore,
+                        directUtf8String,
+                        binarySequenceParamsPool
+                );
+                yield true;
+            }
+            default -> false;
+        };
+
     }
 }

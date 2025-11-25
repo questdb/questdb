@@ -43,6 +43,7 @@ import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
@@ -176,6 +177,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final SCSequence tempSequence = new SCSequence();
     private final DirectUtf8String utf8String = new DirectUtf8String();
     private SocketAuthenticator authenticator;
+    private PGPipelineEntry bindingServiceConfiguredFor;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
     private boolean freezeRecvBuffer;
@@ -342,6 +344,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         totalReceived = 0;
         transactionState = IMPLICIT_TRANSACTION;
         entryPool.resetCapacity();
+        bindingServiceConfiguredFor = null;
     }
 
     @Override
@@ -927,6 +930,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         pipelineCurrentEntry.setReturnRowCountLimit(pipelineCurrentEntry.getInt(lo, msgLimit, "could not read max rows value"));
         pipelineCurrentEntry.setStateExec(true);
         sqlExecutionContext.initNow();
+        try {
+            if (pipelineCurrentEntry.populateBindingServiceIfNeeded(sqlExecutionContext, bindVariableValuesCharacterStore, utf8String, binarySequenceParamsPool)) {
+                bindingServiceConfiguredFor = pipelineCurrentEntry;
+            }
+        } catch (SqlException e) {
+            pipelineCurrentEntry.getErrorMessageSink().put(e.getFlyweightMessage());
+        }
         transactionState = pipelineCurrentEntry.msgExecute(
                 sqlExecutionContext,
                 transactionState,
@@ -1394,6 +1404,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
             while (true) {
                 try {
+
+                    // we need to repopulate BindingService before sync
+                    // because syncing might access binding data too
+                    if (bindingServiceConfiguredFor != pipelineCurrentEntry && pipelineCurrentEntry.populateBindingServiceIfNeeded(
+                            sqlExecutionContext,
+                            bindVariableValuesCharacterStore,
+                            utf8String,
+                            binarySequenceParamsPool
+                    )) {
+                        bindingServiceConfiguredFor = pipelineCurrentEntry;
+                    }
                     pipelineCurrentEntry.msgSync(
                             sqlExecutionContext,
                             pendingWriters,
@@ -1416,6 +1437,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         );
                         break;
                     }
+                } catch (PGMessageProcessingException | SqlException e) {
+                    pipelineCurrentEntry.getErrorMessageSink().put(e.getMessage());
+                    pipelineCurrentEntry.msgSync(
+                            sqlExecutionContext,
+                            pendingWriters,
+                            responseUtf8Sink
+                    );
                 }
             }
 
