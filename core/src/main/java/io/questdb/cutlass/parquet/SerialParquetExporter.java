@@ -34,10 +34,13 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyExportResult;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.CopyDataProgressReporter;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
@@ -58,6 +61,8 @@ import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
 import java.io.File;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class SerialParquetExporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SerialParquetExporter.class);
@@ -132,6 +137,25 @@ public class SerialParquetExporter implements Closeable {
                 tableToken = cairoEngine.verifyTableName(task.getTableName());
                 LOG.info().$("completed creating temporary table and populating with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(']').$();
                 copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+
+                // from http
+                if (exportResult != null) {
+                    RecordCursorFactory factory = null;
+                    try (SqlCompiler compiler = cairoEngine.getSqlCompiler()) {
+                        CompiledQuery cc = compiler.compile(task.getTableName(), sqlExecutionContext);
+                        factory = cc.getRecordCursorFactory();
+                        if (factory.supportsPageFrameCursor()) {
+                            PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+                            task.setUpStreamPartitionParquetExporter(factory, pageFrameCursor, factory.getMetadata());
+                            factory = null; // transfer ownership to the task
+                            processStreamExport();
+                            return CopyExportRequestTask.Phase.SUCCESS;
+                        }
+                    } catch (Throwable e) {
+                        Misc.free(factory);
+                        throw e;
+                    }
+                }
             }
 
             phase = CopyExportRequestTask.Phase.CONVERTING_PARTITIONS;
@@ -452,7 +476,7 @@ public class SerialParquetExporter implements Closeable {
         }
 
         @Override
-        public void onProgress(CopyDataProgressReporter.Stage stage, long rows) {
+        public void onProgress(Stage stage, long rows) {
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             switch (stage) {
                 case Start:

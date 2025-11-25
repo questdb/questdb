@@ -112,7 +112,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
-    private final StringSink stringSink = new StringSink();
     private byte apiVersion = DEFAULT_API_VERSION;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;

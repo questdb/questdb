@@ -31,6 +31,7 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -62,6 +63,7 @@ public class CopyExportRequestTask implements Mutable {
     private int parquetVersion;
     private boolean rawArrayEncoding;
     private @Nullable CopyExportResult result;
+    private @Nullable RecordCursorFactory rfc;
     private int rowGroupSize;
     private boolean statisticsEnabled;
     private String tableName;
@@ -79,6 +81,7 @@ public class CopyExportRequestTask implements Mutable {
         this.rowGroupSize = -1;
         this.statisticsEnabled = true;
         this.createOp = Misc.free(createOp);
+        this.rfc = Misc.free(rfc);
         result = null;
         pageFrameCursor = null;
         writeCallback = null;
@@ -202,8 +205,10 @@ public class CopyExportRequestTask implements Mutable {
         streamPartitionParquetExporter.setUp();
     }
 
-    public void setUpStreamPartitionParquetExporter(PageFrameCursor pageFrameCursor, RecordMetadata metadata) {
+    public void setUpStreamPartitionParquetExporter(RecordCursorFactory factory, PageFrameCursor pageFrameCursor, RecordMetadata metadata) {
         assert this.pageFrameCursor == null && this.metadata == null;
+        this.pageFrameCursor = pageFrameCursor;
+        this.metadata = metadata;
         streamPartitionParquetExporter.setUp();
     }
 
