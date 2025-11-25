@@ -40,6 +40,9 @@
         <web.console.version>1.1.4</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
         <qdbr.release>false</qdbr.release>
+        <!-- empty to disable the process checker by default,
+             it's overridden on Linux in a profile -->
+        <surefire.process.checker></surefire.process.checker>
 
         <!--
         For production builds, use -P qdbr-release
@@ -194,7 +197,7 @@
                 <version>3.5.3</version>
                 <configuration>
                     <shutdown>kill</shutdown>
-                    <enableProcessChecker>all</enableProcessChecker>
+                    <enableProcessChecker>${surefire.process.checker}</enableProcessChecker>
                     <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory"/>
                     <useModulePath>true</useModulePath>
                     <includes>
@@ -500,6 +503,17 @@
 
                 </plugins>
             </build>
+        </profile>
+        <profile>
+            <id>surefire-process-checker-linux</id>
+            <activation>
+                <os>
+                    <name>linux</name>
+                </os>
+            </activation>
+            <properties>
+                <surefire.process.checker>all</surefire.process.checker>
+            </properties>
         </profile>
         <profile>
             <id>platform-windows-x86-64</id>
