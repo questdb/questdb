@@ -30,6 +30,9 @@ import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.HashSet;
+import java.util.Set;
+
 public class DirectLongHashSetTest {
 
     @Test
@@ -110,6 +113,68 @@ public class DirectLongHashSetTest {
             set.add(100);
             Assert.assertFalse(set.excludes(100));
             Assert.assertTrue(set.excludes(200));
+        }
+    }
+
+    @Test
+    public void testFuzz() {
+        final int N = 100000;
+        final Rnd rnd = new Rnd();
+        final long seed0 = rnd.getSeed0();
+        final long seed1 = rnd.getSeed1();
+
+        try (DirectLongHashSet set = new DirectLongHashSet(16)) {
+            Set<Long> referenceSet = new HashSet<>();
+            for (int i = 0; i < N; i++) {
+                long val = rnd.nextLong();
+                set.add(val);
+                referenceSet.add(val);
+            }
+
+            Assert.assertEquals(referenceSet.size(), set.size());
+            Assert.assertTrue(set.capacity() >= referenceSet.size());
+
+            rnd.reset(seed0, seed1);
+            for (int i = 0; i < N; i++) {
+                long val = rnd.nextLong();
+                Assert.assertTrue(set.contains(val));
+            }
+
+            set.clear();
+            Assert.assertEquals(0, set.size());
+            rnd.reset(seed0, seed1);
+            referenceSet.clear();
+            for (int i = 0; i < N; i++) {
+                long val = rnd.nextLong();
+                int keyIndex = set.keyIndex(val);
+                boolean wasInSet = referenceSet.contains(val);
+
+                if (wasInSet) {
+                    Assert.assertTrue(keyIndex < 0);
+                } else {
+                    Assert.assertTrue(keyIndex >= 0);
+                }
+
+                set.add(val);
+                referenceSet.add(val);
+            }
+
+            Assert.assertEquals(referenceSet.size(), set.size());
+            rnd.reset(seed0, seed1);
+            for (int i = 0; i < N; i++) {
+                Assert.assertTrue(set.contains(rnd.nextLong()));
+            }
+
+            rnd.reset(seed0, seed1);
+            for (int i = 0; i < N / 2; i++) {
+                long val = rnd.nextLong();
+                if (referenceSet.remove(val)) {
+                    int removeIndex = set.remove(val);
+                    Assert.assertTrue(removeIndex >= 0);
+                    Assert.assertFalse(set.contains(val));
+                }
+            }
+            Assert.assertEquals(referenceSet.size(), set.size());
         }
     }
 

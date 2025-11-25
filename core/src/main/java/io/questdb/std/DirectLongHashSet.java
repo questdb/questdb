@@ -50,6 +50,10 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         this(capacity, DEFAULT_LOAD_FACTOR, MemoryTag.NATIVE_DEFAULT);
     }
 
+    public DirectLongHashSet(int capacity, int memoryTag) {
+        this(capacity, DEFAULT_LOAD_FACTOR, memoryTag);
+    }
+
     public DirectLongHashSet(int capacity, double loadFactor, int memoryTag) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");

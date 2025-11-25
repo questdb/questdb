@@ -117,7 +117,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                                     2)
                     );
                 default:
-                    DirectLongHashSet inVals = new DirectLongHashSet(argCount, DirectLongHashSet.DEFAULT_LOAD_FACTOR, MemoryTag.NATIVE_FUNC_RSS);
+                    DirectLongHashSet inVals = new DirectLongHashSet(argCount, MemoryTag.NATIVE_FUNC_RSS);
                     try {
                         parseToLong(args, argPositions, inVals);
                         return new InLongConstFunction(args.getQuick(0), inVals);
@@ -227,7 +227,7 @@ public class InLongFunctionFactory implements FunctionFactory {
             // value functions also contain key function at 0 index.
             this.valueFunctions = valueFunctions;
             this.valueFunctionPositions = valueFunctionPositions;
-            this.inSet = new DirectLongHashSet(valueFunctions.size() - 1, DirectLongHashSet.DEFAULT_LOAD_FACTOR, MemoryTag.NATIVE_FUNC_RSS);
+            this.inSet = new DirectLongHashSet(valueFunctions.size() - 1, MemoryTag.NATIVE_FUNC_RSS);
         }
 
         @Override
