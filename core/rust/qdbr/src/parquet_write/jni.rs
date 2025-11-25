@@ -418,7 +418,7 @@ impl Write for BufferWriter {
         unsafe {
             let buffer_ref = &mut *self.buffer;
             if buffer_ref.len() == self.init_offset {
-                self.offset = 16;
+                self.offset = 8;
             }
 
             let total_size = self.offset + buf.len();
@@ -507,7 +507,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_createStream
         )?;
         let encodings = crate::parquet_write::schema::to_encodings(&partition_template);
         let buffer_writer =
-            unsafe { BufferWriter::new_with_offset(&mut current_buffer as *mut Vec<u8>, 16) };
+            unsafe { BufferWriter::new_with_offset(&mut current_buffer as *mut Vec<u8>, 8) };
         let parquet_writer = ParquetWriter::new(buffer_writer)
             .with_version(version_from_i32(version)?)
             .with_compression(compression_options)
@@ -551,18 +551,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_writeStreami
     }
     let encoder = unsafe { &mut *encoder };
     let mut write_chunk = || -> ParquetResult<*const u8> {
-        // preserves capacity
         unsafe {
-            encoder.current_buffer.set_len(16);
+            encoder.current_buffer.set_len(8);
         }
 
         update_partition_data(&mut encoder.partition, col_data_ptr, row_count as usize)?;
-
         encoder.chunked_writer.write_chunk(&encoder.partition)?;
-        let data_len = (encoder.current_buffer.len() - 16) as u64;
-        let data_addr = (encoder.current_buffer.as_ptr() as u64) + 16;
-        encoder.current_buffer[0..8].copy_from_slice(&data_addr.to_le_bytes());
-        encoder.current_buffer[8..16].copy_from_slice(&data_len.to_le_bytes());
+        let data_len = (encoder.current_buffer.len() - 8) as u64;
+        encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
     };
 
@@ -581,40 +577,33 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_finishStream
     mut env: JNIEnv,
     _class: JClass,
     encoder: *mut StreamingParquetWriter,
-) -> jlong {
+) -> *const u8 {
     if encoder.is_null() {
         let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
         err.add_context("error in StreamingPartitionEncoder.finish");
         err.into_cairo_exception().throw::<jlong>(&mut env);
-        return 0;
+        return std::ptr::null();
     }
 
     let encoder = unsafe { &mut *encoder };
-    let mut finish = || -> ParquetResult<u64> {
-        encoder.current_buffer.clear();
+    let mut finish = || -> ParquetResult<*const u8> {
+        unsafe {
+            encoder.current_buffer.set_len(8);
+        }
         encoder
             .chunked_writer
             .finish(encoder.additional_data.clone())?;
-        let data_len = if encoder.current_buffer.len() > 16 {
-            (encoder.current_buffer.len() - 16) as u64
-        } else {
-            0
-        };
-        if encoder.current_buffer.len() < 16 {
-            encoder.current_buffer.resize(16, 0);
-        }
-        let data_addr = (encoder.current_buffer.as_ptr() as u64) + 16;
-        encoder.current_buffer[0..8].copy_from_slice(&data_addr.to_le_bytes());
-        encoder.current_buffer[8..16].copy_from_slice(&data_len.to_le_bytes());
-        Ok(data_len)
+        let data_len = (encoder.current_buffer.len() - 8) as u64;
+        encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
+        Ok(encoder.current_buffer.as_ptr())
     };
 
     match finish() {
-        Ok(size) => size as jlong,
+        Ok(ptr) => ptr,
         Err(mut err) => {
             err.add_context("error in StreamingPartitionEncoder.finish");
-            err.into_cairo_exception().throw::<jlong>(&mut env);
-            0
+            err.into_cairo_exception().throw::<*const u8>(&mut env);
+            std::ptr::null()
         }
     }
 }

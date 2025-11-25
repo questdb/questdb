@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -57,9 +58,11 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     boolean countRows = false;
     RecordCursor cursor;
     char delimiter = ',';
+    boolean firstParquetWriteCall = true;
     boolean hasNext;
     RecordMetadata metadata;
     boolean noMeta = false;
+    PageFrameCursor pageFrameCursor;
     long parquetFileAddress = 0;
     long parquetFileFd = -1;
     long parquetFileOffset = 0;
@@ -71,7 +74,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     Rnd rnd;
     long skip;
     long stop;
-    boolean waitingForCopy;
     private CreateTableOperation createParquetOp;
     private String parquetExportTableName;
     private boolean queryCacheable = false;
@@ -90,6 +92,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         rnd = null;
         record = null;
         cursor = Misc.free(cursor);
+        pageFrameCursor = Misc.free(pageFrameCursor);
+        firstParquetWriteCall = true;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
                 httpConnectionContext.getSelectCache().put(sqlText, recordCursorFactory);
@@ -114,7 +118,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         copyID = -1;
         createParquetOp = Misc.free(createParquetOp);
         parquetExportTableName = null;
-        waitingForCopy = false;
         parquetFileOffset = 0;
         exportModel.clear();
         cleanupParquetState();
@@ -125,6 +128,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     public void close() {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
+        pageFrameCursor = Misc.free(pageFrameCursor);
     }
 
     public ExportModel getExportModel() {

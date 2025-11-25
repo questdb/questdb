@@ -81,6 +81,10 @@ public class CopyExportContext {
         this.copyIDSupplier = engine.getConfiguration().getCopyIDSupplier();
     }
 
+    public static boolean canStreamExportParquet(RecordCursorFactory factory) throws SqlException {
+        return factory.supportsPageFrameCursor();
+    }
+
     public ExportTaskEntry assignExportEntry(
             SecurityContext securityContext,
             @NotNull CharSequence sqlText,
@@ -286,8 +290,7 @@ public class CopyExportContext {
             @Nullable final CharSequence msg,
             long errors,
             String tableName,
-            long copyID,
-            CopyExportResult result
+            long copyID
     ) {
 
         Throwable error = null;
@@ -344,10 +347,6 @@ public class CopyExportContext {
                     .$(", msg=").$safe(msg)
                     .$(", errors=").$(errors)
                     .I$();
-        }
-
-        if (result != null) {
-            result.report(phase, status, msg);
         }
     }
 

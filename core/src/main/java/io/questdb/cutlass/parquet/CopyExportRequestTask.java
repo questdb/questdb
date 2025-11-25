@@ -25,27 +25,47 @@
 package io.questdb.cutlass.parquet;
 
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8Sink;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
 
 public class CopyExportRequestTask implements Mutable {
+    private final StreamPartitionParquetExporter streamPartitionParquetExporter = new StreamPartitionParquetExporter();
     private int compressionCodec;
     private int compressionLevel;
-    private CreateTableOperation createOp;
+    private @Nullable CreateTableOperation createOp;
     private int dataPageSize;
     private CopyExportContext.ExportTaskEntry entry;
     private CharSequence fileName;
+    private @Nullable RecordMetadata metadata;
+    private @Nullable PageFrameCursor pageFrameCursor;
     private int parquetVersion;
     private boolean rawArrayEncoding;
-    private CopyExportResult result;
+    private @Nullable CopyExportResult result;
     private int rowGroupSize;
     private boolean statisticsEnabled;
     private String tableName;
+    private @Nullable WriteParquetCallBack writeCallback;
 
     @Override
     public void clear() {
@@ -60,6 +80,10 @@ public class CopyExportRequestTask implements Mutable {
         this.statisticsEnabled = true;
         this.createOp = Misc.free(createOp);
         result = null;
+        pageFrameCursor = null;
+        writeCallback = null;
+        metadata = null;
+        streamPartitionParquetExporter.clear();
     }
 
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
@@ -94,6 +118,14 @@ public class CopyExportRequestTask implements Mutable {
         return fileName;
     }
 
+    public RecordMetadata getMetadata() {
+        return metadata;
+    }
+
+    public PageFrameCursor getPageFrameCursor() {
+        return pageFrameCursor;
+    }
+
     public int getParquetVersion() {
         return parquetVersion;
     }
@@ -110,8 +142,16 @@ public class CopyExportRequestTask implements Mutable {
         return entry.getSecurityContext();
     }
 
+    public StreamPartitionParquetExporter getStreamPartitionParquetExporter() {
+        return streamPartitionParquetExporter;
+    }
+
     public String getTableName() {
         return tableName;
+    }
+
+    public WriteParquetCallBack getWriteCallback() {
+        return writeCallback;
     }
 
     public boolean isRawArrayEncoding() {
@@ -134,7 +174,11 @@ public class CopyExportRequestTask implements Mutable {
             int dataPageSize,
             boolean statisticsEnabled,
             int parquetVersion,
-            boolean rawArrayEncoding
+            boolean rawArrayEncoding,
+            PageFrameCursor pageFrameCursor, // for streaming export
+            RecordMetadata metadata,
+            WriteParquetCallBack writeCallback
+
     ) {
         this.entry = entry;
         this.result = result;
@@ -148,6 +192,19 @@ public class CopyExportRequestTask implements Mutable {
         this.parquetVersion = parquetVersion;
         this.rawArrayEncoding = rawArrayEncoding;
         this.createOp = createOp;
+        this.pageFrameCursor = pageFrameCursor;
+        this.metadata = metadata;
+        this.writeCallback = writeCallback;
+    }
+
+    public void setUpStreamPartitionParquetExporter() {
+        assert pageFrameCursor != null;
+        streamPartitionParquetExporter.setUp();
+    }
+
+    public void setUpStreamPartitionParquetExporter(PageFrameCursor pageFrameCursor, RecordMetadata metadata) {
+        assert this.pageFrameCursor == null && this.metadata == null;
+        streamPartitionParquetExporter.setUp();
     }
 
     public enum Phase {
@@ -186,6 +243,152 @@ public class CopyExportRequestTask implements Mutable {
 
         public String getName() {
             return name;
+        }
+    }
+
+    @FunctionalInterface
+    public interface WriteParquetCallBack {
+        void onWrite(long dataPtr, long dataLen, byte format) throws Exception;
+    }
+
+    public class StreamPartitionParquetExporter implements Mutable {
+        private final DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
+        private final DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
+        private final DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false);
+        private long lastPartitionIndex = -1;
+        private long streamExportCurrentPtr;
+        private long streamExportCurrentSize;
+        private byte streamExportFormat;
+        private long streamWriter = -1;
+
+        @Override
+        public void clear() {
+            columnNames.close();
+            columnData.close();
+            columnMetadata.close();
+            if (streamWriter != -1) {
+                closeStreamingParquetWriter(streamWriter);
+                streamWriter = -1;
+            }
+            streamExportCurrentPtr = 0;
+            streamExportCurrentSize = 0;
+            lastPartitionIndex = -1;
+        }
+
+        public void finishExport() throws Exception {
+            if (streamWriter == -1) {
+                return;
+            }
+            long buffer = finishStreamingParquetWrite(streamWriter);
+            long dataPtr = Unsafe.getUnsafe().getLong(buffer);
+            long dataSize = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+            assert writeCallback != null;
+            writeCallback.onWrite(dataPtr, dataSize, PartitionFormat.NATIVE);
+            closeStreamingParquetWriter(streamWriter);
+            streamWriter = -1;
+        }
+
+        public void onSuspend() throws Exception {
+            if (streamExportCurrentPtr != 0) {
+                assert writeCallback != null;
+                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize, streamExportFormat);
+                streamExportCurrentPtr = 0;
+                streamExportCurrentSize = 0;
+            }
+        }
+
+        public void setUp() {
+            columnNames.reopen();
+            columnMetadata.reopen();
+            columnData.reopen();
+
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                CharSequence columnName = metadata.getColumnName(i);
+                int startSize = columnNames.size();
+                columnNames.put(columnName);
+                columnMetadata.add(columnNames.size() - startSize);
+                columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | metadata.getColumnType(i));
+            }
+        }
+
+        public void writePageFrame(PageFrameCursor frameCursor, PageFrame frame) throws Exception {
+            int currentPartitionIndex = frame.getPartitionIndex();
+            if (currentPartitionIndex != lastPartitionIndex) {
+                if (lastPartitionIndex != -1 && streamExportFormat == PartitionFormat.NATIVE) {
+                    finishExport();
+                }
+                if (frame.getFormat() == PartitionFormat.NATIVE) {
+                    assert metadata != null;
+                    streamWriter = createStreamingParquetWriter(
+                            metadata.getColumnCount(),
+                            columnNames.ptr(),
+                            columnNames.size(),
+                            columnMetadata.getAddress(),
+                            metadata.getTimestampIndex(),
+                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                            statisticsEnabled,
+                            rawArrayEncoding,
+                            rowGroupSize,
+                            dataPageSize,
+                            parquetVersion
+                    );
+                }
+            }
+
+            if (frame.getFormat() == PartitionFormat.NATIVE) {
+                assert writeCallback != null;
+                columnData.clear();
+                final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
+
+                for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
+                    long localColTop = frame.getColumnTop(i);
+                    if (localColTop > frameRowCount) {
+                        localColTop = frameRowCount;
+                    }
+
+                    final int columnType = metadata.getColumnType(i);
+                    if (ColumnType.isSymbol(columnType)) {
+                        SymbolMapReader symbolMapReader = (SymbolMapReader) frameCursor.getSymbolTable(i);
+                        final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
+                        final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
+
+                        columnData.add(localColTop);
+                        columnData.add(frame.getPageAddress(i));
+                        columnData.add(frame.getPageSize(i));
+                        columnData.add(symbolValuesMem.addressOf(0));
+                        columnData.add(symbolValuesMem.size());
+                        columnData.add(symbolOffsetsMem.addressOf(HEADER_SIZE));
+                        columnData.add(symbolMapReader.getSymbolCount());
+                    } else {
+                        columnData.add(localColTop);
+                        columnData.add(frame.getPageAddress(i));
+                        columnData.add(frame.getPageSize(i));
+                        columnData.add(frame.getAuxPageAddress(i));
+                        columnData.add(frame.getAuxPageSize(i));
+                        columnData.add(0L);
+                        columnData.add(0L);
+                    }
+                }
+
+                // Write chunk to Parquet
+                long buffer = writeStreamingParquetChunk(
+                        streamWriter,
+                        columnData.getAddress(),
+                        frameRowCount
+                );
+                streamExportCurrentPtr = Unsafe.getUnsafe().getLong(buffer);
+                streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+                streamExportFormat = PartitionFormat.NATIVE;
+                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize, PartitionFormat.NATIVE);
+            } else {
+                streamExportCurrentPtr = frame.getParquetAddr();
+                streamExportCurrentSize = frame.getParquetFileSize();
+                assert writeCallback != null;
+                streamExportFormat = PartitionFormat.PARQUET;
+                writeCallback.onWrite(frame.getParquetAddr(), frame.getParquetFileSize(), PartitionFormat.PARQUET);
+            }
+            streamExportCurrentPtr = 0;
+            streamExportCurrentSize = 0;
         }
     }
 }

@@ -81,7 +81,10 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     task.getDataPageSize(),
                     task.isStatisticsEnabled(),
                     task.getParquetVersion(),
-                    task.isRawArrayEncoding()
+                    task.isRawArrayEncoding(),
+                    task.getPageFrameCursor(),
+                    task.getMetadata(),
+                    task.getWriteCallback()
             );
             task.clear();
         } finally {
@@ -107,8 +110,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         "",
                         0,
                         localTaskCopy.getTableName(),
-                        localTaskCopy.getCopyID(),
-                        localTaskCopy.getResult());
+                        localTaskCopy.getCopyID());
                 serialExporter.of(localTaskCopy);
                 phase = serialExporter.process(); // throws CopyExportException
 
@@ -121,8 +123,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         null,
                         0,
                         localTaskCopy.getTableName(),
-                        localTaskCopy.getCopyID(),
-                        localTaskCopy.getResult()
+                        localTaskCopy.getCopyID()
                 );
             } catch (CopyExportException e) {
                 copyContext.updateStatus(
@@ -133,8 +134,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         e.getFlyweightMessage(),
                         e.getErrno(),
                         localTaskCopy.getTableName(),
-                        localTaskCopy.getCopyID(),
-                        localTaskCopy.getResult()
+                        localTaskCopy.getCopyID()
                 );
             } catch (NetworkError e) { // SuspendEvent::trigger() may throw
                 copyContext.updateStatus(
@@ -145,8 +145,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         e.getFlyweightMessage(),
                         e.getErrno(),
                         localTaskCopy.getTableName(),
-                        localTaskCopy.getCopyID(),
-                        localTaskCopy.getResult()
+                        localTaskCopy.getCopyID()
                 );
             } catch (Throwable e) {
                 copyContext.updateStatus(
@@ -157,8 +156,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         e.getMessage(),
                         -1,
                         localTaskCopy.getTableName(),
-                        localTaskCopy.getCopyID(),
-                        localTaskCopy.getResult()
+                        localTaskCopy.getCopyID()
                 );
             } finally {
 
