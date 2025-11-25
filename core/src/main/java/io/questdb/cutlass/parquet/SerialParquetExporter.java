@@ -151,7 +151,6 @@ public class SerialParquetExporter implements Closeable {
                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
 
-            boolean emptyTable = true;
             try (TableReader reader = cairoEngine.getReader(tableToken)) {
                 final int timestampType = reader.getMetadata().getTimestampType();
                 final int partitionCount = reader.getPartitionCount();
@@ -173,12 +172,7 @@ public class SerialParquetExporter implements Closeable {
                                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                             }
                             final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
-                            if (reader.openPartition(partitionIndex) <= 0) {
-                                entry.setFinishedPartitionCount(partitionIndex + 1);
-                                continue;
-                            }
-
-                            emptyTable = false;
+                            boolean emptyPartition = reader.openPartition(partitionIndex) <= 0;
                             // skip parquet conversion if the partition is already in parquet format
                             if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
                                 numOfFiles++;
@@ -220,7 +214,11 @@ public class SerialParquetExporter implements Closeable {
 
                             // native partition - convert to parquet
                             numOfFiles++;
-                            PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                            if (emptyPartition) {
+                                PartitionEncoder.populateEmptyPartition(reader, partitionDescriptor, partitionIndex);
+                            } else {
+                                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                            }
                             nameSink.clear();
                             PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy)
                                     .format(partitionTimestamp, DateLocaleFactory.EN_LOCALE, null, nameSink);
@@ -254,21 +252,16 @@ public class SerialParquetExporter implements Closeable {
                 }
             }
 
-            if (!emptyTable) {
-                copyExportContext.updateStatus(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-                if (exportResult == null) {
-                    phase = CopyExportRequestTask.Phase.MOVE_FILES;
-                    entry.setPhase(phase);
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-                    moveExportFiles(tempBaseDirLen, fileName);
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-                }
-                LOG.info().$("finished parquet conversion to temp [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(']').$();
-                success = true;
-            } else {
-                LOG.error().$("export to parquet failed, table is empty [id=").$hexPadded(task.getCopyID()).$(']').$();
-                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+            copyExportContext.updateStatus(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+            if (exportResult == null) {
+                phase = CopyExportRequestTask.Phase.MOVE_FILES;
+                entry.setPhase(phase);
+                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+                moveExportFiles(tempBaseDirLen, fileName);
+                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
             }
+            LOG.info().$("finished parquet conversion to temp [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(']').$();
+            success = true;
         } catch (CopyExportException e) {
             LOG.error().$("parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
             throw e;

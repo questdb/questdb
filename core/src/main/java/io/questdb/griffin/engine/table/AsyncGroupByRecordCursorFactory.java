@@ -76,7 +76,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncGroupByRecordCursor cursor;
     private final PageFrameSequence<AsyncGroupByAtom> frameSequence;
-    private final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<Function> recordFunctions; // includes groupByFunctions
     private final int workerCount;
 
@@ -106,7 +105,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         super(groupByMetadata);
         try {
             this.base = base;
-            this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
             AsyncGroupByAtom atom = new AsyncGroupByAtom(
                     asm,
@@ -136,7 +134,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     workerCount,
                     PageFrameReduceTask.TYPE_GROUP_BY
             );
-            this.cursor = new AsyncGroupByRecordCursor(engine, groupByFunctions, recordFunctions, messageBus);
+            this.cursor = new AsyncGroupByRecordCursor(engine, recordFunctions, messageBus);
             this.workerCount = workerCount;
         } catch (Throwable th) {
             close();
@@ -186,7 +184,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
         sink.meta("workers").val(workerCount);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
-        sink.optAttr("values", groupByFunctions, true);
+        sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions(), true);
         sink.optAttr("filter", frameSequence.getAtom(), true);
         sink.child(base);
     }
@@ -221,6 +219,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
         try {
+            fragment.resetLocalStats();
+
             if (atom.isSharded()) {
                 fragment.shard();
             }
@@ -234,7 +234,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
             }
 
-            atom.requestSharding(fragment);
+            atom.maybeEnableSharding(fragment);
         } finally {
             atom.release(slotId);
         }
@@ -387,6 +387,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final Function filter = atom.getFilter(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
         try {
+            fragment.resetLocalStats();
+
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
                 applyFilter(filter, rows, record, frameRowCount);
@@ -407,7 +409,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 aggregateFilteredSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
             }
 
-            atom.requestSharding(fragment);
+            atom.maybeEnableSharding(fragment);
         } finally {
             atom.release(slotId);
         }

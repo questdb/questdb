@@ -132,6 +132,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getAsyncMunmapEnabled() {
+        return false;
+    }
+
+    @Override
     public @NotNull String getAttachPartitionSuffix() {
         return TableUtils.ATTACHABLE_DIR_MARKER;
     }
@@ -763,6 +768,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getRepeatMigrationsFromVersion() {
         return -1;
+    }
+
+    @Override
+    public int getRmdirMaxDepth() {
+        return 5;
     }
 
     @Override

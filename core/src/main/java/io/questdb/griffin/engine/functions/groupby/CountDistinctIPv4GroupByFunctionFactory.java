@@ -32,6 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CountDistinctIPv4GroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "count_distinct(X)";
@@ -53,8 +54,7 @@ public class CountDistinctIPv4GroupByFunctionFactory implements FunctionFactory 
         return new CountDistinctIPv4GroupByFunction(
                 args.getQuick(0),
                 configuration.getCountDistinctCapacity(),
-                configuration.getCountDistinctLoadFactor(),
-                sqlExecutionContext.getSharedQueryWorkerCount()
+                configuration.getCountDistinctLoadFactor()
         );
     }
 }

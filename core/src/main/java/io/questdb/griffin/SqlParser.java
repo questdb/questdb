@@ -3474,7 +3474,9 @@ public class SqlParser {
             case ExpressionNode.CONSTANT:
                 final WithClauseModel withClause = masterModel.get(tableName);
                 if (withClause != null) {
-                    model.setNestedModel(parseWith(lexer, withClause, sqlParserCallback, model.getDecls()));
+                    QueryModel cteModel = parseWith(lexer, withClause, sqlParserCallback, model.getDecls());
+                    cteModel.setIsCteModel(true);
+                    model.setNestedModel(cteModel);
                     model.setAlias(literal(tableName, expr.position));
                 } else {
                     int dot = Chars.indexOfLastUnquoted(tableName, '.');
@@ -3877,7 +3879,11 @@ public class SqlParser {
      */
     private void rewriteJsonExtractCast(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && isCastKeyword(node.token)) {
-            if (node.lhs != null && node.lhs.paramCount == 2 && isJsonExtract(node.lhs.token)) {
+            if (node.lhs != null
+                    && node.lhs.type == ExpressionNode.FUNCTION
+                    && node.lhs.paramCount == 2
+                    && node.lhs.token != null
+                    && isJsonExtract(node.lhs.token)) {
                 // rewrite cast such as
                 // json_extract(json,path)::type -> json_extract(json,path,type)
                 // the ::type is already rewritten as
@@ -3900,7 +3906,7 @@ public class SqlParser {
                         node.rhs = jsonExtractNode.rhs;
                         node.args.clear();
                     } else if (JsonExtractTypedFunctionFactory.isIntrusivelyOptimized(castType)) {
-                        int type = ColumnType.typeOf(typeNode.token);
+                        int type = castType;
                         node.token = jsonExtractNode.token;
                         node.paramCount = 3;
                         node.type = jsonExtractNode.type;

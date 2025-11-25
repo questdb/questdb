@@ -112,6 +112,29 @@ public class PartitionEncoder {
             long writerPtr
     ) throws CairoException;
 
+    public static void populateEmptyPartition(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) throws CairoException {
+        final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
+        descriptor.of(tableReader.getTableToken().getTableName(), 0, timestampIndex);
+        final TableReaderMetadata metadata = tableReader.getMetadata();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final int columnType = metadata.getColumnType(i);
+            if (columnType > 0) {
+                descriptor.addColumn(
+                        metadata.getColumnName(i),
+                        columnType,
+                        metadata.getColumnMetadata(i).getWriterIndex(),
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0
+                );
+            }
+        }
+    }
+
     public static void populateFromTableReader(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) throws CairoException {
         final long partitionSize = tableReader.openPartition(partitionIndex);
         assert partitionSize != 0;
