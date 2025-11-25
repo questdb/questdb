@@ -27,7 +27,7 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>compat</artifactId>
-    <version>9.2.1-SNAPSHOT</version>
+    <version>9.2.2-SNAPSHOT</version>
 
     <name>Compatibility tests for QuestDB</name>
 
