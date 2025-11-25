@@ -1268,7 +1268,6 @@ public class DoubleHistogram extends EncodableHistogram implements DoubleValueRe
                 while (value >= currentHighestValueLimitInAutoRange);
             }
         } catch (CairoException ex) {
-            throw CairoException.nonCritical().put("The value ").put(value)
             // Build the base error message first
             CairoException err = CairoException.nonCritical().put("The value ").put(value)
                     .put(" is out of bounds for histogram, current covered range [")
