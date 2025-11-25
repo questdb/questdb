@@ -465,6 +465,92 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testJsonConnectionCounterDoesNotGoNegativeWithConcurrentExports() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    // Create a test table using the engine to ensure it's created successfully
+                    engine.execute("CREATE TABLE test_json_conn_table AS (" +
+                                    "SELECT x as id, 'test_' || x as name FROM long_sequence(100))",
+                            sqlExecutionContext);
+
+                    final int numExportThreads = 4;
+                    final int numJsonThreads = 3;
+                    final int requestsPerThread = 5;
+                    final AtomicInteger errors = new AtomicInteger();
+                    final ObjList<Thread> threads = new ObjList<>();
+                    final CyclicBarrier expBarrier = new CyclicBarrier(numExportThreads);
+                    final CyclicBarrier jsonBarrier = new CyclicBarrier(numJsonThreads);
+
+                    // Start export threads
+                    for (int i = 0; i < numExportThreads; i++) {
+                        Thread thread = new Thread(() -> {
+                            TestUtils.await(expBarrier);
+                            try {
+                                try (TestHttpClient client = new TestHttpClient()) {
+                                    client.port = testHttpClient.port;
+                                    client.setKeepConnection(true);
+                                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
+                                    for (int n = 0; n < requestsPerThread; n++) {
+                                        params.clear();
+                                        params.put("fmt", "parquet");
+                                        params.put("query", "test_json_conn_table");
+                                        client.assertGetParquet("/exp", 926, params, null);
+                                    }
+                                }
+                            } catch (Throwable e) {
+                                LOG.error().$(e.getMessage()).$();
+                                errors.incrementAndGet();
+                            } finally {
+                                Path.clearThreadLocals();
+                            }
+                        });
+                        threads.add(thread);
+                    }
+
+                    // Start JSON query threads
+                    for (int i = 0; i < numJsonThreads; i++) {
+                        Thread thread = new Thread(() -> {
+                            TestUtils.await(jsonBarrier);
+                            try {
+                                try (final HttpClient client = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                                    for (int n = 0; n < requestsPerThread; n++) {
+                                        try (var respHeaders = client.newRequest("localhost", testHttpClient.port)
+                                                .GET()
+                                                .url("/exec")
+                                                .query("query", "SELECT * FROM test_json_conn_table LIMIT 50")
+                                                .send()) {
+                                            respHeaders.await();
+                                        }
+                                    }
+                                }
+                            } catch (Throwable e) {
+                                LOG.error().$(e.getMessage()).$();
+                                errors.incrementAndGet();
+                            }
+                        });
+                        threads.add(thread);
+                    }
+
+                    // Start all threads
+                    for (int i = 0; i < threads.size(); i++) {
+                        threads.getQuick(i).start();
+                    }
+
+                    // Wait for all threads to complete, then verify connection count returns to 0
+                    try {
+                        for (int i = 0; i < threads.size(); i++) {
+                            threads.getQuick(i).join();
+                        }
+                    } finally {
+                        threads.clear();
+                    }
+
+                    // All requests should have completed successfully
+                    Assert.assertEquals("No errors should occur during concurrent export/json operations", 0, errors.get());
+                });
+    }
+
+    @Test
     public void testOnParquetPartition() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -943,7 +1029,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     assertEventually(() ->
                             Assert.assertEquals(
                                     0,
-                                    serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_EXPORT
+                                    serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_EXPORT_HTTP
                                     )
                             )
                     );
@@ -960,7 +1046,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                     // Http server may take time to close the connection, so we need to wait
                                     // until the active connection count is less than the limit
                                     connectionExpCount.incrementAndGet();
-                                    while (serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_EXPORT) + connectionExpCount.get() > requestExpLimit) {
+                                    while (serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_EXPORT_HTTP) + connectionExpCount.get() > requestExpLimit) {
                                         Os.pause();
                                     }
 
