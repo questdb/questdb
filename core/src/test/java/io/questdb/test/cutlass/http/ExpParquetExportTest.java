@@ -352,10 +352,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("query", "SELECT * FROM codec_zstd_test where 1 = 2");
-
                     testHttpClient.assertGet(
                             "/exp",
-                            "{\"query\":\"SELECT * FROM codec_zstd_test where 1 = 2\",\"error\":\"empty table\",\"position\":0}",
+                            "PAR1\u0015\u0002\u0019,H\u0019zzz.copy.0000000000000000\u0015\u0002\u0000\u0015\u0004%\u0002\u0018\u0001xU\u0000\u0000\u0016\u0000\u0019\f\u0019\u001C\u0018\u0007questdb\u00189{\"version\":1,\"schema\":[{\"column_type\":6,\"column_top\":0}]}\u0000\u0018\u0013QuestDB version 9.0\u0000",
                             params,
                             null,
                             null
@@ -493,7 +492,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     Thread thread = startCancelThread(engine, sqlExecutionContext);
                     thread.start();
                     String expectedError = "cancelled by user";
-                    testHttpClient.assertGetContains("/exp", expectedError, params, null, null);
+                    testHttpClient.assertGetContains("/exp", expectedError, params, null, null, 9001);
                     thread.join();
                 });
     }
@@ -513,7 +512,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     thread.start();
                     String expectedError = "cancelled by user";
                     try {
-                        testHttpClient.assertGetContains("/exp", expectedError, params, null, null);
+                        testHttpClient.assertGetContains("/exp", expectedError, params, null, null, 9001);
                         Assert.fail("server should disconnect");
                     } catch (HttpClientException e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -928,7 +927,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         for (int i = 0; i < requestLimit; i++) {
                             HttpClient client = HttpClientFactory.newPlainTextInstance();
                             clients.add(client);
-                            HttpClient.ResponseHeaders resp = startExport(client, serverMain, params, "multiple_options_test");
+                            HttpClient.ResponseHeaders resp = startExport(client, serverMain, params);
                             respHeaders.add(resp);
                         }
                     } finally {
@@ -1233,7 +1232,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("fmt", "parquet");
                     params.put("timeout", "1");
                     String expectedError = "timeout, query aborted";
-                    testHttpClient.assertGetContains("/exp", expectedError, params, null, null);
+                    testHttpClient.assertGetContains("/exp", expectedError, params, null, null, 9001);
                 });
     }
 
@@ -1248,7 +1247,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("rmode", "nodelay");
 
                     try {
-                        testHttpClient.assertGetContains("/exp", "nothing", params, null, null);
+                        testHttpClient.assertGetContains("/exp", "nothing", params, null, null, 9001);
                         Assert.fail();
                     } catch (HttpClientException e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -1312,13 +1311,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     private static HttpClient.ResponseHeaders startExport(
             HttpClient client,
             TestServerMain serverMain,
-            @Nullable CharSequenceObjHashMap<String> queryParams,
-            String sql
+            @Nullable CharSequenceObjHashMap<String> queryParams
     ) {
-
         HttpClient.Request req = client.newRequest("localhost", serverMain.getHttpServerPort());
         req.GET().url("/exp");
-        req.query("query", sql);
+        req.query("query", "multiple_options_test");
         if (queryParams != null) {
             for (int i = 0, n = queryParams.size(); i < n; i++) {
                 CharSequence name = queryParams.keys().getQuick(i);
