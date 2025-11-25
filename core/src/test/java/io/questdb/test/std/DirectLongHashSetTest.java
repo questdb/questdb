@@ -71,19 +71,15 @@ public class DirectLongHashSetTest {
         try (DirectLongHashSet set = new DirectLongHashSet(16)) {
             Rnd rnd = new Rnd();
             final int N = 1000;
-
             for (int i = 0; i < N; i++) {
                 set.add(rnd.nextPositiveLong());
             }
 
             Assert.assertEquals(N, set.size());
-
             rnd.reset();
-
             for (int i = 0; i < N; i++) {
                 Assert.assertTrue(set.keyIndex(rnd.nextPositiveLong()) < 0);
             }
-
             rnd.reset();
 
             for (int i = 0; i < N; i++) {
