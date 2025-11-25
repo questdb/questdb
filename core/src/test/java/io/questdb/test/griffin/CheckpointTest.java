@@ -76,20 +76,10 @@ import static io.questdb.PropertyKey.CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED;
 
 public class CheckpointTest extends AbstractCairoTest {
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
-    static int SCOREBOARD_FORMAT = 1;
     private static Path path;
     private static Rnd rnd;
     private static Path triggerFilePath;
     private int rootLen;
-
-    public CheckpointTest() throws Exception {
-        int scoreboardFormat = TestUtils.generateRandom(LOG).nextBoolean() ? 1 : 2;
-        if (scoreboardFormat != SCOREBOARD_FORMAT) {
-            SCOREBOARD_FORMAT = scoreboardFormat;
-            tearDownStatic();
-            setUpStatic();
-        }
-    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {

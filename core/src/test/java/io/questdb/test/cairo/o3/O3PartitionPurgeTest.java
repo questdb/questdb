@@ -70,16 +70,10 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 @RunWith(Parameterized.class)
 public class O3PartitionPurgeTest extends AbstractCairoTest {
-    private static int SCOREBOARD_FORMAT = 1;
     private static O3PartitionPurgeJob purgeJob;
     private final TestTimestampType timestampType;
 
-    public O3PartitionPurgeTest(int version, TestTimestampType timestampType) throws Exception {
-        if (version != SCOREBOARD_FORMAT) {
-            SCOREBOARD_FORMAT = version;
-            tearDownStatic();
-            setUpStatic();
-        }
+    public O3PartitionPurgeTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
     }
 
@@ -94,13 +88,11 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
         purgeJob = new O3PartitionPurgeJob(engine, 1);
     }
 
-    @Parameterized.Parameters(name = "V{0}-{1}")
+    @Parameterized.Parameters(name = "timestamp={0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {1, TestTimestampType.MICRO},
-                {1, TestTimestampType.NANO},
-                {2, TestTimestampType.MICRO},
-                {2, TestTimestampType.NANO},
+                {TestTimestampType.MICRO},
+                {TestTimestampType.NANO},
         });
     }
 
@@ -219,7 +211,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointDoesNotBlockPurge() throws Exception {
-        Assume.assumeTrue(SCOREBOARD_FORMAT == 2 && Os.type != Os.WINDOWS);
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
