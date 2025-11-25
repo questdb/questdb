@@ -252,7 +252,6 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             if (!isOpen) {
                 isOpen = true;
                 joinKeyMap.reopen();
-                slaveChain.reopen();
             }
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;

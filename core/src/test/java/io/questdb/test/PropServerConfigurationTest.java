@@ -52,6 +52,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -309,7 +310,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
-        Assert.assertEquals(100_000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
+        Assert.assertEquals(10_000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
         Assert.assertTrue(configuration.getCairoConfiguration().isGroupByPresizeEnabled());
         Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getGroupByPresizeMaxCapacity());
         Assert.assertEquals(Numbers.SIZE_1GB, configuration.getCairoConfiguration().getGroupByPresizeMaxHeapSize());
@@ -535,6 +536,28 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.tcp.commit.interval.default", "1000");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
+    }
+
+    @Test
+    public void testConfigKeysAreValidInDefaultConfs() throws Exception {
+        String[] configFiles = {
+                "../core/src/main/resources/io/questdb/site/conf/server.conf",
+                "../pkg/ami/marketplace/assets/server.conf"
+        };
+
+        Properties properties = new Properties();
+        PropServerConfiguration.PropertyValidator validator = new PropServerConfiguration.PropertyValidator();
+
+        for (String configFile : configFiles) {
+            java.nio.file.Path path = java.nio.file.Paths.get(configFile);
+            if (!java.nio.file.Files.exists(path)) {
+                Assert.fail("Config file not found: " + configFile);
+            }
+
+            try (java.io.BufferedReader reader = java.nio.file.Files.newBufferedReader(path, java.nio.charset.StandardCharsets.UTF_8)) {
+                validateConfigKeys(reader, configFile, properties, validator);
+            }
+        }
     }
 
     @Test
@@ -767,7 +790,6 @@ public class PropServerConfigurationTest {
 
         // affinity
         properties.setProperty("shared.worker.count", "2");
-        properties.setProperty("shared.worker.affinity", "2,3");
         env.put("QDB_SHARED_WORKER_COUNT", "3");
         env.put("QDB_SHARED_NETWORK_WORKER_AFFINITY", "5,6,7");
 
@@ -1687,31 +1709,30 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("http.context.web.console", "/new-path");
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        // duplicates are ok
         Assert.assertEquals(
-                "[/new-path/warnings,/new-path/warnings]",
+                "[/new-path/warnings]",
                 configuration.getHttpServerConfiguration().getContextPathWarnings().toString()
         );
         Assert.assertEquals(
-                "[/new-path/exec,/new-path/exec]",
+                "[/new-path/exec,/new-path/api/v1/sql/execute]",
                 configuration.getHttpServerConfiguration().getContextPathExec().toString()
         );
         Assert.assertEquals(
-                "[/new-path/exp,/new-path/exp]",
+                "[/new-path/exp]",
                 configuration.getHttpServerConfiguration().getContextPathExport().toString()
         );
         Assert.assertEquals(
-                "[/new-path/imp,/new-path/imp]",
+                "[/new-path/imp]",
                 configuration.getHttpServerConfiguration().getContextPathImport().toString()
         );
 
         Assert.assertEquals(
-                "[/new-path/chk,/new-path/chk]",
+                "[/new-path/chk]",
                 configuration.getHttpServerConfiguration().getContextPathTableStatus().toString()
         );
 
         Assert.assertEquals(
-                "[/new-path/settings,/new-path/settings]",
+                "[/new-path/settings]",
                 configuration.getHttpServerConfiguration().getContextPathSettings().toString()
         );
 
@@ -1733,12 +1754,53 @@ public class PropServerConfigurationTest {
         final Rnd rnd = TestUtils.generateRandom(LOG);
 
         final ObjList<FuzzItem> pathsThatCanBePinned = new ObjList<>();
-        pathsThatCanBePinned.add(new FuzzItem("http.context.import", "/imp", HttpFullFatServerConfiguration::getContextPathImport));
-        pathsThatCanBePinned.add(new FuzzItem("http.context.export", "/exp", HttpFullFatServerConfiguration::getContextPathExport));
-        pathsThatCanBePinned.add(new FuzzItem("http.context.settings", "/settings", HttpFullFatServerConfiguration::getContextPathSettings));
-        pathsThatCanBePinned.add(new FuzzItem("http.context.table.status", "/chk", HttpFullFatServerConfiguration::getContextPathTableStatus));
-        pathsThatCanBePinned.add(new FuzzItem("http.context.warnings", "/warnings", HttpFullFatServerConfiguration::getContextPathWarnings));
-        pathsThatCanBePinned.add(new FuzzItem("http.context.execute", "/exec", HttpFullFatServerConfiguration::getContextPathExec));
+        pathsThatCanBePinned.add(
+                new FuzzItem(
+                        "http.context.import",
+                        "/imp_new",
+                        HttpFullFatServerConfiguration.CONTEXT_PATH_IMPORT,
+                        HttpFullFatServerConfiguration::getContextPathImport
+                )
+        );
+        pathsThatCanBePinned.add(
+                new FuzzItem(
+                        "http.context.export",
+                        "/exp_new",
+                        HttpFullFatServerConfiguration.CONTEXT_PATH_EXPORT,
+                        HttpFullFatServerConfiguration::getContextPathExport)
+        );
+        pathsThatCanBePinned.add(
+                new FuzzItem(
+                        "http.context.settings",
+                        "/settings_new",
+                        HttpFullFatServerConfiguration.CONTEXT_PATH_SETTINGS,
+                        HttpFullFatServerConfiguration::getContextPathSettings
+                )
+        );
+        pathsThatCanBePinned.add(
+                new FuzzItem(
+                        "http.context.table.status",
+                        "/chk_new",
+                        HttpFullFatServerConfiguration.CONTEXT_PATH_TABLE_STATUS,
+                        HttpFullFatServerConfiguration::getContextPathTableStatus
+                )
+        );
+        pathsThatCanBePinned.add(
+                new FuzzItem(
+                        "http.context.warnings",
+                        "/warnings_new",
+                        HttpFullFatServerConfiguration.CONTEXT_PATH_WARNINGS,
+                        HttpFullFatServerConfiguration::getContextPathWarnings
+                )
+        );
+        pathsThatCanBePinned.add(
+                new FuzzItem(
+                        "http.context.execute",
+                        "/exec_new",
+                        HttpFullFatServerConfiguration.CONTEXT_PATH_EXEC,
+                        HttpFullFatServerConfiguration::getContextPathExec
+                )
+        );
 
         String webConsolePath = rnd.nextString(64);
         Properties properties = new Properties();
@@ -1753,25 +1815,27 @@ public class PropServerConfigurationTest {
         }
 
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        var expected = new ObjHashSet<>();
 
         for (int i = 0; i < pathsThatCanBePinned.size(); i++) {
+            expected.clear();
             FuzzItem item = pathsThatCanBePinned.getQuick(i);
-            String e1 = webConsolePath + item.value;
-            String e2;
             if (pinnedIndexes.contains(i)) {
-                e2 = item.value;
-            } else {
-                e2 = e1;
+                expected.add(item.value);
+            }
+
+            for (int j = 0; j < item.webConsoleExpectedValue.size(); j++) {
+                expected.add(webConsolePath + item.webConsoleExpectedValue.get(j));
             }
             Assert.assertEquals(
-                    "[" + e2 + "," + e1 + "]",
+                    expected.toString(),
                     item.getter.apply(configuration.getHttpServerConfiguration()).toString()
             );
         }
 
         // check the ILP did not move
         Assert.assertEquals(
-                "[/write,/api/v2/write]",
+                HttpFullFatServerConfiguration.CONTEXT_PATH_ILP.toString(),
                 configuration.getHttpServerConfiguration().getContextPathILP().toString()
         );
 
@@ -2035,6 +2099,31 @@ public class PropServerConfigurationTest {
         return new PropServerConfiguration.PropertyValidator().validate(properties);
     }
 
+    private void validateConfigKeys(java.io.BufferedReader reader, String source, Properties properties, PropServerConfiguration.PropertyValidator validator) throws Exception {
+        String line;
+        while ((line = reader.readLine()) != null) {
+            line = line.trim();
+            if (line.startsWith("#") && line.contains("=") && !line.startsWith("##")) {
+                String uncommented = line.substring(1).trim();
+                int equalsIndex = uncommented.indexOf('=');
+                if (equalsIndex > 0) {
+                    String key = uncommented.substring(0, equalsIndex).trim();
+                    String value = uncommented.substring(equalsIndex + 1).trim();
+                    if (!key.contains(".") || key.startsWith("http.redirect") || key.contains(" ")
+                            || key.startsWith("replication") || key.startsWith("acl") || key.contains("tls") || key.startsWith("cold.storage") || key.startsWith("native.")) { // Enterprise confs
+                        continue;
+                    }
+                    properties.clear();
+                    properties.setProperty(key, value);
+                    PropServerConfiguration.ValidationResult result = validator.validate(properties);
+                    if (result != null && result.isError()) {
+                        Assert.fail(String.format("Invalid commented key '%s' found in %s: %s", key, source, result.message()));
+                    }
+                }
+            }
+        }
+    }
+
     @NotNull
     protected PropServerConfiguration newPropServerConfiguration(
             String root,
@@ -2049,7 +2138,11 @@ public class PropServerConfigurationTest {
         return new PropServerConfiguration(root, properties, null, PropServerConfigurationTest.LOG, new BuildInformationHolder());
     }
 
-    private record FuzzItem(String key, String value,
-                            Function<HttpFullFatServerConfiguration, ObjList<String>> getter) {
+    private record FuzzItem(
+            String key,
+            String value,
+            ObjHashSet<String> webConsoleExpectedValue,
+            Function<HttpFullFatServerConfiguration, ObjHashSet<String>> getter
+    ) {
     }
 }

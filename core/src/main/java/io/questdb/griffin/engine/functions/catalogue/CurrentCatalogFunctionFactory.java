@@ -22,21 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.filewatch;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.std.str.LPSZ;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface WindowsAccessor {
+public class CurrentCatalogFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "current_catalog()";
+    }
 
-    void closeDirectory(long pWatch);
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
 
-    long getFileName(long pWatch);
-
-    int getFileNameSize(long pWatch);
-
-    long openDirectory(LPSZ dirName);
-
-    boolean readDirectoryChanges(long pWatch);
-
-    void stopWatch(long pWatch);
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return CurrentDatabaseFunctionFactory.INSTANCE;
+    }
 }
