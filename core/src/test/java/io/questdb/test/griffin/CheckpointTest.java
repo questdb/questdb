@@ -93,7 +93,6 @@ public class CheckpointTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
         path = new Path();
         triggerFilePath = new Path();
         ff = testFilesFacade;

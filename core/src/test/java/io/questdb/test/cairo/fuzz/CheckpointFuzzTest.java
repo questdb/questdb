@@ -63,7 +63,6 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
         AbstractFuzzTest.setUpStatic();
         triggerFilePath = new Path();
     }

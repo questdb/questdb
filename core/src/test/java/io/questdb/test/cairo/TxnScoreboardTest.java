@@ -31,17 +31,15 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxnScoreboardPool;
-import io.questdb.cairo.TxnScoreboardPoolFactory;
+import io.questdb.cairo.TxnScoreboardPoolV2;
 import io.questdb.cairo.TxnScoreboardV1;
 import io.questdb.cairo.TxnScoreboardV2;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -60,25 +58,12 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
-@RunWith(Parameterized.class)
 public class TxnScoreboardTest extends AbstractCairoTest {
     private static volatile long txn;
     private static volatile long writerMin;
-    private final int version;
     private TxnScoreboardPool scoreboardPoolFactory;
     private TableToken tableToken;
 
-    public TxnScoreboardTest(int version) {
-        this.version = version;
-    }
-
-    @Parameterized.Parameters(name = "V{0}")
-    public static Collection<Object[]> testParams() {
-        return Arrays.asList(new Object[][]{
-                {1},
-                {2},
-        });
-    }
 
     public TxnScoreboard newTxnScoreboard() {
         return scoreboardPoolFactory.getTxnScoreboard(tableToken);
@@ -87,8 +72,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, version);
-        scoreboardPoolFactory = TxnScoreboardPoolFactory.createPool(engine.getConfiguration());
+        scoreboardPoolFactory = new TxnScoreboardPoolV2(engine.getConfiguration());
         tableToken = createTable(
                 new TableModel(engine.getConfiguration(), "x", PartitionBy.DAY)
                         .col("ts", ColumnType.TIMESTAMP)
@@ -99,7 +83,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testBitmapIndexEdgeCase() throws Exception {
-        Assume.assumeTrue(version == 2);
         TestUtils.assertMemoryLeak(() -> {
             for (int i = 127; i < 130; i++) {
                 try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(i)) {
@@ -125,7 +108,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testCannotLockTwice() throws Exception {
-        Assume.assumeTrue(version == 2);
         TestUtils.assertMemoryLeak(() -> {
             try (TxnScoreboard txnScoreboard = newTxnScoreboard()) {
                 Assume.assumeTrue(txnScoreboard.acquireTxn(0, 1));
@@ -160,44 +142,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             // The assertion fails while there are readers
             Assert.assertEquals(lastCommittedTxn, getMin(txnScoreboard));
         }
-    }
-
-    @Test
-    public void testCleanFailsNoResourceLeakRO() throws Exception {
-        Assume.assumeTrue(version == 1);
-        FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public long openCleanRW(LPSZ name, long size) {
-                return -1;
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            try (TxnScoreboard ignored = newTxnScoreboard()) {
-                Assert.fail();
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write with clean allocation");
-            }
-        });
-    }
-
-    @Test
-    public void testCleanFailsNoResourceLeakRW() throws Exception {
-        Assume.assumeTrue(version == 1);
-        FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public long openCleanRW(LPSZ name, long size) {
-                return -1;
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            try (TxnScoreboard ignored = newTxnScoreboard()) {
-                Assert.fail();
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write with clean allocation");
-            }
-        });
     }
 
     @Test
@@ -364,102 +308,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLimits() throws Exception {
-        Assume.assumeTrue(version == 1);
-        TestUtils.assertMemoryLeak(() -> {
-            int expect = 2048;
-            setProperty(PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, expect);
-            try (TxnScoreboard scoreboard2 = newTxnScoreboard()) {
-                try (TxnScoreboard scoreboard1 = newTxnScoreboard()) {
-                    // we should successfully acquire expected number of entries
-                    for (int i = 0; i < expect; i++) {
-                        scoreboard1.acquireTxn(0, i + 134);
-                    }
-                    // scoreboard capacity should be exhausted,
-                    // we should be refused to acquire any more slots
-                    try {
-                        scoreboard1.acquireTxn(0, expect + 134);
-                        Assert.fail();
-                    } catch (CairoException ignored) {
-                    }
-
-                    // now we release middle slot, this does not free any more slots
-                    scoreboard1.releaseTxn(0, 11 + 134);
-                    Assert.assertEquals(134, getMin(scoreboard1));
-                    // we should NOT be able to allocate more slots
-                    try {
-                        scoreboard1.acquireTxn(0, expect + 134);
-                        Assert.fail();
-                    } catch (CairoException ignored) {
-                    }
-
-                    // now that we release "head" slot we should be able to acquire more
-                    scoreboard1.releaseTxn(0, 134);
-                    Assert.assertEquals(135, getMin(scoreboard1));
-                    // and we should be able to allocate another one
-                    scoreboard1.acquireTxn(0, expect + 134);
-
-                    // now check that all counts are intact
-                    for (int i = 1; i <= expect; i++) {
-                        if (i != 11) {
-                            Assert.assertFalse(scoreboard1.isTxnAvailable(i + 134));
-                        } else {
-                            Assert.assertTrue(scoreboard1.isTxnAvailable(i + 134));
-                        }
-                    }
-                }
-
-                for (int i = 1; i <= expect; i++) {
-                    if (i != 11) {
-                        Assert.assertFalse(scoreboard2.isTxnAvailable(i + 134));
-                    } else {
-                        Assert.assertTrue(scoreboard2.isTxnAvailable(i + 134));
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testLimitsO3Acquire() throws Exception {
-        LOG.debug().$("start testLimitsO3Acquire").$();
-        for (int i = 0; i < 1000; i++) {
-            testLimits();
-        }
-    }
-
-    @Test
-    public void testMapFailsNoResourceLeakRO() throws Exception {
-        Assume.assumeTrue(version == 1);
-        TestUtils.assertMemoryLeak(() -> {
-            FilesFacade ff = new TestFilesFacadeImpl() {
-                @Override
-                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                    if (this.fd == fd) {
-                        return -1;
-                    }
-                    return super.mmap(fd, len, offset, flags, memoryTag);
-                }
-
-                @Override
-                public long openCleanRW(LPSZ name, long size) {
-                    long fd = super.openCleanRW(name, size);
-                    this.fd = fd;
-                    return fd;
-                }
-            };
-
-            assertMemoryLeak(ff, () -> {
-                try (TxnScoreboard ignored = newTxnScoreboard()) {
-                    Assert.fail();
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");
-                }
-            });
-        });
-    }
-
-    @Test
     public void testMoveToNextPageContention() throws Exception {
         int readers = 8;
         int iterations = 8;
@@ -506,23 +354,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testO3AcquireRejected() throws Exception {
-        Assume.assumeTrue(version == 1);
-        TestUtils.assertMemoryLeak(() -> {
-            int size = 64;
-            int start = 134;
-            setProperty(PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, size);
-
-            try (TxnScoreboard scoreboard1 = newTxnScoreboard()) {
-                // first 2 go out of order
-                scoreboard1.acquireTxn(0, 1 + start);
-                Assert.assertFalse(scoreboard1.acquireTxn(0, start));
-                Assert.assertTrue(scoreboard1.isTxnAvailable(start));
-            }
-        });
-    }
-
-    @Test
     public void testStartContention() throws Exception {
         int readers = 8;
         int iterations = 8;
@@ -553,16 +384,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                             }
                             Os.pause();
                             scoreboard.releaseTxn(id, txn);
-                            long min = getMin(scoreboard);
-                            if (!scoreboard.isTxnAvailable(min - 1)) {
-                                // V2 scoreboard can add a phantom min entry temporarily and then check
-                                // that this is not valid min and remove it, returning lock as unsuccessful (false)
-                                // It's only problem with V1 scoreboard
-                                if (version == 1) {
-                                    // This one also fails, but those could be readers that didn't roll back yet
-                                    anomaly.incrementAndGet();
-                                }
-                            }
                             Os.pause();
                         }
                     } catch (Throwable e) {
@@ -714,7 +535,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             }
 
             // Writer constantly increments txn number
-            Writer writer = new Writer(scoreboard, barrier, latch, anomaly, iterations, version);
+            Writer writer = new Writer(scoreboard, barrier, latch, anomaly, iterations, 2);
             writer.start();
 
             latch.await();

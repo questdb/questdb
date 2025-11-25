@@ -90,7 +90,6 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
         AbstractCairoTest.setUpStatic();
         purgeJob = new O3PartitionPurgeJob(engine, 1);
     }
