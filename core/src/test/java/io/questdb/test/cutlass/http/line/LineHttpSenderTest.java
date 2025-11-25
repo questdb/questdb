@@ -922,7 +922,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testDecimalDefaultValues() throws Exception {
+    public void testDecimalDefaultValuesWal() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
