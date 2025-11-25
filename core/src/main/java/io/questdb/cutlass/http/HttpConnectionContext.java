@@ -453,9 +453,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private HttpRequestProcessor checkConnectionLimit(HttpRequestProcessor processor) {
         processorName = processor.getName();
         final int connectionLimit = activeConnectionTracker.getLimit(processorName);
+        final long numOfConnections = activeConnectionTracker.inc(processorName);
+        connectionCounted = true;
+
         if (connectionLimit != ActiveConnectionTracker.UNLIMITED) {
             assert processorName != null;
-            final long numOfConnections = activeConnectionTracker.get(processorName);
             if (numOfConnections > connectionLimit) {
                 rejectProcessor.getMessageSink()
                         .put("exceeded connection limit [name=").put(processorName)
@@ -474,8 +476,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         .put(", connectionLimit=").put(connectionLimit)
                         .put(", fd=").put(getFd())
                         .put(']');
-                activeConnectionTracker.dec(processorName);
-                processorName = null;
+                decrementActiveConnections(getFd());
                 forceDisconnectOnComplete = true;
                 return rejectProcessor.withShutdownWrite().reject(HTTP_TOO_MANY_REQUESTS);
             }
@@ -952,8 +953,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
 
                 if (!connectionCounted && !processor.ignoreConnectionLimitCheck()) {
-                    processorName = processor.getName();
-                    incrementActiveConnections(getFd());
                     processor = checkConnectionLimit(processor);
                 }
 
@@ -1047,17 +1046,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             LOG.error().$("spurious write request [fd=").$(getFd()).I$();
         }
         return false;
-    }
-
-    private void incrementActiveConnections(long fd) {
-        if (processorName != null && !connectionCounted) {
-            long activeConnections = activeConnectionTracker.inc(processorName);
-            LOG.debug().$("incrementing active connections [name=").$(processorName)
-                    .$(", activeConnections=").$(activeConnections)
-                    .$(", fd=").$(fd)
-                    .I$();
-        }
-        connectionCounted = true;
     }
 
     private boolean keepConnectionAlive() {
