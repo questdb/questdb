@@ -28,17 +28,13 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class CurrentDatabaseFunctionFactory implements FunctionFactory {
-    final static StrFunction INSTANCE = new StrConstant(Constants.DB_NAME);
-
+public class CurrentCatalogFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "current_database()";
+        return "current_catalog()";
     }
 
     @Override
@@ -48,6 +44,6 @@ public class CurrentDatabaseFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return INSTANCE;
+        return CurrentDatabaseFunctionFactory.INSTANCE;
     }
 }
