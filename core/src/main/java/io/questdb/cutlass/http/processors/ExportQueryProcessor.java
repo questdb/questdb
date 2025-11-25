@@ -100,13 +100,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     static final int QUERY_DONE = 1;
     static final int QUERY_METADATA = 2;
     static final int QUERY_PARQUET_EXPORT_INIT = 10;
-    static final int QUERY_PARQUET_FILE_SEND_CHUNK = 17;
-    static final int QUERY_PARQUET_FILE_SEND_COMPLETE = 18;
-    static final int QUERY_PARQUET_FILE_SEND_INIT = 16;
+    static final int QUERY_PARQUET_FILE_SEND_CHUNK = 16;
+    static final int QUERY_PARQUET_FILE_SEND_COMPLETE = 17;
+    static final int QUERY_PARQUET_FILE_SEND_INIT = 15;
     static final int QUERY_PARQUET_SEND_HEADER = 12;
     static final int QUERY_PARQUET_SEND_MAGIC = 13;
     static final int QUERY_PARQUET_TO_PARQUET_FILE = 14;
-    static final int QUERY_PARQUET_TO_SEND = 15;
     static final int QUERY_RECORD = 5;
     static final int QUERY_RECORD_START = 4;
     static final int QUERY_RECORD_SUFFIX = 6;
@@ -281,7 +280,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     @Override
-    public void onWrite(long dataPtr, long dataLen, byte format) throws Exception {
+    public void onWrite(long dataPtr, long dataLen, byte format) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (dataLen <= 0) {
             return;
         }
@@ -478,7 +477,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             if (state.pageFrameCursor == null) { // cannot stream parquet export
                 String tableName = getTableName(state.copyID);
                 state.setParquetExportTableName(tableName);
-
                 var createOp = copyExportContext.validateAndCreateParquetExportTableOp(
                         sqlExecutionContext,
                         state.sqlText,
@@ -627,45 +625,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         return true;
     }
 
-    private void copyQueryToParquetFile(ExportQueryProcessorState state) throws SqlException {
-        if (state.copyID != -1) {
-            CopyExportContext.ExportTaskEntry entry = null;
-            try {
-                var copyExportContext = engine.getCopyExportContext();
-                CopyExportResult exportResult = state.getExportResult();
-                entry = copyExportContext.getEntry(state.copyID);
-
-                task.of(
-                        entry,
-                        state.getParquetTempTableCreate(),
-                        exportResult,
-                        state.getParquetExportTableName(),
-                        state.fileName,
-                        state.getExportModel().getCompressionCodec(),
-                        state.getExportModel().getCompressionLevel(),
-                        state.getExportModel().getRowGroupSize(),
-                        state.getExportModel().getDataPageSize(),
-                        state.getExportModel().isStatisticsEnabled(),
-                        state.getExportModel().getParquetVersion(),
-                        state.getExportModel().isRawArrayEncoding(),
-                        null,
-                        null,
-                        null
-                );
-
-                serialParquetExporter.of(task);
-                serialParquetExporter.process();
-            } finally {
-                if (entry != null) {
-                    engine.getCopyExportContext().releaseEntry(entry);
-                }
-            }
-        } else {
-            throw CairoException.nonCritical().put("invalid export state, cannot find export id");
+    private void copyQueryToParquetFile(ExportQueryProcessorState state) throws Exception {
+        if (state.serialExporterInit) {
+            serialParquetExporter.process();
+            return;
         }
-    }
-
-    private void copyQueryToSend(ExportQueryProcessorState state) throws SqlException {
         if (state.copyID != -1) {
             CopyExportContext.ExportTaskEntry entry = null;
             try {
@@ -692,7 +656,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 );
 
                 serialParquetExporter.of(task);
-                task.setUpStreamPartitionParquetExporter();
+                state.serialExporterInit = true;
                 serialParquetExporter.process();
             } finally {
                 if (entry != null) {
@@ -743,8 +707,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 break OUT;
                             }
                         }
+                        state.queryState = QUERY_PARQUET_SEND_MAGIC;
                         // fall through
-
                     case QUERY_PARQUET_SEND_MAGIC:
                         if (state.getExportModel().isNoDelay()) {
                             try {
@@ -754,44 +718,34 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 response.put("PAR");
                                 state.parquetFileOffset = 3;
                                 response.bookmark();
-                                state.queryState = QUERY_PARQUET_TO_PARQUET_FILE;
                                 response.sendChunk(false);
                             } catch (CairoException e) {
                                 sendException(response, 0, e.getFlyweightMessage(), state);
                                 break OUT;
                             }
                         }
-                        if (state.pageFrameCursor == null) {
-                            state.queryState = QUERY_PARQUET_TO_SEND;
-                        } else {
-                            state.queryState = QUERY_PARQUET_TO_PARQUET_FILE;
-                        }
-                        break;
+                        state.queryState = QUERY_PARQUET_TO_PARQUET_FILE;
+                        // fall through
 
-                    case QUERY_PARQUET_TO_SEND:
-                        try {
-                            copyQueryToSend(state);
-                        } catch (SqlException | CairoException e) {
-                            sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
-                            break OUT;
-                        } catch (Throwable e) {
-                            sendException(response, 0, e.getMessage(), state);
-                            break OUT;
-                        }
-                        state.queryState = QUERY_PARQUET_FILE_SEND_COMPLETE;
-                        break;
                     case QUERY_PARQUET_TO_PARQUET_FILE:
                         try {
                             copyQueryToParquetFile(state);
                         } catch (SqlException | CairoException e) {
                             sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
                             break OUT;
+                        } catch (PeerIsSlowToReadException | PeerDisconnectedException e) {
+                            throw e;
                         } catch (Throwable e) {
                             sendException(response, 0, e.getMessage(), state);
                             break OUT;
                         }
-                        state.queryState = QUERY_PARQUET_FILE_SEND_INIT;
-                        // fall through
+
+                        if (state.getExportResult().getPath().size() != 0) {
+                            state.queryState = QUERY_PARQUET_FILE_SEND_INIT;
+                        } else {
+                            state.queryState = QUERY_PARQUET_FILE_SEND_COMPLETE;
+                        }
+                        break;
                     case QUERY_PARQUET_FILE_SEND_INIT:
                         try {
                             initParquetFileSending(state);

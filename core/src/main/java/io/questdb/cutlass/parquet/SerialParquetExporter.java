@@ -107,7 +107,7 @@ public class SerialParquetExporter implements Closeable {
         sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, circuitBreaker);
     }
 
-    public CopyExportRequestTask.Phase process() {
+    public CopyExportRequestTask.Phase process() throws Exception {
         if (processStreamExport()) {
             return CopyExportRequestTask.Phase.SUCCESS;
         }
@@ -324,33 +324,29 @@ public class SerialParquetExporter implements Closeable {
         return phase;
     }
 
-    public boolean processStreamExport() throws CairoException {
-        try {
-            PageFrameCursor pageFrameCursor = task.getPageFrameCursor();
-            if (pageFrameCursor != null) {
-                CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
-                if (circuitBreaker.checkIfTripped()) {
-                    LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
-                    throw CopyExportException.instance(CopyExportRequestTask.Phase.SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
-                }
-                exporter.onSuspend();
-                if (circuitBreaker.checkIfTripped()) {
-                    LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
-                    throw CopyExportException.instance(CopyExportRequestTask.Phase.SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
-                }
-                PageFrame frame;
-                while ((frame = pageFrameCursor.next()) != null) {
-                    if (circuitBreaker.checkIfTripped()) {
-                        LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
-                        throw CopyExportException.instance(CopyExportRequestTask.Phase.SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
-                    }
-                    exporter.writePageFrame(pageFrameCursor, frame);
-                }
-                exporter.finishExport();
-                return true;
+    public boolean processStreamExport() throws Exception {
+        PageFrameCursor pageFrameCursor = task.getPageFrameCursor();
+        if (pageFrameCursor != null) {
+            CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
+            if (circuitBreaker.checkIfTripped()) {
+                LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
+                throw CopyExportException.instance(CopyExportRequestTask.Phase.SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
-        } catch (Throwable e) {
-            throw CairoException.nonCritical().put("stream export to parquet failed: ").put(e.getMessage());
+            exporter.onSuspend();
+            if (circuitBreaker.checkIfTripped()) {
+                LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
+                throw CopyExportException.instance(CopyExportRequestTask.Phase.SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+            }
+            PageFrame frame;
+            while ((frame = pageFrameCursor.next()) != null) {
+                if (circuitBreaker.checkIfTripped()) {
+                    LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
+                    throw CopyExportException.instance(CopyExportRequestTask.Phase.SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                }
+                exporter.writePageFrame(pageFrameCursor, frame);
+            }
+            exporter.finishExport();
+            return true;
         }
         return false;
     }

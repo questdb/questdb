@@ -76,6 +76,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     Record record;
     RecordCursorFactory recordCursorFactory;
     Rnd rnd;
+    boolean serialExporterInit = false;
     long skip;
     long stop;
     private CreateTableOperation createParquetOp;
@@ -129,6 +130,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         copyExportResult.clear();
         errorMessage.clear();
         errorPosition = 0;
+        serialExporterInit = false;
     }
 
     @Override

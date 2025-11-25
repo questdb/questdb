@@ -201,8 +201,9 @@ public class CopyExportRequestTask implements Mutable {
     }
 
     public void setUpStreamPartitionParquetExporter() {
-        assert pageFrameCursor != null;
-        streamPartitionParquetExporter.setUp();
+        if (pageFrameCursor != null) {
+            streamPartitionParquetExporter.setUp();
+        }
     }
 
     public void setUpStreamPartitionParquetExporter(RecordCursorFactory factory, PageFrameCursor pageFrameCursor, RecordMetadata metadata) {
@@ -351,6 +352,7 @@ public class CopyExportRequestTask implements Mutable {
                         localColTop = frameRowCount;
                     }
 
+                    assert metadata != null;
                     final int columnType = metadata.getColumnType(i);
                     if (ColumnType.isSymbol(columnType)) {
                         SymbolMapReader symbolMapReader = (SymbolMapReader) frameCursor.getSymbolTable(i);
