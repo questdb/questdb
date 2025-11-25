@@ -66,6 +66,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     public CreateMatViewOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
         final CreateTableOperationImpl createTableOperation = createTableOperationBuilder.build(compiler, sqlExecutionContext, sqlText);
         return new CreateMatViewOperationImpl(
+                sqlExecutionContext.getCairoEngine().getConfiguration(),
                 Chars.toString(sqlText),
                 createTableOperation,
                 refreshType,
@@ -161,7 +162,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
 
     public void setTimer(@Nullable String timeZone, long startUs, int interval, char unit) {
         this.timerTimeZone = timeZone;
-        // timerStart always use microSecond precision.
+        // timerStart always use microsecond precision.
         this.timerStartUs = startUs;
         this.timerInterval = interval;
         this.timerUnit = unit;
@@ -218,6 +219,8 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 sink.putAscii(periodDelayUnit);
             }
             sink.putAscii(')');
+        } else if (periodLength == -1) {
+            sink.putAscii(" period (sample by interval)");
         }
         sink.putAscii(" as (");
         if (createTableOperationBuilder.getQueryModel() != null) {

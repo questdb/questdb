@@ -72,7 +72,7 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
 
     @Override
     public String getName() {
-        return ActiveConnectionTracker.PROCESSOR_ILP;
+        return ActiveConnectionTracker.PROCESSOR_ILP_HTTP;
     }
 
     @Override

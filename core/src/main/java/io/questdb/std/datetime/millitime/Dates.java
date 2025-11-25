@@ -513,7 +513,6 @@ public final class Dates {
             OUT:
             while (p < hi) {
                 char c = in.charAt(p);
-
                 switch (state) {
                     case STATE_INIT:
                         switch (c) {
