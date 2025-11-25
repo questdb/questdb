@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.SecurePath;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -99,6 +100,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         // on close and the next time a new object is created.
         PATH.close();
         PATH2.close();
+        SecurePath.clearThreadLocals();
     }
 
     public static Path getThreadLocal(CharSequence root) {

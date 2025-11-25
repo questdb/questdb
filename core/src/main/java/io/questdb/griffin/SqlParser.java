@@ -3450,7 +3450,9 @@ public class SqlParser {
             case ExpressionNode.CONSTANT:
                 final WithClauseModel withClause = masterModel.get(tableName);
                 if (withClause != null) {
-                    model.setNestedModel(parseWith(lexer, withClause, sqlParserCallback, model.getDecls()));
+                    QueryModel cteModel = parseWith(lexer, withClause, sqlParserCallback, model.getDecls());
+                    cteModel.setIsCteModel(true);
+                    model.setNestedModel(cteModel);
                     model.setAlias(literal(tableName, expr.position));
                 } else {
                     int dot = Chars.indexOfLastUnquoted(tableName, '.');
