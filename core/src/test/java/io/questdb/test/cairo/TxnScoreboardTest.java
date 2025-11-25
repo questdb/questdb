@@ -373,7 +373,8 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 try (TxnScoreboard scoreboard1 = newTxnScoreboard()) {
                     // we should successfully acquire expected number of entries
                     for (int i = 0; i < expect; i++) {
-                        scoreboard1.acquireTxn(0, i + 134);
+                        boolean acquired = scoreboard1.acquireTxn(0, i + 134);
+                        Assert.assertTrue("Failed to acquire txn " + (i + 134) + " at iteration " + i, acquired);
                     }
                     // scoreboard capacity should be exhausted,
                     // we should be refused to acquire any more slots
