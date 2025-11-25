@@ -32,6 +32,21 @@ import java.io.Closeable;
 
 /**
  * Direct (off-heap) long hash set without sentinel value conflicts.
+ * <p>
+ * This implementation is designed for bulk operations: add elements and then clear the entire set.
+ * Individual element removal is not supported.
+ * <p>
+ * Typical usage pattern:
+ * <pre>
+ * try (DirectLongHashSet set = new DirectLongHashSet(capacity)) {
+ *     // Add elements
+ *     set.add(value1);
+ *     set.add(value2);
+ *     // ... process the set ...
+ *     // Clear all elements when done
+ *     set.clear();
+ * }
+ * </pre>
  */
 public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
     public static final double DEFAULT_LOAD_FACTOR = 0.4;
@@ -136,31 +151,6 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         }
     }
 
-    public int remove(long key) {
-        if (key == 0) {
-            if (hasZero) {
-                hasZero = false;
-                return 0;
-            }
-            return -1;
-        }
-
-        long index = Hash.hashLong64(key) & mask;
-        long addr = memStart + (index * Long.BYTES);
-
-        for (; ; ) {
-            long k = Unsafe.getUnsafe().getLong(addr);
-            if (k == 0) {
-                return -1;
-            } else if (k == key) {
-                removeAt(addr, index);
-                return (int) index;
-            }
-            index = (index + 1) & mask;
-            addr = memStart + (index * Long.BYTES);
-        }
-    }
-
     public int size() {
         return size + (hasZero ? 1 : 0);
     }
@@ -220,14 +210,6 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         return true;
     }
 
-    private boolean canMoveBack(long properIndex, long currentIndex, long emptyIndex) {
-        if (properIndex <= currentIndex) {
-            return properIndex <= emptyIndex && emptyIndex < currentIndex;
-        } else {
-            return properIndex <= emptyIndex || emptyIndex < currentIndex;
-        }
-    }
-
     private void rehash() {
         int newCapacity = capacity * 2;
         long newSizeBytes = (long) newCapacity * Long.BYTES;
@@ -258,33 +240,5 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         capacity = newCapacity;
         mask = newMask;
         free = (int) ((capacity - size) * loadFactor);
-    }
-
-    private void removeAt(long addr, long index) {
-        Unsafe.getUnsafe().putLong(addr, 0);
-        size--;
-
-        long nextIndex = (index + 1) & mask;
-        long nextAddr = memStart + (nextIndex * Long.BYTES);
-
-        for (; ; ) {
-            long nextKey = Unsafe.getUnsafe().getLong(nextAddr);
-            if (nextKey == 0) {
-                break;
-            }
-
-            long properIndex = Hash.hashLong64(nextKey) & mask;
-            if (properIndex != nextIndex) {
-                if (canMoveBack(properIndex, nextIndex, index)) {
-                    Unsafe.getUnsafe().putLong(addr, nextKey);
-                    Unsafe.getUnsafe().putLong(nextAddr, 0);
-                    addr = nextAddr;
-                    index = nextIndex;
-                }
-            }
-
-            nextIndex = (nextIndex + 1) & mask;
-            nextAddr = memStart + (nextIndex * Long.BYTES);
-        }
     }
 }

@@ -24,9 +24,12 @@
 
 package io.questdb.test.std;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongHashSet;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -34,6 +37,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 public class DirectLongHashSetTest {
+    private static final Log LOG = LogFactory.getLog(DirectLongHashSetTest.class);
 
     @Test
     public void testAddAndContains() {
@@ -119,7 +123,7 @@ public class DirectLongHashSetTest {
     @Test
     public void testFuzz() {
         final int N = 100000;
-        final Rnd rnd = new Rnd();
+        final Rnd rnd = TestUtils.generateRandom(LOG);
         final long seed0 = rnd.getSeed0();
         final long seed1 = rnd.getSeed1();
 
@@ -164,17 +168,6 @@ public class DirectLongHashSetTest {
             for (int i = 0; i < N; i++) {
                 Assert.assertTrue(set.contains(rnd.nextLong()));
             }
-
-            rnd.reset(seed0, seed1);
-            for (int i = 0; i < N / 2; i++) {
-                long val = rnd.nextLong();
-                if (referenceSet.remove(val)) {
-                    int removeIndex = set.remove(val);
-                    Assert.assertTrue(removeIndex >= 0);
-                    Assert.assertFalse(set.contains(val));
-                }
-            }
-            Assert.assertEquals(referenceSet.size(), set.size());
         }
     }
 
@@ -221,44 +214,6 @@ public class DirectLongHashSetTest {
             for (int i = 0; i < 1000; i++) {
                 Assert.assertTrue(set.contains(i));
             }
-        }
-    }
-
-    @Test
-    public void testRemoveWithCollisions() {
-        try (DirectLongHashSet set = new DirectLongHashSet(4)) {
-            set.add(1);
-            set.add(5);
-            set.add(9);
-            set.add(13);
-            Assert.assertEquals(4, set.size());
-            set.remove(5);
-            Assert.assertEquals(3, set.size());
-            Assert.assertFalse(set.contains(5));
-            Assert.assertTrue(set.contains(1));
-            Assert.assertTrue(set.contains(9));
-            Assert.assertTrue(set.contains(13));
-            set.add(17);
-            Assert.assertTrue(set.contains(17));
-            Assert.assertEquals(4, set.size());
-        }
-    }
-
-    @Test
-    public void testRemoveZero() {
-        try (DirectLongHashSet set = new DirectLongHashSet(16)) {
-            set.add(0);
-            set.add(1);
-            set.add(2);
-            Assert.assertEquals(3, set.size());
-            Assert.assertTrue(set.remove(0) >= 0);
-            Assert.assertEquals(2, set.size());
-            Assert.assertFalse(set.contains(0));
-            Assert.assertTrue(set.contains(1));
-            Assert.assertTrue(set.contains(2));
-            Assert.assertEquals(-1, set.remove(0));
-            Assert.assertTrue(set.remove(2) >= 0);
-            Assert.assertFalse(set.contains(2));
         }
     }
 
