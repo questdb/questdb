@@ -80,13 +80,19 @@ import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitOption;
+import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.function.Function;
+import java.util.stream.Stream;
 
 @SuppressWarnings("ClassEscapesDefinedScope")
 public class PropServerConfigurationTest {
@@ -540,22 +546,28 @@ public class PropServerConfigurationTest {
 
     @Test
     public void testConfigKeysAreValidInDefaultConfs() throws Exception {
-        String[] configFiles = {
-                "../core/src/main/resources/io/questdb/site/conf/server.conf",
-                "../pkg/ami/marketplace/assets/server.conf"
-        };
+        List<Path> configFiles;
+
+        Path basePath = Path.of("..").toAbsolutePath().normalize();
+        try (Stream<Path> pathStream = java.nio.file.Files.find(basePath, Integer.MAX_VALUE,
+                (p, attr) -> p.endsWith("server.conf"),
+                FileVisitOption.FOLLOW_LINKS)) {
+            configFiles = pathStream.toList();
+        }
+
+        // sanity check
+        Assert.assertFalse(configFiles.isEmpty());
 
         Properties properties = new Properties();
         PropServerConfiguration.PropertyValidator validator = new PropServerConfiguration.PropertyValidator();
 
-        for (String configFile : configFiles) {
-            java.nio.file.Path path = java.nio.file.Paths.get(configFile);
+        for (Path path : configFiles) {
             if (!java.nio.file.Files.exists(path)) {
-                Assert.fail("Config file not found: " + configFile);
+                Assert.fail("Config file not found: " + path);
             }
 
-            try (java.io.BufferedReader reader = java.nio.file.Files.newBufferedReader(path, java.nio.charset.StandardCharsets.UTF_8)) {
-                validateConfigKeys(reader, configFile, properties, validator);
+            try (BufferedReader reader = java.nio.file.Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+                validateConfigKeys(reader, path, properties, validator);
             }
         }
     }
@@ -2099,7 +2111,7 @@ public class PropServerConfigurationTest {
         return new PropServerConfiguration.PropertyValidator().validate(properties);
     }
 
-    private void validateConfigKeys(java.io.BufferedReader reader, String source, Properties properties, PropServerConfiguration.PropertyValidator validator) throws Exception {
+    private void validateConfigKeys(BufferedReader reader, Path source, Properties properties, PropServerConfiguration.PropertyValidator validator) throws Exception {
         String line;
         while ((line = reader.readLine()) != null) {
             line = line.trim();
