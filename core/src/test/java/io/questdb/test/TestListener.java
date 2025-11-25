@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.Os;
 import org.junit.runner.Description;
 import org.junit.runner.notification.Failure;
@@ -85,6 +86,7 @@ public class TestListener extends RunListener {
                 .$safe(description.getClassName()).$('.')
                 .$safe(description.getMethodName())
                 .$(" duration_ms=").$(getTestDuration())
+                .$(" ASYNC_MUNMAP_ENABLED=").$(Files.ASYNC_MUNMAP_ENABLED)
                 .$(" : ")
                 .$(failure.getException()).$();
     }
@@ -94,7 +96,8 @@ public class TestListener extends RunListener {
         LOG.infoW().$("<<<< ")
                 .$safe(description.getClassName()).$('.')
                 .$safe(description.getMethodName())
-                .$(" duration_ms=").$(getTestDuration()).$();
+                .$(" duration_ms=").$(getTestDuration())
+                .$(" ASYNC_MUNMAP_ENABLED=").$(Files.ASYNC_MUNMAP_ENABLED).$();
         System.out.println("<<<<= " + description.getClassName() + '.' + description.getMethodName() + " duration_ms=" + getTestDuration());
     }
 
