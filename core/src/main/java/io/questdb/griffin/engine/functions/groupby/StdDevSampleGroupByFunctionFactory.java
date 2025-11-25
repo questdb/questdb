@@ -82,10 +82,5 @@ public class StdDevSampleGroupByFunctionFactory implements FunctionFactory {
         public int getSampleByFlags() {
             return GroupByFunction.SAMPLE_BY_FILL_ALL;
         }
-
-        @Override
-        public boolean supportsParallelism() {
-            return true;
-        }
     }
 }

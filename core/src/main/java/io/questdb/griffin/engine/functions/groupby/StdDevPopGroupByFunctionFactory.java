@@ -76,10 +76,5 @@ public class StdDevPopGroupByFunctionFactory implements FunctionFactory {
         public String getName() {
             return "stddev_pop";
         }
-
-        @Override
-        public boolean supportsParallelism() {
-            return true;
-        }
     }
 }

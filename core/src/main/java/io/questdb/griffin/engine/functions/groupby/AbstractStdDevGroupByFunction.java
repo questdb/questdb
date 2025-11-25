@@ -139,7 +139,7 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
 
     @Override
     public boolean supportsParallelism() {
-        return false;
+        return true;
     }
 
     protected void aggregate(MapValue mapValue, double value) {
