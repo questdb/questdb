@@ -922,6 +922,49 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testDecimalDefaultValues() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
+            )) {
+                serverMain.execute("""
+                        CREATE TABLE decimal_test (
+                            dec8 DECIMAL(2, 0),
+                            dec16 DECIMAL(4, 1),
+                            dec32 DECIMAL(8, 2),
+                            dec64 DECIMAL(16, 4),
+                            dec128 DECIMAL(34, 8),
+                            dec256 DECIMAL(64, 16),
+                            value INT,
+                            ts TIMESTAMP
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """);
+                serverMain.awaitTxn("decimal_test", 0);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    sender.table("decimal_test")
+                            .longColumn("value", 1)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTxn("decimal_test", 1);
+                serverMain.assertSql("decimal_test",
+                        """
+                                dec8\tdec16\tdec32\tdec64\tdec128\tdec256\tvalue\tts
+                                \t\t\t\t\t\t1\t1970-01-02T03:46:40.000000Z
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testEmptyArraysMultiDimensional() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
