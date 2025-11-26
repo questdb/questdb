@@ -25,6 +25,65 @@ stages:
     jobs:
       - template: templates/check-changes-job.yml
 
+  - stage: TriggerEnterpriseCI
+    displayName: "Trigger Enterprise CI"
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    dependsOn: [ ]
+    jobs:
+      - job: TriggerEnterprise
+        displayName: "Trigger Enterprise Pipeline"
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - checkout: none
+          - bash: |
+              set -eux
+
+              # Trigger the enterprise CI pipeline via Azure DevOps REST API
+              # The enterprise pipeline will:
+              # 1. Checkout enterprise main branch
+              # 2. Update questdb submodule to the OSS commit
+              # 3. Run enterprise tests
+              # 4. Post status back to OSS PR
+
+              RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+                -H "Authorization: Basic $(echo -n ":$(AZURE_DEVOPS_ENT_PAT)" | base64)" \
+                -H "Content-Type: application/json" \
+                "https://dev.azure.com/questdb/questdb-enterprise/_apis/pipelines/1/runs?api-version=7.0" \
+                -d '{
+                  "resources": {
+                    "repositories": {
+                      "self": {
+                        "refName": "refs/heads/main"
+                      }
+                    }
+                  },
+                  "templateParameters": {
+                    "ossCommit": "$(Build.SourceVersion)",
+                    "ossPrNumber": "$(System.PullRequest.PullRequestNumber)"
+                  }
+                }')
+
+              HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+              BODY=$(echo "$RESPONSE" | sed '$d')
+
+              echo "Response code: $HTTP_CODE"
+              echo "Response body: $BODY"
+
+              if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+                echo "Successfully triggered enterprise CI"
+                RUN_ID=$(echo "$BODY" | jq -r '.id // empty')
+                if [ -n "$RUN_ID" ]; then
+                  echo "Enterprise pipeline run ID: $RUN_ID"
+                  echo "View at: https://dev.azure.com/questdb/questdb-enterprise/_build/results?buildId=$RUN_ID"
+                fi
+              else
+                echo "##vso[task.logissue type=warning]Failed to trigger enterprise CI (HTTP $HTTP_CODE). Enterprise tests will not run."
+              fi
+            displayName: "Trigger Enterprise Pipeline"
+            env:
+              AZURE_DEVOPS_ENT_PAT: $(AZURE_DEVOPS_ENT_PAT)
+
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
