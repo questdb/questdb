@@ -265,9 +265,9 @@ public class CopyExportRequestTask implements Mutable {
     }
 
     public class StreamPartitionParquetExporter implements Mutable {
-        private final DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
-        private final DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
-        private final DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false);
+        private final DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+        private final DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+        private final DirectUtf8Sink columnNames = new DirectUtf8Sink(32);
         private long streamExportCurrentPtr;
         private long streamExportCurrentSize;
         private long streamWriter = -1;

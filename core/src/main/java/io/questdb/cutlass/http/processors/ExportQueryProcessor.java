@@ -132,7 +132,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private final byte requiredAuthType;
     private final SerialParquetExporter serialParquetExporter;
     private final SqlExecutionContextImpl sqlExecutionContext;
-    private final CopyExportRequestTask task = new CopyExportRequestTask();
     private HttpConnectionContext currentContext;
     private long timeout;
 
@@ -202,9 +201,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     state.descending = order == ORDER_DESC;
                     for (int retries = 0; runQuery; retries++) {
                         try {
-                            state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                             if (canStreamExportParquet) {
                                 state.pageFrameCursor = state.recordCursorFactory.getPageFrameCursor(sqlExecutionContext, order);
+                            } else if (!state.getExportModel().isParquetFormat()) {
+                                state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                             }
                             runQuery = false;
                         } catch (TableReferenceOutOfDateException e) {
@@ -636,8 +636,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 var copyExportContext = engine.getCopyExportContext();
                 CopyExportResult exportResult = state.getExportResult();
                 entry = copyExportContext.getEntry(state.copyID);
-                task.clear();
-                task.of(
+                state.task.of(
                         entry,
                         state.getParquetTempTableCreate(),
                         exportResult,
@@ -656,8 +655,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         this
                 );
 
-                serialParquetExporter.of(task);
-                task.setUpStreamPartitionParquetExporter();
+                serialParquetExporter.of(state.task);
+                state.task.setUpStreamPartitionParquetExporter();
                 state.serialExporterInit = true;
                 serialParquetExporter.process();
             } finally {

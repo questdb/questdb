@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExportModel;
@@ -49,6 +50,7 @@ import java.io.Closeable;
 public class ExportQueryProcessorState implements Mutable, Closeable {
     final StringSink fileName = new StringSink();
     final StringSink sqlText = new StringSink();
+    final CopyExportRequestTask task = new CopyExportRequestTask();
     private final CopyExportResult copyExportResult;
     private final StringSink errorMessage = new StringSink();
     private final ExportModel exportModel = new ExportModel();
@@ -98,8 +100,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         fileName.clear();
         rnd = null;
         record = null;
-        cursor = Misc.free(cursor);
         pageFrameCursor = Misc.free(pageFrameCursor);
+        cursor = Misc.free(cursor);
         firstParquetWriteCall = true;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
@@ -132,6 +134,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         errorMessage.clear();
         errorPosition = 0;
         serialExporterInit = false;
+        task.clear();
     }
 
     @Override
