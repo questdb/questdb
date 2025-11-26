@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.view;
 
+import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -43,8 +44,9 @@ public class ViewState {
         this.updateTimestamp = updateTimestamp;
     }
 
-    public CharSequence getInvalidationReason() {
-        return !invalidationReason.isEmpty() ? invalidationReason : null;
+    public synchronized CharSequence getInvalidationReason(MutableUtf16Sink sink) {
+        sink.clear();
+        return !invalidationReason.isEmpty() ? (MutableUtf16Sink) sink.put(invalidationReason) : null;
     }
 
     public long getUpdateTimestamp() {

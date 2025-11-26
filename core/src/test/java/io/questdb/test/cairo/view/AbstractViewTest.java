@@ -35,6 +35,7 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -51,6 +52,7 @@ class AbstractViewTest extends AbstractCairoTest {
     static final String VIEW2 = "view2";
     static final String VIEW3 = "view3";
     static final String VIEW4 = "view4";
+    private final static StringSink sink = new StringSink();
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -117,11 +119,10 @@ class AbstractViewTest extends AbstractCairoTest {
 
         if (invalidationReason != null) {
             assertTrue(viewState.isInvalid());
-            assertNotNull(viewState.getInvalidationReason());
-            assertEquals(invalidationReason, viewState.getInvalidationReason().toString());
+            assertEquals(invalidationReason, viewState.getInvalidationReason(sink).toString());
         } else {
             assertFalse(viewState.isInvalid());
-            assertNull(viewState.getInvalidationReason());
+            assertNull(viewState.getInvalidationReason(sink));
         }
     }
 

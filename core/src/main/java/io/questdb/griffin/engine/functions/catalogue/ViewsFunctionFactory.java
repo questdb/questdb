@@ -47,6 +47,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 
 public class ViewsFunctionFactory implements FunctionFactory {
 
@@ -158,12 +159,13 @@ public class ViewsFunctionFactory implements FunctionFactory {
                 viewIndex = 0;
             }
 
-            public void toTop(CairoEngine engine) {
+            private void toTop(CairoEngine engine) {
                 this.engine = engine;
                 toTop();
             }
 
             private static class ViewsRecord implements Record {
+                private final StringSink tmpSink = new StringSink();
                 private ViewDefinition viewDefinition;
                 private ViewState viewState;
 
@@ -179,7 +181,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_VIEW_SQL -> viewDefinition.getViewSql();
                         case COLUMN_TABLE_DIR_NAME -> viewDefinition.getViewToken().getDirName();
                         case COLUMN_VIEW_STATUS -> getViewStatus();
-                        case COLUMN_INVALIDATION_REASON -> viewState.getInvalidationReason();
+                        case COLUMN_INVALIDATION_REASON -> viewState.getInvalidationReason(tmpSink);
                         default -> null;
                     };
                 }
@@ -202,7 +204,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                     this.viewState = viewState;
                 }
 
-                private CharSequence getViewStatus() {
+                private String getViewStatus() {
                     return viewState.isInvalid() ? "invalid" : "valid";
                 }
             }
