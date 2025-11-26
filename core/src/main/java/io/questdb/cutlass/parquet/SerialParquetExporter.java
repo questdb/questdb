@@ -339,9 +339,16 @@ public class SerialParquetExporter implements Closeable {
                     LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                     throw CopyExportException.instance(CopyExportRequestTask.Phase.SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                 }
+                long rowsInFrame = frame.getPartitionHi() - frame.getPartitionLo();
                 exporter.writePageFrame(pageFrameCursor, frame);
+                LOG.info().$("stream export progress [id=").$hexPadded(task.getCopyID())
+                        .$(", rowsInFrame=").$(rowsInFrame)
+                        .$(", partitionIndex=").$(frame.getPartitionIndex())
+                        .$(']').$();
             }
             exporter.finishExport();
+            LOG.info().$("stream export completed [id=").$hexPadded(task.getCopyID())
+                    .$(']').$();
             return true;
         }
         return false;

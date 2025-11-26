@@ -280,7 +280,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     @Override
-    public void onWrite(long dataPtr, long dataLen, byte format) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void onWrite(long dataPtr, long dataLen) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (dataLen <= 0) {
             return;
         }

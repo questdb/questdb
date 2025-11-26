@@ -216,6 +216,17 @@ public class PartitionEncoder {
             long rowCount
     ) throws CairoException;
 
+    public static native long writeStreamingParquetChunkFromParquet(
+            long writerPtr,
+            long allocatorPtr,
+            long columnDataPtr,
+            long sourceParquetAddr,
+            long sourceParquetSize,
+            int rowGroupIndex,
+            int rowGroupLo,
+            int rowGroupHi
+    ) throws CairoException;
+
     private static native void encodePartition(
             long tableNamePtr,
             int tableNameSize,

@@ -261,7 +261,7 @@ public class CopyExportRequestTask implements Mutable {
 
     @FunctionalInterface
     public interface WriteParquetCallBack {
-        void onWrite(long dataPtr, long dataLen, byte format) throws Exception;
+        void onWrite(long dataPtr, long dataLen) throws Exception;
     }
 
     public class StreamPartitionParquetExporter implements Mutable {
@@ -270,7 +270,6 @@ public class CopyExportRequestTask implements Mutable {
         private final DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false);
         private long streamExportCurrentPtr;
         private long streamExportCurrentSize;
-        private byte streamExportFormat;
         private long streamWriter = -1;
 
         @Override
@@ -307,7 +306,7 @@ public class CopyExportRequestTask implements Mutable {
             long dataPtr = buffer + Long.BYTES;
             long dataSize = Unsafe.getUnsafe().getLong(buffer);
             assert writeCallback != null;
-            writeCallback.onWrite(dataPtr, dataSize, PartitionFormat.NATIVE);
+            writeCallback.onWrite(dataPtr, dataSize);
             closeStreamingParquetWriter(streamWriter);
             streamWriter = -1;
         }
@@ -315,7 +314,7 @@ public class CopyExportRequestTask implements Mutable {
         public void onSuspend() throws Exception {
             if (streamExportCurrentPtr != 0) {
                 assert writeCallback != null;
-                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize, streamExportFormat);
+                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
                 streamExportCurrentPtr = 0;
                 streamExportCurrentSize = 0;
             }
@@ -354,8 +353,8 @@ public class CopyExportRequestTask implements Mutable {
                 );
             }
 
+            assert writeCallback != null;
             if (frame.getFormat() == PartitionFormat.NATIVE) {
-                assert writeCallback != null;
                 columnData.clear();
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 
@@ -394,14 +393,38 @@ public class CopyExportRequestTask implements Mutable {
                 );
                 streamExportCurrentPtr = buffer + Long.BYTES;
                 streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
-                streamExportFormat = PartitionFormat.NATIVE;
-                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize, streamExportFormat);
+                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
             } else {
-                streamExportCurrentPtr = frame.getParquetAddr();
-                streamExportCurrentSize = frame.getParquetFileSize();
-                assert writeCallback != null;
-                streamExportFormat = PartitionFormat.PARQUET;
-                writeCallback.onWrite(frame.getParquetAddr(), frame.getParquetFileSize(), PartitionFormat.PARQUET);
+                columnData.clear();
+
+                for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
+                    assert metadata != null;
+                    final int columnType = metadata.getColumnType(i);
+                    if (ColumnType.isSymbol(columnType)) {
+                        SymbolMapReader symbolMapReader = (SymbolMapReader) frameCursor.getSymbolTable(i);
+                        final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
+                        final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
+                        columnData.add(symbolValuesMem.addressOf(0));
+                        columnData.add(symbolValuesMem.size());
+                        columnData.add(symbolOffsetsMem.addressOf(HEADER_SIZE));
+                        columnData.add(symbolMapReader.getSymbolCount());
+                    }
+                }
+
+                long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER);
+                long buffer = writeStreamingParquetChunkFromParquet(
+                        streamWriter,
+                        allocator,
+                        columnData.getAddress(),
+                        frame.getParquetAddr(),
+                        frame.getParquetFileSize(),
+                        frame.getParquetRowGroup(),
+                        frame.getParquetRowGroupLo(),
+                        frame.getParquetRowGroupHi()
+                );
+                streamExportCurrentPtr = buffer + Long.BYTES;
+                streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
             }
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
