@@ -75,8 +75,8 @@ import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
+import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
@@ -123,80 +123,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         Misc.free(operationExecutor);
         Misc.free(walEventReader);
         Misc.free(mvStateWriter);
-    }
-
-    private static long calculateSkipTransactionCount(long initialSeqTxn, WalTxnDetails walTxnDetails) {
-        // Check all future transactions to see if any fully replace this transaction's range or table is truncated
-        final long lastSeqTxn = walTxnDetails.getLastSeqTxn();
-
-        // Initial loop condition, as if the previous transaction was skipped
-        for (long seqTxn = initialSeqTxn; seqTxn < lastSeqTxn; seqTxn++) {
-            int walId = walTxnDetails.getWalId(seqTxn);
-            if (walId < 1 || !isDataType(walTxnDetails.getWalTxnType(seqTxn))) {
-                // This is not a data transaction
-                return seqTxn - initialSeqTxn;
-            }
-
-            long txnTsLo = walTxnDetails.getMinTimestamp(seqTxn);
-            long txnTsHi = walTxnDetails.getMaxTimestamp(seqTxn) + 1; // Max is inclusive, make txnTsHi exclusive
-            if (walTxnDetails.getDedupMode(seqTxn) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
-                txnTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
-                txnTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
-            }
-
-            long firstNonSkippableTxn = Long.MAX_VALUE;
-            boolean seqTxnCanBeSkipped = false;
-
-            // Even though it's O(N^2) complexity, the number of transactions we can skip is expected to be small.
-            // So the outer loop exits very early, it is expected to exit after 1st iteration.
-            // Unless TRUNCATE SQL found and many transactions can be skipped.
-            // TRUNCATE has special optimization to stop scanning early.
-            for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
-                int futureWalId = walTxnDetails.getWalId(futureSeqTxn);
-                if (futureWalId > 0) {
-                    final byte walTxnType = walTxnDetails.getWalTxnType(futureSeqTxn);
-                    if (walTxnType == TRUNCATE) {
-                        // Truncate fully removes any prior data, no point doing any data apply
-                        // We can skip straight to the truncate operation or the first non-skippable operation before it
-                        return Math.min(firstNonSkippableTxn, futureSeqTxn) - initialSeqTxn;
-                    }
-
-                    if (walTxnType == SQL) {
-                        // This is not a data transaction.
-                        // Potentially it can be an UPDATE SQL that uses existing data
-                        // so the transactions cannot be skipped even if the data is fully replaces after the update.
-                        // We can optimize partition drops to be recognized here in the future.
-                        break;
-                    }
-                    if (!WalTxnType.isDataType(walTxnType)) {
-                        firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
-                    }
-                } else {
-                    firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
-                }
-
-                // If the future transaction is a replace range operation
-                byte futureDedupMode = walTxnDetails.getDedupMode(futureSeqTxn);
-                if (futureDedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
-                    long futureRangeTsLo = walTxnDetails.getReplaceRangeTsLow(futureSeqTxn);
-                    long futureRangeTsHi = walTxnDetails.getReplaceRangeTsHi(futureSeqTxn);
-
-                    // Check if the future transaction's replace range fully covers this transaction
-                    if (futureRangeTsLo <= txnTsLo && futureRangeTsHi >= txnTsHi) {
-                        // Found that seqTxn is fully replaced by a future transaction
-                        // Skip it and continue checking further transactions
-                        seqTxnCanBeSkipped = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!seqTxnCanBeSkipped) {
-                return seqTxn - initialSeqTxn;
-            }
-        }
-
-        return lastSeqTxn - initialSeqTxn;
     }
 
     private static void cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
@@ -536,7 +462,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // be returned to the pool and dirty writes will be rolled back. We have to update the sequencer
                 // on the state of the writer and revert any dirty txns that might have advanced. We do that
                 // by equalizing writerTxn and dirtyWriterTxn.
-                engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getSeqTxn(), writer.getAppliedSeqTxn());
+                engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getSeqTxn(), writer.getSeqTxn());
                 throw th;
             } finally {
                 Misc.free(structuralChangeCursor);
@@ -623,27 +549,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             case DATA:
             case MAT_VIEW_DATA:
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
-                long skipTxnCount = calculateSkipTransactionCount(seqTxn, txnDetails);
-
-                // Ask TableWriter to skip applying transactions entirely when possible
-                boolean skipped = false;
-                if (skipTxnCount > 0) {
-                    skipped = writer.trySkipWalTransactions(seqTxn, skipTxnCount);
-                }
-
-                // Cannot skip, possibly there are rows in LAG that need to be committed
-                if (!skipped) {
-                    writer.commitWalInsertTransactions(
-                            walPath,
-                            seqTxn,
-                            pressureControl
-                    );
-                }
-
+                writer.commitWalInsertTransactions(
+                        walPath,
+                        seqTxn,
+                        pressureControl
+                );
                 final long latency = microClock.getTicks() - start;
                 long totalPhysicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
                 long lastCommittedSeqTxn = writer.getAppliedSeqTxn();
-
                 lastCommittedRows = 0;
                 for (long s = seqTxn; s <= lastCommittedSeqTxn; s++) {
                     long walRowCount = txnDetails.getSegmentRowHi(s) - txnDetails.getSegmentRowLo(s);
@@ -683,7 +596,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                 }
 
-                return (int) (lastCommittedSeqTxn - seqTxn + 1);
+                return (int) (writer.getAppliedSeqTxn() - seqTxn + 1);
             case SQL:
                 try (WalEventReader eventReader = walEventReader) {
                     final WalEventCursor walEventCursor = eventReader.of(walPath, segmentTxn);
