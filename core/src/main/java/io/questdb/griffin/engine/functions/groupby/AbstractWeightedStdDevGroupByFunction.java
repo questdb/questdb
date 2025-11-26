@@ -36,6 +36,52 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
+ * Base class to compute the unbiased weighted standard deviation.
+ * <p>
+ * According to
+ * <a href="https://en.wikipedia.org/wiki/Weighted_arithmetic_mean#Weighted_sample_variance">
+ * Wikipedia</a>, there are two variants for the unbiased estimator of population variance
+ * based on a subset of it (a sample): one for frequency weights, and another for reliability
+ * weights.
+ * <p>
+ * A frequency weight represents the number of occurrences of the sample in the dataset.
+ * A reliability weight represents the "importance" or "trustworthiness" of the given sample.
+ * <p>
+ * We implement both functions, called <code>weighted_stddev_rel</code> for reliability weights,
+ * and <code>weighted_stddev_freq</code> for frequency weights. We also define the shorthand
+ * <code>weighted_stddev</code> for <code>weighted_stddev_rel</code>.
+ * <p>
+ * These two:
+ * <pre>
+ * SELECT weighted_stddev_rel(value, weight) FROM my_table;
+ * SELECT weighted_stddev(value, weight) FROM my_table;
+ * </pre>
+ * calculate the equivalent of
+ * <pre>
+ *   SELECT sqrt(
+ *     (
+ *       sum(weight * value * value)
+ *       - (sum(weight * value) * sum(weight * value) / sum(weight))
+ *     )
+ *     / (sum(weight) - sum(weight * weight) / sum(weight))
+ *   ) FROM my_table;
+ * </pre>
+ * <p>
+ * This one:
+ * <pre>
+ * SELECT weighted_stddev_freq(value, weight) FROM my_table;
+ * </pre>
+ * calculates the equivalent of
+ * <pre>
+ *   SELECT sqrt(
+ *     (
+ *       sum(weight * value * value)
+ *       - (sum(weight * value) * sum(weight * value) / sum(weight))
+ *     )
+ *     / (sum(weight) - 1)
+ *   ) FROM my_table;
+ * </pre>
+ *
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Weighted_incremental_algorithm">
  * Weighted incremental algorithm
  * </a>
