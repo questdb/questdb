@@ -74,6 +74,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
+import static io.questdb.griffin.engine.ops.CreateMatViewOperation.*;
 import static io.questdb.std.GenericLexer.assertNoDotsAndSlashes;
 import static io.questdb.std.GenericLexer.unquote;
 
@@ -209,7 +210,6 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "Invalid decimal type. Missing ')'");
         }
 
-
         if (precision <= 0) {
             throw SqlException.position(previousTokenPosition)
                     .put("Invalid decimal type. The precision (")
@@ -323,32 +323,6 @@ public class SqlParser {
         return visitor.visit(node);
     }
 
-    public static void validateMatViewDelay(int length, char lengthUnit, int delay, char delayUnit, int pos) throws SqlException {
-        if (delay < 0) {
-            throw SqlException.position(pos).put("delay cannot be negative");
-        }
-
-        int lengthMinutes = switch (lengthUnit) {
-            case 'm' -> length;
-            case 'h' -> length * 60;
-            case 'd' -> length * 24 * 60;
-            default -> throw SqlException.position(pos).put("unsupported length unit: ").put(length).put(lengthUnit)
-                    .put(", supported units are 'm', 'h', 'd'");
-        };
-
-        int delayMinutes = switch (delayUnit) {
-            case 'm' -> delay;
-            case 'h' -> delay * 60;
-            case 'd' -> delay * 24 * 60;
-            default -> throw SqlException.position(pos).put("unsupported delay unit: ").put(delay).put(delayUnit)
-                    .put(", supported units are 'm', 'h', 'd'");
-        };
-
-        if (delayMinutes >= lengthMinutes) {
-            throw SqlException.position(pos).put("delay cannot be equal to or greater than length");
-        }
-    }
-
     public static void validateMatViewEveryUnit(char unit, int pos) throws SqlException {
         if (unit != 'M' && unit != 'y' && unit != 'w' && unit != 'd' && unit != 'h' && unit != 'm') {
             throw SqlException.position(pos).put("unsupported interval unit: ").put(unit)
@@ -356,26 +330,15 @@ public class SqlParser {
         }
     }
 
-    public static void validateMatViewLength(int interval, char unit, int pos) throws SqlException {
-        switch (unit) {
-            case 'm':
-                if (interval > 24 * 60) {
-                    throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(interval).put(unit);
-                }
-                break;
-            case 'h':
-                if (interval > 24) {
-                    throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(interval).put(unit);
-                }
-                break;
-            case 'd':
-                if (interval > 1) {
-                    throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(interval).put(unit);
-                }
-                break;
-            default:
-                throw SqlException.position(pos).put("unsupported length unit: ").put(interval).put(unit)
-                        .put(", supported units are 'm', 'h', 'd'");
+    public static void validateMatViewPeriodDelay(int length, char lengthUnit, int delay, char delayUnit, int pos) throws SqlException {
+        if (delay < 0) {
+            throw SqlException.position(pos).put("delay cannot be negative");
+        }
+
+        final int lengthSeconds = matViewPeriodLengthSeconds(length, lengthUnit, pos);
+        final int delaySeconds = matViewPeriodDelaySeconds(delay, delayUnit, pos);
+        if (delaySeconds >= lengthSeconds) {
+            throw SqlException.position(pos).put("delay cannot be equal to or greater than length");
         }
     }
 
@@ -1100,59 +1063,72 @@ public class SqlParser {
 
             // Timer uses microsecond precision for start time calculation
             if (isPeriodKeyword(tok)) {
-                // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                 expectTok(lexer, "(");
-                expectTok(lexer, "length");
-                tok = tok(lexer, "LENGTH interval");
-                final int length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
-                final char lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
-                validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
-                final TimestampSampler periodSamplerMicros = TimestampSamplerFactory.getInstance(
-                        MicrosTimestampDriver.INSTANCE,
-                        length,
-                        lengthUnit,
-                        lexer.lastTokenPosition()
-                );
-                tok = tok(lexer, "'time zone' or 'delay' or ')'");
+                tok = tok(lexer, "'length' or 'sample'");
+                if (isLengthKeyword(tok)) {
+                    // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
+                    tok = tok(lexer, "LENGTH interval");
+                    final int length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                    final char lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
+                    validateMatViewPeriodLength(length, lengthUnit, lexer.lastTokenPosition());
+                    final TimestampSampler periodSamplerMicros = TimestampSamplerFactory.getInstance(
+                            MicrosTimestampDriver.INSTANCE,
+                            length,
+                            lengthUnit,
+                            lexer.lastTokenPosition()
+                    );
+                    tok = tok(lexer, "'time zone' or 'delay' or ')'");
 
-                TimeZoneRules tzRulesMicros = null;
-                String tz = null;
-                if (isTimeKeyword(tok)) {
-                    expectTok(lexer, "zone");
-                    tok = tok(lexer, "TIME ZONE name");
-                    if (Chars.equals(tok, ')') || isDelayKeyword(tok)) {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("TIME ZONE name expected");
+                    TimeZoneRules tzRulesMicros = null;
+                    String tz = null;
+                    if (isTimeKeyword(tok)) {
+                        expectTok(lexer, "zone");
+                        tok = tok(lexer, "TIME ZONE name");
+                        if (Chars.equals(tok, ')') || isDelayKeyword(tok)) {
+                            throw SqlException.position(lexer.lastTokenPosition()).put("TIME ZONE name expected");
+                        }
+                        tz = unquote(tok).toString();
+                        try {
+                            tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
+                        } catch (CairoException e) {
+                            throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
+                        }
+                        tok = tok(lexer, "'delay' or ')'");
                     }
-                    tz = unquote(tok).toString();
-                    try {
-                        tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
-                    } catch (CairoException e) {
-                        throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
-                    }
-                    tok = tok(lexer, "'delay' or ')'");
-                }
 
-                int delay = 0;
-                char delayUnit = 0;
-                if (isDelayKeyword(tok)) {
-                    tok = tok(lexer, "DELAY interval");
-                    delay = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
-                    delayUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
-                    validateMatViewDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
+                    int delay = 0;
+                    char delayUnit = 0;
+                    if (isDelayKeyword(tok)) {
+                        tok = tok(lexer, "DELAY interval");
+                        delay = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                        delayUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
+                        validateMatViewPeriodDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
+                        tok = tok(lexer, "')'");
+                    }
+
+                    // Period timer start is at the boundary of the current period.
+                    final long nowMicros = configuration.getMicrosecondClock().getTicks();
+                    final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
+                    final long startUs = periodSamplerMicros.round(nowLocalMicros);
+
+                    mvOpBuilder.setTimer(tz, startUs, every, everyUnit);
+                    mvOpBuilder.setPeriodLength(length, lengthUnit, delay, delayUnit);
+                } else if (isSampleKeyword(tok)) {
+                    // REFRESH ... PERIOD(SAMPLE BY INTERVAL)
+                    expectTok(lexer, "by");
+                    expectTok(lexer, "interval");
                     tok = tok(lexer, "')'");
+
+                    mvOpBuilder.setTimer(null, 0, every, everyUnit);
+                    // Set length to -1 to define the period later, once we parse the query.
+                    mvOpBuilder.setPeriodLength(-1, (char) 0, 0, (char) 0);
+                } else {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("'length' or 'sample' expected");
                 }
 
                 if (!Chars.equals(tok, ')')) {
                     throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
                 }
-
-                // Period timer start is at the boundary of the current period.
-                final long nowMicros = configuration.getMicrosecondClock().getTicks();
-                final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
-                final long startUs = periodSamplerMicros.round(nowLocalMicros);
-
-                mvOpBuilder.setTimer(tz, startUs, every, everyUnit);
-                mvOpBuilder.setPeriodLength(length, lengthUnit, delay, delayUnit);
                 tok = tok(lexer, "'as'");
             } else if (!isAsKeyword(tok)) {
                 // REFRESH EVERY <interval> [START '<datetime>' [TIME ZONE '<timezone>']]
@@ -3476,7 +3452,9 @@ public class SqlParser {
             case ExpressionNode.CONSTANT:
                 final WithClauseModel withClause = masterModel.get(tableName);
                 if (withClause != null) {
-                    model.setNestedModel(parseWith(lexer, withClause, sqlParserCallback, model.getDecls()));
+                    QueryModel cteModel = parseWith(lexer, withClause, sqlParserCallback, model.getDecls());
+                    cteModel.setIsCteModel(true);
+                    model.setNestedModel(cteModel);
                     model.setAlias(literal(tableName, expr.position));
                 } else {
                     int dot = Chars.indexOfLastUnquoted(tableName, '.');
@@ -3888,7 +3866,6 @@ public class SqlParser {
                 // json_extract(json,path)::type -> json_extract(json,path,type)
                 // the ::type is already rewritten as
                 // cast(json_extract(json,path) as type)
-                //
 
                 // we remove the outer cast and let json_extract() do the cast
                 ExpressionNode jsonExtractNode = node.lhs;
@@ -3906,7 +3883,6 @@ public class SqlParser {
                         node.rhs = jsonExtractNode.rhs;
                         node.args.clear();
                     } else if (JsonExtractTypedFunctionFactory.isIntrusivelyOptimized(castType)) {
-                        int type = castType;
                         node.token = jsonExtractNode.token;
                         node.paramCount = 3;
                         node.type = jsonExtractNode.type;
@@ -3919,7 +3895,7 @@ public class SqlParser {
 
                         // type integer
                         CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
-                        characterStoreEntry.put(type);
+                        characterStoreEntry.put(castType);
                         node.args.add(
                                 expressionNodePool.next().of(
                                         ExpressionNode.CONSTANT,
