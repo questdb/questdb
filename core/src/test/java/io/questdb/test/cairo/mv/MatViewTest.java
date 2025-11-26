@@ -581,6 +581,11 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterRefreshParamsPeriodIntervalToManual() throws Exception {
+        testAlterRefreshParamsToManual("period(sample by interval)");
+    }
+
+    @Test
     public void testAlterRefreshParamsPeriodToManual() throws Exception {
         testAlterRefreshParamsToManual("period(length 1h)");
     }
@@ -617,6 +622,16 @@ public class MatViewTest extends AbstractCairoTest {
                 new TestRefreshParams()
                         .ofDeferred()
                         .ofPeriod()
+        );
+    }
+
+    @Test
+    public void testAlterRefreshParamsToPeriodInterval() throws Exception {
+        testAlterRefreshParamsToTarget(
+                "immediate period(sample by interval)",
+                new TestRefreshParams()
+                        .ofDeferred()
+                        .ofPeriodInterval()
         );
     }
 
@@ -889,7 +904,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h_t set refresh every 2h period (start)",
                     64,
-                    "'length' expected"
+                    "'length' or 'sample' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h_t set refresh period( length",
@@ -965,6 +980,21 @@ public class MatViewTest extends AbstractCairoTest {
                     "alter materialized view price_1h_t set refresh period (length 25h delay 2h)",
                     62,
                     "maximum supported length interval is 24 hours: 25h"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (sample)",
+                    61,
+                    "'by' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (sample by)",
+                    64,
+                    "'interval' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (sample by interval foobar)",
+                    74,
+                    "')' expected"
             );
 
             assertQueryNoLeakCheck(
@@ -7667,6 +7697,16 @@ public class MatViewTest extends AbstractCairoTest {
             this.periodDelayUnit = 'h';
             this.timerStartUs = MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2020-12-12T00:00:00.000000Z");
             this.timerTimeZone = "Europe/London";
+            return this;
+        }
+
+        TestRefreshParams ofPeriodInterval() throws NumericException {
+            refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
+            this.periodLength = 1;
+            this.periodLengthUnit = 'h';
+            this.periodDelay = 0;
+            this.periodDelayUnit = 0;
+            this.timerStartUs = MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2020-12-12T00:00:00.000000Z");
             return this;
         }
 

@@ -154,8 +154,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
                 assertSql(
-                        "count\n" +
-                                "1\n",
+                        """
+                                count
+                                1
+                                """,
                         "select count() from materialized_views where view_name = '" + mvName + "' and view_status <> 'invalid';"
                 );
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -552,18 +554,49 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         execute("create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") + " as (" + viewSql + ") partition by DAY");
     }
 
+    private static void createPeriodMatView(String viewSql, String mvName, int interval, char intervalUnit, boolean deferred) throws SqlException {
+        execute("create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") + " period (length " + interval + intervalUnit + ") as (" + viewSql + ") partition by DAY");
+    }
+
     private static void createTimerMatView(String viewSql, String mvName, long start, int interval, char intervalUnit, boolean deferred) throws SqlException {
         sink.clear();
         MicrosFormatUtils.appendDateTimeUSec(sink, start);
         execute("create materialized view " + mvName + " refresh every " + interval + intervalUnit + " " + (deferred ? "deferred" : "") + " start '" + sink + "' as (" + viewSql + ") partition by DAY");
     }
 
-    private ObjList<FuzzTransaction> createTransactionsAndMv(Rnd rnd, String tableNameBase, String matViewName, String viewSql) throws SqlException, NumericException {
+    private ObjList<FuzzTransaction> createTransactionsAndMv(
+            Rnd rnd,
+            String tableNameBase,
+            String matViewName,
+            String viewSql
+    ) throws SqlException, NumericException {
         fuzzer.createInitialTableWal(tableNameBase, timestampTypes[rnd.nextInt(10) % 2]);
         final boolean deferred = rnd.nextBoolean();
         createMatView(viewSql, matViewName, deferred);
 
         ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd);
+
+        // Release table writers to reduce memory pressure
+        engine.releaseInactive();
+        return transactions;
+    }
+
+    private ObjList<FuzzTransaction> createTransactionsAndPeriodMv(
+            Rnd rnd,
+            String tableNameBase,
+            String matViewName,
+            String viewSql,
+            long start,
+            long end,
+            int interval,
+            char intervalUnit
+    ) throws SqlException {
+        // create empty initial table as we want the timestamps to be in the [start, end] interval
+        fuzzer.createInitialTableWal(tableNameBase, 0);
+        final boolean deferred = rnd.nextBoolean();
+        createPeriodMatView(viewSql, matViewName, interval, intervalUnit, deferred);
+
+        ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd, start, end);
 
         // Release table writers to reduce memory pressure
         engine.releaseInactive();
@@ -609,7 +642,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         for (int i = 0; i < tableCount; i++) {
             String tableNameBase = testTableName + "_" + i;
             String tableNameMv = tableNameBase + "_mv";
-            String viewSql = "select min(c3), max(c3), ts from  " + tableNameBase + (sleep ? " where sleep(1)" : "") + " sample by 1h";
+            String viewSql = "select min(c3), max(c3), ts from " + tableNameBase + (sleep ? " where sleep(1)" : "") + " sample by 1h";
             ObjList<FuzzTransaction> transactions = createTransactionsAndMv(rnd, tableNameBase, tableNameMv, viewSql);
             fuzzTransactions.add(transactions);
             viewSqls.add(viewSql);
@@ -637,16 +670,20 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
                 // Check that the view exists.
                 assertSql(
-                        "count\n" +
-                                "1\n",
+                        """
+                                count
+                                1
+                                """,
                         "select count() " +
                                 "from materialized_views " +
                                 "where view_name = '" + mvName + "';"
                 );
                 if (expectValidMatViews) {
                     assertSql(
-                            "count\n" +
-                                    "1\n",
+                            """
+                                    count
+                                    1
+                                    """,
                             "select count() " +
                                     "from materialized_views " +
                                     "where view_name = '" + mvName + "' and view_status <> 'invalid';"
@@ -668,23 +705,18 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final ObjList<String> viewSqls = new ObjList<>();
 
         final int length = 1 + rnd.nextInt(24);
-        final char[] units = new char[]{'m', 'h'};
+        final char[] units = new char[]{'s', 'm', 'h'};
         final char lengthUnit = units[rnd.nextInt(units.length)];
-        final long clockJump;
-        switch (lengthUnit) {
-            case 'm':
-                clockJump = length * Micros.MINUTE_MICROS;
-                break;
-            case 'h':
-                clockJump = length * Micros.HOUR_MICROS;
-                break;
-            default:
-                throw new IllegalStateException("unexpected unit: " + lengthUnit);
-        }
+        final long periodLengthMicros = switch (lengthUnit) {
+            case 's' -> length * Micros.SECOND_MICROS;
+            case 'm' -> length * Micros.MINUTE_MICROS;
+            case 'h' -> length * Micros.HOUR_MICROS;
+            default -> throw new IllegalStateException("unexpected unit: " + lengthUnit);
+        };
 
         final long start = MicrosTimestampDriver.floor("2022-01-02T03");
+        final long end = start + (1 + rnd.nextInt(10)) * periodLengthMicros;
         currentMicros = start;
-        final long clockJumpLimit = start + (SPIN_LOCK_TIMEOUT / clockJump);
 
         final AtomicBoolean stop = new AtomicBoolean();
         // Timer refresh job must be created after currentMicros is set.
@@ -694,14 +726,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final int refreshJobCount = 1 + rnd.nextInt(4);
 
         for (int i = 0; i < refreshJobCount; i++) {
-            refreshJobs.add(startTimerJob(i, stop, rnd, timerJob, clockJump, clockJumpLimit));
+            refreshJobs.add(startTimerJob(i, stop, rnd, timerJob, periodLengthMicros, end));
         }
 
         for (int i = 0; i < tableCount; i++) {
             String tableNameBase = testTableName + "_" + i;
             String tableNameMv = tableNameBase + "_mv";
-            String viewSql = "select min(c3), max(c3), ts from  " + tableNameBase + " sample by 1h";
-            ObjList<FuzzTransaction> transactions = createTransactionsAndTimerMv(rnd, tableNameBase, tableNameMv, viewSql, start, length, lengthUnit);
+            String viewSql = "select min(c3), max(c3), ts from " + tableNameBase + " sample by 1" + lengthUnit;
+            ObjList<FuzzTransaction> transactions = createTransactionsAndPeriodMv(rnd, tableNameBase, tableNameMv, viewSql, start, end, length, lengthUnit);
             fuzzTransactions.add(transactions);
             viewSqls.add(viewSql);
         }
@@ -718,7 +750,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         drainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
-        currentMicros += clockJump;
+        currentMicros = Math.max(end, currentMicros) + periodLengthMicros;
         drainMatViewTimerQueue(timerJob);
         drainWalAndMatViewQueues();
         fuzzer.checkNoSuspendedTables();
@@ -729,8 +761,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 final String mvName = testTableName + "_" + i + "_mv";
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
                 assertSql(
-                        "count\n" +
-                                "1\n",
+                        """
+                                count
+                                1
+                                """,
                         "select count() " +
                                 "from materialized_views " +
                                 "where view_name = '" + mvName + "' and view_status <> 'invalid';"
@@ -753,17 +787,11 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final int interval = 1 + rnd.nextInt(10);
         final char[] units = new char[]{'m', 'h'};
         final char intervalUnit = units[rnd.nextInt(units.length)];
-        final long clockJump;
-        switch (intervalUnit) {
-            case 'm':
-                clockJump = interval * Micros.MINUTE_MICROS;
-                break;
-            case 'h':
-                clockJump = interval * Micros.HOUR_MICROS;
-                break;
-            default:
-                throw new IllegalStateException("unexpected unit: " + intervalUnit);
-        }
+        final long clockJump = switch (intervalUnit) {
+            case 'm' -> interval * Micros.MINUTE_MICROS;
+            case 'h' -> interval * Micros.HOUR_MICROS;
+            default -> throw new IllegalStateException("unexpected unit: " + intervalUnit);
+        };
 
         final long start = MicrosTimestampDriver.floor("2022-02-24T17");
         currentMicros = start;
@@ -811,8 +839,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 final String mvName = testTableName + "_" + i + "_mv";
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
                 assertSql(
-                        "count\n" +
-                                "1\n",
+                        """
+                                count
+                                1
+                                """,
                         "select count() " +
                                 "from materialized_views " +
                                 "where view_name = '" + mvName + "' and view_status <> 'invalid';"

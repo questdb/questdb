@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -239,6 +240,67 @@ public class InTest extends AbstractCairoTest {
                 "ts",
                 true,
                 false
+        );
+    }
+
+    @Test
+    public void testIntInWithSentinelValues() throws Exception {
+        execute("CREATE TABLE anomaly_log AS (" +
+                "SELECT " +
+                "  timestamp_sequence('2025-10-24', 3600000000L) ts, " +
+                "  rnd_symbol('S3', 'O1', 'O2') type, " +
+                "  rnd_int(1, 3, 0) risk, " +
+                "  rnd_int(-2, 0, 3) action " +
+                "FROM long_sequence(1000)" +
+                ") TIMESTAMP(ts) PARTITION BY MONTH");
+
+        assertQueryAndPlan(
+                "count\n889\n",
+                "Count\n" +
+                        "    Async JIT Filter workers: 1\n" +
+                        "      filter: action in [-2,-1,0]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: anomaly_log\n",
+                "SELECT count(*) FROM anomaly_log " +
+                        "where action IN (-2, 0, -1) ",
+                null,
+                false,
+                true
+        );
+        assertQueryAndPlan(
+                "count\n1000\n",
+                "Count\n" +
+                        "    Async JIT Filter workers: 1\n" +
+                        "      filter: action in [null,-2,-1,0]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: anomaly_log\n",
+                "SELECT count(*) FROM anomaly_log " +
+                        "where action IN (null, -2, 0, -1) ",
+                null,
+                false,
+                true
+        );
+
+        bindVariableService.setInt("a", -1);
+        bindVariableService.setInt("b", -2);
+        bindVariableService.setInt("c", 0);
+        bindVariableService.setInt("d", Numbers.INT_NULL);
+        assertQueryAndPlan(
+                "count\n1000\n",
+                "Count\n" +
+                        "    Async JIT Filter workers: 1\n" +
+                        "      filter: action in [null,-2,-1,0]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: anomaly_log\n",
+                "SELECT count(*) FROM anomaly_log " +
+                        "where action IN (:a, :b, :c, :d) ",
+
+                null,
+                false,
+                true
         );
     }
 
