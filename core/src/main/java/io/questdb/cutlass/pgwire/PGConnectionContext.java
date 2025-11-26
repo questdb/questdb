@@ -931,7 +931,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         pipelineCurrentEntry.setStateExec(true);
         sqlExecutionContext.initNow();
         try {
-            if (pipelineCurrentEntry.populateBindingServiceIfNeeded(sqlExecutionContext, bindVariableValuesCharacterStore, utf8String, binarySequenceParamsPool)) {
+            if (pipelineCurrentEntry.populateBindingServiceForExec(sqlExecutionContext, bindVariableValuesCharacterStore, utf8String, binarySequenceParamsPool)) {
                 bindingServiceConfiguredFor = pipelineCurrentEntry;
             }
         } catch (SqlException e) {
@@ -1407,7 +1407,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
                     // we need to repopulate BindingService before sync
                     // because syncing might access binding data too
-                    if (bindingServiceConfiguredFor != pipelineCurrentEntry && pipelineCurrentEntry.populateBindingServiceIfNeeded(
+                    if (bindingServiceConfiguredFor != pipelineCurrentEntry && pipelineCurrentEntry.populateBindingServiceForSync(
                             sqlExecutionContext,
                             bindVariableValuesCharacterStore,
                             utf8String,

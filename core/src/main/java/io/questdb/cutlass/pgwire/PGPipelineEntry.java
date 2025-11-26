@@ -3440,14 +3440,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return msgParseReconcileParameterTypes((short) msgParseParameterTypeOIDs.size(), typeContainer);
     }
 
-    boolean populateBindingServiceIfNeeded(SqlExecutionContext sqlExecutionContext,
-                                           CharacterStore bindVariableCharacterStore,
-                                           @Transient DirectUtf8String directUtf8String,
-                                           @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool) throws PGMessageProcessingException, SqlException {
+    boolean populateBindingServiceForExec(SqlExecutionContext sqlExecutionContext,
+                                          CharacterStore bindVariableCharacterStore,
+                                          @Transient DirectUtf8String directUtf8String,
+                                          @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool) throws PGMessageProcessingException, SqlException {
         if (isError()) {
             return false;
         }
-        return switch (this.sqlType) {
+        return switch (sqlType) {
+            // these query types use binding variables at the EXEC time
             case CompiledQuery.EXPLAIN, CompiledQuery.SELECT, CompiledQuery.PSEUDO_SELECT, CompiledQuery.INSERT,
                  CompiledQuery.INSERT_AS_SELECT, CompiledQuery.UPDATE, CompiledQuery.ALTER -> {
                 copyParameterValuesToBindVariableService(
@@ -3460,6 +3461,27 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
             default -> false;
         };
+    }
 
+    boolean populateBindingServiceForSync(SqlExecutionContext sqlExecutionContext,
+                                          CharacterStore bindVariableCharacterStore,
+                                          @Transient DirectUtf8String directUtf8String,
+                                          @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool) throws PGMessageProcessingException, SqlException {
+        if (isError()) {
+            return false;
+        }
+        return switch (sqlType) {
+            // these query types use binding variables also at the SYNC time
+            case CompiledQuery.EXPLAIN, CompiledQuery.SELECT, CompiledQuery.PSEUDO_SELECT -> {
+                copyParameterValuesToBindVariableService(
+                        sqlExecutionContext,
+                        bindVariableCharacterStore,
+                        directUtf8String,
+                        binarySequenceParamsPool
+                );
+                yield true;
+            }
+            default -> false;
+        };
     }
 }
