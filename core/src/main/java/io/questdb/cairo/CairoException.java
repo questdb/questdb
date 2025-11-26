@@ -39,6 +39,10 @@ import org.jetbrains.annotations.Nullable;
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
 
     public static final int ERRNO_ACCESS_DENIED_WIN = 5;
+    public static final int ERRNO_EACCES_LINUX = 13;
+    public static final int ERRNO_EACCES_MACOS = 13;
+    public static final int ERRNO_EPERM_LINUX = 1;
+    public static final int ERRNO_EPERM_MACOS = 1;
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
     public static final int ERRNO_FILE_DOES_NOT_EXIST_WIN = 3;
     // psync_cvcontinue sets two bits in the error code to indicate whether the wait timed out (0x100) or there were no waiters (0x200).
