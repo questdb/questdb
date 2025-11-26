@@ -37,19 +37,9 @@ stages:
         steps:
           - checkout: none
           - bash: |
-              set -x
-
               # Trigger the enterprise CI pipeline via Azure DevOps REST API
-              # The enterprise pipeline will:
-              # 1. Checkout enterprise main branch
-              # 2. Update questdb submodule to the OSS commit
-              # 3. Run enterprise tests
-              # 4. Post status back to OSS PR
-
-              # Build auth header (PAT requires empty username)
               AUTH_HEADER="Authorization: Basic $(printf ':%s' "$AZURE_DEVOPS_ENT_PAT" | base64 -w0)"
 
-              # Build JSON payload
               PAYLOAD=$(cat <<EOF
               {
                 "resources": {
@@ -75,18 +65,12 @@ stages:
                 "https://dev.azure.com/questdb/questdb-enterprise/_apis/pipelines/23/runs?api-version=7.0" \
                 -d "$PAYLOAD")
 
-              echo "Response code: $HTTP_CODE"
-              cat response.json
-
               if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-                echo "Successfully triggered enterprise CI"
                 RUN_ID=$(jq -r '.id // empty' response.json)
-                if [ -n "$RUN_ID" ]; then
-                  echo "Enterprise pipeline run ID: $RUN_ID"
-                  echo "View at: https://dev.azure.com/questdb/questdb-enterprise/_build/results?buildId=$RUN_ID"
-                fi
+                echo "Triggered enterprise CI: https://dev.azure.com/questdb/questdb-enterprise/_build/results?buildId=$RUN_ID"
               else
-                echo "##vso[task.logissue type=warning]Failed to trigger enterprise CI (HTTP $HTTP_CODE). Enterprise tests will not run."
+                echo "##vso[task.logissue type=warning]Failed to trigger enterprise CI (HTTP $HTTP_CODE)"
+                cat response.json
               fi
             displayName: "Trigger Enterprise Pipeline"
             env:
