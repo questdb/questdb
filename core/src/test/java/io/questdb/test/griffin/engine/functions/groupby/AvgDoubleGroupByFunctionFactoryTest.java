@@ -33,7 +33,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testAll() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 """
-                        max	avg	weighted_avg	sum	stddev_samp	weighted_stddev_samp
+                        max	avg	weighted_avg	sum	stddev_samp	weighted_stddev
                         10	5.5	7.0	55	3.0276503540974917	2.6220221204253784
                         """, """
                         SELECT
@@ -42,32 +42,67 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                             weighted_avg(x, x),
                             sum(x),
                             stddev_samp(x),
-                            weighted_stddev_samp(x, x)
+                            weighted_stddev(x, x)
                         FROM long_sequence(10)
                         """
         ));
     }
 
     @Test
-    public void testAllWithInfinity() throws Exception {
+    public void testAllWithEmptyAndNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));");
-            assertSql(
-                    """
-                            sum\tavg\tmax\tmin\tksum\tnsum\tstddev_samp
-                            44.0\t1.0\t1.0\t1.0\t44.0\t44.0\t0.0
-                            """,
-                    "select sum(1/val) , avg(1/val), max(1/val), min(1/val), ksum(1/val), nsum(1/val), stddev_samp(1/val) from test2"
-            );
+            String expected = """
+                    sum	avg	weighted_avg	max	min	ksum	nsum	stddev_samp	weighted_stddev_rel	weighted_stddev_freq
+                    null	null	null			null	null	null	null	null
+                    """;
+            String sql = """
+                    SELECT
+                        sum(NULL),
+                        avg(NULL),
+                        weighted_avg(NULL, x),
+                        max(NULL),
+                        min(NULL),
+                        ksum(NULL),
+                        nsum(NULL),
+                        stddev_samp(NULL),
+                        weighted_stddev_rel(NULL, x),
+                        weighted_stddev_freq(NULL, x)
+                    FROM long_sequence(""";
+            assertSql(expected, sql + "0)");
+            assertSql(expected, sql + "1)");
+            assertSql(expected, sql + "2)");
         });
     }
 
     @Test
-    public void testAvgWithInfinity() throws Exception {
+    public void testAllWithInfinity() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));");
+            execute("""
+                    CREATE TABLE test2 AS (
+                        SELECT CASE
+                            WHEN rnd_double() > 0.6 then 1.0
+                            ELSE 0.0
+                        END
+                        val FROM long_sequence(100)
+                    )""");
             assertSql(
-                    "avg\n1.0\n", "select avg(1/val) from test2"
+                    """
+                            sum	avg	weighted_avg	max	min	ksum	nsum	stddev_samp	weighted_stddev
+                            44.0	1.0	1.0	1.0	1.0	44.0	44.0	0.0	0.0
+                            """,
+                    """
+                            SELECT
+                                sum(1/val),
+                                avg(1/val),
+                                weighted_avg(1/val, val),
+                                max(1/val),
+                                min(1/val),
+                                ksum(1/val),
+                                nsum(1/val),
+                                stddev_samp(1/val),
+                                weighted_stddev(1/val, val)
+                            FROM test2
+                            """
             );
         });
     }
@@ -107,11 +142,11 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
             assertSql(
                     """
                             weighted_avg	sum_over_sum
-                            7.0	7
+                            7.0	7.0
                             """, """
                             SELECT
                                 weighted_avg(x, x),
-                                sum(x * x) / sum(x) sum_over_sum
+                                sum(x * x) / sum(x)::double sum_over_sum
                             FROM long_sequence(10)
                             """
             );
@@ -126,7 +161,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWeightedAvgZeroWeight() throws Exception {
+    public void testWeightedAvgZeroAndNegativeWeight() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
                     """
@@ -158,19 +193,71 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWeightedStddevZero() throws Exception {
+    public void testWeightedStddevAgainstFormula() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (sym SYMBOL, value DOUBLE, weight DOUBLE)");
+            execute("""
+                    INSERT INTO tango SELECT
+                        rnd_symbol('A', 'B', 'C', 'D'),
+                        8 + 4 * rnd_double(),
+                        rnd_double()
+                    FROM long_sequence(1000)
+                    """);
+            assertSql("""
+                    sym	function	formula
+                    A	1.1832	1.1832
+                    D	1.1332	1.1332
+                    B	1.1528	1.1528
+                    C	1.2291	1.2291
+                    """, """
+                    SELECT
+                        sym,
+                        round(weighted_stddev_rel(value, weight), 4) AS function,
+                        round(sqrt(
+                          (
+                            sum(weight * value * value)
+                            - (sum(weight * value) * sum(weight * value) / sum(weight))
+                          )
+                          / (sum(weight) - sum(weight * weight) / sum(weight))
+                        ), 4) AS formula
+                    FROM tango
+                    """);
+            assertSql("""
+                    sym	function	formula
+                    A	1.1845	1.1845
+                    D	1.1346	1.1346
+                    B	1.1544	1.1544
+                    C	1.2309	1.2309
+                    """, """
+                    SELECT
+                        sym,
+                        round(weighted_stddev_freq(value, weight), 4) AS function,
+                        round(sqrt(
+                          (
+                            sum(weight * value * value)
+                            - (sum(weight * value) * sum(weight * value) / sum(weight))
+                          )
+                          / (sum(weight) - 1)
+                        ), 4) AS formula
+                    FROM tango
+                    """);
+        });
+    }
+
+    @Test
+    public void testWeightedStddevEqualSamples() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
                     """
-                            weighted_stddev_samp
+                            weighted_stddev_freq
                             0.0
-                            """, "SELECT weighted_stddev_samp(1, 1) FROM long_sequence(10)"
+                            """, "SELECT weighted_stddev_freq(1, 1) FROM long_sequence(10)"
             );
             assertSql(
                     """
-                            weighted_stddev_samp
+                            weighted_stddev_rel
                             0.0
-                            """, "SELECT weighted_stddev_samp(1, 1) FROM long_sequence(10)"
+                            """, "SELECT weighted_stddev_rel(1, 1) FROM long_sequence(10)"
             );
         });
     }

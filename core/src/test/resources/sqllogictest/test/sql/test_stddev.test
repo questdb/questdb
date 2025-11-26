@@ -5,14 +5,38 @@ statement ok
 insert into stddev_test values (42, 2, 1), (43, 3, 1), (42, 1, 2), (1000, 4, 2), (NULL, 1, 1), (NULL, 2, 3)
 
 query R
-SELECT weighted_stddev_samp(1, 1)
+SELECT weighted_stddev_rel(1, 1)
 ----
 NULL
 
 query R
-SELECT weighted_stddev_samp(val, weight) FROM stddev_test
+SELECT weighted_stddev_rel(val, weight) FROM stddev_test
 ----
 560.654783
+
+query IR
+SELECT grp, weighted_stddev_rel(val, weight) FROM stddev_test
+----
+1 0.707107
+2 677.408296
+3 NULL
+
+query R
+SELECT weighted_stddev_freq(1, 1)
+----
+NULL
+
+query R
+SELECT weighted_stddev_freq(val, weight) FROM stddev_test
+----
+494.451042
+
+query IR
+SELECT grp, weighted_stddev_freq(val, weight) FROM stddev_test
+----
+1 0.547723
+2 428.430624
+3 NULL
 
 query I
 SELECT stddev_samp(1)
