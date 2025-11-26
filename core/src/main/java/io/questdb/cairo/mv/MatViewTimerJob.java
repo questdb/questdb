@@ -147,7 +147,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                 .$(", start=").$ts(MicrosTimestampDriver.INSTANCE, startUs)
                 .$(", tz=").$(viewDefinition.getTimerTimeZone())
                 .$(", length=").$(length).$(lengthUnit)
-                .$(", delay=").$(delayInterval).$(delayUnit)
+                .$(", delay=").$(delayInterval).$(delayUnit != 0 ? delayUnit : ' ')
                 .I$();
     }
 
