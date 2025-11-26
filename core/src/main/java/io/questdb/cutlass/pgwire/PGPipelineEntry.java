@@ -170,7 +170,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private Utf8String namedPortal;
     private Utf8String namedStatement;
     private Operation operation = null;
-    private int outResendArrayFlatIndex = 0;
+    private int outResendArrayFlatIndex = -1; // -1 indicates the array header has been sent yet
     private int outResendColumnIndex = 0;
     private boolean outResendCursorRecord = false;
     private boolean outResendRecordHeader = true;
@@ -1712,10 +1712,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return;
         }
         short elemType = array.getElemType();
-        if (outResendArrayFlatIndex == 0) {
-            // Send the header. We must ensure at least one element follows the header, otherwise the
-            // outResendArrayFlatIndex stays at 0 even though the header was already sent, which will cause
-            // the header to be sent again.
+        if (outResendArrayFlatIndex == -1) {
             int nDims = array.getDimCount();
             int componentTypeOid = getTypeOid(elemType);
             int notNullCount = PGUtils.countNotNull(array, 0);
@@ -1731,6 +1728,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 utf8Sink.putNetworkInt(array.getDimLen(i)); // length of each dimension
                 utf8Sink.putNetworkInt(1); // lower bound, always 1 in QuestDB
             }
+            utf8Sink.bookmark();
+            outResendArrayFlatIndex = 0;
         }
         try {
             if (array.isVanilla()) {
@@ -1759,7 +1758,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             } else {
                 outColBinArrRecursive(utf8Sink, array, elemType, 0, 0, 0);
             }
-            outResendArrayFlatIndex = 0;
+            outResendArrayFlatIndex = -1;
         } catch (NoSpaceLeftInResponseBufferException e) {
             utf8Sink.resetToBookmark();
             throw e;

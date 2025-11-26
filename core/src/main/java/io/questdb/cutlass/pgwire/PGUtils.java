@@ -175,13 +175,15 @@ class PGUtils {
                 assert ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE ||
                         ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG
                         : "implemented only for DOUBLE and LONG";
-                int notNullCount = PGUtils.countNotNull(array, arrayResumePoint);
-                if (arrayResumePoint == 0) {
+
+                int actualResumePoint = Math.max(0, arrayResumePoint);
+                int notNullCount = PGUtils.countNotNull(array, actualResumePoint);
+                if (arrayResumePoint == -1) {
                     // No elements written yet, need full array size including header
                     return calculateArrayColBinSize(array, notNullCount);
                 }
                 // Some elements already written, only calculate remaining elements
-                int remainingElements = array.getCardinality() - arrayResumePoint;
+                int remainingElements = array.getCardinality() - actualResumePoint;
                 return calculateArrayResumeColBinSize(notNullCount, remainingElements - notNullCount);
             default:
                 assert false : "unsupported type: " + typeTag;
