@@ -479,7 +479,7 @@ public class MatViewDefinition implements Mutable {
         offset += Integer.BYTES;
 
         final CharSequence baseTableName = block.getStr(offset);
-        if (baseTableName == null || baseTableName.length() == 0) {
+        if (baseTableName == null || baseTableName.isEmpty()) {
             throw CairoException.critical(0)
                     .put("base table name for materialized view is empty [view=")
                     .put(matViewToken.getTableName())
@@ -503,7 +503,7 @@ public class MatViewDefinition implements Mutable {
         final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
 
         final CharSequence matViewSql = block.getStr(offset);
-        if (matViewSql == null || matViewSql.length() == 0) {
+        if (matViewSql == null || matViewSql.isEmpty()) {
             throw CairoException.critical(0)
                     .put("materialized view SQL is empty [view=")
                     .put(matViewToken.getTableName())

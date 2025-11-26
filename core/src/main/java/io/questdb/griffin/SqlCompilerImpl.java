@@ -140,6 +140,7 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -153,6 +154,7 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.TableUtils.TABLE_KIND_REGULAR_TABLE;
 import static io.questdb.griffin.SqlKeywords.*;
+import static io.questdb.griffin.engine.ops.CreateMatViewOperation.validateMatViewPeriodLength;
 import static io.questdb.griffin.model.ExportModel.COPY_TYPE_FROM;
 import static io.questdb.std.GenericLexer.unquote;
 
@@ -1821,7 +1823,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             columnName,
                             tableMetadata
                     );
-
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'symbol capacity', 'add index' or 'drop index' expected");
                 }
@@ -1857,8 +1858,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         int refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
                         int every = 0;
                         char everyUnit = 0;
-                        long startUs = Numbers.LONG_NULL;
-                        String tz = null;
+                        long timerStartUs = Numbers.LONG_NULL;
+                        String timerTimeZone = null;
                         TimeZoneRules tzRulesMicros = null;
                         int length = 0;
                         char lengthUnit = 0;
@@ -1880,59 +1881,92 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
 
                         if (tok != null && isPeriodKeyword(tok)) {
-                            // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
+                            final TimestampSampler periodSamplerMicros;
                             expectKeyword(lexer, "(");
-                            expectKeyword(lexer, "length");
-                            tok = expectToken(lexer, "LENGTH interval");
-                            length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
-                            lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
-                            SqlParser.validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
-                            final TimestampSampler periodSamplerMicros = TimestampSamplerFactory.getInstance(
-                                    MicrosTimestampDriver.INSTANCE,
-                                    length,
-                                    lengthUnit,
-                                    lexer.lastTokenPosition()
-                            );
-                            tok = expectToken(lexer, "'time zone' or 'delay' or ')'");
+                            tok = expectToken(lexer, "'length' or 'sample'");
+                            if (isLengthKeyword(tok)) {
+                                // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
+                                tok = expectToken(lexer, "LENGTH interval");
+                                length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                                lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
+                                validateMatViewPeriodLength(length, lengthUnit, lexer.lastTokenPosition());
+                                periodSamplerMicros = TimestampSamplerFactory.getInstance(
+                                        MicrosTimestampDriver.INSTANCE,
+                                        length,
+                                        lengthUnit,
+                                        lexer.lastTokenPosition()
+                                );
+                                tok = expectToken(lexer, "'time zone' or 'delay' or ')'");
 
-                            if (isTimeKeyword(tok)) {
-                                expectKeyword(lexer, "zone");
-                                tok = expectToken(lexer, "TIME ZONE name");
-                                if (Chars.equals(tok, ')') || isDelayKeyword(tok)) {
-                                    throw SqlException.position(lexer.lastTokenPosition()).put("TIME ZONE name expected");
+                                if (isTimeKeyword(tok)) {
+                                    expectKeyword(lexer, "zone");
+                                    tok = expectToken(lexer, "TIME ZONE name");
+                                    if (Chars.equals(tok, ')') || isDelayKeyword(tok)) {
+                                        throw SqlException.position(lexer.lastTokenPosition()).put("TIME ZONE name expected");
+                                    }
+                                    timerTimeZone = unquote(tok).toString();
+                                    try {
+                                        tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
+                                    } catch (CairoException e) {
+                                        throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
+                                    }
+                                    tok = expectToken(lexer, "'delay' or ')'");
                                 }
-                                tz = unquote(tok).toString();
-                                try {
-                                    tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
-                                } catch (CairoException e) {
-                                    throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
-                                }
-                                tok = expectToken(lexer, "'delay' or ')'");
-                            }
 
-                            if (isDelayKeyword(tok)) {
-                                tok = expectToken(lexer, "DELAY interval");
-                                delay = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
-                                delayUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
-                                SqlParser.validateMatViewDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
+                                if (isDelayKeyword(tok)) {
+                                    tok = expectToken(lexer, "DELAY interval");
+                                    delay = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                                    delayUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
+                                    SqlParser.validateMatViewPeriodDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
+                                    tok = expectToken(lexer, "')'");
+                                }
+                            } else if (isSampleKeyword(tok)) {
+                                // REFRESH ... PERIOD(SAMPLE BY INTERVAL)
+                                // Align the period to the SAMPLE BY bucket.
+                                expectKeyword(lexer, "by");
+                                expectKeyword(lexer, "interval");
                                 tok = expectToken(lexer, "')'");
-                            }
 
-                            if (!Chars.equals(tok, ')')) {
-                                throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
+                                length = (int) Math.min(viewDefinition.getSamplingInterval(), Integer.MAX_VALUE);
+                                lengthUnit = viewDefinition.getSamplingIntervalUnit();
+                                validateMatViewPeriodLength(length, lengthUnit, lexer.lastTokenPosition());
+                                periodSamplerMicros = TimestampSamplerFactory.getInstance(
+                                        MicrosTimestampDriver.INSTANCE,
+                                        length,
+                                        lengthUnit,
+                                        lexer.lastTokenPosition()
+                                );
+
+                                timerTimeZone = viewDefinition.getTimeZone();
+                                tzRulesMicros = viewDefinition.getTzRules();
+                                if (viewDefinition.getTimeZoneOffset() != null) {
+                                    final long val = Dates.parseOffset(viewDefinition.getTimeZoneOffset());
+                                    if (val == Numbers.LONG_NULL) {
+                                        throw SqlException.position(lexer.lastTokenPosition()).put("invalid offset: ").put(viewDefinition.getTimeZoneOffset());
+                                    }
+                                    if (Numbers.decodeLowInt(val) != 0) {
+                                        throw SqlException.position(lexer.lastTokenPosition()).put("PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
+                                    }
+                                }
+                            } else {
+                                throw SqlException.position(lexer.lastTokenPosition()).put("'length' or 'sample' expected");
                             }
 
                             // Period timer start is at the boundary of the current period.
                             final long nowMicros = configuration.getMicrosecondClock().getTicks();
                             final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
-                            startUs = periodSamplerMicros.round(nowLocalMicros);
+                            timerStartUs = periodSamplerMicros.round(nowLocalMicros);
+
+                            if (!Chars.equals(tok, ')')) {
+                                throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
+                            }
                             tok = SqlUtil.fetchNext(lexer);
                         } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                             if (tok != null && isStartKeyword(tok)) {
                                 // REFRESH EVERY <interval> [START '<datetime>' [TIME ZONE '<timezone>']]
                                 tok = expectToken(lexer, "START timestamp");
                                 try {
-                                    startUs = MicrosTimestampDriver.INSTANCE.parseFloorLiteral(unquote(tok));
+                                    timerStartUs = MicrosTimestampDriver.INSTANCE.parseFloorLiteral(unquote(tok));
                                 } catch (NumericException e) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                                 }
@@ -1941,10 +1975,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 if (isTimeKeyword(tok)) {
                                     expectKeyword(lexer, "zone");
                                     tok = expectToken(lexer, "TIME ZONE name");
-                                    tz = unquote(tok).toString();
+                                    timerTimeZone = unquote(tok).toString();
                                     // validate time zone
                                     try {
-                                        MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
+                                        MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
                                     } catch (CairoException e) {
                                         throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
                                     }
@@ -1953,7 +1987,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             } else {
                                 // REFRESH EVERY <interval> AS
                                 // Don't forget to set timer params.
-                                startUs = configuration.getMicrosecondClock().getTicks();
+                                timerStartUs = configuration.getMicrosecondClock().getTicks();
                             }
                         }
 
@@ -1968,8 +2002,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 refreshType,
                                 every,
                                 everyUnit,
-                                startUs,
-                                tz,
+                                timerStartUs,
+                                timerTimeZone,
                                 length,
                                 lengthUnit,
                                 delay,

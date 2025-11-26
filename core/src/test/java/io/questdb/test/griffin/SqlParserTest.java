@@ -2131,7 +2131,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create materialized view myview refresh every 2h period (start)",
                 57,
-                "'length' expected"
+                "'length' or 'sample' expected"
         );
     }
 
@@ -2221,17 +2221,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create materialized view myview refresh period (length 1y)",
                 55,
-                "unsupported length unit: 1y, supported units are 'm', 'h', 'd'"
+                "unsupported length unit: 1y, supported units are 's', 'm', 'h', 'd'"
         );
         assertSyntaxError(
                 "create materialized view myview refresh period (length 1w)",
                 55,
-                "unsupported length unit: 1w, supported units are 'm', 'h', 'd'"
+                "unsupported length unit: 1w, supported units are 's', 'm', 'h', 'd'"
         );
         assertSyntaxError(
                 "create materialized view myview refresh period (length 1M)",
                 55,
-                "unsupported length unit: 1M, supported units are 'm', 'h', 'd'"
+                "unsupported length unit: 1M, supported units are 's', 'm', 'h', 'd'"
         );
     }
 
@@ -2277,17 +2277,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create materialized view myview refresh period (length 1d time zone 'Europe/Sofia' delay 1y)",
                 89,
-                "unsupported delay unit: 1y, supported units are 'm', 'h', 'd'"
+                "unsupported delay unit: 1y, supported units are 's', 'm', 'h', 'd'"
         );
         assertSyntaxError(
                 "create materialized view myview refresh period (length 1d delay 1w)",
                 64,
-                "unsupported delay unit: 1w, supported units are 'm', 'h', 'd'"
+                "unsupported delay unit: 1w, supported units are 's', 'm', 'h', 'd'"
         );
         assertSyntaxError(
                 "create materialized view myview refresh period (length 1d delay 1M)",
                 64,
-                "unsupported delay unit: 1M, supported units are 'm', 'h', 'd'"
+                "unsupported delay unit: 1M, supported units are 's', 'm', 'h', 'd'"
         );
     }
 
@@ -2488,6 +2488,42 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "CREATE MATERIALIZED VIEW myview REFRESH MANUAL PERIOD (LENGTH 1d DELAY 0h);",
                 71,
                 "positive number expected: 0h"
+        );
+    }
+
+    @Test
+    public void testCreateMatView63() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (sample)",
+                54,
+                "'by' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView64() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (sample foo)",
+                55,
+                "'by' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView65() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (sample by)",
+                57,
+                "'interval' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView66() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (sample by foo)",
+                58,
+                "'interval' expected"
         );
     }
 

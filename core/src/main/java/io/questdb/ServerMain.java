@@ -187,7 +187,7 @@ public class ServerMain implements Closeable {
         if (httpServer == null) {
             return 0;
         }
-        return httpServer.getActiveConnectionTracker().getActiveConnections(processorName);
+        return httpServer.getActiveConnectionTracker().get(processorName);
     }
 
     public ServerConfiguration getConfiguration() {
