@@ -26,10 +26,10 @@ package io.questdb.test.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
@@ -87,11 +87,17 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testStackOverFlowError() throws Exception {
-        assertFailure(
-                "regexp_replace failed [position=",
-                "select regexp_replace('test(address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address,address)', " +
-                        "'\\s*\\(([^()]|\\(([^()])*\\))*\\)\\s*', '()')"
-        );
+        StringSink sink1 = new StringSink(8192);
+        sink1.put("select regexp_replace('test(");
+        for (int i = 0; i < 2000; i++) {
+            if (i > 0) {
+                sink1.put(',');
+            }
+            sink1.put("address");
+        }
+        sink1.put(")', ");
+        sink1.put("'\\s*\\(([^()]|\\(([^()])*\\))*\\)\\s*', '()')");
+        assertFailure("regexp_replace failed [position=", sink1);
     }
 
     @Test

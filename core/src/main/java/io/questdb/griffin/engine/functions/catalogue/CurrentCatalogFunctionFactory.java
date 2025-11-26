@@ -22,50 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import java.util.concurrent.atomic.AtomicLong;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class AtomicLongGaugeImpl extends AbstractLongGauge implements AtomicLongGauge {
-    private final AtomicLong counter;
-
-    public AtomicLongGaugeImpl(CharSequence name) {
-        super(name);
-        counter = new AtomicLong();
+public class CurrentCatalogFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "current_catalog()";
     }
 
     @Override
-    public void add(long value) {
-        counter.addAndGet(value);
+    public boolean isRuntimeConstant() {
+        return true;
     }
 
     @Override
-    public void dec() {
-        counter.decrementAndGet();
-    }
-
-    @Override
-    public long decrementAndGet() {
-        return counter.decrementAndGet();
-    }
-
-    @Override
-    public long getValue() {
-        return counter.get();
-    }
-
-    @Override
-    public void inc() {
-        counter.incrementAndGet();
-    }
-
-    @Override
-    public long incrementAndGet() {
-        return counter.incrementAndGet();
-    }
-
-    @Override
-    public void setValue(long value) {
-        counter.set(value);
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return CurrentDatabaseFunctionFactory.INSTANCE;
     }
 }

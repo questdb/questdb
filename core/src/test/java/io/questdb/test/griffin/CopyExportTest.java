@@ -51,6 +51,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.HashSet;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -1598,20 +1599,27 @@ public class CopyExportTest extends AbstractCairoTest {
 
         assertMemoryLeak(ff, () -> {
             execute("create table test_table (x int, y string)");
-            execute("insert into test_table values (1, 'test')");
+            execute("insert into test_table select x, x::string as y FROM long_sequence(100_000)");
             drainWalQueue();
 
-            CopyExportRunnable stmt = () -> {
-                pause.set(true);
-                runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
+            Callable<Exception> callback = () -> {
                 try {
-                    runAndFetchCopyExportID("copy test_table to 'output9' with format parquet statistics_enabled true", sqlExecutionContext);
-                    Assert.fail("Expected failure due to duplicate sql statement");
+                    runAndFetchCopyExportID("copy (select y from test_table) to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
                 } catch (SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "duplicate sql statement: test_table");
+                    CharSequence contains = "duplicate export path: output8";
+                    TestUtils.assertContains(e.getMessage(), contains);
+                    LOG.info().$("asserted that duplicate export failed: [message=").$(e.getFlyweightMessage()).$(", contains=").$(contains).I$();
+                    return e;
                 } finally {
                     pause.set(false);
                 }
+                return new UnsupportedOperationException();
+            };
+
+            CopyExportRunnable stmt = () -> {
+                runAndFetchCopyExportID("copy (select x from test_table) to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
+                // Wait for the first export to be active before attempting the second
+                waitForActiveExport();
             };
 
             CopyExportRunnable test = () ->
@@ -1619,11 +1627,14 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertSql("export_path\tnum_exported_files\tstatus\n" +
                                         exportRoot + File.separator + "output8.parquet" + "\t1\tfinished\n",
                                 "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("x\ty\n1\ttest\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet')");
+                        assertSql("""
+                                        x
+                                        1
+                                        """,
+                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet') LIMIT 1");
                     });
 
-            testCopyExport(stmt, test);
+            testCopyExport(stmt, test, callback);
         });
     }
 
@@ -1644,19 +1655,25 @@ public class CopyExportTest extends AbstractCairoTest {
 
         assertMemoryLeak(ff, () -> {
             execute("create table test_table (x int, y string)");
-            execute("insert into test_table values (1, 'test')");
+            execute("insert into test_table select x, x::string as y FROM long_sequence(100_000)");
 
-            CopyExportRunnable stmt = () -> {
-                pause.set(true);
-                runAndFetchCopyExportID("copy (select x from test_table) to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
+            Callable<Exception> callback = () -> {
                 try {
-                    runAndFetchCopyExportID("copy (select y from test_table) to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
-                    Assert.fail("Expected failure due to ongoing export to same directory");
+                    runAndFetchCopyExportID("copy test_table to 'output9' with format parquet statistics_enabled true", sqlExecutionContext);
                 } catch (SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "duplicate export path: output8");
+                    CharSequence contains = "duplicate sql statement: test_table";
+                    TestUtils.assertContains(e.getMessage(), contains);
+                    LOG.info().$("asserted that duplicate export failed: [message=").$(e.getFlyweightMessage()).$(", contains=").$(contains).I$();
+                    return e;
                 } finally {
                     pause.set(false);
                 }
+                return new UnsupportedOperationException();
+            };
+
+            CopyExportRunnable stmt = () -> {
+                runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
+                waitForActiveExport();
             };
 
             CopyExportRunnable test = () ->
@@ -1664,14 +1681,11 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertSql("export_path\tnum_exported_files\tstatus\n" +
                                         exportRoot + File.separator + "output8.parquet" + "\t1\tfinished\n",
                                 "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("""
-                                        x
-                                        1
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet')");
+                        assertSql("x\ty\n1\t1\n",
+                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + ".parquet') LIMIT 1");
                     });
 
-            testCopyExport(stmt, test);
+            testCopyExport(stmt, test, callback);
         });
     }
 
@@ -1859,6 +1873,10 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test, boolean blocked, int waitCount) throws Exception {
+        testCopyExport(statement, test, blocked, waitCount, null);
+    }
+
+    private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test, boolean blocked, int waitCount, Callable<Exception> callback) throws Exception {
         CountDownLatch processed = new CountDownLatch(waitCount);
         execute("truncate table if exists \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
         ObjList<CopyExportRequestJob> jobs = new ObjList<>();
@@ -1866,7 +1884,7 @@ public class CopyExportTest extends AbstractCairoTest {
         AtomicBoolean stop = new AtomicBoolean();
         try {
             for (int i = 0; i < 4; i++) {
-                CopyExportRequestJob copyRequestJob = new CopyExportRequestJob(engine);
+                CopyExportRequestJob copyRequestJob = new CopyExportRequestJob(engine, callback);
                 jobs.add(copyRequestJob);
                 Thread processingThread = createJobThread(copyRequestJob, processed, stop, i);
                 threads.add(processingThread);
@@ -1887,6 +1905,10 @@ public class CopyExportTest extends AbstractCairoTest {
         }
     }
 
+    private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test, Callable<Exception> callback) throws Exception {
+        testCopyExport(statement, test, true, 1, callback);
+    }
+
     private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test) throws Exception {
         testCopyExport(statement, test, true, 1);
     }
@@ -1901,6 +1923,14 @@ public class CopyExportTest extends AbstractCairoTest {
             path.of(exportRoot).concat(fileName).put(".parquet").$();
             return ff.exists(path.$());
         }
+    }
+
+    private void waitForActiveExport() throws Exception {
+        // Wait for an export to be in the active state (running)
+        TestUtils.assertEventually(() -> {
+            long exportId = engine.getCopyExportContext().getActiveExportId();
+            Assert.assertNotEquals("No active export found", -1L, exportId);
+        }, 5, exceptionTypesToCatch);
     }
 
     @FunctionalInterface
