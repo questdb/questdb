@@ -306,6 +306,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         factory = Misc.free(factory);
         msgBindParameterValueCount = 0;
         msgBindSelectFormatCodeCount = 0;
+        outResendArrayFlatIndex = -1;
         outResendColumnIndex = 0;
         outResendCursorRecord = false;
         outResendRecordHeader = true;
