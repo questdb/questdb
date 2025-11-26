@@ -235,15 +235,13 @@ class PGUtils {
             }
             case ColumnType.STRING -> {
                 final CharSequence strValue = record.getStrA(columnIndex);
-                // take rough upper estimate based on the string length
+                // take a rough upper estimate based on the string length
                 yield strValue == null ? Integer.BYTES : Integer.BYTES + 3L * strValue.length();
-                // take rough upper estimate based on the string length
             }
             case ColumnType.SYMBOL -> {
                 final CharSequence symValue = record.getSymA(columnIndex);
-                // take rough upper estimate based on the string length
+                // take a rough upper estimate based on the string length
                 yield symValue == null ? Integer.BYTES : Integer.BYTES + 3L * symValue.length();
-                // take rough upper estimate based on the string length
             }
             case ColumnType.BINARY -> {
                 BinarySequence sequence = record.getBin(columnIndex);
