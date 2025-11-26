@@ -37,7 +37,7 @@ stages:
         steps:
           - checkout: none
           - bash: |
-              set -eux
+              set -x
 
               # Trigger the enterprise CI pipeline via Azure DevOps REST API
               # The enterprise pipeline will:
@@ -46,33 +46,41 @@ stages:
               # 3. Run enterprise tests
               # 4. Post status back to OSS PR
 
-              RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-                -H "Authorization: Basic $(echo -n ":$(AZURE_DEVOPS_ENT_PAT)" | base64)" \
+              # Build auth header (PAT requires empty username)
+              AUTH_HEADER="Authorization: Basic $(printf ':%s' "$AZURE_DEVOPS_ENT_PAT" | base64 -w0)"
+
+              # Build JSON payload
+              PAYLOAD=$(cat <<EOF
+              {
+                "resources": {
+                  "repositories": {
+                    "self": {
+                      "refName": "refs/heads/vi_ci"
+                    }
+                  }
+                },
+                "templateParameters": {
+                  "ossCommit": "$OSS_COMMIT",
+                  "ossPrNumber": "$OSS_PR_NUMBER"
+                }
+              }
+              EOF
+              )
+
+              echo "Triggering enterprise CI for commit $OSS_COMMIT (PR #$OSS_PR_NUMBER)"
+
+              HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" -X POST \
+                -H "$AUTH_HEADER" \
                 -H "Content-Type: application/json" \
                 "https://dev.azure.com/questdb/questdb-enterprise/_apis/pipelines/1/runs?api-version=7.0" \
-                -d '{
-                  "resources": {
-                    "repositories": {
-                      "self": {
-                        "refName": "refs/heads/vi_ci"
-                      }
-                    }
-                  },
-                  "templateParameters": {
-                    "ossCommit": "$(Build.SourceVersion)",
-                    "ossPrNumber": "$(System.PullRequest.PullRequestNumber)"
-                  }
-                }')
-
-              HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-              BODY=$(echo "$RESPONSE" | sed '$d')
+                -d "$PAYLOAD")
 
               echo "Response code: $HTTP_CODE"
-              echo "Response body: $BODY"
+              cat response.json
 
               if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
                 echo "Successfully triggered enterprise CI"
-                RUN_ID=$(echo "$BODY" | jq -r '.id // empty')
+                RUN_ID=$(jq -r '.id // empty' response.json)
                 if [ -n "$RUN_ID" ]; then
                   echo "Enterprise pipeline run ID: $RUN_ID"
                   echo "View at: https://dev.azure.com/questdb/questdb-enterprise/_build/results?buildId=$RUN_ID"
@@ -83,6 +91,8 @@ stages:
             displayName: "Trigger Enterprise Pipeline"
             env:
               AZURE_DEVOPS_ENT_PAT: $(AZURE_DEVOPS_ENT_PAT)
+              OSS_COMMIT: $(Build.SourceVersion)
+              OSS_PR_NUMBER: $(System.PullRequest.PullRequestNumber)
 
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin tests"
