@@ -241,11 +241,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     public void finalizeShardStats() {
         // Find max heap size and apply it to all shards.
         if (configuration.isGroupByPresizeEnabled()) {
+            // First, calculate max heap size.
             long maxHeapSize = 0;
             for (int i = 0; i < NUM_SHARDS; i++) {
                 final MapStats stats = lastShardStats.getQuick(i);
                 maxHeapSize = Math.max(stats.maxHeapSize, maxHeapSize);
             }
+            // Next, apply it to all shard stats.
             for (int i = 0; i < NUM_SHARDS; i++) {
                 lastShardStats.getQuick(i).maxHeapSize = maxHeapSize;
             }
@@ -393,9 +395,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     public void maybeEnableSharding(MapFragment fragment) {
-        final int shardingThreshold = configuration.getGroupByShardingThreshold();
+        // First, update function cardinality stats for the fragment.
+        fragment.totalFunctionCardinality += getTotalFunctionCardinality(fragment.slotId);
         // Functions are cheaper to merge when compared with merging the maps, hence the 10x multiplier.
-        if (!sharded && (fragment.getMap().size() > shardingThreshold || fragment.calculateLocalFunctionCardinality() > 10L * shardingThreshold)) {
+        final int shardingThreshold = configuration.getGroupByShardingThreshold();
+        if (!sharded && (fragment.getMap().size() > shardingThreshold || fragment.totalFunctionCardinality > 10L * shardingThreshold)) {
             sharded = true;
         }
     }
@@ -542,6 +546,15 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return perWorkerGroupByFunctions.getQuick(slotId);
     }
 
+    private long getTotalFunctionCardinality(int slotId) {
+        final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
+        long totalCardinality = 0;
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            totalCardinality += groupByFunctions.getQuick(i).getCardinalityStat();
+        }
+        return totalCardinality;
+    }
+
     private Map reopenDestShard(int shardIndex) {
         Map destMap = destShards.getQuick(shardIndex);
         if (destMap == null) {
@@ -607,24 +620,24 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     private void updateShardedHint() {
-        long totalShardSize = 0;
+        long mapSize = 0;
         if (sharded) {
             for (int i = 0; i < NUM_SHARDS; i++) {
-                totalShardSize += destShards.getQuick(i).size();
+                mapSize += destShards.getQuick(i).size();
             }
         } else {
-            totalShardSize = ownerFragment.map.size();
+            mapSize = ownerFragment.map.size();
         }
 
-        long totalFunctionCardinality = 0;
-        totalFunctionCardinality += ownerFragment.totalFunctionCardinality;
+        long functionCardinality = 0;
+        functionCardinality += ownerFragment.totalFunctionCardinality;
         for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
-            totalFunctionCardinality += perWorkerFragments.getQuick(i).totalFunctionCardinality;
+            functionCardinality += perWorkerFragments.getQuick(i).totalFunctionCardinality;
         }
 
         final int shardingThreshold = configuration.getGroupByShardingThreshold();
         // Functions are cheaper to merge when compared with merging the maps, hence the 10x multiplier.
-        shardedHint = (totalShardSize > shardingThreshold || totalFunctionCardinality > 10L * shardingThreshold);
+        shardedHint = (mapSize > shardingThreshold || functionCardinality > 10L * shardingThreshold);
     }
 
     private static class MapStats {
@@ -722,16 +735,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             map.close();
             sharded = true;
-        }
-
-        private long calculateLocalFunctionCardinality() {
-            final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
-            long maxCardinality = 0;
-            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                maxCardinality = Math.max(groupByFunctions.getQuick(i).getCardinalityStat(), maxCardinality);
-            }
-            this.totalFunctionCardinality += maxCardinality;
-            return maxCardinality;
         }
 
         private void reopenShards() {

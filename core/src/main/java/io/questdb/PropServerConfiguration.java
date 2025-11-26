@@ -224,13 +224,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
-    private final ObjHashSet<String> httpContextPathSqlExecute = new ObjHashSet<>();
-    private final ObjHashSet<String> httpContextPathSqlValidate = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathExport = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathILP = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathILPPing = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathImport = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathSettings = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathSqlExecute = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathSqlValidate = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathTableStatus = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathWarnings = new ObjHashSet<>();
     private final String httpContextWebConsole;
@@ -1828,9 +1828,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + writeWorkers + networkPoolWorkerCount);
 
-            final int defaultReduceQueueCapacity = queryWorkers > 0 ? Math.min(2 * queryWorkers, 64) : 0;
-            this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
-            this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
+            this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, queryWorkers));
+            this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, queryWorkers));
             this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 10_000);
             this.cairoGroupByPresizeEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED, true);
             this.cairoGroupByPresizeMaxCapacity = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY, 100_000_000);
@@ -4667,11 +4666,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public ObjHashSet<String> getContextPathSqlValidation() {
-            return httpContextPathSqlValidate;
-        }
-
-        @Override
         public ObjHashSet<String> getContextPathExport() {
             return httpContextPathExport;
         }
@@ -4694,6 +4688,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public ObjHashSet<String> getContextPathSettings() {
             return httpContextPathSettings;
+        }
+
+        @Override
+        public ObjHashSet<String> getContextPathSqlValidation() {
+            return httpContextPathSqlValidate;
         }
 
         @Override
