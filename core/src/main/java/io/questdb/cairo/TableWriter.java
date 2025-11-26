@@ -3071,19 +3071,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         truncate(true);
     }
 
-    public boolean trySkipWalTransactions(long seqTxn, long skipTxnCount) {
-        assert skipTxnCount > 0;
-        if (txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0) {
-            LOG.info().$("skipping replaced WAL transactions [table=").$(tableToken)
-                    .$("range=[").$(seqTxn)
-                    .$(", ").$(seqTxn + skipTxnCount).$(')')
-                    .I$();
-            commitSeqTxn(seqTxn + skipTxnCount - 1);
-            return true;
-        }
-        return false;
-    }
-
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
         this.metadata.updateTableToken(tableToken);
