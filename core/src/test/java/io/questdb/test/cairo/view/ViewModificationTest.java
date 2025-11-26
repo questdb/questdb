@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.griffin.SqlException;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -41,7 +42,7 @@ public class ViewModificationTest extends AbstractViewTest {
     }
 
     @Test
-    public void testCheckMatViewModification() throws Exception {
+    public void testCheckViewModification() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "create table prices (" +
@@ -78,15 +79,34 @@ public class ViewModificationTest extends AbstractViewTest {
             assertCannotModifyView("truncate table price_1h");
             // vacuum
             assertCannotModifyView("vacuum table price_1h");
+        });
+    }
 
-            // drop
-            assertExceptionNoLeakCheck("drop table price_1h", 11, "table name expected, got view or materialized view name");
+    @Test
+    public void testTryingToDropMatViewAsTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table prices (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by day wal"
+            );
+
+            createView("price_1h", "select sym, last(price) as price, ts from prices sample by 1h", "prices");
+
+            try {
+                execute("drop table price_1h");
+                Assert.fail("Expected exception missing");
+            } catch (SqlException e) {
+                Assert.assertEquals(11, e.getPosition());
+                Assert.assertTrue(e.getMessage().contains("table name expected, got view or materialized view name"));
+            }
         });
     }
 
     private static void assertCannotModifyView(String dml) {
         try {
             execute(dml);
+            Assert.fail("Expected exception missing");
         } catch (SqlException e) {
             assertContains(e.getMessage(), "cannot modify view [view=price_1h]");
         }

@@ -2242,7 +2242,7 @@ public class MatViewTest extends AbstractCairoTest {
             // update
             assertCannotModifyMatView("update price_1h set price = 1.1");
             // insert
-            assertCannotModifyMatView("insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')");
+            assertCannotModifyMatView("insert into price_1h values('gbpusd', 1.319, '2024-09-10T12:05')");
             // insert as select
             assertCannotModifyMatView("insert into price_1h select sym, last(price) as price, ts from base_price sample by 1h");
             // alter
@@ -6559,6 +6559,7 @@ public class MatViewTest extends AbstractCairoTest {
                 execute("drop table price_1h");
                 Assert.fail("Expected exception missing");
             } catch (SqlException e) {
+                Assert.assertEquals(11, e.getPosition());
                 Assert.assertTrue(e.getMessage().contains("table name expected, got view or materialized view name"));
             }
         });
@@ -6812,6 +6813,7 @@ public class MatViewTest extends AbstractCairoTest {
     private static void assertCannotModifyMatView(String updateSql) {
         try {
             execute(updateSql);
+            Assert.fail("Expected exception missing");
         } catch (SqlException e) {
             Assert.assertTrue(e.getMessage().contains("cannot modify materialized view"));
         }
