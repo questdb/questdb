@@ -930,13 +930,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         pipelineCurrentEntry.setReturnRowCountLimit(pipelineCurrentEntry.getInt(lo, msgLimit, "could not read max rows value"));
         pipelineCurrentEntry.setStateExec(true);
         sqlExecutionContext.initNow();
-        try {
-            if (pipelineCurrentEntry.populateBindingServiceForExec(sqlExecutionContext, bindVariableValuesCharacterStore, utf8String, binarySequenceParamsPool)) {
-                bindingServiceConfiguredFor = pipelineCurrentEntry;
-            }
-        } catch (SqlException e) {
-            pipelineCurrentEntry.getErrorMessageSink().put(e.getFlyweightMessage());
-        }
+        bindingServiceConfiguredFor = pipelineCurrentEntry;
         transactionState = pipelineCurrentEntry.msgExecute(
                 sqlExecutionContext,
                 transactionState,

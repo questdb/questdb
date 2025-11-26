@@ -594,6 +594,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
         sqlExecutionContext.containsSecret(sqlTextHasSecret);
         try {
+            populateBindingServiceForExec(sqlExecutionContext, bindVariableCharacterStore, directUtf8String, binarySequenceParamsPool);
             switch (this.sqlType) {
                 case CompiledQuery.EXPLAIN:
                 case CompiledQuery.SELECT:
