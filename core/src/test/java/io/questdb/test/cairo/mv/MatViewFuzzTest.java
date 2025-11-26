@@ -81,7 +81,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0.2, 0);
             setFuzzProperties(rnd);
-            runMvFuzz(rnd, getTestName(), 1);
+            runMvFuzz(rnd, getTestName(), 1, true);
         });
     }
 
@@ -189,7 +189,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             // truncate will lead to mat view invalidation
             setFuzzParams(rnd, 0, 0.5);
             setFuzzProperties(rnd);
-            runMvFuzz(rnd, getTestName(), 1, false, false);
+            runMvFuzz(rnd, getTestName(), 1, false);
         });
     }
 
@@ -209,8 +209,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 1_000, 10_000, 0, 0.0);
             setFuzzProperties(rnd);
-            // use sleep(1) to make sure that the view is not refreshed too quickly
-            runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4), false, true);
+            runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4), false);
         });
     }
 
@@ -230,7 +229,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
-            runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4));
+            runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4), true);
         });
     }
 
@@ -428,7 +427,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
-            runMvFuzz(rnd, getTestName(), 1);
+            runMvFuzz(rnd, getTestName(), 1, true);
         });
     }
 
@@ -442,7 +441,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
-            runMvFuzz(rnd, getTestName(), 4);
+            runMvFuzz(rnd, getTestName(), 4, true);
         });
     }
 
@@ -607,11 +606,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         return transactions;
     }
 
-    private void runMvFuzz(Rnd rnd, String testTableName, int tableCount) throws Exception {
-        runMvFuzz(rnd, testTableName, tableCount, true, false);
-    }
-
-    private void runMvFuzz(Rnd rnd, String testTableName, int tableCount, boolean expectValidMatViews, boolean sleep) throws Exception {
+    private void runMvFuzz(Rnd rnd, String testTableName, int tableCount, boolean expectValidMatViews) throws Exception {
         final AtomicBoolean stop = new AtomicBoolean();
         final ObjList<Thread> refreshJobs = new ObjList<>();
         final int refreshJobCount = 1 + rnd.nextInt(4);
@@ -626,7 +621,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         for (int i = 0; i < tableCount; i++) {
             String tableNameBase = testTableName + "_" + i;
             String tableNameMv = tableNameBase + "_mv";
-            String viewSql = "select min(c3), max(c3), ts from " + tableNameBase + (sleep ? " where sleep(1)" : "") + " sample by 1h";
+            String viewSql = "select min(c3), max(c3), ts from " + tableNameBase + " sample by 1h";
             ObjList<FuzzTransaction> transactions = createTransactionsAndMv(rnd, tableNameBase, tableNameMv, viewSql);
             fuzzTransactions.add(transactions);
             viewSqls.add(viewSql);
