@@ -1074,6 +1074,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
             // number of bits or chars for geohash
             final int geohashSize = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
+
+            // outResendArrayFlatIndex applies to the column we were sending before we ran out of space
+            // all other array columns will be sent in full
+            final int effectiveOutResendArrayFlatIndex = i == outResendColumnIndex ? outResendArrayFlatIndex : -1;
+
             final int columnValueSize = calculateColumnBinSize(
                     this,
                     record,
@@ -1081,7 +1086,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     columnType,
                     geohashSize,
                     maxBlobSize,
-                    outResendArrayFlatIndex
+                    effectiveOutResendArrayFlatIndex
             );
 
             if (columnValueSize < 0) {

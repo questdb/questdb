@@ -100,7 +100,7 @@ def run_test(test, global_variables, connection):
     variables = global_variables.copy()
     variables.update(test.get('variables', {}))
 
-    cursor = connection.cursor()
+    cursor = connection.cursor(binary = True)
 
     test_failed = False
     try:
@@ -151,7 +151,8 @@ def main(yaml_file):
                 port=port,
                 user='admin',
                 password='quest',
-                dbname='qdb'
+                dbname='qdb',
+                autocommit=True
             )
             run_test(test, global_variables, connection)
             connection.close()
