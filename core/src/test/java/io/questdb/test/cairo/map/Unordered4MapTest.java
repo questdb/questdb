@@ -46,7 +46,6 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -55,7 +54,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Consumer;
 
-public class Unordered4MapTest extends AbstractCairoTest {
+public class Unordered4MapTest extends AbstractCairoTest2 {
     Decimal128 decimal128 = new Decimal128();
     Decimal256 decimal256 = new Decimal256();
 
