@@ -34,7 +34,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-public class WeightedStdDevSampleGroupByFunctionFactory implements FunctionFactory {
+public class WeightedStdDevReliabilityGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "weighted_stddev_rel(DD)";
@@ -53,12 +53,12 @@ public class WeightedStdDevSampleGroupByFunctionFactory implements FunctionFacto
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new WeightedStdDevSampleGroupByFunction(args.getQuick(0), args.getQuick(1));
+        return new WeightedStdDevReliabilityGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class WeightedStdDevSampleGroupByFunction extends AbstractWeightedStdDevGroupByFunction {
+    private static class WeightedStdDevReliabilityGroupByFunction extends AbstractWeightedStdDevGroupByFunction {
 
-        public WeightedStdDevSampleGroupByFunction(@NotNull Function sampleArg, @NotNull Function weightArg) {
+        public WeightedStdDevReliabilityGroupByFunction(@NotNull Function sampleArg, @NotNull Function weightArg) {
             super(sampleArg, weightArg);
         }
 
