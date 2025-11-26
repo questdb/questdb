@@ -1444,6 +1444,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                             pendingWriters,
                             responseUtf8Sink
                     );
+                    break;
                 }
             }
 
