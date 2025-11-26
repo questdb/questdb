@@ -99,13 +99,13 @@ import static io.questdb.griffin.model.ExportModel.COPY_FORMAT_PARQUET;
 public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable, CopyExportRequestTask.WriteParquetCallBack {
     static final int QUERY_DONE = 1;
     static final int QUERY_METADATA = 2;
+    static final int QUERY_PARQUET_EXPORT_DATA = 14;
     static final int QUERY_PARQUET_EXPORT_INIT = 10;
     static final int QUERY_PARQUET_FILE_SEND_CHUNK = 16;
     static final int QUERY_PARQUET_FILE_SEND_COMPLETE = 17;
     static final int QUERY_PARQUET_FILE_SEND_INIT = 15;
     static final int QUERY_PARQUET_SEND_HEADER = 12;
     static final int QUERY_PARQUET_SEND_MAGIC = 13;
-    static final int QUERY_PARQUET_TO_PARQUET_FILE = 14;
     static final int QUERY_RECORD = 5;
     static final int QUERY_RECORD_START = 4;
     static final int QUERY_RECORD_SUFFIX = 6;
@@ -636,7 +636,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 var copyExportContext = engine.getCopyExportContext();
                 CopyExportResult exportResult = state.getExportResult();
                 entry = copyExportContext.getEntry(state.copyID);
-
+                task.clear();
                 task.of(
                         entry,
                         state.getParquetTempTableCreate(),
@@ -726,10 +726,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 break OUT;
                             }
                         }
-                        state.queryState = QUERY_PARQUET_TO_PARQUET_FILE;
+                        state.queryState = QUERY_PARQUET_EXPORT_DATA;
                         // fall through
 
-                    case QUERY_PARQUET_TO_PARQUET_FILE:
+                    case QUERY_PARQUET_EXPORT_DATA: // export to temp parquet file or memory
                         try {
                             copyQueryToParquetFile(state);
                         } catch (SqlException | CairoException e) {

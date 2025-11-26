@@ -347,12 +347,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public long getColumnTop(int columnIndex) {
-            long relative = reader.getColumnTop(reader.getColumnBase(partitionIndex), columnIndexes.getQuick(columnIndex)) - partitionLo;
-            return relative > 0 ? relative : 0;
-        }
-
-        @Override
         public byte getFormat() {
             return format;
         }
@@ -406,6 +400,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public long getPartitionLo() {
             return partitionLo;
+        }
+
+        @Override
+        public boolean hasColumnData(int columnIndex) {
+            return reader.getColumnTop(reader.getColumnBase(partitionIndex), columnIndexes.getQuick(columnIndex)) - partitionLo <= 0;
         }
     }
 }

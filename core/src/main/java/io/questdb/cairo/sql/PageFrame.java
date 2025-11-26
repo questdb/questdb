@@ -67,19 +67,12 @@ public interface PageFrame {
     int getColumnCount();
 
     /**
-     * Returns the column top offset for a specific column within this page frame.
-     * For example, if a column was added when the partition already had 200 rows,
-     * and this page frame covers rows 150-250:
-     * <ul>
-     *   <li>Rows 150-199 (first 50 rows of this frame): NULL values, column_top = 50</li>
-     *   <li>Rows 200-249 (last 50 rows of this frame): actual data</li>
-     * </ul>
+     * Checks if a column has actual data in this frame (vs. being entirely column top/NULL).
      *
      * @param columnIndex index of column within this frame
-     * @return row offset where column data begins (0 if column exists from partition start),
-     * or greater equal than frame's row count if entire frame predates the column
+     * @return true if column has data, false if entire frame predates the column
      */
-    long getColumnTop(int columnIndex);
+    boolean hasColumnData(int columnIndex);
 
     /**
      * Returns page frame format.
@@ -154,4 +147,5 @@ public interface PageFrame {
      * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
+
 }

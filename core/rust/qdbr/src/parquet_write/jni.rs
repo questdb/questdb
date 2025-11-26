@@ -417,8 +417,9 @@ impl Write for BufferWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         unsafe {
             let buffer_ref = &mut *self.buffer;
-            if buffer_ref.len() == self.init_offset {
-                self.offset = 8;
+            if buffer_ref.len() <= self.init_offset {
+                buffer_ref.set_len(self.init_offset);
+                self.offset = self.init_offset;
             }
 
             let total_size = self.offset + buf.len();
@@ -444,13 +445,15 @@ impl Write for BufferWriter {
 
 pub struct StreamingParquetWriter {
     partition: Partition,
-    current_buffer: Vec<u8>,
+    // We need Box<Vec<u8>> here to ensure the Vec itself has a stable heap address
+    #[allow(clippy::box_collection)]
+    current_buffer: Box<Vec<u8>>,
     chunked_writer: ChunkedWriter<BufferWriter>,
     additional_data: Vec<KeyValue>,
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_createStreamingParquetWriter(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_createStreamingParquetWriter(
     mut env: JNIEnv,
     _class: JClass,
     col_count: jint,
@@ -474,7 +477,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_createStream
             col_meta_data,
             timestamp_index,
         )?;
-        let mut current_buffer = Vec::with_capacity(8192);
+        let current_buffer = Vec::with_capacity(8192);
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
         let row_group_size_opt = if row_group_size > 0 {
@@ -507,8 +510,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_createStream
             raw_array_encoding != 0,
         )?;
         let encodings = crate::parquet_write::schema::to_encodings(&partition_template);
+        let mut current_buffer = Box::new(current_buffer);
         let buffer_writer =
-            unsafe { BufferWriter::new_with_offset(&mut current_buffer as *mut Vec<u8>, 8) };
+            unsafe { BufferWriter::new_with_offset(&mut *current_buffer as *mut Vec<u8>, 8) };
         let parquet_writer = ParquetWriter::new(buffer_writer)
             .with_version(version_from_i32(version)?)
             .with_compression(compression_options)
@@ -518,6 +522,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_createStream
             .with_data_page_size(data_page_size_opt)
             .with_sorting_columns(sorting_columns.clone());
         let chunked_writer = parquet_writer.chunked(parquet_schema, encodings)?;
+
         Ok(StreamingParquetWriter {
             partition: partition_template,
             current_buffer,
@@ -537,7 +542,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_createStream
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_writeStreamingParquetChunk(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_writeStreamingParquetChunk(
     mut env: JNIEnv,
     _class: JClass,
     encoder: *mut StreamingParquetWriter,
@@ -552,10 +557,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_writeStreami
     }
     let encoder = unsafe { &mut *encoder };
     let mut write_chunk = || -> ParquetResult<*const u8> {
-        unsafe {
-            encoder.current_buffer.set_len(8);
-        }
-
+        encoder.current_buffer.clear();
         update_partition_data(&mut encoder.partition, col_data_ptr, row_count as usize)?;
         encoder.chunked_writer.write_chunk(&encoder.partition)?;
         let data_len = (encoder.current_buffer.len() - 8) as u64;
@@ -574,7 +576,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_writeStreami
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_finishStreamingParquetWrite(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_finishStreamingParquetWrite(
     mut env: JNIEnv,
     _class: JClass,
     encoder: *mut StreamingParquetWriter,
@@ -610,7 +612,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_finishStream
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_closeStreamingParquetWriter(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_closeStreamingParquetWriter(
     mut env: JNIEnv,
     _class: JClass,
     encoder: *mut StreamingParquetWriter,
@@ -637,7 +639,7 @@ fn create_partition_template(
     let mut col_names = unsafe {
         std::str::from_utf8_unchecked(slice::from_raw_parts(col_names_ptr, col_names_len))
     };
-    let col_meta_datas = unsafe { slice::from_raw_parts(col_meta_data_ptr, col_count) };
+    let col_meta_datas = unsafe { slice::from_raw_parts(col_meta_data_ptr, col_count * 2) };
     let mut columns = vec![];
 
     for col_idx in 0..col_count {
@@ -690,19 +692,26 @@ fn update_partition_data(
         let secondary_col_size = col_data[raw_idx + 4];
         let symbol_offsets_addr = col_data[raw_idx + 5];
         let symbol_offsets_size = col_data[raw_idx + 6];
+        let primary_ptr = primary_col_addr as *const u8;
+        let secondary_ptr = secondary_col_addr as *const u8;
+        let symbol_offsets_ptr = symbol_offsets_addr as *const u64;
+
         column.column_top = col_top as usize;
         column.row_count = row_count;
-        column.primary_data = unsafe {
-            slice::from_raw_parts(primary_col_addr as *const u8, primary_col_size as usize)
+        column.primary_data = if primary_ptr.is_null() {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(primary_ptr, primary_col_size as usize) }
         };
-        column.secondary_data = unsafe {
-            slice::from_raw_parts(secondary_col_addr as *const u8, secondary_col_size as usize)
+        column.secondary_data = if secondary_ptr.is_null() {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(secondary_ptr, secondary_col_size as usize) }
         };
-        column.symbol_offsets = unsafe {
-            slice::from_raw_parts(
-                symbol_offsets_addr as *const u64,
-                symbol_offsets_size as usize,
-            )
+        column.symbol_offsets = if symbol_offsets_ptr.is_null() {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_size as usize) }
         };
     }
 

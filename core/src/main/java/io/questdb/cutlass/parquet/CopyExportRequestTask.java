@@ -188,7 +188,6 @@ public class CopyExportRequestTask implements Mutable {
             PageFrameCursor pageFrameCursor, // for streaming export
             RecordMetadata metadata,
             WriteParquetCallBack writeCallback
-
     ) {
         this.entry = entry;
         this.result = result;
@@ -269,7 +268,6 @@ public class CopyExportRequestTask implements Mutable {
         private final DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
         private final DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
         private final DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false);
-        private long lastPartitionIndex = -1;
         private long streamExportCurrentPtr;
         private long streamExportCurrentSize;
         private byte streamExportFormat;
@@ -286,16 +284,28 @@ public class CopyExportRequestTask implements Mutable {
             }
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
-            lastPartitionIndex = -1;
         }
 
         public void finishExport() throws Exception {
-            if (streamWriter == -1) {
-                return;
+            if (streamWriter == -1) { // empty table
+                streamWriter = createStreamingParquetWriter(
+                        metadata.getColumnCount(),
+                        columnNames.ptr(),
+                        columnNames.size(),
+                        columnMetadata.getAddress(),
+                        metadata.getTimestampIndex(),
+                        descending,
+                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                        statisticsEnabled,
+                        rawArrayEncoding,
+                        rowGroupSize,
+                        dataPageSize,
+                        parquetVersion
+                );
             }
             long buffer = finishStreamingParquetWrite(streamWriter);
-            long dataPtr = Unsafe.getUnsafe().getLong(buffer);
-            long dataSize = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+            long dataPtr = buffer + Long.BYTES;
+            long dataSize = Unsafe.getUnsafe().getLong(buffer);
             assert writeCallback != null;
             writeCallback.onWrite(dataPtr, dataSize, PartitionFormat.NATIVE);
             closeStreamingParquetWriter(streamWriter);
@@ -326,28 +336,22 @@ public class CopyExportRequestTask implements Mutable {
         }
 
         public void writePageFrame(PageFrameCursor frameCursor, PageFrame frame) throws Exception {
-            int currentPartitionIndex = frame.getPartitionIndex();
-            if (currentPartitionIndex != lastPartitionIndex) {
-                if (lastPartitionIndex != -1 && streamExportFormat == PartitionFormat.NATIVE) {
-                    finishExport();
-                }
-                if (frame.getFormat() == PartitionFormat.NATIVE) {
-                    assert metadata != null;
-                    streamWriter = createStreamingParquetWriter(
-                            metadata.getColumnCount(),
-                            columnNames.ptr(),
-                            columnNames.size(),
-                            columnMetadata.getAddress(),
-                            metadata.getTimestampIndex(),
-                            descending,
-                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                            statisticsEnabled,
-                            rawArrayEncoding,
-                            rowGroupSize,
-                            dataPageSize,
-                            parquetVersion
-                    );
-                }
+            if (streamWriter == -1) {
+                assert metadata != null;
+                streamWriter = createStreamingParquetWriter(
+                        metadata.getColumnCount(),
+                        columnNames.ptr(),
+                        columnNames.size(),
+                        columnMetadata.getAddress(),
+                        metadata.getTimestampIndex(),
+                        descending,
+                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                        statisticsEnabled,
+                        rawArrayEncoding,
+                        rowGroupSize,
+                        dataPageSize,
+                        parquetVersion
+                );
             }
 
             if (frame.getFormat() == PartitionFormat.NATIVE) {
@@ -356,11 +360,7 @@ public class CopyExportRequestTask implements Mutable {
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 
                 for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
-                    long localColTop = frame.getColumnTop(i);
-                    if (localColTop > frameRowCount) {
-                        localColTop = frameRowCount;
-                    }
-
+                    long localColTop = frame.hasColumnData(i) ? 0 : frameRowCount;
                     assert metadata != null;
                     final int columnType = metadata.getColumnType(i);
                     if (ColumnType.isSymbol(columnType)) {
@@ -392,10 +392,10 @@ public class CopyExportRequestTask implements Mutable {
                         columnData.getAddress(),
                         frameRowCount
                 );
-                streamExportCurrentPtr = Unsafe.getUnsafe().getLong(buffer);
-                streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+                streamExportCurrentPtr = buffer + Long.BYTES;
+                streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
                 streamExportFormat = PartitionFormat.NATIVE;
-                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize, PartitionFormat.NATIVE);
+                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize, streamExportFormat);
             } else {
                 streamExportCurrentPtr = frame.getParquetAddr();
                 streamExportCurrentSize = frame.getParquetFileSize();

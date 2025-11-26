@@ -333,10 +333,6 @@ public class SerialParquetExporter implements Closeable {
                 throw CopyExportException.instance(CopyExportRequestTask.Phase.SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
             exporter.onSuspend();
-            if (circuitBreaker.checkIfTripped()) {
-                LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
-                throw CopyExportException.instance(CopyExportRequestTask.Phase.SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
-            }
             PageFrame frame;
             while ((frame = pageFrameCursor.next()) != null) {
                 if (circuitBreaker.checkIfTripped()) {
