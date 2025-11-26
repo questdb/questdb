@@ -54,7 +54,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Consumer;
 
-public class Unordered4MapTest extends AbstractCairoTest22 {
+public class Unordered4MapTest extends AbstractCairoTest2 {
     Decimal128 decimal128 = new Decimal128();
     Decimal256 decimal256 = new Decimal256();
 
