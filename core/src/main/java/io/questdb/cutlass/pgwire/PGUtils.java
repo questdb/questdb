@@ -176,7 +176,13 @@ class PGUtils {
                         ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG
                         : "implemented only for DOUBLE and LONG";
                 int notNullCount = PGUtils.countNotNull(array, arrayResumePoint);
-                return calculateArrayResumeColBinSize(notNullCount, array.getCardinality() - notNullCount);
+                if (arrayResumePoint == 0) {
+                    // No elements written yet, need full array size including header
+                    return calculateArrayColBinSize(array, notNullCount);
+                }
+                // Some elements already written, only calculate remaining elements
+                int remainingElements = array.getCardinality() - arrayResumePoint;
+                return calculateArrayResumeColBinSize(notNullCount, remainingElements - notNullCount);
             default:
                 assert false : "unsupported type: " + typeTag;
                 return -1;
@@ -185,18 +191,15 @@ class PGUtils {
 
     public static int countNotNull(ArrayView array, int resumePoint) {
         if (array.isVanilla()) {
-            switch (array.getElemType()) {
-                case ColumnType.DOUBLE:
-                    return array.flatView().countDouble(
-                            array.getFlatViewOffset() + resumePoint,
-                            array.getFlatViewLength() - resumePoint);
-                case ColumnType.LONG:
-                    return array.flatView().countLong(
-                            array.getFlatViewOffset() + resumePoint,
-                            array.getFlatViewLength() - resumePoint);
-                default:
-                    throw new AssertionError("Unsupported array element type: " + array.getElemType());
-            }
+            return switch (array.getElemType()) {
+                case ColumnType.DOUBLE -> array.flatView().countDouble(
+                        array.getFlatViewOffset() + resumePoint,
+                        array.getFlatViewLength() - resumePoint);
+                case ColumnType.LONG -> array.flatView().countLong(
+                        array.getFlatViewOffset() + resumePoint,
+                        array.getFlatViewLength() - resumePoint);
+                default -> throw new AssertionError("Unsupported array element type: " + array.getElemType());
+            };
         } else {
             return countNotNullRecursive(array, 0, 0, resumePoint);
         }
@@ -212,61 +215,50 @@ class PGUtils {
             int columnIndex,
             int typeTag
     ) {
-        switch (typeTag) {
-            case ColumnType.NULL:
-                return Integer.BYTES;
-            case ColumnType.BOOLEAN:
-                return Integer.BYTES + Byte.BYTES;
-            case ColumnType.BYTE:
-                return Integer.BYTES + MAX_BYTE_TEXT_LEN;
-            case ColumnType.SHORT:
-                return Integer.BYTES + MAX_SHORT_TEXT_LEN;
-            case ColumnType.CHAR:
-                return Integer.BYTES + MAX_CHAR_TEXT_LEN;
-            case ColumnType.IPv4:
-                return Integer.BYTES + MAX_IPv4_TEXT_LEN;
-            case ColumnType.INT:
-                return Integer.BYTES + MAX_INT_TEXT_LEN;
-            case ColumnType.LONG:
-                return Integer.BYTES + MAX_LONG_TEXT_LEN;
-            case ColumnType.DATE:
-                return Integer.BYTES + MAX_DATE_TEXT_LEN;
-            case ColumnType.TIMESTAMP:
-                return Integer.BYTES + MAX_TIMESTAMP_TEXT_LEN;
-            case ColumnType.FLOAT:
-                return Integer.BYTES + MAX_FLOAT_TEXT_LEN;
-            case ColumnType.DOUBLE:
-                return Integer.BYTES + MAX_DOUBLE_TEXT_LEN;
-            case ColumnType.UUID:
-                return Integer.BYTES + MAX_UUID_TEXT_LEN;
-            case ColumnType.LONG256:
-                return Integer.BYTES + MAX_LONG256_TEXT_LEN;
-            case ColumnType.GEOBYTE:
-                return Integer.BYTES + MAX_GEOBYTE_TEXT_LEN;
-            case ColumnType.GEOSHORT:
-                return Integer.BYTES + MAX_GEOSHORT_TEXT_LEN;
-            case ColumnType.GEOINT:
-                return Integer.BYTES + MAX_GEOINT_TEXT_LEN;
-            case ColumnType.GEOLONG:
-                return Integer.BYTES + MAX_GEOLONG_TEXT_LEN;
-            case ColumnType.VARCHAR:
+        return switch (typeTag) {
+            case ColumnType.NULL -> Integer.BYTES;
+            case ColumnType.BOOLEAN -> Integer.BYTES + Byte.BYTES;
+            case ColumnType.BYTE -> Integer.BYTES + MAX_BYTE_TEXT_LEN;
+            case ColumnType.SHORT -> Integer.BYTES + MAX_SHORT_TEXT_LEN;
+            case ColumnType.CHAR -> Integer.BYTES + MAX_CHAR_TEXT_LEN;
+            case ColumnType.IPv4 -> Integer.BYTES + MAX_IPv4_TEXT_LEN;
+            case ColumnType.INT -> Integer.BYTES + MAX_INT_TEXT_LEN;
+            case ColumnType.LONG -> Integer.BYTES + MAX_LONG_TEXT_LEN;
+            case ColumnType.DATE -> Integer.BYTES + MAX_DATE_TEXT_LEN;
+            case ColumnType.TIMESTAMP -> Integer.BYTES + MAX_TIMESTAMP_TEXT_LEN;
+            case ColumnType.FLOAT -> Integer.BYTES + MAX_FLOAT_TEXT_LEN;
+            case ColumnType.DOUBLE -> Integer.BYTES + MAX_DOUBLE_TEXT_LEN;
+            case ColumnType.UUID -> Integer.BYTES + MAX_UUID_TEXT_LEN;
+            case ColumnType.LONG256 -> Integer.BYTES + MAX_LONG256_TEXT_LEN;
+            case ColumnType.GEOBYTE -> Integer.BYTES + MAX_GEOBYTE_TEXT_LEN;
+            case ColumnType.GEOSHORT -> Integer.BYTES + MAX_GEOSHORT_TEXT_LEN;
+            case ColumnType.GEOINT -> Integer.BYTES + MAX_GEOINT_TEXT_LEN;
+            case ColumnType.GEOLONG -> Integer.BYTES + MAX_GEOLONG_TEXT_LEN;
+            case ColumnType.VARCHAR -> {
                 final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
-                return vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
-            case ColumnType.STRING:
+                yield vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
+            }
+            case ColumnType.STRING -> {
                 final CharSequence strValue = record.getStrA(columnIndex);
                 // take rough upper estimate based on the string length
-                return strValue == null ? Integer.BYTES : Integer.BYTES + 3L * strValue.length();
-            case ColumnType.SYMBOL:
+                yield strValue == null ? Integer.BYTES : Integer.BYTES + 3L * strValue.length();
+                // take rough upper estimate based on the string length
+            }
+            case ColumnType.SYMBOL -> {
                 final CharSequence symValue = record.getSymA(columnIndex);
                 // take rough upper estimate based on the string length
-                return symValue == null ? Integer.BYTES : Integer.BYTES + 3L * symValue.length();
-            case ColumnType.BINARY:
+                yield symValue == null ? Integer.BYTES : Integer.BYTES + 3L * symValue.length();
+                // take rough upper estimate based on the string length
+            }
+            case ColumnType.BINARY -> {
                 BinarySequence sequence = record.getBin(columnIndex);
-                return sequence == null ? Integer.BYTES : Integer.BYTES + sequence.length();
-            default:
+                yield sequence == null ? Integer.BYTES : Integer.BYTES + sequence.length();
+            }
+            default -> {
                 assert false : "unsupported type: " + typeTag;
-                return -1;
-        }
+                yield -1;
+            }
+        };
     }
 
     private static int countNotNullRecursive(ArrayView array, int dim, int flatIndex, int resumePoint) {
