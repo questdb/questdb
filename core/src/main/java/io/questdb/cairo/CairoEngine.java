@@ -1274,6 +1274,7 @@ public class CairoEngine implements Closeable, WriterSource {
             matViewRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
             matViewRefreshTask.invalidationReason = "table drop operation";
             notifyMatViewBaseTableCommit(matViewRefreshTask, tableSequencerAPI.lastTxn(tableToken));
+            notifyViewStoresAboutDrop(tableToken);
             return true;
         }
         return false;
