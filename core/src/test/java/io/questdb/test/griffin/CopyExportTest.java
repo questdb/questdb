@@ -37,12 +37,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -1584,23 +1581,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyWithSameOutput() throws Exception {
-        AtomicBoolean pause = new AtomicBoolean();
-        FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                if (pause.get() && Utf8s.containsAscii(to, "output8")) {
-                    while (pause.get()) {
-                        Os.sleep(100);
-                    }
-                }
-                return super.rename(from, to);
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
+        assertMemoryLeak(() -> {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table select x, x::string as y FROM long_sequence(100_000)");
-            drainWalQueue();
 
             Callable<Exception> callback = () -> {
                 try {
@@ -1610,8 +1593,6 @@ public class CopyExportTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), contains);
                     LOG.info().$("asserted that duplicate export failed: [message=").$(e.getFlyweightMessage()).$(", contains=").$(contains).I$();
                     return e;
-                } finally {
-                    pause.set(false);
                 }
                 return new UnsupportedOperationException();
             };
@@ -1640,20 +1621,7 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyWithSameSql() throws Exception {
-        AtomicBoolean pause = new AtomicBoolean();
-        FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                if (pause.get() && Utf8s.containsAscii(to, "output8")) {
-                    while (pause.get()) {
-                        Os.sleep(100);
-                    }
-                }
-                return super.rename(from, to);
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
+        assertMemoryLeak(() -> {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table select x, x::string as y FROM long_sequence(100_000)");
 
@@ -1665,8 +1633,6 @@ public class CopyExportTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), contains);
                     LOG.info().$("asserted that duplicate export failed: [message=").$(e.getFlyweightMessage()).$(", contains=").$(contains).I$();
                     return e;
-                } finally {
-                    pause.set(false);
                 }
                 return new UnsupportedOperationException();
             };
@@ -1691,31 +1657,15 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyWithSameTable() throws Exception {
-        AtomicBoolean pause = new AtomicBoolean();
-        FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                if (pause.get() && Utf8s.containsAscii(to, "output8")) {
-                    while (pause.get()) {
-                        Os.sleep(100);
-                    }
-                }
-                return super.rename(from, to);
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
+        assertMemoryLeak(() -> {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table values (1, 'test')");
-            pause.set(true);
             runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
             try {
                 runAndFetchCopyExportID("copy test_table to 'output9' with format parquet statistics_enabled true", sqlExecutionContext);
                 Assert.fail("Expected failure due to ongoing export to same sql statement");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getMessage(), "duplicate sql statement: test_table");
-            } finally {
-                pause.set(false);
             }
 
             CopyExportRunnable test = () ->
