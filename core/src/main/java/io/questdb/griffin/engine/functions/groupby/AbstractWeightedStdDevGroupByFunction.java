@@ -57,6 +57,13 @@ public abstract class AbstractWeightedStdDevGroupByFunction extends DoubleFuncti
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double sample = sampleArg.getDouble(record);
         final double weight = weightArg.getDouble(record);
+        if (!Numbers.isFinite(sample) || !Numbers.isFinite(weight) || weight == 0.0) {
+            mapValue.putDouble(valueIndex, 0.0); // w_sum
+            mapValue.putDouble(valueIndex + 1, 0.0); // w_sum2
+            mapValue.putDouble(valueIndex + 2, 0.0); // mean
+            mapValue.putDouble(valueIndex + 3, 0.0); // S
+            return;
+        }
         mapValue.putDouble(valueIndex, weight); // w_sum
         mapValue.putDouble(valueIndex + 1, weight * weight); // w_sum2
         mapValue.putDouble(valueIndex + 2, sample); // mean

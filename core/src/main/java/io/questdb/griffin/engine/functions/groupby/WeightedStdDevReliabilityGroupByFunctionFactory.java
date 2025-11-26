@@ -37,7 +37,7 @@ import org.jetbrains.annotations.NotNull;
 public class WeightedStdDevSampleGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "weighted_stddev_samp(DD)";
+        return "weighted_stddev_rel(DD)";
     }
 
     @Override
@@ -77,7 +77,7 @@ public class WeightedStdDevSampleGroupByFunctionFactory implements FunctionFacto
 
         @Override
         public String getName() {
-            return "weighted_stddev_samp";
+            return "weighted_stddev_rel";
         }
 
         @Override
