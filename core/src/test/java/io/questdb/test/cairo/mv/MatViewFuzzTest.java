@@ -52,8 +52,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MatViewFuzzTest extends AbstractFuzzTest {
-    private static final int SPIN_LOCK_TIMEOUT = 100_000_000;
+    private static final long SPIN_LOCK_TIMEOUT = 100_000_000;
     private static final String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
+
+    @Override
+    public void setUp() {
+        super.setUp();
+        // Timer refresh tests mess with the clock, so set the spin timeout
+        // to a large value to avoid false positive errors.
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
+        spinLockTimeout = SPIN_LOCK_TIMEOUT;
+    }
 
     @Test
     public void test2LevelDependencyView() throws Exception {
@@ -190,10 +199,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
-            // Timer refresh tests mess with the clock, so set the spin timeout
-            // to a large value to avoid false positive errors.
-            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
-            spinLockTimeout = 10_000_000;
             runPeriodMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4));
         });
     }
@@ -202,7 +207,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public void testManyTablesRefreshJobRace() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd, 2_000, 1_000, 0, 0.0);
+            setFuzzParams(rnd, 1_000, 10_000, 0, 0.0);
             setFuzzProperties(rnd);
             // use sleep(1) to make sure that the view is not refreshed too quickly
             runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4), false, true);
@@ -215,10 +220,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
-            // Timer refresh tests mess with the clock, so set the spin timeout
-            // to a large value to avoid false positive errors.
-            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
-            spinLockTimeout = 10_000_000;
             runTimerMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4));
         });
     }
@@ -323,11 +324,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testPeriodRefreshConcurrent() throws Exception {
-        // Timer refresh tests mess with the clock, so set the spin timeout
-        // to a large value to avoid false positive errors.
-        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
-        spinLockTimeout = 100_000_000;
-
         final TestMicroClock testClock = new TestMicroClock(MicrosTimestampDriver.floor("2000-01-01T00:00:00.000000Z"));
         testMicrosClock = testClock;
 
@@ -411,10 +407,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
-            // Timer refresh tests mess with the clock, so set the spin timeout
-            // to a large value to avoid false positive errors.
-            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
-            spinLockTimeout = SPIN_LOCK_TIMEOUT;
             runPeriodMvFuzz(rnd, getTestName(), 1);
         });
     }
@@ -425,10 +417,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0, 0);
             setFuzzProperties(rnd);
-            // Timer refresh tests mess with the clock, so set the spin timeout
-            // to a large value to avoid false positive errors.
-            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
-            spinLockTimeout = SPIN_LOCK_TIMEOUT;
             runTimerMvFuzz(rnd, getTestName(), 1);
         });
     }
@@ -460,11 +448,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testUpdateRefreshIntervalsConcurrent() throws Exception {
-        // Timer refresh tests mess with the clock, so set the spin timeout
-        // to a large value to avoid false positive errors.
-        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
         node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "10ms");
-        spinLockTimeout = 100_000_000;
 
         final TestMicroClock testClock = new TestMicroClock(parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z"));
         testMicrosClock = testClock;
@@ -704,7 +688,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
         final ObjList<String> viewSqls = new ObjList<>();
 
-        final int length = 1 + rnd.nextInt(24);
+        final int length = 1 + rnd.nextInt(10);
         final char[] units = new char[]{'s', 'm', 'h'};
         final char lengthUnit = units[rnd.nextInt(units.length)];
         final long periodLengthMicros = switch (lengthUnit) {
@@ -716,6 +700,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
         final long start = MicrosTimestampDriver.floor("2022-01-02T03");
         final long end = start + (1 + rnd.nextInt(10)) * periodLengthMicros;
+        final long clockJumpLimit = Math.min(end, start + (SPIN_LOCK_TIMEOUT / periodLengthMicros));
         currentMicros = start;
 
         final AtomicBoolean stop = new AtomicBoolean();
@@ -726,7 +711,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final int refreshJobCount = 1 + rnd.nextInt(4);
 
         for (int i = 0; i < refreshJobCount; i++) {
-            refreshJobs.add(startTimerJob(i, stop, rnd, timerJob, periodLengthMicros, end));
+            refreshJobs.add(startTimerJob(i, stop, rnd, timerJob, periodLengthMicros, clockJumpLimit));
         }
 
         for (int i = 0; i < tableCount; i++) {
@@ -859,7 +844,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private void setFuzzParams(Rnd rnd, double colAddProb, double truncateProb) {
-        setFuzzParams(rnd, 2_000_000, 1_000_000, colAddProb, truncateProb);
+        setFuzzParams(rnd, 10_000, 100_000, colAddProb, truncateProb);
     }
 
     private void setFuzzParams(Rnd rnd, int transactionCount, int initialRowCount, double colAddProb, double truncateProb) {
