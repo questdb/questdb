@@ -57,9 +57,6 @@ public class ViewState {
         return viewDefinition;
     }
 
-    public void init() {
-    }
-
     public boolean isDropped() {
         return dropped;
     }

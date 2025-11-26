@@ -645,7 +645,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken.isWal()) {
             if (notifyDropped(tableToken)) {
                 tableSequencerAPI.dropTable(tableToken, false);
-                notifyViewsAboutDrop(tableToken);
+                notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
                 matViewGraph.removeView(tableToken);
             } else {
@@ -670,7 +670,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 // it from the registry without knowing that the table is being dropped.
                 // Then it can push the scoreboard max txn value into incorrect state.
                 scoreboardPool.remove(tableToken);
-                notifyViewsAboutDrop(tableToken);
+                notifyViewStoresAboutDrop(tableToken);
                 return;
             }
             throw CairoException.nonCritical().put("could not lock '").put(tableToken)
@@ -1274,7 +1274,6 @@ public class CairoEngine implements Closeable, WriterSource {
             matViewRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
             matViewRefreshTask.invalidationReason = "table drop operation";
             notifyMatViewBaseTableCommit(matViewRefreshTask, tableSequencerAPI.lastTxn(tableToken));
-            notifyViewsAboutDrop(tableToken);
             return true;
         }
         return false;
@@ -1831,10 +1830,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return configuration.isViewEnabled() ? new ViewStateStoreImpl(this) : NoOpViewStateStore.INSTANCE;
     }
 
-    private void notifyViewsAboutDrop(TableToken tableToken) {
-        viewStateStore.removeViewState(tableToken);
-        enqueueCompileView(tableToken);
-        viewGraph.removeView(tableToken);
+    private void notifyViewStoresAboutDrop(TableToken droppedToken) {
+        viewGraph.removeView(droppedToken);
+        viewStateStore.removeViewState(droppedToken);
+
+        // this event will result in recompiling of dependent views, and updating their state
+        enqueueCompileView(droppedToken);
     }
 
     private TableToken rename0(Path fromPath, TableToken fromTableToken, Path toPath, CharSequence toTableName) {

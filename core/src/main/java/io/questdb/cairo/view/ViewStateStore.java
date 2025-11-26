@@ -35,10 +35,6 @@ import org.jetbrains.annotations.Nullable;
  */
 public interface ViewStateStore extends Mutable {
 
-    // Only creates the view state, no telemetry event logged.
-    ViewState addViewState(ViewDefinition viewDefinition);
-
-    // Creates the view state, logs telemetry event.
     void createViewState(ViewDefinition viewDefinition);
 
     void enqueueCompile(TableToken viewToken);

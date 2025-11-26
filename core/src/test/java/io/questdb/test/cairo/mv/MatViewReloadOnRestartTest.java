@@ -40,8 +40,10 @@ import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.client.Sender;
+import io.questdb.cutlass.http.processors.LineHttpProcessorState;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineUdpSender;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
@@ -94,6 +96,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @Before
     @Override
     public void setUp() {
+        LogFactory.enableGuaranteedLogging(LineHttpProcessorState.class);
         super.setUp();
         capture.start();
         TestUtils.unchecked(() -> createDummyConfiguration());
@@ -104,6 +107,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void tearDown() throws Exception {
         capture.stop();
         super.tearDown();
+        LogFactory.disableGuaranteedLogging(LineHttpProcessorState.class);
     }
 
     @Test

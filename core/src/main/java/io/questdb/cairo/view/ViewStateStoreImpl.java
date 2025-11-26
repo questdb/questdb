@@ -54,18 +54,6 @@ public class ViewStateStoreImpl implements ViewStateStore {
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
     }
 
-    @Override
-    public ViewState addViewState(ViewDefinition viewDefinition) {
-        final TableToken viewToken = viewDefinition.getViewToken();
-        final ViewState state = new ViewState(viewDefinition, microsecondClock.getTicks());
-
-        final ViewState prevState = stateByTableDirName.putIfAbsent(viewToken.getDirName(), state);
-        if (prevState != null) {
-            throw CairoException.critical(0).put("view state already exists [dir=").put(viewToken.getDirName());
-        }
-        return state;
-    }
-
     @TestOnly
     @Override
     public void clear() {
@@ -74,25 +62,26 @@ public class ViewStateStoreImpl implements ViewStateStore {
 
     @Override
     public void createViewState(ViewDefinition viewDefinition) {
-        addViewState(viewDefinition).init();
+        final TableToken viewToken = viewDefinition.getViewToken();
+        final ViewState state = new ViewState(viewDefinition, microsecondClock.getTicks());
+
+        final ViewState prevState = stateByTableDirName.putIfAbsent(viewToken.getDirName(), state);
+        if (prevState != null) {
+            throw CairoException.critical(0).put("view state already exists [dir=").put(viewToken.getDirName());
+        }
     }
 
     @Override
     public void enqueueCompile(@NotNull TableToken tableToken) {
-        enqueueViewTask(tableToken);
+        final ViewCompilerTask task = taskHolder.get();
+        task.tableToken = tableToken;
+        task.updateTimestamp = microsecondClock.getTicks();
+        taskQueue.enqueue(task);
     }
 
     @Override
     public ViewState getViewState(TableToken viewToken) {
-        final ViewState state = stateByTableDirName.get(viewToken.getDirName());
-        if (state != null) {
-            if (state.isDropped()) {
-                // Housekeeping
-                stateByTableDirName.remove(viewToken.getDirName(), state);
-            }
-            return state;
-        }
-        return null;
+        return stateByTableDirName.get(viewToken.getDirName());
     }
 
     @Override
@@ -106,13 +95,6 @@ public class ViewStateStoreImpl implements ViewStateStore {
     @Override
     public boolean tryDequeueCompilerTask(ViewCompilerTask task) {
         return taskQueue.tryDequeue(task);
-    }
-
-    private void enqueueViewTask(@NotNull TableToken tableToken) {
-        final ViewCompilerTask task = taskHolder.get();
-        task.tableToken = tableToken;
-        task.updateTimestamp = microsecondClock.getTicks();
-        taskQueue.enqueue(task);
     }
 
 //    private void storeViewTelemetry(short event, TableToken tableToken, CharSequence errorMessage, long latencyUs) {

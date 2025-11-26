@@ -30,11 +30,6 @@ import org.jetbrains.annotations.TestOnly;
 public class NoOpViewStateStore implements ViewStateStore {
     public static final NoOpViewStateStore INSTANCE = new NoOpViewStateStore();
 
-    @Override
-    public ViewState addViewState(ViewDefinition viewDefinition) {
-        return null;
-    }
-
     @TestOnly
     @Override
     public void clear() {

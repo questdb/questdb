@@ -271,30 +271,21 @@ public class TestHttpClient implements QuietCloseable {
     public void assertGetContains(
             CharSequence url,
             CharSequence expectedResponse,
-            CharSequence sql,
-            String host,
-            int port,
-            @Nullable CharSequence username,
-            @Nullable CharSequence password,
-            @Nullable CharSequence token
+            @Nullable CharSequenceObjHashMap<String> queryParams
     ) {
-        try {
-            toSink0(host, port, url, sql, sink, username, password, token, null, "200");
-            TestUtils.assertContains(sink.asAsciiCharSequence(), expectedResponse);
-        } finally {
-            if (!keepConnection) {
-                httpClient.disconnect();
-            }
-        }
+        assertGetContains(url, expectedResponse, queryParams, null, null, 9001);
     }
 
     public void assertGetContains(
             CharSequence url,
             CharSequence expectedResponse,
-            @Nullable CharSequenceObjHashMap<String> queryParams
+            @Nullable CharSequenceObjHashMap<String> queryParams,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            int port
     ) {
         try {
-            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+            HttpClient.Request req = httpClient.newRequest("localhost", port);
             req.GET().url(url);
 
             if (queryParams != null) {
@@ -304,7 +295,7 @@ public class TestHttpClient implements QuietCloseable {
                 }
             }
 
-            reqToSink(req, sink, null, null, null, null);
+            reqToSink(req, sink, username, password, null, null);
             TestUtils.assertContains(sink.toString(), expectedResponse);
         } finally {
             if (!keepConnection) {
