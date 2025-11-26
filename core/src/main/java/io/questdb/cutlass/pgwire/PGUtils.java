@@ -59,19 +59,11 @@ class PGUtils {
     }
 
     public static int calculateArrayColBinSizeIncludingHeader(ArrayView array, int notNullCount) {
-        int headerSize = Integer.BYTES // size field (stores the number returned from this method)
-                + Integer.BYTES // dimension count
-                + Integer.BYTES // "has nulls" flag
-                + Integer.BYTES // component type
-                + array.getDimCount() * (2 * Integer.BYTES); // dimension lengths
-        return headerSize +
-                notNullCount *
-                        (Integer.BYTES // element size
-                                + Long.BYTES) + // element value
-                (array.getCardinality() - notNullCount) * // number of NULL elements
-                        Integer.BYTES; // element size, zero for NULL value
+        int nullCount = array.getCardinality() - notNullCount;
+        return calculateArrayHeaderSize(array) + calculateArrayResumeColBinSize(notNullCount, nullCount);
     }
 
+    // does NOT include array header size!
     public static int calculateArrayResumeColBinSize(int notNullCount, int nullCount) {
         return notNullCount *
                 (Integer.BYTES // element size
@@ -177,14 +169,15 @@ class PGUtils {
                         : "implemented only for DOUBLE and LONG";
 
                 int actualResumePoint = Math.max(0, arrayResumePoint);
+                int remainingElements = array.getCardinality() - actualResumePoint; // includes nulls
                 int notNullCount = PGUtils.countNotNull(array, actualResumePoint);
-                if (arrayResumePoint == -1) {
-                    // array header was not written yet: we need to calculate the size of header and elements
-                    return calculateArrayColBinSizeIncludingHeader(array, notNullCount);
-                }
-                // array header was already written, only calculate remaining elements
-                int remainingElements = array.getCardinality() - actualResumePoint;
-                return calculateArrayResumeColBinSize(notNullCount, remainingElements - notNullCount);
+
+                // -1 = array header was not written yet -> we have to include it in our calculation
+                int size = arrayResumePoint == -1 ? calculateArrayHeaderSize(array) : 0;
+
+                // add remaining elements
+                size += calculateArrayResumeColBinSize(notNullCount, remainingElements - notNullCount);
+                return size;
             default:
                 assert false : "unsupported type: " + typeTag;
                 return -1;
@@ -261,6 +254,14 @@ class PGUtils {
                 yield -1;
             }
         };
+    }
+
+    private static int calculateArrayHeaderSize(ArrayView array) {
+        return Integer.BYTES // size field (stores the number returned from this method)
+                + Integer.BYTES // dimension count
+                + Integer.BYTES // "has nulls" flag
+                + Integer.BYTES // component type
+                + array.getDimCount() * (2 * Integer.BYTES); // dimension lengths
     }
 
     private static int countNotNullRecursive(ArrayView array, int dim, int flatIndex, int resumePoint) {
