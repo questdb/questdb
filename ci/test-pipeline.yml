@@ -54,7 +54,7 @@ stages:
                   "resources": {
                     "repositories": {
                       "self": {
-                        "refName": "refs/heads/main"
+                        "refName": "refs/heads/vi_ci"
                       }
                     }
                   },
