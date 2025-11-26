@@ -58,7 +58,7 @@ class PGUtils {
     private PGUtils() {
     }
 
-    public static int calculateArrayColBinSize(ArrayView array, int notNullCount) {
+    public static int calculateArrayColBinSizeIncludingHeader(ArrayView array, int notNullCount) {
         int headerSize = Integer.BYTES // size field (stores the number returned from this method)
                 + Integer.BYTES // dimension count
                 + Integer.BYTES // "has nulls" flag
@@ -179,10 +179,10 @@ class PGUtils {
                 int actualResumePoint = Math.max(0, arrayResumePoint);
                 int notNullCount = PGUtils.countNotNull(array, actualResumePoint);
                 if (arrayResumePoint == -1) {
-                    // No elements written yet, need full array size including header
-                    return calculateArrayColBinSize(array, notNullCount);
+                    // array header was not written yet: we need to calculate the size of header and elements
+                    return calculateArrayColBinSizeIncludingHeader(array, notNullCount);
                 }
-                // Some elements already written, only calculate remaining elements
+                // array header was already written, only calculate remaining elements
                 int remainingElements = array.getCardinality() - actualResumePoint;
                 return calculateArrayResumeColBinSize(notNullCount, remainingElements - notNullCount);
             default:

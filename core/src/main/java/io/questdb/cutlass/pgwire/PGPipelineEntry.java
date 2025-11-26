@@ -1726,7 +1726,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // The size field indicates the size of what follows, excluding its own size,
             // that's why we subtract Integer.BYTES from it. The same method is used to calculate
             // the full size of the message, and in that case this field must be included.
-            utf8Sink.putNetworkInt(PGUtils.calculateArrayColBinSize(array, notNullCount) - Integer.BYTES);
+            utf8Sink.putNetworkInt(PGUtils.calculateArrayColBinSizeIncludingHeader(array, notNullCount) - Integer.BYTES);
             utf8Sink.putNetworkInt(nDims);
             utf8Sink.putIntDirect(notNullCount < array.getCardinality() ? 1 : 0); // "has nulls" flag
             utf8Sink.putNetworkInt(componentTypeOid);
