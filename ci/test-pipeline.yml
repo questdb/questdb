@@ -72,7 +72,7 @@ stages:
               HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" -X POST \
                 -H "$AUTH_HEADER" \
                 -H "Content-Type: application/json" \
-                "https://dev.azure.com/questdb/questdb-enterprise/_apis/pipelines/1/runs?api-version=7.0" \
+                "https://dev.azure.com/questdb/questdb-enterprise/_apis/pipelines/23/runs?api-version=7.0" \
                 -d "$PAYLOAD")
 
               echo "Response code: $HTTP_CODE"
