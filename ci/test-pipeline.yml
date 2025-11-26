@@ -28,12 +28,16 @@ stages:
   - stage: TriggerEnterpriseCI
     displayName: "Trigger Enterprise CI"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
-    dependsOn: [ ]
+    dependsOn:
+      - CheckChanges
     jobs:
       - job: TriggerEnterprise
         displayName: "Trigger Enterprise Pipeline"
         pool:
           vmImage: "ubuntu-latest"
+        variables:
+          SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
+        condition: eq(variables['SOURCE_CODE_CHANGED'], 'true')
         steps:
           - checkout: none
           - bash: |
