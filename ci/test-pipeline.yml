@@ -25,6 +25,81 @@ stages:
     jobs:
       - template: templates/check-changes-job.yml
 
+  - stage: TriggerEnterpriseCI
+    displayName: "Trigger Enterprise CI"
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - job: TriggerEnterprise
+        displayName: "Trigger Enterprise Pipeline"
+        pool:
+          vmImage: "ubuntu-latest"
+        variables:
+          SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
+        condition: eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        steps:
+          - checkout: none
+          - bash: |
+              set -e
+              # Trigger the enterprise CI pipeline via Azure DevOps REST API
+              AUTH_HEADER="Authorization: Basic $(printf ':%s' "$AZURE_DEVOPS_ENT_PAT" | base64 -w0)"
+
+              # Check if matching branch exists in enterprise repo (private, requires auth)
+              BRANCH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/questdb/questdb-enterprise/branches/$OSS_BRANCH")
+
+              if [ "$BRANCH_CHECK" = "200" ]; then
+                ENT_BRANCH="$OSS_BRANCH"
+                echo "Found matching enterprise branch: $ENT_BRANCH"
+              else
+                ENT_BRANCH="main"
+                echo "No matching branch '$OSS_BRANCH' in enterprise, using: $ENT_BRANCH"
+              fi
+
+              PAYLOAD=$(cat <<EOF
+              {
+                "resources": {
+                  "repositories": {
+                    "self": {
+                      "refName": "refs/heads/$ENT_BRANCH"
+                    }
+                  }
+                },
+                "templateParameters": {
+                  "ossCommit": "$OSS_COMMIT",
+                  "ossPrNumber": "$OSS_PR_NUMBER"
+                }
+              }
+              EOF
+              )
+
+              echo "Triggering enterprise CI for commit $OSS_COMMIT (PR #$OSS_PR_NUMBER)"
+
+              HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" -X POST \
+                -H "$AUTH_HEADER" \
+                -H "Content-Type: application/json" \
+                "https://dev.azure.com/questdb/questdb-enterprise/_apis/pipelines/23/runs?api-version=7.0" \
+                -d "$PAYLOAD")
+
+              if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+                RUN_ID=$(jq -r '.id // empty' response.json)
+                echo "Triggered enterprise CI: https://dev.azure.com/questdb/questdb-enterprise/_build/results?buildId=$RUN_ID"
+              else
+                echo "##vso[task.logissue type=warning]Failed to trigger enterprise CI (HTTP $HTTP_CODE); see pipeline logs"
+                rm -f response.json
+                exit 1
+              fi
+              rm -f response.json
+            displayName: "Trigger Enterprise Pipeline"
+            env:
+              AZURE_DEVOPS_ENT_PAT: $(AZURE_DEVOPS_ENT_PAT)
+              GH_TOKEN: $(GH_TOKEN)
+              OSS_COMMIT: $(Build.SourceVersion)
+              OSS_PR_NUMBER: $(System.PullRequest.PullRequestNumber)
+              OSS_BRANCH: $(System.PullRequest.SourceBranch)
+
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
