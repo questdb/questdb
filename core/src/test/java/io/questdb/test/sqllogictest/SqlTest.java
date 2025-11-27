@@ -26,7 +26,6 @@ package io.questdb.test.sqllogictest;
 
 import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
 import java.util.Collection;
 
 /**
@@ -39,7 +38,6 @@ public class SqlTest extends AbstractSqllogicTestRunner {
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> files() {
-        return Arrays.asList(new Object[][]{{"/sql/test_stddev.test"}});
-//        return files("sql");
+        return files("sql");
     }
 }
