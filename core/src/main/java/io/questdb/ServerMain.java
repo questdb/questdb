@@ -48,12 +48,9 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
 import io.questdb.std.Misc;
-import io.questdb.std.MmapCache;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.Uuid;
-import io.questdb.std.filewatch.FileWatcher;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -73,7 +70,6 @@ public class ServerMain implements Closeable {
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
     protected PGServer pgServer;
-    private FileWatcher fileWatcher;
     private HttpServer httpServer;
     private Thread hydrateMetadataThread;
     private boolean initialized;
@@ -184,7 +180,6 @@ public class ServerMain implements Closeable {
             engine.signalClose();
             if (initialized) {
                 workerPoolManager.halt();
-                fileWatcher = Misc.free(fileWatcher);
             }
             freeOnExit.close();
         }
@@ -194,7 +189,7 @@ public class ServerMain implements Closeable {
         if (httpServer == null) {
             return 0;
         }
-        return httpServer.getActiveConnectionTracker().getActiveConnections(processorName);
+        return httpServer.getActiveConnectionTracker().get(processorName);
     }
 
     public ServerConfiguration getConfiguration() {

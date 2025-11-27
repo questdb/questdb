@@ -1232,10 +1232,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
-        if (checkpointStatus.partitionsLocked()) {
-            // do not alter scoreboard while checkpoint is in progress
-            return true;
-        }
         return txnScoreboard.hasEarlierTxnLocks(txWriter.getTxn());
     }
 
@@ -9881,12 +9877,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
         if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
             // Nothing to do
-            return;
-        }
-
-        if (checkpointStatus.partitionsLocked()) {
-            LOG.info().$("cannot squash partition [table=").$(tableToken)
-                    .$("], checkpoint in progress").$();
             return;
         }
 

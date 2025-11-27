@@ -61,13 +61,11 @@ import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE
  */
 public class WalWriterFuzzTest extends AbstractFuzzTest {
     private static boolean ASYNC_MUNMAP = false;
-    private static int SCOREBOARD_FORMAT = 1;
     private boolean existingFilesParanoia;
     private boolean fsAllowsMixedIO;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
         setProperty(PropertyKey.CAIRO_FILE_ASYNC_MUNMAP_ENABLED, String.valueOf(ASYNC_MUNMAP));
         AbstractCairoTest.setUpStatic();
     }
@@ -645,11 +643,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         LOG.info().$("switching to [scoreboard-format=").$(newScoreboardVersion)
                 .$(", asyncMunmapEnabled = ").$(newAsyncMunmapEnabled)
                 .I$();
-        if (SCOREBOARD_FORMAT != newScoreboardVersion || ASYNC_MUNMAP != newAsyncMunmapEnabled) {
+        if (ASYNC_MUNMAP != newAsyncMunmapEnabled) {
             // This restarts test initialization
-            // we only will run for v1 and v2 scoreboards for a limited period before
-            // switching to v2 only.
-            SCOREBOARD_FORMAT = newScoreboardVersion;
             ASYNC_MUNMAP = newAsyncMunmapEnabled;
             tearDownStatic();
             setUpStatic();

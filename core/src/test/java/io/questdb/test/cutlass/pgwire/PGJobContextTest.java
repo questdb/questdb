@@ -171,7 +171,7 @@ import static org.junit.Assert.assertEquals;
  * Change PGWireConfiguration.getDumpNetworkTraffic() to return 'false' again.
  * 7. Run the test
  */
-@SuppressWarnings("SqlNoDataSourceInspection")
+@SuppressWarnings({"SqlNoDataSourceInspection", "SqlSourceToSinkFlow"})
 public class PGJobContextTest extends BasePGTest {
 
     /**
@@ -234,7 +234,6 @@ public class PGJobContextTest extends BasePGTest {
 
     @Test
     public void testAllParamsHex() throws Exception {
-        skipOnWalRun();
         final String script = """
                 >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                 <520000000800000003
@@ -1346,7 +1345,6 @@ public class PGJobContextTest extends BasePGTest {
 
     @Test
     public void testArrayBindingVars() throws Exception {
-        skipOnWalRun();
         // In simple mode bind vars are interpolated into the query text,
         // and we don't have implicit cast from string to array, so test extended mode only.
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
@@ -1445,7 +1443,6 @@ public class PGJobContextTest extends BasePGTest {
 
     @Test
     public void testArrayBindingVarsWrongDimensions() throws Exception {
-        skipOnWalRun();
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
                 stmt.execute();
@@ -1548,7 +1545,6 @@ if __name__ == "__main__":
         // Old PGWire did not respond with Z (because it recorded in its state that Z was send with "flush")
         // The 2.0 PGWire does responds to P/D/H with E only, then responds to S with Z. Python is ok with that and
         // this is the correct sequence.
-        skipOnWalRun();
         assertHexScript("""
                 >0000000804d2162f
                 <4e
@@ -1567,7 +1563,6 @@ if __name__ == "__main__":
 
     @Test
     public void testBadMessageLength() throws Exception {
-        skipOnWalRun();
         final String script =
                 """
                         >0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
@@ -1583,7 +1578,6 @@ if __name__ == "__main__":
 
     @Test
     public void testBadPasswordLength() throws Exception {
-        skipOnWalRun();
         assertHexScript(
                 """
                         >0000000804d2162f
@@ -1597,7 +1591,6 @@ if __name__ == "__main__":
 
     @Test
     public void testBasicFetch() throws Exception {
-        skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
@@ -1633,7 +1626,6 @@ if __name__ == "__main__":
 
     @Test
     public void testBasicFetchIPv4() throws Exception {
-        skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
@@ -1772,7 +1764,6 @@ if __name__ == "__main__":
 
     @Test
     public void testBasicFetchIPv4MultiCol() throws Exception {
-        skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
@@ -1916,7 +1907,6 @@ if __name__ == "__main__":
 
     @Test
     public void testBasicFetchIPv4Null() throws Exception {
-        skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
@@ -2055,7 +2045,6 @@ if __name__ == "__main__":
 
     @Test
     public void testBatchInsertWithTransaction() throws Exception {
-        skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table test (id long,val int)");
@@ -2719,7 +2708,6 @@ if __name__ == "__main__":
 
     @Test
     public void testBlobOverLimit() throws Exception {
-        skipOnWalRun(); // non-partitioned
         PGConfiguration configuration = new Port0PGConfiguration() {
             @Override
             public int getMaxBlobSizeOnQuery() {
@@ -2765,7 +2753,6 @@ if __name__ == "__main__":
 
     @Test
     public void testBrokenUtf8QueryInParseMessage() throws Exception {
-        skipOnWalRun(); // non-partitioned
         // the modern server will return actionable error message to the client
         assertHexScript(
                 """
@@ -2783,8 +2770,6 @@ if __name__ == "__main__":
 
     @Test
     public void testByteBindingVariable() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             final PreparedStatement statement = connection.prepareStatement("create table x (a byte)");
             statement.execute();
@@ -2808,7 +2793,6 @@ if __name__ == "__main__":
 
     @Test
     public void testCairoException() throws Exception {
-        skipOnWalRun(); // non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.prepareStatement("create table xyz(a int)").execute();
             try (TableWriter ignored1 = getWriter("xyz")) {
@@ -2984,7 +2968,6 @@ if __name__ == "__main__":
 
     @Test
     public void testCharIntLongDoubleBooleanParametersWithoutExplicitParameterTypeHex() throws Exception {
-        skipOnWalRun(); // non-partitioned
         String script = """
                 >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                 <520000000800000003
@@ -3004,7 +2987,6 @@ if __name__ == "__main__":
 
     @Test
     public void testCloseMessageFollowedByNewQueryHex() throws Exception {
-        skipOnWalRun(); // non-partitioned
         assertHexScriptAltCreds(
                 """
                         >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
@@ -3032,7 +3014,6 @@ if __name__ == "__main__":
 
     @Test
     public void testCloseMessageForPortalHex() throws Exception {
-        skipOnWalRun(); // non-partitioned
         assertHexScriptAltCreds(
                 """
                         >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
@@ -3058,7 +3039,6 @@ if __name__ == "__main__":
 
     @Test
     public void testCloseMessageForSelectWithParamsHex() throws Exception {
-        skipOnWalRun();
         assertHexScriptAltCreds(
                 """
                         >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
@@ -3090,7 +3070,6 @@ if __name__ == "__main__":
 
     @Test
     public void testCloseMessageHex() throws Exception {
-        skipOnWalRun(); // select only
         //hex for close message 43 00000009 53 535f31 00
         assertHexScriptAltCreds(
                 """
@@ -3119,7 +3098,6 @@ if __name__ == "__main__":
 
     @Test
     public void testContextClearsTransactionFlag() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(true);
             try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
@@ -3224,7 +3202,6 @@ if __name__ == "__main__":
 
     @Test
     public void testCreateTableAsSelectExtendedPrepared() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
@@ -3277,8 +3254,6 @@ if __name__ == "__main__":
 
     @Test
     public void testCreateTableDuplicateColumnName() throws Exception {
-        skipOnWalRun(); // non-partitioned table
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try {
                 connection.prepareStatement(
@@ -3299,7 +3274,6 @@ if __name__ == "__main__":
 
     @Test
     public void testCreateTableDuplicateColumnNameNonAscii() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try {
                 connection.prepareStatement("""
@@ -3318,7 +3292,6 @@ if __name__ == "__main__":
 
     @Test
     public void testCreateTableExtendedPrepared() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement("""
@@ -3336,8 +3309,6 @@ if __name__ == "__main__":
 
     @Test
     public void testCursorFetch() throws Exception {
-        skipOnWalRun(); // the test doesn't use partitioned tables
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 10000;
@@ -3382,7 +3353,6 @@ if __name__ == "__main__":
 
     @Test
     public void testDDL() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("create table x (a int)")) {
                 statement.execute();
@@ -3399,7 +3369,6 @@ if __name__ == "__main__":
 
     @Test
     public void testDecimalType_insertIntoDecimalColumns() throws Exception {
-        skipOnWalRun();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             if (!binary) {
                 return;
@@ -3417,8 +3386,10 @@ if __name__ == "__main__":
                 }
                 try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
                     sink.clear();
-                    String expected = "d8[NUMERIC],d16[NUMERIC],d32[NUMERIC],d64[NUMERIC],d128[NUMERIC],d256[NUMERIC]\n" +
-                            "12,123.4,12345678,1234567890.123456,1234567890123455678901234.567890,123456789012345567890123456789012345678901234567890\n";
+                    String expected = """
+                            d8[NUMERIC],d16[NUMERIC],d32[NUMERIC],d64[NUMERIC],d128[NUMERIC],d256[NUMERIC]
+                            12,123.4,12345678,1234567890.123456,1234567890123455678901234.567890,123456789012345567890123456789012345678901234567890
+                            """;
                     assertResultSet(expected, sink, resultSet);
                 }
             }
@@ -3440,8 +3411,10 @@ if __name__ == "__main__":
                 }
                 try (ResultSet resultSet = connection.prepareStatement("select *  from x").executeQuery()) {
                     sink.clear();
-                    String expected = "d1[NUMERIC]\n" +
-                            "9876543.21098\n";
+                    String expected = """
+                            d1[NUMERIC]
+                            9876543.21098
+                            """;
                     assertResultSet(expected, sink, resultSet);
                 }
             }
@@ -3467,8 +3440,10 @@ if __name__ == "__main__":
                 }
                 try (ResultSet resultSet = connection.prepareStatement("select d1 from x").executeQuery()) {
                     sink.clear();
-                    String expected = "d1[NUMERIC]\n" +
-                            "9876543.21098\n";
+                    String expected = """
+                            d1[NUMERIC]
+                            9876543.21098
+                            """;
                     assertResultSet(expected, sink, resultSet);
                 }
             }
@@ -3477,7 +3452,6 @@ if __name__ == "__main__":
 
     @Test
     public void testDiscardClearsTransactionFlag() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
                     "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(0))")) {
@@ -3501,7 +3475,6 @@ if __name__ == "__main__":
 
     @Test
     public void testDisconnectDuringAuth() throws Exception {
-        skipOnWalRun(); // we are not touching tables at all, no reason to run the same test twice.
         for (int i = 0; i < 3; i++) {
             testDisconnectDuringAuth0(i);
         }
@@ -3516,7 +3489,6 @@ if __name__ == "__main__":
         // Other drivers are less sensitive, perhaps they just do non-zero check
         // Here we assert that 1 is correctly derived from column type
 
-        skipOnWalRun(); // select only
         String script = """
                 >0000003b00030000757365720061646d696e00636c69656e745f656e636f64696e67005554463800646174616261736500706f7374677265730000
                 <520000000800000003
@@ -3563,7 +3535,6 @@ if __name__ == "__main__":
 
     @Test
     public void testDropTableIfExistsDoesNotFailWhenTableDoesNotExist() throws Exception {
-        skipOnWalRun(); // table not created
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement("drop table if exists doesnt")) {
                 statement.execute();
@@ -3573,7 +3544,6 @@ if __name__ == "__main__":
 
     @Test
     public void testEmptySql() throws Exception {
-        skipOnWalRun(); // table not created
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement("")) {
                 statement.execute();
@@ -3583,7 +3553,6 @@ if __name__ == "__main__":
 
     @Test
     public void testErrnoInErrorMessage() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         ff = new TestFilesFacadeImpl() {
             @Override
             public int errno() {
@@ -3856,8 +3825,6 @@ if __name__ == "__main__":
 
     @Test
     public void testExecuteAndFailedQueryDoesntLeaveItInRegistry() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("create table trades as (select 'a'::symbol symbol, -1 price from long_sequence(10))");
 
@@ -3881,7 +3848,6 @@ if __name__ == "__main__":
 
     @Test
     public void testExecuteSameQueryManyTimesWithMaxRowsReturnsCorrectResult() throws Exception {
-        skipOnWalRun();
         // this test exercises maxRows feature of the protocol, which is not supported (not sent to the server)
         // in "simple" mode.
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
@@ -4316,7 +4282,6 @@ if __name__ == "__main__":
 
     @Test
     public void testFetchWithBindVariables() throws Exception {
-        skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 10;
@@ -4377,7 +4342,6 @@ if __name__ == "__main__":
 
     @Test
     public void testGORMConnect() throws Exception {
-        skipOnWalRun(); // table not created
         // GORM is a Golang ORM tool
         assertHexScript(
                 """
@@ -4392,7 +4356,6 @@ if __name__ == "__main__":
 
     @Test
     public void testGeoHashInsert() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("create table xyz (" +
                     "a geohash(1b)," +
@@ -4455,7 +4418,6 @@ if __name__ == "__main__":
 
     @Test
     public void testGeoHashSelect() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
@@ -4495,7 +4457,6 @@ if __name__ == "__main__":
 
     @Test
     public void testGetRow() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             Statement stmt = connection.createStatement();
@@ -4572,7 +4533,6 @@ if __name__ == "__main__":
      * </pre>
      */
     public void testGolangBoolean() throws Exception {
-        skipOnWalRun(); // table not created
         assertHexScriptAltCreds(
                 """
                         >0000000804d2162f
@@ -4642,7 +4602,6 @@ if __name__ == "__main__":
 
     @Test
     public void testHappyPathForIntParameterWithoutExplicitParameterTypeHex() throws Exception {
-        skipOnWalRun(); // table not created
         assertHexScriptAltCreds(
                 """
                         >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
@@ -4658,7 +4617,6 @@ if __name__ == "__main__":
 
     @Test
     public void testHexFragmentedSend() throws Exception {
-        skipOnWalRun(); // table not created
         // This is a simple select from long_sequence. A selection of column types.
         // Legacy code behaviour is that for "FLOAT" column it uses DOUBLE formatting. E.g. column
         // is specified as OID 700 on the Row Description, but is sent as 0.46218354.
@@ -4897,7 +4855,6 @@ if __name__ == "__main__":
 
     @Test
     public void testIPv4Operations() throws Exception {
-        skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
 
@@ -5070,7 +5027,6 @@ if __name__ == "__main__":
 
     @Test
     public void testImplicitStringAndCharConversions() throws Exception {
-        skipOnWalRun();
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
 
@@ -5251,7 +5207,6 @@ if __name__ == "__main__":
     // Test odd queries that should not be transformed into cursor-based fetches.
     @Test
     public void testInsert() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             int totalRows = 1;
             PreparedStatement tbl = connection.prepareStatement("create table x (a int)");
@@ -5428,7 +5383,6 @@ if __name__ == "__main__":
 
     @Test
     public void testInsert2dArrayBindingVars() throws Exception {
-        skipOnWalRun();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
                 stmt.execute();
@@ -5458,7 +5412,6 @@ if __name__ == "__main__":
 
     @Test
     public void testInsert2dArrayBindingVarsWrongDimensions() throws Exception {
-        skipOnWalRun();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
                 stmt.execute();
@@ -5483,7 +5436,6 @@ if __name__ == "__main__":
 
     @Test
     public void testInsertAllTypes() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         // heavy bind variable use
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             execute("create table xyz (" +
@@ -5721,7 +5673,6 @@ if __name__ == "__main__":
 
     @Test
     public void testInsertBinaryBindVariable() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (final PreparedStatement insert = connection.prepareStatement("insert into xyz values (?)")) {
                 execute("create table xyz (" +
@@ -5853,7 +5804,6 @@ if __name__ == "__main__":
 
     @Test
     public void testInsertDateAndTimestampFromRustHex() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         String script = """
                 >0000004300030000636c69656e745f656e636f64696e6700555446380074696d657a6f6e650055544300757365720061646d696e006461746162617365007164620000
                 <520000000800000003
@@ -5877,7 +5827,6 @@ if __name__ == "__main__":
 
     @Test
     public void testInsertDoubleTableWithTypeSuffix() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             final PreparedStatement statement = connection.prepareStatement("create table x (val double)");
             statement.execute();
@@ -5991,7 +5940,6 @@ if __name__ == "__main__":
 
     @Test
     public void testInsertFloatTableWithTypeSuffix() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             final PreparedStatement statement = connection.prepareStatement("create table x (val float)");
             statement.execute();
@@ -6062,7 +6010,6 @@ if __name__ == "__main__":
      */
     @Test
     public void testInsertFomNodeJsWith2Parameters_TableDoesNotExist() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         final String script = """
                 >0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
                 <520000000800000003
@@ -6108,7 +6055,6 @@ nodejs code:
  */
     @Test
     public void testInsertFomNodeJsWith2Parameters_WithTableCreation() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         final String script = """
                 >0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
                 <520000000800000003
@@ -6133,7 +6079,6 @@ nodejs code:
 
     @Test
     public void testInsertNoMemLeak() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("CREATE TABLE test(id LONG);");
@@ -6300,7 +6245,6 @@ nodejs code:
 
     @Test
     public void testInsertStringWithEscapedQuote() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
                 s.execute("create table t ( s string)");
@@ -6316,7 +6260,6 @@ nodejs code:
 
     @Test
     public void testInsertTableDoesNotExist() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         // we are going to:
         // 1. create a table
         // 2. insert a record
@@ -6419,7 +6362,6 @@ nodejs code:
 
     @Test
     public void testIntAndLongParametersWithoutExplicitParameterTypeButOneExplicitTextFormatHex() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         String script = """
                 >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                 <520000000800000003
@@ -6439,7 +6381,6 @@ nodejs code:
 
     @Test
     public void testIntParameterWithoutExplicitParameterTypeButExplicitTextFormatHex() throws Exception {
-        skipOnWalRun(); // select only
         String script = """
                 >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                 <520000000800000003
@@ -6459,7 +6400,6 @@ nodejs code:
 
     @Test
     public void testInvalidateWriterBetweenInserts() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table test_batch(id long,val int)");
@@ -6534,7 +6474,6 @@ nodejs code:
 
     @Test
     public void testJdbcIsValid() throws Exception {
-        skipOnWalRun(); // non-wal specific
         AtomicReference<Connection> connectionRef = new AtomicReference<>();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Assert.assertTrue(connection.isValid(5));
@@ -6782,7 +6721,6 @@ nodejs code:
 
     @Test
     public void testLargeBatchCairoExceptionResume() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table test_large_batch(id long, val int, ts timestamp) timestamp(ts)");
@@ -6835,8 +6773,6 @@ nodejs code:
 
     @Test
     public void testLargeBatchInsertMethod() throws Exception {
-        skipOnWalRun(); // non-partitioned table
-
         assertWithPgServer(
                 CONN_AWARE_EXTENDED,
                 (connection, binary, mode, port) -> {
@@ -6883,7 +6819,6 @@ nodejs code:
 
     @Test
     public void testLargeOutput() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         final String expected = """
                 1[INTEGER],2[INTEGER],3[INTEGER]
                 1,2,3
@@ -6960,7 +6895,6 @@ nodejs code:
 
     @Test
     public void testLargeOutputHex() throws Exception {
-        skipOnWalRun(); // select only
         String script = """
                 >0000007300030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                 <520000000800000003
@@ -7223,7 +7157,6 @@ nodejs code:
 
     @Test
     public void testLocalCopyFrom() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (
                     final PreparedStatement copy = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true");
@@ -7298,7 +7231,6 @@ nodejs code:
 
     @Test
     public void testLoginBadPassword() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Properties properties = new Properties();
             properties.setProperty("user", "admin");
@@ -7315,7 +7247,6 @@ nodejs code:
 
     @Test
     public void testLoginBadUsername() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Properties properties = new Properties();
             properties.setProperty("user", "joe");
@@ -7332,7 +7263,6 @@ nodejs code:
 
     @Test
     public void testLoginBadUsernameHex() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         // this test specifically assert that we do not send
         // "ready for next query" message back to client when they fail to log in
         String script = """
@@ -7352,7 +7282,6 @@ nodejs code:
 
     @Test
     public void testMalformedInitPropertyName() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 ">0000004c00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
@@ -7363,7 +7292,6 @@ nodejs code:
 
     @Test
     public void testMalformedInitPropertyValue() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 ">0000001e00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
@@ -7374,7 +7302,6 @@ nodejs code:
 
     @Test
     public void testMatchSymbolBindVariable() throws Exception {
-        skipOnWalRun();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))").execute();
@@ -7435,7 +7362,6 @@ nodejs code:
 
     @Test
     public void testMicroTimestamp() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.prepareCall("create table x(t timestamp)").execute();
 
@@ -7479,7 +7405,6 @@ nodejs code:
 
     @Test
     public void testMiscExtendedPrepared() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement("begin")) {
@@ -7499,7 +7424,6 @@ nodejs code:
 
     @Test
     public void testMultiplePreparedStatements() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             PreparedStatement ps1 = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
             PreparedStatement ps2 = connection.prepareStatement("select 4,5,6 from long_sequence(1)");
@@ -7570,7 +7494,6 @@ nodejs code:
 
     @Test
     public void testNamedPortalForInsert() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
                     final PGServer server = createPGServer(1);
@@ -7633,7 +7556,6 @@ nodejs code:
 
     @Test
     public void testNamedStatementWithoutParameterTypeHex() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         String script = """
                 >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                 <520000000800000003
@@ -7663,7 +7585,6 @@ nodejs code:
     // through execution
     @Test
     public void testNoCursorWithAutoCommit() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 10;
@@ -7686,7 +7607,6 @@ nodejs code:
 
     @Test
     public void testNoDataAndEmptyQueryResponsesHex() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         String script = """
                 >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                 <520000000800000003
@@ -7772,7 +7692,6 @@ nodejs code:
 
     @Test
     public void testNullTypeSerialization() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(
                 CONN_AWARE_ALL,
                 (connection, binary, mode, port) -> {
@@ -7849,7 +7768,6 @@ nodejs code:
         //        } catch(PDOException $e) {
         //            echo $e;
         //        }
-        skipOnWalRun(); // non-partitioned table
         String scriptx00 = """
                 >0000000804d2162f
                 <4e
@@ -7892,7 +7810,6 @@ nodejs code:
     //checks that function parser error doesn't persist and affect later queries issued through the same connection
     @Test
     public void testParseErrorDoesNotCorruptConnection() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
                     "(select cast(x as timestamp) ts, '0x05cb69971d94a00000192178ef80f0' as id, x from long_sequence(10) ) " +
@@ -7917,7 +7834,6 @@ nodejs code:
     @Test
     //checks that function parser error doesn't persist and affect later queries issued through the same connection
     public void testParseErrorDoesntCorruptConnection() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
 
             try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
@@ -7942,8 +7858,6 @@ nodejs code:
 
     @Test
     public void testPlanWithIndexAndBindingVariables() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             // columns:
             // hc = high-cardinality column - must be preferred for index-scans
@@ -8017,8 +7931,6 @@ nodejs code:
 
     @Test
     public void testPlanWithIndexAndSingleBindingVariable() throws Exception {
-        skipOnWalRun();
-
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             execute(
                     "CREATE TABLE x ( " +
@@ -8059,8 +7971,6 @@ nodejs code:
 
     @Test
     public void testPrepareInsertAsSelect() throws Exception {
-        skipOnWalRun(); // the test uses non-partitioned tables
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             CallableStatement stmt = connection.prepareCall("drop table if exists mining_event;");
             stmt.execute();
@@ -8122,7 +8032,6 @@ nodejs code:
 
     @Test
     public void testPreparedStatement() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
             Statement statement1 = connection.createStatement();
@@ -8146,7 +8055,6 @@ nodejs code:
 
     @Test
     public void testPreparedStatementHex() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 """
@@ -8206,7 +8114,6 @@ nodejs code:
 
     @Test
     public void testPreparedStatementInsertSelectNullDesignatedColumn() throws Exception {
-        skipOnWalRun();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             {
                 try (
@@ -8256,7 +8163,6 @@ nodejs code:
 
     @Test
     public void testPreparedStatementInsertSelectNullNoDesignatedColumn() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final Statement statement = connection.createStatement()) {
                 statement.execute("create table tab(ts timestamp, value double)");
@@ -8280,7 +8186,6 @@ nodejs code:
 
     @Test
     public void testPreparedStatementParamBadByte() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         final String script =
                 """
                         >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
@@ -8299,7 +8204,6 @@ nodejs code:
 
     @Test
     public void testPreparedStatementParams() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             final PGConfiguration conf = new Port0PGConfiguration() {
                 @Override
@@ -8416,7 +8320,6 @@ nodejs code:
 
     @Test
     public void testPreparedStatementSelectNull() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("select ? from long_sequence(1)")) {
                 sink.clear();
@@ -8460,7 +8363,6 @@ nodejs code:
 
     @Test
     public void testPreparedStatementTextParams() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(
                 CONN_AWARE_ALL,
                 (connection, binary, mode, port) -> {
@@ -8712,7 +8614,6 @@ nodejs code:
 
     @Test
     public void testPythonInsertDateSelectHex() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         String script = """
                 >0000000804d2162f
                 <4e
@@ -8762,7 +8663,6 @@ nodejs code:
 
     @Test
     public void testPythonInsertSelectHex() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         String script = """
                 >0000000804d2162f
                 <4e
@@ -8939,7 +8839,6 @@ nodejs code:
 
     @Test
     public void testQueryCountMetrics() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("create table x as (select x id from long_sequence(10))");
             // table
@@ -9011,7 +8910,6 @@ nodejs code:
 
     @Test
     public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
-        Assume.assumeFalse(walEnabled);
         maxQueryTime = 100;
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
@@ -9038,7 +8936,6 @@ nodejs code:
 
     @Test
     public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             int totalRows = 3;
             int backoffCount = 3;
@@ -9090,7 +8987,6 @@ nodejs code:
 
     @Test
     public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
-        Assume.assumeFalse(walEnabled);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             int totalRows = 3;
             int backoffCount = 10;
@@ -9120,7 +9016,6 @@ nodejs code:
 
     @Test
     public void testQueryEventuallySucceedsOnDataUnavailableSmallSendBuffer() throws Exception {
-        skipOnWalRun(); // test doesn't use tables
         assertMemoryLeak(() -> {
             PGConfiguration configuration = new Port0PGConfiguration() {
                 @Override
@@ -9179,7 +9074,6 @@ nodejs code:
 
     @Test
     public void testQueryTimeout() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         maxQueryTime = 100;
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("create table tab as (select rnd_double() d from long_sequence(1000000))");
@@ -9196,7 +9090,6 @@ nodejs code:
 
     @Test
     public void testQueryTimeoutModern() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         maxQueryTime = 100;
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("select sleep(120000)")) {
@@ -9212,7 +9105,6 @@ nodejs code:
 
     @Test
     public void testQuestDBVersionIncludedInStatus() throws Exception {
-        skipOnWalRun(); // no table at all
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             PgConnection pgConnection = connection.unwrap(PgConnection.class);
             String actualVersion = pgConnection.getParameterStatus("questdb_version");
@@ -9236,7 +9128,6 @@ nodejs code:
 
     @Test
     public void testRegProcedure() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(
                 CONN_AWARE_ALL,
                 (connection, binary, mode, port) -> {
@@ -9257,7 +9148,6 @@ nodejs code:
     @Test
     public void testRegularBatchInsertMethod() throws Exception {
         // bind variables do not work well over "simple" protocol
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL ^ CONN_AWARE_SIMPLE, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table test_batch(id long,val int)");
@@ -9309,7 +9199,6 @@ nodejs code:
     // --process 25 rows. end of results.
     @Test
     public void testResultSetFetchSizeFour() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
@@ -9341,7 +9230,6 @@ nodejs code:
     // -process results
     @Test
     public void testResultSetFetchSizeOne() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
@@ -9378,7 +9266,6 @@ nodejs code:
     // --process 25 rows. end of results.
     @Test
     public void testResultSetFetchSizeThree() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
@@ -9414,7 +9301,6 @@ nodejs code:
     // --process 75 rows
     @Test
     public void testResultSetFetchSizeTwo() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
@@ -9441,7 +9327,6 @@ nodejs code:
 
     @Test
     public void testRollbackDataOnStaleTransaction() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("create table xyz(a int)").execute();
@@ -9543,7 +9428,6 @@ nodejs code:
 
     @Test
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 1000);
             node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
@@ -9634,7 +9518,6 @@ nodejs code:
 
     @Test
     public void testRunSimpleQueryMultipleTimes() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 final String query = "select 42 as the_answer";
@@ -9655,7 +9538,6 @@ nodejs code:
 
     @Test
     public void testRustBindVariableHex() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         //hex for close message 43 00000009 53 535f31 00
         assertHexScript("""
                 >0000003600030000636c69656e745f656e636f64696e67005554463800757365720061646d696e006461746162617365007164620000
@@ -9680,7 +9562,6 @@ nodejs code:
 
     @Test
     public void testRustSelectHex() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertHexScript("""
                 >0000004300030000636c69656e745f656e636f64696e6700555446380074696d657a6f6e650055544300757365720061646d696e006461746162617365007164620000
                 <520000000800000003
@@ -9728,7 +9609,6 @@ nodejs code:
 
     @Test
     public void testSchemasCall() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(
                 CONN_AWARE_ALL,
                 (connection, binary, mode, port) -> {
@@ -9755,8 +9635,8 @@ nodejs code:
                         assertResultSet(
                                 """
                                         TABLE_SCHEM[VARCHAR],TABLE_CATALOG[VARCHAR]
-                                        pg_catalog,null
-                                        public,null
+                                        pg_catalog,qdb
+                                        public,qdb
                                         """,
                                 sink,
                                 rs
@@ -9769,10 +9649,10 @@ nodejs code:
                         assertResultSet(
                                 """
                                         TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],TABLE_TYPE[VARCHAR],REMARKS[VARCHAR],TYPE_CAT[VARCHAR],TYPE_SCHEM[VARCHAR],TYPE_NAME[VARCHAR],SELF_REFERENCING_COL_NAME[VARCHAR],REF_GENERATION[VARCHAR]
-                                        null,pg_catalog,pg_class,SYSTEM TABLE,null,,,,,
-                                        null,public,sys.text_import_log,TABLE,null,,,,,
-                                        null,public,test,TABLE,null,,,,,
-                                        null,public,test2,TABLE,null,,,,,
+                                        qdb,pg_catalog,pg_class,SYSTEM TABLE,null,,,,,
+                                        qdb,public,sys.text_import_log,TABLE,null,,,,,
+                                        qdb,public,test,TABLE,null,,,,,
+                                        qdb,public,test2,TABLE,null,,,,,
                                         """,
                                 sink,
                                 rs
@@ -9784,8 +9664,8 @@ nodejs code:
                         assertResultSet(
                                 """
                                         TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],COLUMN_NAME[VARCHAR],DATA_TYPE[SMALLINT],TYPE_NAME[VARCHAR],COLUMN_SIZE[INTEGER],BUFFER_LENGTH[VARCHAR],DECIMAL_DIGITS[INTEGER],NUM_PREC_RADIX[INTEGER],NULLABLE[INTEGER],REMARKS[VARCHAR],COLUMN_DEF[VARCHAR],SQL_DATA_TYPE[INTEGER],SQL_DATETIME_SUB[INTEGER],CHAR_OCTET_LENGTH[VARCHAR],ORDINAL_POSITION[INTEGER],IS_NULLABLE[VARCHAR],SCOPE_CATALOG[VARCHAR],SCOPE_SCHEMA[VARCHAR],SCOPE_TABLE[VARCHAR],SOURCE_DATA_TYPE[SMALLINT],IS_AUTOINCREMENT[VARCHAR],IS_GENERATEDCOLUMN[VARCHAR]
-                                        null,public,test,id,-5,int8,19,null,0,10,1,null,null,null,null,19,1,YES,null,null,null,0,NO,NO
-                                        null,public,test,val,4,int4,10,null,0,10,1,null,null,null,null,10,2,YES,null,null,null,0,NO,NO
+                                        qdb,public,test,id,-5,int8,19,null,0,10,1,null,null,null,null,19,1,YES,null,null,null,0,NO,NO
+                                        qdb,public,test,val,4,int4,10,null,0,10,1,null,null,null,null,10,2,YES,null,null,null,0,NO,NO
                                         """,
                                 sink,
                                 rs
@@ -9840,7 +9720,6 @@ create table tab as (
 
      */
     public void testSelectAllTypesFromAsyncPG() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         execute("""
                 create table tab as (
                     select
@@ -9886,7 +9765,6 @@ create table tab as (
 
     @Test
     public void testSelectArrayBindingVars() throws Exception {
-        skipOnWalRun();
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             final Array array1d = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d});
             final Array array2d = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}, {4d, 5d, 6d}});
@@ -9952,8 +9830,6 @@ create table tab as (
      */
     @Test
     public void testSelectBindVarsAsyncPG() throws Exception {
-        skipOnWalRun(); // non-partitioned table
-
         execute("create table tab2 (a double);");
         execute("insert into 'tab2' values (0.7);");
         execute("insert into 'tab2' values (0.2);");
@@ -9998,8 +9874,6 @@ create table tab as (
      */
     @Test//bind variables make sense in extended mode only
     public void testSelectBindVarsInSelectAndWhereAsyncPG() throws Exception {
-        skipOnWalRun(); // non-partitioned table
-
         execute("create table tab2 (a double);");
         execute("insert into 'tab2' values (0.7);");
         execute("insert into 'tab2' values (0.2);");
@@ -10115,7 +9989,6 @@ create table tab as (
 
     @Test
     public void testSemicolon() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement(";;")) {
                 statement.execute();
@@ -10161,7 +10034,6 @@ create table tab as (
 
     @Test
     public void testSendingBufferWhenFlushMessageReceivedHex() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertHexScriptAltCreds(
                 """
                         >0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
@@ -10190,7 +10062,6 @@ create table tab as (
         // 1. create a table
         // 2. alter table
         // 3. check table column added
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             PreparedStatement statement = connection.prepareStatement("create table x (a int)");
             statement.execute();
@@ -10236,7 +10107,6 @@ create table tab as (
 
     @Test
     public void testSimpleModeNoCommit() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (ignore, binary, mode, port) -> {
             for (int i = 0; i < 50; i++) {
                 try (final Connection connection = getConnection(mode, port, binary)) {
@@ -10319,7 +10189,6 @@ create table tab as (
 
     @Test
     public void testSimpleSimpleQuery() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute(
@@ -10444,7 +10313,6 @@ create table tab as (
 
     @Test
     public void testSingleInClause() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                 statement.execute();
@@ -10530,7 +10398,6 @@ create table tab as (
 
     @Test
     public void testSingleInClauseNonDedicatedTimestamp() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         // this test fails in simple mode for the new PG driver
         // The driver use to send `timestamp in '2020'` and now it sends
         // `timestamp in ('2020')`. We interpret the latter as "points" rather than intervals.
@@ -10618,7 +10485,6 @@ create table tab as (
 
     @Test
     public void testSlowClient() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
             PGConfiguration configuration = new Port0PGConfiguration() {
@@ -10657,7 +10523,6 @@ create table tab as (
 
     @Test
     public void testSlowClient2() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
             PGConfiguration configuration = new Port0PGConfiguration() {
@@ -10943,8 +10808,6 @@ create table tab as (
 
     @Test
     public void testSmallSendBufferLargeErrorMessage() throws Exception {
-        Assume.assumeFalse(walEnabled);
-
         final int sndBufSize = 256;
         final int errorLen = sndBufSize + bufferSizeRnd.nextInt(1000);
 
@@ -10986,9 +10849,6 @@ create table tab as (
 
     @Test
     public void testSmallSendBufferWideRecordPermute() throws Exception {
-        // WAL is irrelevant here, we are checking result sending code path
-        skipOnWalRun();
-
         // 256 is not enough for the row description message
         final int[] bufferSizes = {512, 1024, 2048, 4096, 8192};
         final int numIteration = 10;
@@ -11173,7 +11033,6 @@ create table tab as (
         sqlx = { version = "0.7", features = [ "postgres", "runtime-tokio" ] }
      */
     public void testSyncAfterLoginSendsRNQ() throws Exception {
-        skipOnWalRun();
         final String script =
                 """
                         >0000006b00030000757365720061646d696e0064617461626173650071646200446174655374796c650049534f2c204d445900636c69656e745f656e636f64696e6700555446380054696d655a6f6e65005554430065787472615f666c6f61745f64696769747300320000
@@ -11192,7 +11051,6 @@ create table tab as (
 
     @Test
     public void testSyntaxErrorReporting() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try {
                 connection.prepareCall("drop table xyz;").execute();
@@ -11206,7 +11064,6 @@ create table tab as (
 
     @Test
     public void testSyntaxErrorSimple() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try {
                 // column does not exits
@@ -11221,7 +11078,6 @@ create table tab as (
 
     @Test
     public void testTableReferenceOutOfDate() throws Exception {
-        Assume.assumeFalse(walEnabled);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             final String query = "select * from test_table_reference_out_of_date();";
             try (
@@ -11253,7 +11109,6 @@ create table tab as (
      */
     @Test
     public void testThatTableOidIsSetToZero() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (
                     final PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
@@ -11419,7 +11274,6 @@ create table tab as (
 
     @Test
     public void testTransaction() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("create table xyz(a int)").execute();
@@ -11451,13 +11305,11 @@ create table tab as (
 
     @Test
     public void testTruncateAndUpdateOnNonPartitionedTableWithDesignatedTs() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         testTruncateAndUpdateOnTable("timestamp(ts)");
     }
 
     @Test
     public void testTruncateAndUpdateOnNonPartitionedTableWithoutDesignatedTs() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         testTruncateAndUpdateOnTable("");
     }
 
@@ -11528,7 +11380,6 @@ create table tab as (
 
     @Test
     public void testUnsupportedParameterType() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("select x, ? y from long_sequence(5)")) {
                 // TIME is passed over protocol as UNSPECIFIED type
@@ -12008,7 +11859,6 @@ create table tab as (
 
     @Test
     public void testUuidType_insertIntoUUIDColumn() throws Exception {
-        skipOnWalRun();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("create table x (u1 uuid, u2 uuid, s1 string)")) {
                 statement.execute();
@@ -12210,7 +12060,6 @@ create table tab as (
 
     @Test
     public void testVarchar() throws Exception {
-        skipOnWalRun();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate(
@@ -12247,7 +12096,6 @@ create table tab as (
     */
     @Test
     public void testVarcharBinaryType() throws Exception {
-        skipOnWalRun();
         engine.execute("create table x (id varchar)", sqlExecutionContext);
         engine.execute("insert into x values ('entry')", sqlExecutionContext);
 
@@ -12449,7 +12297,6 @@ create table tab as (
     }
 
     private void assertHexScriptAltCreds(String script) throws Exception {
-        skipOnWalRun();
         assertHexScript(NetworkFacadeImpl.INSTANCE, script, getStdPgWireConfigAltCreds());
     }
 
@@ -12756,7 +12603,6 @@ create table tab as (
     }
 
     private void testBinaryInsert(int maxLength, int recvBufferSize, int sendBufferSize) throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(
                 CONN_AWARE_EXTENDED,
                 (connection, binary, mode, port) -> {
@@ -13143,7 +12989,6 @@ create table tab as (
     }
 
     private void testFetchDisconnectReleasesReader(String query) throws Exception {
-        skipOnWalRun(); // non-partitioned table
         // Circuit breaker does not work with fragmented buffer
         // TODO: find a solution, Net.peek() always return a byte when the incoming buffer not read fully
         // when executing 'E' (execute) postgres protocol command
@@ -13185,7 +13030,6 @@ create table tab as (
     }
 
     private void testQuery(String s, String s2) throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("create table x as (" +
@@ -13282,7 +13126,6 @@ create table tab as (
 
     private void testReadParquetSchemaChange(boolean simple) throws Exception {
         inputRoot = root; // the parquet files are exported into the root dir
-        skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
                     PGServer server = createPGServer(1);
@@ -13342,7 +13185,6 @@ create table tab as (
     }
 
     private void testTableSchemaChange(boolean simple) throws Exception {
-        skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
                     PGServer server = createPGServer(1);

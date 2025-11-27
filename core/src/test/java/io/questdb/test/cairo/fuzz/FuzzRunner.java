@@ -294,10 +294,9 @@ public class FuzzRunner {
                         try {
                             writer = TestUtils.getWriter(engine, tableName);
                         } catch (CairoException ex) {
-                            if (ex.isTableDoesNotExist() && transaction.operationList.get(0) instanceof FuzzDropCreateTableOperation) {
+                            if (ex.isTableDoesNotExist() && transaction.operationList.get(0) instanceof FuzzDropCreateTableOperation dropCreateTableOperation) {
                                 // Table is dropped, but failed to recreate.
                                 // Create it again.
-                                FuzzDropCreateTableOperation dropCreateTableOperation = (FuzzDropCreateTableOperation) transaction.operationList.get(0);
                                 if (dropCreateTableOperation.recreateTable(engine)) {
                                     writer = TestUtils.getWriter(engine, tableName);
                                     // Drop and create cycle now complete, move to next transaction.
@@ -437,8 +436,8 @@ public class FuzzRunner {
         return createInitialTable(tableName, true, initialRowCount);
     }
 
-    public TableToken createInitialTableWal(String tableName, String timestampType) throws SqlException {
-        return createInitialTable(tableName, true, initialRowCount, timestampType);
+    public void createInitialTableWal(String tableName, String timestampType) throws SqlException {
+        createInitialTable(tableName, initialRowCount, timestampType);
     }
 
     public TableToken createInitialTableWal(String tableName, int initialRowCount) throws SqlException {
@@ -820,7 +819,7 @@ public class FuzzRunner {
         return engine.verifyTableName(tableName);
     }
 
-    private TableToken createInitialTable(String tableName, boolean isWal, int rowCount, String timestampType) throws SqlException {
+    private void createInitialTable(String tableName, int rowCount, String timestampType) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
         TableToken tempTable = engine.getTableTokenIfExists("data_temp");
 
@@ -846,7 +845,7 @@ public class FuzzRunner {
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                            "), index(sym2) timestamp(ts) partition by DAY WAL",
                     sqlExecutionContext
             );
             // force few column tops
@@ -856,7 +855,7 @@ public class FuzzRunner {
             engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
-        return engine.verifyTableName(tableName);
+        engine.verifyTableName(tableName);
     }
 
     @NotNull

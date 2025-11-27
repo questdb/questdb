@@ -751,6 +751,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getRmdirMaxDepth() {
+        return 5;
+    }
+
+    @Override
     public int getRndFunctionMemoryMaxPages() {
         return 128;
     }
@@ -768,11 +773,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
-    }
-
-    @Override
-    public int getScoreboardFormat() {
-        return 2;
     }
 
     @Override
