@@ -922,7 +922,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                             while (!stop.get()) {
                                 drainMatViewTimerQueue(timerJob);
                                 refreshJob.run(workerId);
-                                Os.sleep(rnd.nextInt(50));
+                                Os.sleep(rnd.nextInt(10));
                                 if (rnd.nextBoolean()) {
                                     // Try to move the clock one jump forward.
                                     long timeBefore = currentMicros;
