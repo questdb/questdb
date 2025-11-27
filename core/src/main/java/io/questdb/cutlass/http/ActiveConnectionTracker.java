@@ -26,23 +26,24 @@ package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.metrics.AtomicLongGauge;
+import io.questdb.metrics.AtomicLongGaugeImpl;
+import io.questdb.metrics.NullLongGauge;
 import org.jetbrains.annotations.NotNull;
-
-import java.util.concurrent.atomic.AtomicLong;
+import org.jetbrains.annotations.Nullable;
 
 public class ActiveConnectionTracker {
-    public static final String PROCESSOR_EXPORT = "export-http";
-    public static final String PROCESSOR_ILP = "ilp-http";
-    public static final String PROCESSOR_JSON = "json-http";
-    public static final String PROCESSOR_OTHER = "other-http";
+    public static final String PROCESSOR_EXPORT_HTTP = "http_export_connections";
+    public static final String PROCESSOR_ILP_HTTP = "http_ilp_connections";
+    public static final String PROCESSOR_JSON = "http_json_connections";
+    public static final String PROCESSOR_OTHER = "http_other_connections";
     public static final int UNLIMITED = -1;
     public static final ActiveConnectionTracker NO_TRACKING = new ActiveConnectionTracker() {
         @Override
-        public long decrementActiveConnection(@NotNull String name) {
+        public long dec(@NotNull String name) {
             return 0;
         }
 
-        public long getActiveConnections(@NotNull String processorName) {
+        public long get(@NotNull String processorName) {
             return 0;
         }
 
@@ -52,14 +53,14 @@ public class ActiveConnectionTracker {
         }
 
         @Override
-        public long incrementActiveConnection(@NotNull String processorName) {
+        public long inc(@NotNull String processorName) {
             return 0;
         }
     };
     private final HttpContextConfiguration contextConfiguration;
-    private final AtomicLong exportActiveConnections = new AtomicLong();
-    private final AtomicLong ilpActiveConnections = new AtomicLong();
-    private final AtomicLong jsonActiveConnections = new AtomicLong();
+    private final AtomicLongGaugeImpl exportActiveConnections = new AtomicLongGaugeImpl("http_export_connections");
+    private final AtomicLongGaugeImpl ilpActiveConnections = new AtomicLongGaugeImpl("http_ilp_connections");
+    private final AtomicLongGaugeImpl jsonActiveConnections = new AtomicLongGaugeImpl("http_json_connections");
     private final Metrics metrics;
 
     private ActiveConnectionTracker() {
@@ -72,55 +73,53 @@ public class ActiveConnectionTracker {
         this.metrics = contextConfiguration.getMetrics();
     }
 
-    public long decrementActiveConnection(@NotNull String processorName) {
-        getGauge(processorName).dec();
-        return getCounter(processorName).decrementAndGet();
+    public long dec(@NotNull String processorName) {
+        getMetricsGauge(processorName).dec();
+        return getLocalGauge(processorName).decrementAndGet();
     }
 
-    public long getActiveConnections(@NotNull String processorName) {
-        return getCounter(processorName).get();
+    public long get(@NotNull String processorName) {
+        return getLocalGauge(processorName).getValue();
     }
 
-    public int getLimit(String processorName) {
+    public int getLimit(@Nullable String processorName) {
         if (processorName == null) {
             // No limit.
             return UNLIMITED;
         }
-        switch (processorName) {
-            case PROCESSOR_JSON:
-                return contextConfiguration.getJsonQueryConnectionLimit();
-            case PROCESSOR_ILP:
-                return contextConfiguration.getIlpConnectionLimit();
-            case PROCESSOR_EXPORT:
-                return contextConfiguration.getExportConnectionLimit();
-            default:
-                // No limit.
-                return UNLIMITED;
-        }
+        return switch (processorName) {
+            case PROCESSOR_JSON -> contextConfiguration.getJsonQueryConnectionLimit();
+            case PROCESSOR_ILP_HTTP -> contextConfiguration.getIlpConnectionLimit();
+            case PROCESSOR_EXPORT_HTTP -> contextConfiguration.getExportConnectionLimit();
+            case PROCESSOR_OTHER -> UNLIMITED;
+            default -> throw new UnsupportedOperationException();
+        };
     }
 
-    public long incrementActiveConnection(@NotNull String processorName) {
-        getGauge(processorName).inc();
-        return getCounter(processorName).incrementAndGet();
+    public long inc(@NotNull String processorName) {
+        getMetricsGauge(processorName).inc();
+        return getLocalGauge(processorName).incrementAndGet();
     }
 
-    private AtomicLong getCounter(@NotNull String processorName) {
-        switch (processorName) {
-            case PROCESSOR_ILP:
-                return ilpActiveConnections;
-            case PROCESSOR_EXPORT:
-                return exportActiveConnections;
-            default:
-                return jsonActiveConnections;
-        }
+    private AtomicLongGauge getLocalGauge(@NotNull String processorName) {
+        return switch (processorName) {
+            case PROCESSOR_ILP_HTTP -> ilpActiveConnections;
+            case PROCESSOR_EXPORT_HTTP -> exportActiveConnections;
+            case PROCESSOR_JSON -> jsonActiveConnections;
+            case PROCESSOR_OTHER -> NullLongGauge.INSTANCE;
+            // noop, not currently in use
+            default -> throw new UnsupportedOperationException();
+        };
     }
 
-    private AtomicLongGauge getGauge(@NotNull String processorName) {
-        switch (processorName) {
-            case PROCESSOR_ILP:
-                return metrics.lineMetrics().httpConnectionCountGauge();
-            default:
-                return metrics.jsonQueryMetrics().connectionCountGauge();
-        }
+    private AtomicLongGauge getMetricsGauge(@NotNull String processorName) {
+        return switch (processorName) {
+            case PROCESSOR_ILP_HTTP -> metrics.lineMetrics().httpConnectionCountGauge();
+            case PROCESSOR_JSON -> metrics.jsonQueryMetrics().connectionCountGauge();
+            case PROCESSOR_EXPORT_HTTP ->
+                    NullLongGauge.INSTANCE;  // intentional noop, we do not have a prom metrics entry
+            case PROCESSOR_OTHER -> NullLongGauge.INSTANCE;
+            default -> throw new UnsupportedOperationException();
+        };
     }
 }

@@ -471,6 +471,62 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testHintsNotPropagatedToCte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE left (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE right (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+            String queryTemplate = """
+                    EXPLAIN WITH cte AS (SELECT %s * FROM left ASOF JOIN right ON sym)
+                    SELECT %s * FROM cte
+                    """;
+            String planTemplate = """
+                    QUERY PLAN
+                    SelectedRecord
+                        AsOf Join %s
+                          condition: right.sym=left.sym
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: left
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: right
+                    """;
+            // Hint at the top level, must not affect CTE
+            assertSql(
+                    String.format(planTemplate, "Fast"),
+                    String.format(queryTemplate, "", "/*+ asof_dense(left right) */")
+            );
+            // Hint in CTE, must apply
+            assertSql(
+                    String.format(planTemplate, "Dense Single Symbol"),
+                    String.format(queryTemplate, "/*+ asof_dense(left right) */", "")
+            );
+            // Same hint at both levels, top-level hint uses wrong aliases. CTE hint must apply.
+            assertSql(
+                    String.format(planTemplate, "Dense Single Symbol"),
+                    String.format(queryTemplate, "/*+ asof_dense(left right) */", "/*+ asof_dense(a b) */")
+            );
+            // Same hint at both levels, CTE hint uses wrong aliases. CTE hint must be visible, and have no effect.
+            assertSql(
+                    String.format(planTemplate, "Fast"),
+                    String.format(queryTemplate, "/*+ asof_dense(a b) */", "/*+ asof_dense(left right) */")
+            );
+            // Two different hints at top level and CTE. If inherited, top-level hint would override the CTE one.
+            // CTE hint must apply.
+            assertSql(
+                    String.format(planTemplate, "Dense Single Symbol"),
+                    String.format(queryTemplate, "/*+ asof_dense(left right) */", "/*+ asof_linear(left right) */")
+            );
+            // Two different hints at top level and CTE. If inherited, top-level hint would be overridden by CTE hint.
+            // CTE hint must apply.
+            assertSql(
+                    String.format(planTemplate, "Light"),
+                    String.format(queryTemplate, "/*+ asof_linear(left right) */", "/*+ asof_dense(left right) */")
+            );
+        });
+    }
+
+    @Test
     public void testJoinAndUnionQueryWithJoinOnDesignatedTimestampColumnWithLastFunction() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
