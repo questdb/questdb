@@ -1233,10 +1233,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
-        if (checkpointStatus.partitionsLocked()) {
-            // do not alter scoreboard while checkpoint is in progress
-            return true;
-        }
         return txnScoreboard.hasEarlierTxnLocks(txWriter.getTxn());
     }
 
@@ -3070,19 +3066,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public final void truncateSoft() {
         truncate(true);
-    }
-
-    public boolean trySkipWalTransactions(long seqTxn, long skipTxnCount) {
-        assert skipTxnCount > 0;
-        if (txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0) {
-            LOG.info().$("skipping replaced WAL transactions [table=").$(tableToken)
-                    .$("range=[").$(seqTxn)
-                    .$(", ").$(seqTxn + skipTxnCount).$(')')
-                    .I$();
-            commitSeqTxn(seqTxn + skipTxnCount - 1);
-            return true;
-        }
-        return false;
     }
 
     public void updateTableToken(TableToken tableToken) {
@@ -9895,12 +9878,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
         if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
             // Nothing to do
-            return;
-        }
-
-        if (checkpointStatus.partitionsLocked()) {
-            LOG.info().$("cannot squash partition [table=").$(tableToken)
-                    .$("], checkpoint in progress").$();
             return;
         }
 
