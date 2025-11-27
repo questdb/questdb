@@ -32,7 +32,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxnScoreboardPool;
 import io.questdb.cairo.TxnScoreboardPoolV2;
-import io.questdb.cairo.TxnScoreboardV1;
 import io.questdb.cairo.TxnScoreboardV2;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.mp.SOCountDownLatch;
@@ -48,11 +47,7 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -492,29 +487,17 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     // This method is implemented in scoreboards for testing only and
     // is not part of the public API
     private static long getActiveReaderCount(TxnScoreboard scoreboard, long txn) {
-        if (scoreboard instanceof TxnScoreboardV2) {
-            return ((TxnScoreboardV2) scoreboard).getActiveReaderCount(txn);
-        } else {
-            return ((TxnScoreboardV1) scoreboard).getActiveReaderCount(txn);
-        }
+        return ((TxnScoreboardV2) scoreboard).getActiveReaderCount(txn);
     }
 
     // This method is implemented in scoreboards for testing only and
     // is not part of the public API
     private static long getMin(TxnScoreboard scoreboard) {
-        if (scoreboard instanceof TxnScoreboardV2) {
-            return ((TxnScoreboardV2) scoreboard).getMin();
-        } else {
-            return ((TxnScoreboardV1) scoreboard).getMin();
-        }
+        return ((TxnScoreboardV2) scoreboard).getMin();
     }
 
     private void assertScoreboardMinOrNoLocks(TxnScoreboard scoreboard, long txn) {
-        if (scoreboard instanceof TxnScoreboardV2) {
-            Assert.assertEquals(-1, getMin(scoreboard));
-        } else {
-            Assert.assertEquals(txn, getMin(scoreboard));
-        }
+        Assert.assertEquals(-1, getMin(scoreboard));
     }
 
     @SuppressWarnings("SameParameterValue")
