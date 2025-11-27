@@ -30,6 +30,37 @@ import org.junit.Test;
 public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testWeightedStddevFreqAgainstNonWeighted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE freq_weights (value DOUBLE, freq DOUBLE)");
+            execute("""
+                    INSERT into freq_weights VALUES
+                        (13, 1),
+                        (42, 2),
+                        (27, 3)
+                    """);
+            execute("CREATE TABLE samples (value DOUBLE)");
+            execute("""
+                    INSERT INTO samples VALUES
+                        (13),
+                        (42),
+                        (42),
+                        (27),
+                        (27),
+                        (27)
+                    """);
+            assertSql(
+                    "weighted_stddev\n10.9848\n",
+                    "SELECT round(weighted_stddev_freq(value, freq), 4) weighted_stddev FROM freq_weights"
+            );
+            assertSql(
+                    "stddev\n10.9848\n",
+                    "SELECT round(stddev_samp(value), 4) stddev FROM samples"
+            );
+        });
+    }
+
+    @Test
     public void testWeightedStddevFreqAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango as (SELECT 17.2151921 value, rnd_double() weight FROM long_sequence(100))");
