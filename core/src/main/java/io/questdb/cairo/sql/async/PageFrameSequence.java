@@ -323,6 +323,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return uninterruptible;
     }
 
+    public long next() {
+        return next(Integer.MAX_VALUE);
+    }
+
     /**
      * This method is not thread safe. It's always invoked on a single "query owner" thread.
      * <p>
@@ -331,10 +335,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      * instead, should use getTask and collect methods. <code>Long.MAX_VALUE</code> is the
      * reserved cursor value for the local reduce task case.
      *
+     * @param dispatchLimit a cap for the number of in-flight tasks
      * @return the next cursor value, or -1 value if the cursor failed and the caller
      * should retry, or -2 if there are no frames to dispatch
      */
-    public long next() {
+    public long next(int dispatchLimit) {
         if (frameCount == 0) {
             return -2;
         }
@@ -353,7 +358,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     collectSubSeq.done(cursor);
                 }
             } else if (cursor == -1) {
-                if (dispatch()) {
+                if (dispatch(dispatchLimit)) {
                     // We have dispatched something, so let's try to collect it.
                     continue;
                 }
@@ -422,7 +427,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     /**
-     * Must be called before subsequence calls to {@link #next()} to count page frames and
+     * Must be called before subsequence calls to {@link #next(int)} to count page frames and
      * initialize page frame cache and filter functions.
      *
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
@@ -491,14 +496,15 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     /**
-     * This method is re-enterable. It has to be in case queue capacity is smaller than number of frames to
-     * be dispatched. When it is the case, frame count published so far is stored in the `frameSequence`.
-     * This method has no responsibility to deal with "collect" stage hence it deals with everything to
-     * unblock the collect stage.
+     * This method is re-enterable. It has to be in case queue capacity or the dispatch limit is smaller
+     * than number of frames to be dispatched. When it is the case, frame count published so far is
+     * stored in the `dispatchStartFrameIndex` field. This method has no responsibility to deal with
+     * "collect" stage hence it deals with everything to unblock the collect stage.
      *
+     * @param dispatchLimit a cap for the number of in-flight tasks
      * @return true if at least one task was dispatched or reduced; false otherwise
      */
-    private boolean dispatch() {
+    private boolean dispatch(int dispatchLimit) {
         boolean idle = true;
         boolean dispatched = false;
 
@@ -517,7 +523,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // tasks from the queue.
 
             while (true) {
-                cursor = reducePubSeq.next();
+                final int totalDispatched = dispatchStartFrameIndex - collectedFrameCount;
+                // Treat situation when we hit the dispatch limit as if it was a full queue (-1).
+                cursor = totalDispatched < dispatchLimit ? reducePubSeq.next() : -1;
                 if (cursor > -1) {
                     reduceQueue.get(cursor).of(this, i);
                     LOG.debug()

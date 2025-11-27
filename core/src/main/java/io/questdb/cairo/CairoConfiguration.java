@@ -586,6 +586,8 @@ public interface CairoConfiguration {
 
     int getSqlPageFrameMinRows();
 
+    int getSqlParallelFilterDispatchLimit();
+
     double getSqlParallelFilterPreTouchThreshold();
 
     int getSqlParallelWorkStealingThreshold();

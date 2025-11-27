@@ -2016,6 +2016,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertFalse(configuration.isSqlParallelFilterEnabled());
         Assert.assertEquals(0.1, configuration.getSqlParallelFilterPreTouchThreshold(), 0.000001);
+        Assert.assertEquals(100, configuration.getSqlParallelFilterDispatchLimit());
         Assert.assertFalse(configuration.isSqlParallelTopKEnabled());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());

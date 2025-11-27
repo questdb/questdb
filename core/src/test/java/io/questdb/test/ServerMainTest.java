@@ -400,6 +400,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.page.frame.min.rows\tQDB_CAIRO_SQL_PAGE_FRAME_MIN_ROWS\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.filter.enabled\tQDB_CAIRO_SQL_PARALLEL_FILTER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.filter.pretouch.threshold\tQDB_CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD\t0.05\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.filter.dispatch.limit\tQDB_CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT\t2\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.topk.enabled\tQDB_CAIRO_SQL_PARALLEL_TOPK_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
