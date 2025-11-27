@@ -109,7 +109,7 @@ public class SerialParquetExporter implements Closeable {
     }
 
     public CopyExportRequestTask.Phase process() throws Exception {
-        if (processStreamExport()) {
+        if (processStreamExport(true)) {
             copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
             return CopyExportRequestTask.Phase.SUCCESS;
         }
@@ -150,7 +150,7 @@ public class SerialParquetExporter implements Closeable {
                             PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
                             task.setUpStreamPartitionParquetExporter(factory, pageFrameCursor, factory.getMetadata());
                             factory = null; // transfer ownership to the task
-                            processStreamExport();
+                            processStreamExport(false);
                             return CopyExportRequestTask.Phase.SUCCESS;
                         }
                     } catch (Throwable e) {
@@ -429,11 +429,10 @@ public class SerialParquetExporter implements Closeable {
         }
     }
 
-    private boolean processStreamExport() throws Exception {
+    private boolean processStreamExport(boolean cleanupTempTable) throws Exception {
         PageFrameCursor pageFrameCursor = task.getPageFrameCursor();
         if (pageFrameCursor != null) {
             CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
-            boolean cleanup = true;
             try {
                 if (circuitBreaker.checkIfTripped()) {
                     LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
@@ -466,15 +465,14 @@ public class SerialParquetExporter implements Closeable {
                 }
                 exporter.finishExport();
             } catch (PeerIsSlowToReadException e) {
-                cleanup = false;
+                cleanupTempTable = false;
                 throw e;
             } finally {
-                if (cleanup) {
+                if (cleanupTempTable) {
                     if (task.getTableName() != null && task.getCreateOp() != null) {
                         final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
                         TableToken tableToken = cairoEngine.getTableTokenIfExists(task.getTableName());
                         dropTempTable(cairoEngine, tableToken);
-                        task.freeCreateOp(); // avoid to double drop temp table
                     }
                 }
             }

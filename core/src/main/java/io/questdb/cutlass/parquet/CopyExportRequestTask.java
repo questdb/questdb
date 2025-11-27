@@ -96,10 +96,6 @@ public class CopyExportRequestTask implements Mutable {
         }
     }
 
-    public void freeCreateOp() {
-        this.createOp = Misc.free(this.createOp);
-    }
-
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
         return entry.getCircuitBreaker();
     }

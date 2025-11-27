@@ -492,7 +492,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         private void close0(@Nullable Throwable th) {
-            if (!isOpen) {
+            if (!isOpen && th == null) {
                 return;
             }
             try {
@@ -618,12 +618,14 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         private void close0(@Nullable Throwable th) {
-            if (!isOpen) {
+            if (!isOpen && th == null) {
                 return;
             }
             try {
-                isOpen = false;
-                base = Misc.free(base);
+                if (isOpen) {
+                    isOpen = false;
+                    base = Misc.free(base);
+                }
             } catch (Throwable th0) {
                 LOG.critical()
                         .$("could not close record cursor")
