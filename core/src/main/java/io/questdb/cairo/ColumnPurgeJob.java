@@ -64,7 +64,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private static final int TABLE_NAME_COLUMN = 1;
     private static final int TABLE_TRUNCATE_VERSION = 4;
     private static final int UPDATE_TXN_COLUMN = 7;
-    private final DatabaseCheckpointStatus checkpointStatus;
     private final Clock clock;
     private final RingQueue<ColumnPurgeTask> inQueue;
     private final Sequence inSubSequence;
@@ -126,7 +125,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     "completed",
                     ColumnPurgeOperator.ScoreboardUseMode.BAU_QUEUE_PROCESSING
             );
-            this.checkpointStatus = engine.getCheckpointStatus();
             processTableRecords(engine);
         } catch (Throwable th) {
             close();
