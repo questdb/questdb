@@ -26,9 +26,17 @@ package io.questdb.cairo.view;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -107,13 +115,22 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         }
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.testCompileModel(viewDefinition.getViewSql(), compilerExecutionContext);
-            reset(viewToken, updateTimestamp);
+            final ExecutionModel executionModel = compiler.testCompileModel(viewDefinition.getViewSql(), compilerExecutionContext);
+            if (reset(viewToken, updateTimestamp)) {
+                // view went from invalid to valid state, we should sync view metadata
+                syncViewMetadata(viewToken, compiler, executionModel);
+            }
         } catch (SqlException | CairoException e) {
             invalidate(viewToken, e.getFlyweightMessage(), updateTimestamp);
         } catch (Throwable e) {
             invalidate(viewToken, e.getMessage(), updateTimestamp);
         }
+    }
+
+    private RecordCursorFactory generateFactory(SqlCompiler compiler, ExecutionModel model) throws SqlException {
+        final QueryModel queryModel = model.getQueryModel();
+        assert queryModel != null;
+        return compiler.generateSelectWithRetries(queryModel, null, compilerExecutionContext, false);
     }
 
     private void invalidate(TableToken tableToken, CharSequence invalidationReason, long updateTimestamp) {
@@ -139,30 +156,71 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         return false;
     }
 
-    private void reset(TableToken tableToken, long updateTimestamp) {
+    private boolean reset(TableToken tableToken, long updateTimestamp) {
         if (tableToken == null || !tableToken.isView()) {
             LOG.error().$("cannot reset view state, not a view token [token=").$(tableToken).I$();
-            return;
+            return false;
         }
-
-        updateViewState(tableToken, false, null, updateTimestamp);
+        return updateViewState(tableToken, false, null, updateTimestamp);
     }
 
-    private void updateViewState(TableToken viewToken, boolean invalid, CharSequence invalidationReason, long updateTimestamp) {
+    private void syncViewMetadata(TableToken viewToken, SqlCompiler compiler, ExecutionModel executionModel) throws SqlException {
+        try (
+                RecordCursorFactory factory = generateFactory(compiler, executionModel);
+                TableMetadata currentMetadata = engine.getTableMetadata(viewToken)
+        ) {
+            final RecordMetadata newMetadata = factory.getMetadata();
+            final int columnCount = newMetadata.getColumnCount();
+            // todo: We expect column count and column names to be the same because currently the view query cannot be updated.
+            //  When ALTER VIEW viewName AS (new query) is implemented, we will need something more serious here, such
+            //  as TableWriter.replaceMetadata(newMetadata), which could be called only for views or empty tables/mat views.
+            //  Alternatively, we can run DROP COLUMN col1, col2..., then ADD COLUMN newCol1, newCol2...
+            assert columnCount == currentMetadata.getColumnCount();
+            final AlterOperationBuilder alterOperationBuilder = new AlterOperationBuilder();
+            boolean metadataChanged = false;
+            for (int i = 0; i < columnCount; i++) {
+                final String colName = newMetadata.getColumnName(i);
+                final int newColType = newMetadata.getColumnType(i);
+                final int oldColType = currentMetadata.getColumnType(colName);
+                if (oldColType != newColType) {
+                    final TableColumnMetadata columnMetadata = newMetadata.getColumnMetadata(i);
+                    alterOperationBuilder.addColumnToList(
+                            colName,
+                            0,
+                            newColType,
+                            columnMetadata.getSymbolCapacity(),
+                            columnMetadata.isSymbolCacheFlag(),
+                            columnMetadata.isSymbolIndexFlag(),
+                            newMetadata.getIndexValueBlockCapacity(i),
+                            columnMetadata.isDedupKeyFlag()
+                    );
+                    metadataChanged = true;
+                }
+            }
+            if (metadataChanged) {
+                try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
+                    alterOperationBuilder.ofColumnChangeType(0, viewToken, viewToken.getTableId());
+                    walWriter.apply(alterOperationBuilder.build(), true);
+                }
+            }
+        }
+    }
+
+    private boolean updateViewState(TableToken viewToken, boolean invalid, CharSequence invalidationReason, long updateTimestamp) {
         final ViewDefinition viewDefinition = viewGraph.getViewDefinition(viewToken);
         if (viewDefinition == null) {
             LOG.error().$("view definition is missing, probably dropped concurrently [token=").$(viewToken).I$();
-            return;
+            return false;
         }
 
         final ViewState state = stateStore.getViewState(viewToken);
         if (state == null) {
             LOG.error().$("view state is missing [token=").$(viewToken).I$();
-            return;
+            return false;
         }
         if (state.isInvalid() == invalid) {
             // there is no state change, just return
-            return;
+            return false;
         }
         LOG.info().$("updating view state [view=").$safe(viewToken.getTableName())
                 .$(", invalid=").$(invalid)
@@ -170,5 +228,6 @@ public class ViewCompilerJob implements Job, QuietCloseable {
                 .$(", updateTimestamp=").$(updateTimestamp)
                 .I$();
         state.updateState(invalid, invalidationReason, updateTimestamp);
+        return true;
     }
 }

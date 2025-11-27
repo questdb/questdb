@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.griffin.SqlException;
@@ -106,6 +107,15 @@ class AbstractViewTest extends AbstractCairoTest {
 
             assertEquals(query, viewDefinition.getViewSql());
         }
+    }
+
+    static void assertViewMetadata(String name, String expectedMetadataJson) {
+        final TableToken viewToken = engine.getTableTokenIfExists(name);
+        final StringSink sink = new StringSink();
+        try (TableMetadata actualMetadata = engine.getTableMetadata(viewToken)) {
+            actualMetadata.toJson(sink);
+        }
+        assertEquals(expectedMetadataJson, sink.toString());
     }
 
     static void assertViewState(String name) {

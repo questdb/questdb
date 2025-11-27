@@ -1411,7 +1411,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void markColumnRemoved(int columnIndex, int columnType) {
-        if (ColumnType.isSymbol(columnType)) {
+        if (ColumnType.isSymbol(columnType) && !tableToken.isView()) {
             removeSymbolMapReader(columnIndex);
         }
         final int pi = getDataColumnOffset(columnIndex);

@@ -675,7 +675,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void changeSymbolCapacity(MetadataService svc) {
         if (activeExtraStrInfo.size() != 1) {
-            throw CairoException.nonCritical().put("invalid change column type alter statement");
+            throw CairoException.nonCritical().put("invalid change symbol capacity alter statement");
         }
         CharSequence columnName = activeExtraStrInfo.getStrA(0);
         int newCapacity = (int) extraInfo.get(1);

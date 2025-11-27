@@ -203,6 +203,34 @@ public class ViewInvalidationTest extends AbstractViewTest {
     }
 
     @Test
+    public void testDroppedColumnInvalidatesViewAndBringItBackWithDifferentType() throws Exception {
+        testViewInvalidated(
+                "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4",
+                "ALTER TABLE " + TABLE1 + " DROP COLUMN k",
+                "alter table " + TABLE1 + " add column k varchar",
+                "Invalid column: k",
+                "{" +
+                        "\"columnCount\":3," +
+                        "\"columns\":[" +
+                        "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                        "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
+                        "{\"index\":2,\"name\":\"v_max\",\"type\":\"LONG\"}" +
+                        "]," +
+                        "\"timestampIndex\":-1" +
+                        "}",
+                "{" +
+                        "\"columnCount\":3," +
+                        "\"columns\":[" +
+                        "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                        "{\"index\":1,\"name\":\"k\",\"type\":\"VARCHAR\"}," +
+                        "{\"index\":2,\"name\":\"v_max\",\"type\":\"LONG\"}" +
+                        "]," +
+                        "\"timestampIndex\":-1" +
+                        "}"
+        );
+    }
+
+    @Test
     public void testDroppedTableInvalidatesView() throws Exception {
         testViewInvalidated(
                 "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4",
@@ -431,6 +459,10 @@ public class ViewInvalidationTest extends AbstractViewTest {
     }
 
     private void testViewInvalidated(String viewQuery, String breakingSql, String fixingSql, String expectedErrorMessage) throws Exception {
+        testViewInvalidated(viewQuery, breakingSql, fixingSql, expectedErrorMessage, null, null);
+    }
+
+    private void testViewInvalidated(String viewQuery, String breakingSql, String fixingSql, String expectedErrorMessage, String expectedCreateMetadata, String expectedFixedMetadata) throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(1750327200000000L);
 
@@ -439,6 +471,10 @@ public class ViewInvalidationTest extends AbstractViewTest {
 
             // creating view
             createView(VIEW1, viewQuery);
+
+            if (expectedCreateMetadata != null) {
+                assertViewMetadata(VIEW1, expectedCreateMetadata);
+            }
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
@@ -491,6 +527,10 @@ public class ViewInvalidationTest extends AbstractViewTest {
             assertViewDefinition(VIEW1, viewQuery);
             assertViewDefinitionFile(VIEW1, viewQuery);
             assertViewState(VIEW1);
+
+            if (expectedFixedMetadata != null) {
+                assertViewMetadata(VIEW1, expectedFixedMetadata);
+            }
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n" +
