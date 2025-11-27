@@ -44,12 +44,25 @@ stages:
               # Trigger the enterprise CI pipeline via Azure DevOps REST API
               AUTH_HEADER="Authorization: Basic $(printf ':%s' "$AZURE_DEVOPS_ENT_PAT" | base64 -w0)"
 
+              # Check if matching branch exists in enterprise repo (private, requires auth)
+              BRANCH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/questdb/questdb-enterprise/branches/$OSS_BRANCH")
+
+              if [ "$BRANCH_CHECK" = "200" ]; then
+                ENT_BRANCH="$OSS_BRANCH"
+                echo "Found matching enterprise branch: $ENT_BRANCH"
+              else
+                ENT_BRANCH="main"
+                echo "No matching branch '$OSS_BRANCH' in enterprise, using: $ENT_BRANCH"
+              fi
+
               PAYLOAD=$(cat <<EOF
               {
                 "resources": {
                   "repositories": {
                     "self": {
-                      "refName": "refs/heads/vi_ci"
+                      "refName": "refs/heads/$ENT_BRANCH"
                     }
                   }
                 },
@@ -79,8 +92,10 @@ stages:
             displayName: "Trigger Enterprise Pipeline"
             env:
               AZURE_DEVOPS_ENT_PAT: $(AZURE_DEVOPS_ENT_PAT)
+              GH_TOKEN: $(GH_TOKEN)
               OSS_COMMIT: $(Build.SourceVersion)
               OSS_PR_NUMBER: $(System.PullRequest.PullRequestNumber)
+              OSS_BRANCH: $(System.PullRequest.SourceBranch)
 
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin tests"
