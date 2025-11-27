@@ -3660,7 +3660,13 @@ public class SqlOptimiser implements Mutable {
 
         targetModel.copyHints(hints);
         var h = targetModel.getHints();
-        propagateHintsTo(targetModel.getNestedModel(), h);
+
+        QueryModel nestedModel = targetModel.getNestedModel();
+        if (nestedModel != null) {
+            // A CTE is not within the lexical scope of its parent model. Don't propagate hints into it.
+            // However, starting from the CTE model, do propagate its hints into its nested models.
+            propagateHintsTo(nestedModel, nestedModel.isCteModel() ? nestedModel.getHints() : h);
+        }
 
         // propagate hints to join models
         var joinModels = targetModel.getJoinModels();
@@ -7363,6 +7369,9 @@ public class SqlOptimiser implements Mutable {
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
+            if (!sqlExecutionContext.isValidationOnly()) {
+                authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            }
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             parquetProjectionPushdown(rewrittenModel);
             return rewrittenModel;

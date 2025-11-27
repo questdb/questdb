@@ -25,5 +25,7 @@
 package io.questdb.metrics;
 
 public interface AtomicLongGauge extends LongGauge {
+    long decrementAndGet();
+
     long incrementAndGet();
 }
