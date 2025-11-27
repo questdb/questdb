@@ -2408,8 +2408,9 @@ public final class TestUtils {
         Object[][] res = new Object[currentLvlValues.length * lowerLvlValues.length][lowerLvlValues[0].length + 1];
         for (int i = 0; i < currentLvlValues.length; i++) {
             for (int j = 0; j < lowerLvlValues.length; j++) {
-                res[i * lowerLvlValues.length + j][0] = currentLvlValues[i];
-                System.arraycopy(lowerLvlValues[j], 0, res[i * lowerLvlValues.length + j], 1, lowerLvlValues[0].length);
+                int m = i * lowerLvlValues.length + j;
+                res[m][0] = currentLvlValues[i];
+                System.arraycopy(lowerLvlValues[j], 0, res[m], 1, lowerLvlValues[0].length);
             }
         }
         return res;
