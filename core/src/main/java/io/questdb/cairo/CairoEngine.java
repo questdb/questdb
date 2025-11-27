@@ -964,7 +964,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return getTableStatus(Path.getThreadLocal(configuration.getDbRoot()), tableName);
     }
 
-    public TableToken getTableTokenByDirName(CharSequence dirName) {
+    public @Nullable TableToken getTableTokenByDirName(CharSequence dirName) {
         return tableNameRegistry.getTableTokenByDirName(dirName);
     }
 
