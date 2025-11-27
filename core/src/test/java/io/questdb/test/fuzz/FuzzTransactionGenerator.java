@@ -220,12 +220,12 @@ public class FuzzTransactionGenerator {
                     long writeInterval = rnd.nextLong((maxTimestamp - minTimestamp) / transactionCount);
                     startTs = lastTimestamp - writeInterval;
                 }
-                long size = (maxTimestamp - minTimestamp) / transactionCount;
+                long step = (maxTimestamp - minTimestamp) / transactionCount;
                 if (o3) {
                     //noinspection lossy-conversions
-                    size *= rnd.nextDouble();
+                    step *= rnd.nextDouble();
                 }
-                stopTs = Math.min(startTs + size, maxTimestamp);
+                stopTs = Math.min(startTs + step, maxTimestamp);
 
                 // Replace commits with TTL may result in partition drop, if the data is deleted from WAL table at the end
                 // it'll be the reason to drop prior partitions because of the TTL.
@@ -478,7 +478,7 @@ public class FuzzTransactionGenerator {
             // Don't change timestamp sometimes with probabilityOfRowsSameTimestamp
             if (rnd.nextDouble() >= probabilityOfRowsSameTimestamp) {
                 if (o3) {
-                    timestamp = startTs + rnd.nextLong(delta) + i;
+                    timestamp = delta > 0 ? startTs + rnd.nextLong(delta) + i : startTs;
                 } else {
                     timestamp = timestamp + delta / rowCount;
                 }
@@ -501,14 +501,12 @@ public class FuzzTransactionGenerator {
             if (!transaction.rollback) {
                 // Add up to 2 partition to the range from each side to make things more interesting
                 transaction.setReplaceRange(minTs, maxTs);
-
                 return waitBarrierVersion + 1;
             } else if (rnd.nextBoolean()) {
                 // Instead of rollback, insert empty replace range
                 transaction.operationList.clear();
                 transaction.rollback = false;
                 transaction.setReplaceRange(minTs, maxTs);
-
                 return waitBarrierVersion + 1;
             }
         }
