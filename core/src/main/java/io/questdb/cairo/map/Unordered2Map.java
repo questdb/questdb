@@ -150,6 +150,13 @@ public class Unordered2Map implements Map, Reopenable {
         }
     }
 
+    public static long hashKey(short key) {
+        // Although this map does not use hash codes, this method is implemented
+        // for the purpose of map sharding, i.e. to spread keys among multiple Unordered2Maps
+        // in case when group by functions, such as count_distinct(), have high cardinality.
+        return Hash.hashShort64(key);
+    }
+
     @Override
     public void clear() {
         size = 0;
@@ -166,6 +173,24 @@ public class Unordered2Map implements Map, Reopenable {
             size = 0;
             hasZero = false;
         }
+    }
+
+    // Fast-path method to create a key without involving the Key object
+    public MapValue createValueWithKey(short key) {
+        if (key != 0) {
+            long startAddress = getStartAddress(key);
+            short k = Unsafe.getUnsafe().getShort(startAddress);
+            size += (k == 0) ? 1 : 0;
+            Unsafe.getUnsafe().putShort(startAddress, key);
+            return valueOf(startAddress, k == 0, value);
+        }
+
+        if (hasZero) {
+            return valueOf(memStart, false, value);
+        }
+        size++;
+        hasZero = true;
+        return valueOf(memStart, true, value);
     }
 
     @Override
@@ -357,10 +382,7 @@ public class Unordered2Map implements Map, Reopenable {
 
         @Override
         public long hash() {
-            // Although this map does not use hash codes, this method is implemented
-            // for the purpose of map sharding, i.e. to spread keys among multiple Unordered2Maps
-            // in case when group by functions, such as count_distinct(), have high cardinality.
-            return Hash.hashShort64(Unsafe.getUnsafe().getShort(keyMemStart));
+            return hashKey(Unsafe.getUnsafe().getShort(keyMemStart));
         }
 
         public Key init() {

@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -328,10 +327,7 @@ final class Unordered2MapRecord implements MapRecord {
 
     @Override
     public long keyHashCode() {
-        // Although this map does not use hash codes, this method is implemented
-        // for the purpose of map sharding, i.e. to spread keys among multiple Unordered2Maps
-        // in case when group by functions, such as count_distinct(), have high cardinality.
-        return Hash.hashShort64(Unsafe.getUnsafe().getShort(startAddress));
+        return Unordered2Map.hashKey(Unsafe.getUnsafe().getShort(startAddress));
     }
 
     public void of(long address) {

@@ -26,16 +26,21 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.Unordered2Map;
+import io.questdb.cairo.map.Unordered4Map;
+import io.questdb.cairo.map.Unordered8Map;
+import io.questdb.cairo.map.UnorderedVarcharMap;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
@@ -66,6 +71,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.ColumnTypes.totalSize;
 import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
 
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
@@ -98,6 +104,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<RecordSink> perWorkerMapSinks;
+    // In case of a single table column (not an expression/function), set to the column's index;
+    // otherwise, set to -1.
+    private final int singleColumnIndex;
     private final ColumnTypes valueTypes;
     private volatile boolean sharded;
     // A hint whether to shard during the next query execution.
@@ -139,6 +148,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
+
+            // Check if we have single column key and, thus, can use simplified reducers.
+            if (keyTypes.getColumnCount() == 1 && listColumnFilter.getColumnCount() == 1 && ownerKeyFunctions.size() == 0) {
+                int index = listColumnFilter.getColumnIndex(0);
+                final int factor = listColumnFilter.getIndexFactor(index);
+                index = (index * factor - 1);
+                this.singleColumnIndex = index;
+            } else {
+                this.singleColumnIndex = -1;
+            }
 
             final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
@@ -305,6 +324,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public int getShardCount() {
         return NUM_SHARDS;
+    }
+
+    public int getSingleColumnIndex() {
+        return singleColumnIndex;
     }
 
     @Override
@@ -535,6 +558,60 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
+    /**
+     * Behavior of this method must be consistent with {@link AsyncGroupByReducer}
+     * and {@link AsyncGroupByFilteredReducer}.
+     */
+    private Map createMap() {
+        final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
+        final long pageSize = configuration.getSqlSmallMapPageSize();
+        final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
+
+        final int keySize = totalSize(keyTypes);
+        final int valueSize = totalSize(valueTypes);
+        // Check if we can use faster hash tables for single column case.
+        if (singleColumnIndex != -1) {
+            assert keyTypes.getColumnCount() == 1;
+            if (keySize == Short.BYTES && valueSize <= maxEntrySize) {
+                return new Unordered2Map(keyTypes, valueTypes);
+            } else if (keySize == Integer.BYTES && Integer.BYTES + valueSize <= maxEntrySize) {
+                return new Unordered4Map(
+                        keyTypes,
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes()
+                );
+            } else if (keySize == Long.BYTES && Long.BYTES + valueSize <= maxEntrySize) {
+                return new Unordered8Map(
+                        keyTypes,
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes()
+                );
+            } else if (keyTypes.getColumnType(0) == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
+                return new UnorderedVarcharMap(
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes(),
+                        configuration.getGroupByAllocatorDefaultChunkSize(),
+                        configuration.getGroupByAllocatorMaxChunkSize()
+                );
+            }
+        }
+
+        return new OrderedMap(
+                pageSize,
+                keyTypes,
+                valueTypes,
+                keyCapacity,
+                configuration.getSqlFastMapLoadFactor(),
+                configuration.getSqlMapMaxResizes()
+        );
+    }
+
     private ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
         if (slotId == -1 || perWorkerGroupByFunctions == null) {
             return ownerGroupByFunctions;
@@ -545,7 +622,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private Map reopenDestShard(int shardIndex) {
         Map destMap = destShards.getQuick(shardIndex);
         if (destMap == null) {
-            destMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+            destMap = createMap();
             destShards.set(shardIndex, destMap);
         } else if (!destMap.isOpen()) {
             MapStats stats = lastShardStats.getQuick(shardIndex);
@@ -651,7 +728,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         private long totalFunctionCardinality;
 
         private MapFragment(int slotId) {
-            this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+            this.map = createMap();
             this.shards = new ObjList<>(NUM_SHARDS);
             this.slotId = slotId;
         }
@@ -738,7 +815,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             int size = shards.size();
             if (size == 0) {
                 for (int i = 0; i < NUM_SHARDS; i++) {
-                    shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes));
+                    shards.add(createMap());
                 }
             } else {
                 for (int i = 0; i < NUM_SHARDS; i++) {

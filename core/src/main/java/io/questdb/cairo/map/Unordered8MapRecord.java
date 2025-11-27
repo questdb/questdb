@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -328,7 +327,7 @@ final class Unordered8MapRecord implements MapRecord {
 
     @Override
     public long keyHashCode() {
-        return Hash.hashLong64(Unsafe.getUnsafe().getLong(startAddress));
+        return Unordered8Map.hashKey(Unsafe.getUnsafe().getLong(startAddress));
     }
 
     public void of(long address) {

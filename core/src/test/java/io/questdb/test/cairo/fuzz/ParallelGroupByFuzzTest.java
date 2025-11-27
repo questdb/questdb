@@ -69,9 +69,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private final boolean convertToParquet;
     private final boolean enableJitCompiler;
     private final boolean enableParallelGroupBy;
+    private final Rnd rnd;
 
     public ParallelGroupByFuzzTest() {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        this.rnd = TestUtils.generateRandom(LOG);
         this.enableParallelGroupBy = rnd.nextBoolean();
         this.enableJitCompiler = rnd.nextBoolean();
         this.convertToParquet = rnd.nextBoolean();
@@ -87,8 +88,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         // Set the sharding threshold to a small value to test sharding.
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 2);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1 + rnd.nextInt(PAGE_FRAME_MAX_ROWS));
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(4));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
         super.setUp();
     }
@@ -307,7 +308,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // This test controls sets enable parallel GROUP BY flag on its own.
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            final Rnd rnd = TestUtils.generateRandom(LOG);
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
@@ -1936,7 +1936,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByThrowsOnTimeout() throws Exception {
-        final Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
         // We want the timeout to happen in reduce.
         // Page frame count is 40.
         final long tripWhenTicks = Math.max(10, rnd.nextLong(39));
@@ -2622,6 +2621,27 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelShortKeyGroupByWithFilter() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT ashort, count_distinct(along) FROM tab " +
+                        "WHERE ashort < 10000 ORDER BY ashort DESC LIMIT 10",
+                """
+                        ashort\tcount_distinct
+                        1024\t2
+                        1023\t4
+                        1022\t7
+                        1020\t6
+                        1019\t5
+                        1018\t1
+                        1017\t2
+                        1016\t1
+                        1015\t4
+                        1014\t1
+                        """
+        );
+    }
+
+    @Test
     public void testParallelShortKeyGroupByWithReadThreadSafeTimestampFilter() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT ashort, count_distinct(along) FROM tab " +
@@ -2688,7 +2708,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelSingleKeyGroupByThrowsOnTimeout() throws Exception {
-        final Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
         // We want the timeout to happen in either reduce or merge.
         // Page frame count is 40 and shard count is 8.
         final long tripWhenTicks = Math.max(10, rnd.nextLong(48));
@@ -2831,6 +2850,38 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         k2\t1024.5\t419800.0\t800
                         k3\t1025.5\t420200.0\t800
                         k4\t1026.5\t420600.0\t800
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelStringAndVarcharKeyGroupBy2() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, count() FROM tab ORDER BY key",
+                """
+                        key\tcount
+                        k0\t800
+                        k1\t800
+                        k2\t800
+                        k3\t800
+                        k4\t800
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelStringAndVarcharKeyGroupByWithFilter() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, count() FROM tab WHERE value > 0 ORDER BY key",
+                """
+                        key\tcount
+                        k0\t800
+                        k1\t800
+                        k2\t800
+                        k3\t800
+                        k4\t800
                         """
         );
     }
@@ -3835,7 +3886,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // This test controls sets enable parallel GROUP BY flag on its own.
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            final Rnd rnd = TestUtils.generateRandom(LOG);
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
@@ -4077,7 +4127,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // Validate parallel GROUP BY factories.
         Assume.assumeTrue(enableParallelGroupBy);
         // The test is very sensitive to sharding threshold and page frame sizes.
-        Assert.assertEquals(2, configuration.getGroupByShardingThreshold());
+        Assume.assumeTrue(configuration.getGroupByShardingThreshold() <= 10);
         final int rowCount = ROW_COUNT;
         Assert.assertEquals(40, rowCount / configuration.getSqlPageFrameMaxRows());
         assertMemoryLeak(() -> {
