@@ -170,7 +170,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private Utf8String namedPortal;
     private Utf8String namedStatement;
     private Operation operation = null;
-    private int outResendArrayFlatIndex = -1; // -1 indicates the array header has been sent yet
+    private int outResendArrayFlatIndex = -1; // -1 indicates the array header has not been sent yet
     private int outResendColumnIndex = 0;
     private boolean outResendCursorRecord = false;
     private boolean outResendRecordHeader = true;
