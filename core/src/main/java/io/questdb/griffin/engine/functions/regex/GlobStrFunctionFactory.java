@@ -39,6 +39,7 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class GlobStrFunctionFactory implements FunctionFactory {
+    // todo(nwoolmer): this could potentially cause problems in tests, by not clearing up sink contents
     private static final io.questdb.std.ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private final MatchStrFunctionFactory matchStrFactory = new MatchStrFunctionFactory();
 

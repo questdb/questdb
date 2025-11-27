@@ -3458,6 +3458,8 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Reconfigures a parquet reading model to project columns
+     * todo(nwoolmer): Ideally, we should lazy compile the cursors. Currently, we generate the cursor with its metadata
+     * earlier, then have to wait for top-down columns before we can push down the projection.
      */
     private void parquetProjectionPushdown(QueryModel model) {
 

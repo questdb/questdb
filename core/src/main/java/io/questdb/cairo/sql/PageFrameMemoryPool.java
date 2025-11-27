@@ -188,6 +188,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         frameMemory.clear();
         // Don't free the decoder here - it will be reused across frames within the same query
         // and only freed at the end of the query in close()
+        // todo(nwoolmer): check if this is necessary, Andrei fixed some of the issues around efficiency of page frames
+        // previously, they were being reopened for every row group.
     }
 
     @Override
@@ -260,6 +262,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final long fileSize = addressCache.getParquetFileSize(frameIndex);
 
         // Only reinitialize decoder if file changed
+        // todo(nwoolmer): check if this is necessary, Andrei fixed some of the issues around efficiency of page frames
+        // previously, they were being reopened for every row group.
         if (parquetDecoder.getFileAddr() != addr || parquetDecoder.getFileSize() != fileSize) {
             parquetDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         }
