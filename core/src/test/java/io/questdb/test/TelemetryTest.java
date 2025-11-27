@@ -75,19 +75,23 @@ public class TelemetryTest extends AbstractCairoTest {
             execute("INSERT INTO " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " values(CAST('0x01' AS LONG256), true)");
 
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
-                String expected = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                        "id\tLONG256\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "enabled\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "version\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n" +
-                        "os\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n" +
-                        "package\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n" +
-                        "instance_name\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n" +
-                        "instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n" +
-                        "instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n";
+                String expected = """
+                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                        id\tLONG256\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                        enabled\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                        version\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
+                        os\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
+                        package\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse
+                        instance_name\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
+                        instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
+                        instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
+                        """;
                 assertSql(expected, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
-                expected = "id\tversion\n" +
-                        "0x01\t\n" +
-                        "0x01\t[DEVELOPMENT]\n";
+                expected = """
+                        id\tversion
+                        0x01\t
+                        0x01\t[DEVELOPMENT]
+                        """;
                 assertSql(expected, "SELECT id, version FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
             }
         });
@@ -196,8 +200,10 @@ public class TelemetryTest extends AbstractCairoTest {
                 Misc.free(telemetryJob);
                 refreshTablesInBaseEngine();
 
-                final String expectedEvent = "100\t1\n" +
-                        "101\t1\n";
+                final String expectedEvent = """
+                        100\t1
+                        101\t1
+                        """;
                 assertEventAndOrigin(expectedEvent);
             }
         });
@@ -232,33 +238,7 @@ public class TelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryUpdatesVersion() throws Exception {
         final AtomicReference<String> refVersion = new AtomicReference<>();
-        final BuildInformation buildInformation = new BuildInformation() {
-            @Override
-            public String getCommitHash() {
-                return null;
-            }
-
-            @Override
-            public String getJdkVersion() {
-                return null;
-            }
-
-            @Override
-            public String getSwName() {
-                return null;
-            }
-
-            @Override
-            public String getSwVersion() {
-                return refVersion.get();
-            }
-        };
-        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-            @Override
-            public @NotNull BuildInformation getBuildInformation() {
-                return buildInformation;
-            }
-        };
+        final CairoConfiguration configuration = getCairoConfiguration(refVersion);
 
         assertMemoryLeak(() -> {
             try (
@@ -330,6 +310,36 @@ public class TelemetryTest extends AbstractCairoTest {
                 assertSql(start + midNew + end, showCreateTable);
             }
         });
+    }
+
+    private static @NotNull CairoConfiguration getCairoConfiguration(AtomicReference<String> refVersion) {
+        final BuildInformation buildInformation = new BuildInformation() {
+            @Override
+            public String getCommitHash() {
+                return null;
+            }
+
+            @Override
+            public String getJdkVersion() {
+                return null;
+            }
+
+            @Override
+            public String getSwName() {
+                return null;
+            }
+
+            @Override
+            public String getSwVersion() {
+                return refVersion.get();
+            }
+        };
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull BuildInformation getBuildInformation() {
+                return buildInformation;
+            }
+        };
     }
 
     @SuppressWarnings("SameParameterValue")
