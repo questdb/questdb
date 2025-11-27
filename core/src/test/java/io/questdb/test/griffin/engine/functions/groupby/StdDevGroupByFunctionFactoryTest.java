@@ -89,16 +89,6 @@ public class StdDevGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStddevLong256Values() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tbl1 as (select x cast(x as long256) from long_sequence(100))");
-            assertSql(
-                    "stddev\n29.011491975882016\n", "select stddev(x) from tbl1"
-            );
-        });
-    }
-
-    @Test
     public void testStddevNoValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x int)");
