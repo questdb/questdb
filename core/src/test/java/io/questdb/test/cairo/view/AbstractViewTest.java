@@ -109,8 +109,8 @@ class AbstractViewTest extends AbstractCairoTest {
         }
     }
 
-    static void assertViewMetadata(String name, String expectedMetadataJson) {
-        final TableToken viewToken = engine.getTableTokenIfExists(name);
+    static void assertViewMetadata(String expectedMetadataJson) {
+        final TableToken viewToken = engine.getTableTokenIfExists(AbstractViewTest.VIEW1);
         final StringSink sink = new StringSink();
         try (TableMetadata actualMetadata = engine.getTableMetadata(viewToken)) {
             actualMetadata.toJson(sink);

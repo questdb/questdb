@@ -473,7 +473,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
             createView(VIEW1, viewQuery);
 
             if (expectedCreateMetadata != null) {
-                assertViewMetadata(VIEW1, expectedCreateMetadata);
+                assertViewMetadata(expectedCreateMetadata);
             }
 
             assertQueryAndPlan(
@@ -529,7 +529,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
             assertViewState(VIEW1);
 
             if (expectedFixedMetadata != null) {
-                assertViewMetadata(VIEW1, expectedFixedMetadata);
+                assertViewMetadata(expectedFixedMetadata);
             }
 
             assertQueryAndPlan(
