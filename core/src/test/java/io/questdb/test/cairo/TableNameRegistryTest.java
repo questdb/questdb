@@ -174,8 +174,15 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             AtomicReference<Throwable> ref = new AtomicReference<>();
             CyclicBarrier barrier = new CyclicBarrier(2 * threadCount + 2);
 
+            long[][] seeds = {
+                    {3061779658652450L, 1764199810195L},
+                    {3061779726002740L, 1764199810262L},
+                    {3061779742255143L, 1764199810278L},
+            };
+
             ObjList<Thread> threads = new ObjList<>(threadCount + 2);
             for (int i = 0; i < threadCount; i++) {
+                int m = i;
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
@@ -208,7 +215,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        Rnd rnd = TestUtils.generateRandom(LOG);
+                        Rnd rnd = TestUtils.generateRandom(LOG, seeds[m][0], seeds[m][1]);
                         try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 boolean isWal = rnd.nextBoolean();
