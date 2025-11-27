@@ -49,13 +49,13 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
 
     public DirectLongList(long capacity, int memoryTag, boolean alloc) {
         this.memoryTag = memoryTag;
-        this.capacity = (capacity * Long.BYTES);
         if (alloc) {
+            this.capacity = (capacity * Long.BYTES);
             this.address = Unsafe.malloc(this.capacity, memoryTag);
             this.pos = address;
             this.limit = pos + this.capacity;
         }
-        this.initialCapacity = this.capacity;
+        this.initialCapacity = capacity * Long.BYTES;
     }
 
     public void add(long value) {

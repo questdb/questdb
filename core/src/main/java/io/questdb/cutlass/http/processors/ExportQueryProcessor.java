@@ -96,7 +96,7 @@ import static io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.griffin.model.ExportModel.COPY_FORMAT_PARQUET;
 
-public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable, CopyExportRequestTask.WriteParquetCallBack {
+public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable, CopyExportRequestTask.StreamWriteParquetCallBack {
     static final int QUERY_DONE = 1;
     static final int QUERY_METADATA = 2;
     static final int QUERY_PARQUET_EXPORT_DATA = 14;

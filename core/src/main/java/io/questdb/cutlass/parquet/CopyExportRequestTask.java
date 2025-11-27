@@ -68,7 +68,7 @@ public class CopyExportRequestTask implements Mutable {
     private int rowGroupSize;
     private boolean statisticsEnabled;
     private String tableName;
-    private @Nullable WriteParquetCallBack writeCallback;
+    private @Nullable StreamWriteParquetCallBack writeCallback;
 
     @Override
     public void clear() {
@@ -155,7 +155,7 @@ public class CopyExportRequestTask implements Mutable {
         return tableName;
     }
 
-    public @Nullable WriteParquetCallBack getWriteCallback() {
+    public @Nullable StreamWriteParquetCallBack getWriteCallback() {
         return writeCallback;
     }
 
@@ -187,7 +187,7 @@ public class CopyExportRequestTask implements Mutable {
             boolean descending,
             PageFrameCursor pageFrameCursor, // for streaming export
             RecordMetadata metadata,
-            WriteParquetCallBack writeCallback
+            StreamWriteParquetCallBack writeCallback
     ) {
         this.entry = entry;
         this.result = result;
@@ -260,14 +260,14 @@ public class CopyExportRequestTask implements Mutable {
     }
 
     @FunctionalInterface
-    public interface WriteParquetCallBack {
+    public interface StreamWriteParquetCallBack {
         void onWrite(long dataPtr, long dataLen) throws Exception;
     }
 
     public class StreamPartitionParquetExporter implements Mutable {
-        private final DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
-        private final DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
-        private final DirectUtf8Sink columnNames = new DirectUtf8Sink(32);
+        private final DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
+        private final DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
+        private final DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false);
         private long streamExportCurrentPtr;
         private long streamExportCurrentSize;
         private long streamWriter = -1;
