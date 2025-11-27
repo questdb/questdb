@@ -536,24 +536,26 @@ public class WriterPool extends AbstractPool {
         final long thread = Thread.currentThread().getId();
         final TableToken tableToken = e.writer.getTableToken();
 
-        boolean isDistressed;
-        try {
-            e.writer.rollback();
-            // Rollback can change writer state to distressed, do not observe it before rollback
-            isDistressed = e.writer.isDistressed();
-            if (!isDistressed) {
-                if (e.owner != UNALLOCATED) {
-                    e.owner = QUEUE_PROCESSING_OWNER;
+        boolean isDistressed = e.writer.isDistressed();
+        if (!isDistressed) {
+            try {
+                e.writer.rollback();
+                // Rollback can change writer state to distressed, do not observe it before rollback
+                isDistressed = e.writer.isDistressed();
+                if (!isDistressed) {
+                    if (e.owner != UNALLOCATED) {
+                        e.owner = QUEUE_PROCESSING_OWNER;
+                    }
+                    // We can apply structure changes with ALTER TABLE and do UPDATE(s) before the writer returned to the pool
+                    e.writer.tick(true);
+                    e.writer.goPassive();
                 }
-                // We can apply structure changes with ALTER TABLE and do UPDATE(s) before the writer returned to the pool
-                e.writer.tick(true);
-                e.writer.goPassive();
+            } catch (Throwable ex) {
+                // We are here because of a systemic issues of some kind
+                // one of the known issues is "disk is full" so we could not roll back properly.
+                // In this case we just close TableWriter
+                isDistressed = true;
             }
-        } catch (Throwable ex) {
-            // We are here because of a systemic issues of some kind
-            // one of the known issues is "disk is full" so we could not roll back properly.
-            // In this case we just close TableWriter
-            isDistressed = true;
         }
 
         if (isDistressed) {
