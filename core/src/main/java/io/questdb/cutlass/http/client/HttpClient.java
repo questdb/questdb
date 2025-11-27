@@ -473,6 +473,23 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public Request query(CharSequence name, Utf8Sequence value) {
+            assert state == STATE_URL_DONE || state == STATE_QUERY;
+            if (state == STATE_URL_DONE) {
+                putAsciiInternal('?');
+            } else {
+                putAsciiInternal('&');
+            }
+            state = STATE_QUERY;
+            urlEncode = true;
+            try {
+                put(name).putAsciiInternal('=').put(value);
+            } finally {
+                urlEncode = false;
+            }
+            return this;
+        }
+
         public ResponseHeaders send() {
             return send(defaultTimeout);
         }
@@ -495,7 +512,7 @@ public abstract class HttpClient implements QuietCloseable {
          *   <li>Failover scenarios - retry the same request on a different server</li>
          *   <li>Multi-publishing - send the same data to multiple endpoints</li>
          * </ul>
-         * Important: If the request buffer already contains a HTTP request header with a host
+         * Important: If the request buffer already contains an HTTP request header with a host
          * then the host will not change! This means reverse proxies routing requests to different
          * host based on the Host header will not work! Routing on TLS SNI will not be affected.
          *

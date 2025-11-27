@@ -49,21 +49,10 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class CheckpointFuzzTest extends AbstractFuzzTest {
-    static int SCOREBOARD_FORMAT = 1;
     private static Path triggerFilePath;
-
-    public CheckpointFuzzTest() throws Exception {
-        int scoreboardFormat = TestUtils.generateRandomForTestParams(LOG).nextBoolean() ? 1 : 2;
-        if (scoreboardFormat != SCOREBOARD_FORMAT) {
-            SCOREBOARD_FORMAT = scoreboardFormat;
-            tearDownStatic();
-            setUpStatic();
-        }
-    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
         AbstractFuzzTest.setUpStatic();
         triggerFilePath = new Path();
     }

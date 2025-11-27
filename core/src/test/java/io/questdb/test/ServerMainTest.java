@@ -400,7 +400,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.topk.enabled\tQDB_CAIRO_SQL_PARALLEL_TOPK_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.parallel.groupby.sharding.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.groupby.sharding.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.presize.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.presize.max.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY\t100000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.presize.max.heap.size\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE\t1073741824\tdefault\tfalse\tfalse\n" +
@@ -475,7 +475,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.writer.data.index.value.append.page.size\tQDB_CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.writer.fo_opts\tQDB_CAIRO_WRITER_FO_OPTS\to_none\tdefault\tfalse\tfalse\n" +
                                     "cairo.writer.tick.rows.count\tQDB_CAIRO_WRITER_TICK_ROWS_COUNT\t1024\tdefault\tfalse\tfalse\n" +
-                                    "cairo.txn.scoreboard.format\tQDB_CAIRO_TXN_SCOREBOARD_FORMAT\t2\tdefault\tfalse\tfalse\n" +
                                     "circuit.breaker.buffer.size\tQDB_CIRCUIT_BREAKER_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "circuit.breaker.throttle\tQDB_CIRCUIT_BREAKER_THROTTLE\t2000000\tdefault\tfalse\tfalse\n" +
                                     "config.reload.enabled\tQDB_CONFIG_RELOAD_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
@@ -792,7 +791,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.parquet.export.compression.codec\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC\tZSTD\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.compression.level\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_LEVEL\t9\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.copy.report.frequency.lines\tQDB_CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES\t500000\tdefault\tfalse\ttrue\n" +
-                                    "cairo.resource.pool.tracing.enabled\tQDB_CAIRO_RESOURCE_POOL_TRACING_ENABLED\tfalse\tdefault\tfalse\tfalse\n"
+                                    "cairo.resource.pool.tracing.enabled\tQDB_CAIRO_RESOURCE_POOL_TRACING_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.rmdir.max.depth\tQDB_CAIRO_RMDIR_MAX_DEPTH\t5\tdefault\tfalse\tfalse\n"
                     )
                             .split("\n");
 
