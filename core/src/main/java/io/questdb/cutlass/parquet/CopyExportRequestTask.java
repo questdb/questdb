@@ -268,9 +268,12 @@ public class CopyExportRequestTask implements Mutable {
         private final DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
         private final DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, false);
         private final DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false);
+        private long currentFrameRowCount = 0;
+        private long currentPartitionIndex = -1;
         private long streamExportCurrentPtr;
         private long streamExportCurrentSize;
         private long streamWriter = -1;
+        private long totalRows;
 
         @Override
         public void clear() {
@@ -283,6 +286,7 @@ public class CopyExportRequestTask implements Mutable {
             }
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
+            totalRows = 0;
         }
 
         public void finishExport() throws Exception {
@@ -311,13 +315,37 @@ public class CopyExportRequestTask implements Mutable {
             streamWriter = -1;
         }
 
-        public void onSuspend() throws Exception {
+        public long getCurrentFrameRowCount() {
+            return currentFrameRowCount;
+        }
+
+        public long getCurrentPartitionIndex() {
+            return currentPartitionIndex;
+        }
+
+        public long getTotalRows() {
+            return totalRows;
+        }
+
+        public boolean onResume() throws Exception {
             if (streamExportCurrentPtr != 0) {
                 assert writeCallback != null;
                 writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                totalRows += currentFrameRowCount;
                 streamExportCurrentPtr = 0;
                 streamExportCurrentSize = 0;
+                return true;
             }
+            return false;
+        }
+
+        public void setCurrentFrameRowCount(long currentPartitionRowCount) {
+            this.currentFrameRowCount = currentPartitionRowCount;
+        }
+
+        public void setCurrentPartitionIndex(long currentPartitionIndex, long frameRowCount) {
+            this.currentPartitionIndex = currentPartitionIndex;
+            this.currentFrameRowCount = frameRowCount;
         }
 
         public void setUp() {
@@ -412,7 +440,7 @@ public class CopyExportRequestTask implements Mutable {
                 }
 
                 long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER);
-                long buffer = writeStreamingParquetChunkFromParquet(
+                long buffer = writeStreamingParquetChunkFromRowGroup(
                         streamWriter,
                         allocator,
                         columnData.getAddress(),
@@ -426,6 +454,7 @@ public class CopyExportRequestTask implements Mutable {
                 streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
                 writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
             }
+            totalRows += currentFrameRowCount;
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
         }

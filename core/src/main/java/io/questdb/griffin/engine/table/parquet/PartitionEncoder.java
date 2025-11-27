@@ -216,7 +216,7 @@ public class PartitionEncoder {
             long rowCount
     ) throws CairoException;
 
-    public static native long writeStreamingParquetChunkFromParquet(
+    public static native long writeStreamingParquetChunkFromRowGroup(
             long writerPtr,
             long allocatorPtr,
             long columnDataPtr,

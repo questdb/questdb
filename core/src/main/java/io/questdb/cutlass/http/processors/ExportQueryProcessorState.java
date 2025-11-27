@@ -100,8 +100,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         fileName.clear();
         rnd = null;
         record = null;
-        pageFrameCursor = Misc.free(pageFrameCursor);
         cursor = Misc.free(cursor);
+        pageFrameCursor = Misc.free(pageFrameCursor);
         firstParquetWriteCall = true;
         if (recordCursorFactory != null) {
             if (queryCacheable) {

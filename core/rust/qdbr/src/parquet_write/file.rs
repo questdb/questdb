@@ -231,6 +231,23 @@ impl<W: Write> ChunkedWriter<W> {
         Ok(())
     }
 
+    pub fn write_chunk_as_single_row_group(&mut self, partition: &Partition) -> ParquetResult<()> {
+        let partition_length = partition.columns[0].row_count;
+        let schema = &self.parquet_schema;
+
+        let row_group = create_row_group(
+            partition,
+            0,
+            partition_length,
+            schema.fields(),
+            &self.encodings,
+            self.options,
+            self.parallel,
+        );
+        self.writer.write(row_group?)?;
+        Ok(())
+    }
+
     /// Write the footer of the parquet file. Returns the total size of the file.
     pub fn finish(&mut self, additional_meta: Vec<KeyValue>) -> ParquetResult<u64> {
         let size = self.writer.end(Some(additional_meta))?;

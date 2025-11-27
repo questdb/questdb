@@ -561,7 +561,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             encoder.current_buffer.set_len(0);
         }
         update_partition_data(&mut encoder.partition, col_data_ptr, row_count as usize)?;
-        encoder.chunked_writer.write_chunk(&encoder.partition)?;
+        encoder.chunked_writer.write_chunk_as_single_row_group(&encoder.partition)?;
         let data_len = (encoder.current_buffer.len() - 8) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
@@ -721,7 +721,7 @@ fn update_partition_data(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_writeStreamingParquetChunkFromParquet(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_writeStreamingParquetChunkFromRowGroup(
     mut env: JNIEnv,
     _class: JClass,
     encoder: *mut StreamingParquetWriter,
@@ -784,7 +784,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         unsafe {
             encoder.current_buffer.set_len(0);
         }
-        encoder.chunked_writer.write_chunk(&partition)?;
+        encoder.chunked_writer.write_chunk_as_single_row_group(&partition)?;
         let data_len = (encoder.current_buffer.len() - 8) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
@@ -793,7 +793,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     match write_chunk() {
         Ok(ptr) => ptr,
         Err(mut err) => {
-            err.add_context("error in writeStreamingParquetChunkFromParquet");
+            err.add_context("error in writeStreamingParquetChunkFromRowGroup");
             err.into_cairo_exception().throw::<*const u8>(&mut env);
             std::ptr::null()
         }

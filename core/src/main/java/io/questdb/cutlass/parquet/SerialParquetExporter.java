@@ -332,7 +332,13 @@ public class SerialParquetExporter implements Closeable {
                 LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                 throw CopyExportException.instance(CopyExportRequestTask.Phase.SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
-            exporter.onSuspend();
+            if (exporter.onResume()) {
+                LOG.info().$("stream export progress (resume) [id=").$hexPadded(task.getCopyID())
+                        .$(", rowsInFrame=").$(exporter.getCurrentFrameRowCount())
+                        .$(", exported totalRows=").$(exporter.getTotalRows())
+                        .$(", partitionIndex=").$(exporter.getCurrentPartitionIndex())
+                        .$(']').$();
+            }
             PageFrame frame;
             while ((frame = pageFrameCursor.next()) != null) {
                 if (circuitBreaker.checkIfTripped()) {
@@ -340,14 +346,18 @@ public class SerialParquetExporter implements Closeable {
                     throw CopyExportException.instance(CopyExportRequestTask.Phase.SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                 }
                 long rowsInFrame = frame.getPartitionHi() - frame.getPartitionLo();
+                int partitionIndex = frame.getPartitionIndex();
+                exporter.setCurrentPartitionIndex(partitionIndex, rowsInFrame);
                 exporter.writePageFrame(pageFrameCursor, frame);
                 LOG.info().$("stream export progress [id=").$hexPadded(task.getCopyID())
                         .$(", rowsInFrame=").$(rowsInFrame)
-                        .$(", partitionIndex=").$(frame.getPartitionIndex())
+                        .$(", exported totalRows=").$(exporter.getTotalRows())
+                        .$(", partitionIndex=").$(partitionIndex)
                         .$(']').$();
             }
             exporter.finishExport();
             LOG.info().$("stream export completed [id=").$hexPadded(task.getCopyID())
+                    .$(", totalRows=").$(exporter.getTotalRows())
                     .$(']').$();
             return true;
         }
