@@ -41,6 +41,7 @@ stages:
         steps:
           - checkout: none
           - bash: |
+              set -e
               # Trigger the enterprise CI pipeline via Azure DevOps REST API
               AUTH_HEADER="Authorization: Basic $(printf ':%s' "$AZURE_DEVOPS_ENT_PAT" | base64 -w0)"
 
@@ -86,9 +87,11 @@ stages:
                 RUN_ID=$(jq -r '.id // empty' response.json)
                 echo "Triggered enterprise CI: https://dev.azure.com/questdb/questdb-enterprise/_build/results?buildId=$RUN_ID"
               else
-                echo "##vso[task.logissue type=warning]Failed to trigger enterprise CI (HTTP $HTTP_CODE)"
-                cat response.json
+                echo "##vso[task.logissue type=warning]Failed to trigger enterprise CI (HTTP $HTTP_CODE); see pipeline logs"
+                rm -f response.json
+                exit 1
               fi
+              rm -f response.json
             displayName: "Trigger Enterprise Pipeline"
             env:
               AZURE_DEVOPS_ENT_PAT: $(AZURE_DEVOPS_ENT_PAT)
