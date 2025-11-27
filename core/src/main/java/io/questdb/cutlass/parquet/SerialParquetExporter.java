@@ -288,6 +288,9 @@ public class SerialParquetExporter implements Closeable {
             }
             LOG.info().$("finished parquet conversion to temp [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(']').$();
             success = true;
+        } catch (PeerIsSlowToReadException e) {
+            tableToken = null;
+            throw e;
         } catch (CopyExportException e) {
             LOG.error().$("parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
             throw e;

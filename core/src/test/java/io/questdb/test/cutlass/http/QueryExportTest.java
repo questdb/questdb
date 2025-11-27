@@ -182,6 +182,7 @@ public class QueryExportTest extends AbstractCairoTest {
                                     String filename = "test_export_" + i + ".parquet";
                                     Path path = Path.getThreadLocal(root);
                                     path.concat("export").concat(filename).$();
+                                    Files.mkdirs(path, configuration.getMkDirMode());
                                     long fd = Files.openRW(path.$(), CairoConfiguration.O_NONE);
                                     try {
                                         Files.truncate(fd, bytesReceived);
@@ -224,8 +225,8 @@ public class QueryExportTest extends AbstractCairoTest {
                             var requestResponse = new Object[][]{
                                     {"select count() from xyz", """
                                         {"query":"select count() from xyz","error":"parquet export is disabled ['cairo.sql.copy.export.root' is not set]","position":0}"""},
-                                    {"select * from xyz", """
-                                        {"query":"select * from xyz","error":"parquet export is disabled ['cairo.sql.copy.export.root' is not set]","position":0}"""},
+                                    {"select * from xyz limit 1", """
+                                        {"query":"select * from xyz limit 1","error":"parquet export is disabled ['cairo.sql.copy.export.root' is not set]","position":0}"""},
                                     {"create table abc (ts TIMESTAMP)", """
                                         {"query":"create table abc (ts TIMESTAMP)","error":"/exp endpoint only accepts SELECT","position":0}"""}
                             };
