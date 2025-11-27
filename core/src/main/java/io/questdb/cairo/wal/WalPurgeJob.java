@@ -625,7 +625,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         }
                         deleter.unlock(lockFd);
                         if (isWalDir(segmentId, walId)) {
-                            LOG.info().$("Java unlocked: [table=").$(tableToken).$(Files.SEPARATOR).$("wal").$(walId).$(".lock").$(", lockFd=").$(lockFd).I$();
+                            LOG.debug().$("Java unlocked: [table=").$(tableToken).$(Files.SEPARATOR).$("wal").$(walId).$(".lock").$(", lockFd=").$(lockFd).I$();
                         }
                     } else {
                         final int seqPart = getSeqPart(walId, segmentId); // -1 if not a seq part
