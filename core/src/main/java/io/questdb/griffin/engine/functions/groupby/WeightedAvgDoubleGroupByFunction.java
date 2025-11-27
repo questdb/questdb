@@ -49,11 +49,11 @@ public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements 
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double sample = sampleArg.getDouble(record);
         final double weight = weightArg.getDouble(record);
-        if (Numbers.isFinite(sample) && Numbers.isFinite(weight)) {
+        if (Numbers.isFinite(sample) && Numbers.isFinite(weight) && weight != 0.0) {
             mapValue.putDouble(valueIndex, sample * weight);
             mapValue.putDouble(valueIndex + 1, weight);
         } else {
-            mapValue.putDouble(valueIndex, 0);
+            mapValue.putDouble(valueIndex, 0.0);
             mapValue.putDouble(valueIndex + 1, 0.0);
         }
     }

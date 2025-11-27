@@ -113,7 +113,7 @@ public abstract class AbstractWeightedStdDevGroupByFunction extends DoubleFuncti
         mapValue.putDouble(valueIndex, weight); // w_sum
         mapValue.putDouble(valueIndex + 1, weight * weight); // w_sum2
         mapValue.putDouble(valueIndex + 2, sample); // mean
-        mapValue.putDouble(valueIndex + 3, 0); // S
+        mapValue.putDouble(valueIndex + 3, 0.0); // S
     }
 
     @Override
@@ -186,11 +186,26 @@ public abstract class AbstractWeightedStdDevGroupByFunction extends DoubleFuncti
         double srcMean = srcValue.getDouble(valueIndex + 2);
         double srcS = srcValue.getDouble(valueIndex + 3);
 
+        if (srcWsum == 0.0) {
+            // srcValue has no data -- return with destValue untouched
+            return;
+        }
+
         // Acquire destination computation state
         double destWsum = destValue.getDouble(valueIndex);
         double destWsum2 = destValue.getDouble(valueIndex + 1);
         double destMean = destValue.getDouble(valueIndex + 2);
         double destS = destValue.getDouble(valueIndex + 3);
+
+        if (destWsum == 0.0) {
+            // srcValue has data, destValue doesn't. Copy entire srcValue to destValue.
+            destValue.putDouble(valueIndex, srcWsum);
+            destValue.putDouble(valueIndex + 1, srcWsum2);
+            destValue.putDouble(valueIndex + 2, srcMean);
+            destValue.putDouble(valueIndex + 3, srcS);
+            return;
+        }
+        // Both srcValue and destValue have data -- merge them
 
         // Compute interim results
         double meanDelta = srcMean - destMean;
@@ -210,10 +225,10 @@ public abstract class AbstractWeightedStdDevGroupByFunction extends DoubleFuncti
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putDouble(valueIndex, 0);
-        mapValue.putDouble(valueIndex + 1, 0);
+        mapValue.putDouble(valueIndex, 0.0);
+        mapValue.putDouble(valueIndex + 1, 0.0);
         mapValue.putDouble(valueIndex + 2, Double.NaN);
-        mapValue.putDouble(valueIndex + 3, 0);
+        mapValue.putDouble(valueIndex + 3, 0.0);
     }
 
     @Override
