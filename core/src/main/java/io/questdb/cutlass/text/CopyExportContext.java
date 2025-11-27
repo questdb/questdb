@@ -292,7 +292,6 @@ public class CopyExportContext {
             String tableName,
             long copyID
     ) {
-
         Throwable error = null;
         synchronized (this) {
             if (!initialized) {

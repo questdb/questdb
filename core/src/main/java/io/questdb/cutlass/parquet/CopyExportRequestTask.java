@@ -58,6 +58,7 @@ public class CopyExportRequestTask implements Mutable {
     private int dataPageSize;
     private boolean descending;
     private CopyExportContext.ExportTaskEntry entry;
+    private RecordCursorFactory factory;
     private CharSequence fileName;
     private @Nullable RecordMetadata metadata;
     private @Nullable PageFrameCursor pageFrameCursor;
@@ -89,6 +90,14 @@ public class CopyExportRequestTask implements Mutable {
         metadata = null;
         streamPartitionParquetExporter.clear();
         descending = false;
+        if (factory != null) { // owned only if setUpStreamPartitionParquetExporter called with factory
+            factory = Misc.free(factory);
+            pageFrameCursor = Misc.free(pageFrameCursor);
+        }
+    }
+
+    public void freeCreateOp() {
+        this.createOp = Misc.free(this.createOp);
     }
 
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
@@ -214,7 +223,8 @@ public class CopyExportRequestTask implements Mutable {
     }
 
     public void setUpStreamPartitionParquetExporter(RecordCursorFactory factory, PageFrameCursor pageFrameCursor, RecordMetadata metadata) {
-        assert this.pageFrameCursor == null && this.metadata == null;
+        assert this.pageFrameCursor == null;
+        this.factory = factory;
         this.pageFrameCursor = pageFrameCursor;
         this.metadata = metadata;
         streamPartitionParquetExporter.setUp();
@@ -227,7 +237,7 @@ public class CopyExportRequestTask implements Mutable {
         CONVERTING_PARTITIONS("converting_partitions"),
         MOVE_FILES("move_files"),
         DROPPING_TEMP_TABLE("dropping_temp_table"),
-        SENDING_DATA("sending_data"),
+        STREAM_SENDING_DATA("stream_sending_data"),
         SUCCESS("success");
 
         private final String name;
@@ -313,6 +323,10 @@ public class CopyExportRequestTask implements Mutable {
             writeCallback.onWrite(dataPtr, dataSize);
             closeStreamingParquetWriter(streamWriter);
             streamWriter = -1;
+            if (factory != null) {
+                factory = Misc.free(factory);
+                pageFrameCursor = Misc.free(pageFrameCursor);
+            }
         }
 
         public long getCurrentFrameRowCount() {
