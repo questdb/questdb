@@ -80,7 +80,7 @@ public interface TableNameRegistry extends Closeable {
      * @param dirName directory name
      * @return resolves private table name to TableToken. If no token exists, returns null
      */
-    TableToken getTableTokenByDirName(CharSequence dirName);
+    @Nullable TableToken getTableTokenByDirName(CharSequence dirName);
 
     /**
      * Returns total count of table tokens. Among live tables it can count dropped tables which are not fully deleted yet.
