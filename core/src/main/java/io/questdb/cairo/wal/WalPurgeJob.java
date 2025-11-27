@@ -527,7 +527,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     runLock.unlock();
                 }
             } else {
-                LOG.debug().$("skipping, locked out").$();
+                LOG.info().$("skipping, locked out").$();
             }
         }
         return false;
