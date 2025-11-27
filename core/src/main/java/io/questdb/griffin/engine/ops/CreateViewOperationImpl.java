@@ -45,6 +45,7 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -57,7 +58,7 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     public CreateViewOperationImpl(
             @NotNull String sqlText,
             @NotNull CreateTableOperationImpl createTableOperation,
-            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+            @NotNull @Transient LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
     ) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
