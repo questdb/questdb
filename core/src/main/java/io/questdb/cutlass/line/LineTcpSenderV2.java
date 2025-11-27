@@ -44,7 +44,9 @@ import org.jetbrains.annotations.NotNull;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
+@SuppressWarnings("resource")
 public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBufferAppender {
+
     public LineTcpSenderV2(LineChannel channel, int bufferCapacity, int maxNameLength) {
         super(channel, bufferCapacity, maxNameLength);
     }
@@ -109,7 +111,7 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
 
     @Override
     public Sender doubleArray(CharSequence name, DoubleArray array) {
-        if (processNullArray(name, array)) {
+        if (array == null) {
             return this;
         }
         writeFieldName(name)
@@ -156,7 +158,7 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
 
     @Override
     public Sender longArray(@NotNull CharSequence name, LongArray values) {
-        if (processNullArray(name, values)) {
+        if (values == null) {
             return this;
         }
         writeFieldName(name)
@@ -234,10 +236,9 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
             ArrayShapeAppender<T> shapeAppender,
             ArrayDataAppender<T> dataAppender
     ) {
-        if (processNullArray(name, array)) {
+        if (array == null) {
             return this;
         }
-
         writeFieldName(name)
                 .putAsciiInternal('=')
                 .put(LineTcpParser.ENTITY_TYPE_ARRAY)
@@ -246,17 +247,6 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
         shapeAppender.append(this, array);
         dataAppender.append(this, array);
         return this;
-    }
-
-    private boolean processNullArray(CharSequence name, Object value) {
-        if (value == null) {
-            writeFieldName(name)
-                    .putAsciiInternal('=') // binary format flag
-                    .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ARRAY binary format
-                    .put((byte) ColumnType.NULL); // element type
-            return true;
-        }
-        return false;
     }
 
     private void putTimestamp(long timestamp, ChronoUnit unit) {
@@ -271,7 +261,7 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
     }
 
     private void putTimestamp(Instant timestamp) {
-        // always send as nanos as long as it fits in a long 
+        // always send as nanos as long as it fits in a long
         try {
             put(NanosTimestampDriver.INSTANCE.from(timestamp)).putAsciiInternal('n');
         } catch (ArithmeticException e) {

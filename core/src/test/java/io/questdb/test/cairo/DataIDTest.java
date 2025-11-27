@@ -32,8 +32,17 @@ import io.questdb.std.Rnd;
 import io.questdb.std.Uuid;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.Arrays;
 
 public class DataIDTest extends AbstractBootstrapTest {
     @Test
@@ -99,6 +108,38 @@ public class DataIDTest extends AbstractBootstrapTest {
             Assert.assertTrue(updatedId.isInitialized());
             Assert.assertEquals(updatedId.getLo(), currentId.getLo());
             Assert.assertEquals(updatedId.getHi(), currentId.getHi());
+
+            // Ensure that the data is still there
+            final DataID updatedId2 = DataID.open(config);
+            Assert.assertTrue(updatedId2.isInitialized());
+            Assert.assertEquals(updatedId2.getLo(), currentId.getLo());
+            Assert.assertEquals(updatedId2.getHi(), currentId.getHi());
+        });
+    }
+
+    @Test
+    public void testInvalidDataID() throws Exception {
+        assertMemoryLeak(() -> {
+            final java.io.File tmpDbRoot = new java.io.File(temp.newFolder(".testInvalidDataID.installRoot"), "db");
+            Assert.assertTrue(tmpDbRoot.mkdirs());
+            final CairoConfiguration config = new DefaultTestCairoConfiguration(tmpDbRoot.getAbsolutePath());
+            // Creates a file of 8 bytes instead of 16
+            try (Path path = new Path()) {
+                path.of(config.getDbRoot());
+                path.concat(DataID.FILENAME);
+
+                final FilesFacade ff = config.getFilesFacade();
+                try (var mem = new MemoryCMARWImpl(ff, path.$(), 8, -1, MemoryTag.MMAP_DEFAULT, config.getWriterFileOpenOpts())) {
+                    mem.putLong(0, 123);
+                    mem.sync(false);
+                }
+            }
+
+            DataID id = DataID.open(config);
+            Assert.assertNotNull(id);
+            Assert.assertFalse(id.isInitialized());
+            Assert.assertEquals(Numbers.LONG_NULL, id.getLo());
+            Assert.assertEquals(Numbers.LONG_NULL, id.getHi());
         });
     }
 
@@ -127,7 +168,7 @@ public class DataIDTest extends AbstractBootstrapTest {
             final java.io.File dataIdFile = new java.io.File(tmpDbRoot, DataID.FILENAME);
             final byte[] actual = java.nio.file.Files.readAllBytes(dataIdFile.toPath());
 
-            Assert.assertArrayEquals(expected, actual);
+            Assert.assertArrayEquals(expected, Arrays.copyOf(actual, 16));
         });
     }
 }

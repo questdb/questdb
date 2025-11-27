@@ -68,6 +68,9 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Interval;
@@ -101,6 +104,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final MillisecondClock clock;
     private final JsonQueryProcessorConfiguration configuration;
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal256 decimal256 = new Decimal256();
     private final CairoEngine engine;
     private final StringSink errSink = new StringSink();
     private final int maxSqlRecompileAttempts;
@@ -284,6 +289,64 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 && (tok.byteAt(i++) | 32) == 'e'
                 && (tok.byteAt(i++) | 32) == 'x'
                 && (tok.byteAt(i) | 32) == 'p';
+    }
+
+    private static void putDecimal128StringValue(HttpChunkedResponse response, Decimal128 decimal128, int type) {
+        if (decimal128.isNull()) {
+            response.putAscii("null");
+        } else {
+            response.putAscii('\"');
+            Decimals.appendNonNull(decimal128, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+            response.putAscii('\"');
+        }
+    }
+
+    private static void putDecimal16StringValue(HttpChunkedResponse response, short value, int type) {
+        if (value == Decimals.DECIMAL16_NULL) {
+            response.putAscii("null");
+        } else {
+            putDecimalLongStringValue(response, value, type);
+        }
+    }
+
+    private static void putDecimal256StringValue(HttpChunkedResponse response, Decimal256 decimal256, int type) {
+        if (decimal256.isNull()) {
+            response.putAscii("null");
+        } else {
+            response.putAscii('\"');
+            Decimals.appendNonNull(decimal256, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+            response.putAscii('\"');
+        }
+    }
+
+    private static void putDecimal32StringValue(HttpChunkedResponse response, int value, int type) {
+        if (value == Decimals.DECIMAL32_NULL) {
+            response.putAscii("null");
+        } else {
+            putDecimalLongStringValue(response, value, type);
+        }
+    }
+
+    private static void putDecimal64StringValue(HttpChunkedResponse response, long value, int type) {
+        if (value == Decimals.DECIMAL64_NULL) {
+            response.putAscii("null");
+        } else {
+            putDecimalLongStringValue(response, value, type);
+        }
+    }
+
+    private static void putDecimal8StringValue(HttpChunkedResponse response, byte value, int type) {
+        if (value == Decimals.DECIMAL8_NULL) {
+            response.putAscii("null");
+        } else {
+            putDecimalLongStringValue(response, value, type);
+        }
+    }
+
+    private static void putDecimalLongStringValue(HttpChunkedResponse response, long value, int type) {
+        response.putAscii('\"');
+        Decimals.append(value, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        response.putAscii('\"');
     }
 
     private static void putGeoHashStringValue(HttpChunkedResponse response, long value, int type) {
@@ -1079,6 +1142,26 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 break;
             case ColumnType.ARRAY:
                 putArrayValue(response, state, rec, columnIndex, columnType);
+                break;
+            case ColumnType.DECIMAL8:
+                putDecimal8StringValue(response, rec.getDecimal8(columnIndex), columnType);
+                break;
+            case ColumnType.DECIMAL16:
+                putDecimal16StringValue(response, rec.getDecimal16(columnIndex), columnType);
+                break;
+            case ColumnType.DECIMAL32:
+                putDecimal32StringValue(response, rec.getDecimal32(columnIndex), columnType);
+                break;
+            case ColumnType.DECIMAL64:
+                putDecimal64StringValue(response, rec.getDecimal64(columnIndex), columnType);
+                break;
+            case ColumnType.DECIMAL128:
+                rec.getDecimal128(columnIndex, decimal128);
+                putDecimal128StringValue(response, decimal128, columnType);
+                break;
+            case ColumnType.DECIMAL256:
+                rec.getDecimal256(columnIndex, decimal256);
+                putDecimal256StringValue(response, decimal256, columnType);
                 break;
             default:
                 assert false;

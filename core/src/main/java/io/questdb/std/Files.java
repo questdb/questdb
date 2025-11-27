@@ -67,8 +67,9 @@ public final class Files {
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
-    private final static FdCache fdCache = new FdCache();
-    private static final MmapCache mmapCache = new MmapCache();
+    private static final FdCache fdCache = new FdCache();
+    private static final MmapCache mmapCache = MmapCache.INSTANCE;
+    public static boolean ASYNC_MUNMAP_ENABLED = false;
     public static boolean FS_CACHE_ENABLED = true;
     // To be set in tests to check every call for using OPEN file descriptor
     public static boolean VIRTIO_FS_DETECTED = false;
@@ -125,11 +126,6 @@ public final class Files {
             return osFd;
         }
         return -1;
-    }
-
-    public static int errnoInvalidParameter() {
-        return Os.type != Os.WINDOWS ? CairoException.ERRNO_INVALID_PARAMETER
-                : CairoException.ERRNO_INVALID_PARAMETER_WIN;
     }
 
     public static boolean exists(long fd) {
@@ -233,6 +229,10 @@ public final class Files {
      * Returns vm.max_map_count kernel limit on Linux or 0 on other OSes.
      */
     public native static long getMapCountLimit();
+
+    public static MmapCache getMmapCache() {
+        return mmapCache;
+    }
 
     public static long getMmapReuseCount() {
         return mmapCache.getReuseCount();

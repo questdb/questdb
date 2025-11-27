@@ -103,8 +103,8 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        long srcRowId = srcValue.getLong(valueIndex);
-        long destRowId = destValue.getLong(valueIndex);
+        final long srcRowId = srcValue.getLong(valueIndex);
+        final long destRowId = destValue.getLong(valueIndex);
         if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));

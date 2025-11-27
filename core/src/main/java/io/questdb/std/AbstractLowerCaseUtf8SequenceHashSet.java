@@ -48,7 +48,7 @@ public abstract class AbstractLowerCaseUtf8SequenceHashSet implements Mutable {
         free = this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
         this.loadFactor = loadFactor;
         int len = Numbers.ceilPow2((int) (this.capacity / loadFactor));
-        keys = new Utf8String[len];
+        keys = new Utf8Sequence[len];
         hashCodes = new int[len];
         mask = len - 1;
     }

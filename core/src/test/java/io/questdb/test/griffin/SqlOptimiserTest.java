@@ -1305,7 +1305,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Sort
                                   keys: [s, ts]
                                     SelectedRecord
-                                        AsOf Join Fast Scan
+                                        AsOf Join Fast
                                           condition: t2.s=t1.s
                                             PageFrame
                                                 Row forward scan
@@ -1346,7 +1346,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Sort
                                   keys: [ts, s]
                                     SelectedRecord
-                                        AsOf Join Fast Scan
+                                        AsOf Join Fast
                                           condition: t2.s=t1.s
                                             PageFrame
                                                 Row forward scan
@@ -1387,7 +1387,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Sort
                                   keys: [s, ts1]
                                     SelectedRecord
-                                        AsOf Join Fast Scan
+                                        AsOf Join Fast
                                           condition: t2.s=t1.s
                                             PageFrame
                                                 Row forward scan
@@ -1429,7 +1429,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Sort
                                   keys: [s1, ts1]
                                     SelectedRecord
-                                        AsOf Join Fast Scan
+                                        AsOf Join Fast
                                           condition: t2.s=t1.s
                                             PageFrame
                                                 Row forward scan
@@ -1470,7 +1470,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Sort
                                   keys: [s, ts]
                                     SelectedRecord
-                                        AsOf Join Fast Scan
+                                        AsOf Join Fast
                                           condition: t2.s=t1.s
                                             PageFrame
                                                 Row forward scan
@@ -3151,7 +3151,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             Limit lo: -3 hi: -10 skip-over-rows: 0 limit: 0
                                 SelectedRecord
-                                    AsOf Join Fast Scan
+                                    AsOf Join Fast
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
@@ -3175,7 +3175,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             Limit lo: -3 skip-over-rows: 0 limit: 0
                                 SelectedRecord
-                                    AsOf Join Fast Scan
+                                    AsOf Join Fast
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
@@ -4446,7 +4446,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               keys: [ts]
                               values: [avg(x)]
                                 SelectedRecord
-                                    AsOf Join Fast Scan
+                                    AsOf Join Fast
                                         PageFrame
                                             Row forward scan
                                             Interval forward scan on: fromto
@@ -4924,6 +4924,36 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testScalarSubqueryDoesNotBreakJsonExtract() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(tradesDdl);
+            assertPlanNoLeakCheck("""
+                            SELECT * FROM trades
+                            WHERE timestamp = (SELECT max(timestamp) FROM "trades")
+                            ORDER BY timestamp DESC;""",
+                    """
+                            PageFrame
+                                Row backward scan
+                                Interval backward scan on: trades
+                                  intervals: []
+                            """);
+
+            assertException("""
+                            SELECT * FROM trades
+                            WHERE timestamp = CAST((SELECT max(timstamp) FROM "trades") AS LONG)
+                            ORDER BY timestamp DESC""",
+                    56,
+                    "Invalid column");
+
+            assertException("""
+                            SELECT * FROM trades
+                            WHERE timestamp = CAST((SELECT max(timestamp) FROM "trades") AS LONG)
+                            ORDER BY timestamp DESC;""",
+                    39, "there is no matching function");
+        });
+    }
+
+    @Test
     public void testSelectMultipleColumnsIncludingLastFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
@@ -5038,6 +5068,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     expectedPlan
             );
         });
+    }
+
+    @Test
+    public void testUnaryMinusInAggregateFunction() throws Exception {
+        assertMemoryLeak(() -> {
+                    execute(tradesDdl);
+                    assertPlanNoLeakCheck(
+                            "SELECT symbol, sum(-amount) FROM trades;",
+                            """
+                                    Async Group By workers: 1
+                                      keys: [symbol]
+                                      values: [sum(-amount)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                    """
+                    );
+                }
+        );
     }
 
     @Test

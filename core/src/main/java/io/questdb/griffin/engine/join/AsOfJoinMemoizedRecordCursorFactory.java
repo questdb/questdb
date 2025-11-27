@@ -79,10 +79,12 @@ import io.questdb.std.Rows;
  * @see AbstractKeyedAsOfJoinRecordCursor
  */
 public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final AsofJoinColumnAccessHelper columnAccessHelper;
+    private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
+    private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
     private final AsOfJoinMemoizedRecordCursor cursor;
     private final boolean driveByCaching;
     private final int slaveSymbolColumnIndex;
+    private final SymbolJoinKeyMapping symbolJoinKeyMapping;
     private final long toleranceInterval;
 
     public AsOfJoinMemoizedRecordCursorFactory(
@@ -92,26 +94,31 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             RecordCursorFactory slaveFactory,
             int columnSplit,
             int slaveSymbolColumnIndex,
-            AsofJoinColumnAccessHelper columnAccessHelper,
+            SymbolJoinKeyMapping symbolJoinKeyMapping,
             JoinContext joinContext,
             long toleranceInterval,
             boolean driveByCaching
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
-        this.columnAccessHelper = columnAccessHelper;
+        this.symbolJoinKeyMapping = symbolJoinKeyMapping;
         this.toleranceInterval = toleranceInterval;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         this.driveByCaching = driveByCaching;
-        this.cursor = new AsOfJoinMemoizedRecordCursor(
-                configuration,
-                columnSplit,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                masterFactory.getMetadata().getTimestampIndex(),
-                masterFactory.getMetadata().getTimestampType(),
-                slaveFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampType()
-        );
+        try {
+            this.cursor = new AsOfJoinMemoizedRecordCursor(
+                    configuration,
+                    columnSplit,
+                    NullRecordFactory.getInstance(slaveFactory.getMetadata()),
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    masterFactory.getMetadata().getTimestampType(),
+                    slaveFactory.getMetadata().getTimestampIndex(),
+                    slaveFactory.getMetadata().getTimestampType()
+            );
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override
@@ -167,8 +174,6 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         private static final int SLOT_REMEMBERED_ROWID = 0;
         private static final int SLOT_VALIDITY_PERIOD_END = 2;
         private static final int SLOT_VALIDITY_PERIOD_START = 1;
-        private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
-        private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
         private final Map rememberedSymbols;
         private long earliestRowId = Long.MIN_VALUE;
         // These track a contiguous range of slave timestamps that we've already scanned.
@@ -198,13 +203,13 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     slaveTimestampType,
                     configuration.getSqlAsOfJoinLookAhead()
             );
-            rememberedSymbols = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
+            this.rememberedSymbols = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
         }
 
         @Override
         public void close() {
+            Misc.free(rememberedSymbols);
             super.close();
-            rememberedSymbols.close();
         }
 
         @Override
@@ -212,7 +217,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             super.of(masterCursor, slaveCursor, circuitBreaker);
             rememberedSymbols.reopen();
             rememberedSymbols.clear();
-            columnAccessHelper.of(slaveCursor);
+            symbolJoinKeyMapping.of(slaveCursor);
             earliestRowId = Long.MIN_VALUE;
         }
 
@@ -337,7 +342,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            int slaveSymbolKey = columnAccessHelper.getSlaveKey(masterRecord);
+            int slaveSymbolKey = symbolJoinKeyMapping.getSlaveKey(masterRecord);
             if (slaveSymbolKey == StaticSymbolTable.VALUE_NOT_FOUND) {
                 // The master record's symbol does not match any symbol in the slave table,
                 // we can immediately report no match and return.
@@ -486,12 +491,12 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
         }
+    }
 
-        static {
-            TYPES_KEY.add(ColumnType.INT);
-            TYPES_VALUE.add(ColumnType.LONG);
-            TYPES_VALUE.add(ColumnType.LONG);
-            TYPES_VALUE.add(ColumnType.LONG);
-        }
+    static {
+        TYPES_KEY.add(ColumnType.INT);
+        TYPES_VALUE.add(ColumnType.LONG);
+        TYPES_VALUE.add(ColumnType.LONG);
+        TYPES_VALUE.add(ColumnType.LONG);
     }
 }
