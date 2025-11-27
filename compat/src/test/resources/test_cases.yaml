@@ -2,6 +2,14 @@ variables:
   table_name: "sensor_data"
 
 tests:
+  - name: Test Large Array
+    description: Test inserting and selecting large array.
+    iterations: 2
+    steps:
+      - action: query
+        query:
+          select 'XXX'::varchar as symbol, '{{1.0850, 600000},{1.0849, 300000},{1.0848, 150000}}'::double[][] as bids, '{{1.0853, 500000.0},{1.0854,250000.0},{1.0855,125000.0}}'::double[][] as asks from long_sequence(10000);
+
   - name: Test Array in binding var in a function
     description: Test selecting function with array argument.
     steps:
@@ -12,7 +20,7 @@ tests:
             type: "ARRAY_FLOAT8"
         expect:
           result_contains:
-            - [2]
+            - [ 2 ]
 
   - name: Test Insert Array Function
     description: test insert function with array argument.
@@ -33,14 +41,14 @@ tests:
                   type: "ARRAY_FLOAT8"
               expect:
                 result:
-                  - [1]
+                  - [ 1 ]
       - action: query
         query: "SELECT * FROM pos_table"
         expect:
           result_contains:
-            - [3]
-            - [3]
-            - [3]
+            - [ 3 ]
+            - [ 3 ]
+            - [ 3 ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS pos_table;"
@@ -76,7 +84,7 @@ tests:
             type: "TIMESTAMP"
         expect:
           result:
-            - [1, 2.5, "2023-10-01T10:00:00.100000Z"]
+            - [ 1, 2.5, "2023-10-01T10:00:00.100000Z" ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS nanos;"
@@ -102,14 +110,14 @@ tests:
                   type: "ARRAY_FLOAT8"
               expect:
                 result:
-                  - [1]
+                  - [ 1 ]
       - action: query
         query: "SELECT * FROM ${table_name}"
         expect:
           result_contains:
-            - [1, "{}"]
-            - [2, "{}"]
-            - [10, "{}"]
+            - [ 1, "{}" ]
+            - [ 2, "{}" ]
+            - [ 10, "{}" ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
@@ -133,7 +141,7 @@ tests:
                   type: "ARRAY_FLOAT8"
               expect:
                 result:
-                  - [1]
+                  - [ 1 ]
       - action: query
         query: "SELECT arr * $[1], arr / $[2], arr + $[3], arr - $[4] FROM array_op_table WHERE arr = $[5]"
         parameters:
@@ -150,11 +158,11 @@ tests:
         expect:
           result_contains:
             - [
-                "{3.0,6.0,9.0}",
-                "{1.0,1.0,1.0}",
-                "{4.0,4.0,4.0}",
-                "{0.0,1.0,2.0}",
-              ]
+              "{3.0,6.0,9.0}",
+              "{1.0,1.0,1.0}",
+              "{4.0,4.0,4.0}",
+              "{0.0,1.0,2.0}",
+            ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS array_op_table;"
@@ -182,21 +190,21 @@ tests:
                   type: "ARRAY_FLOAT8"
               expect:
                 result:
-                  - [1]
+                  - [ 1 ]
       - action: query
         query: "SELECT * FROM array_table"
         expect:
           result_contains:
-            - [1, "{-1.0,2.0,3.0,4.0,5.42}", "{0.0,1.0,2.0,3.0,4.0,5.0}"]
-            - [2, "{-1.0,2.0,3.0,4.0,5.42}", "{0.0,1.0,2.0,3.0,4.0,5.0}"]
-            - [10, "{-1.0,2.0,3.0,4.0,5.42}", "{0.0,1.0,2.0,3.0,4.0,5.0}"]
+            - [ 1, "{-1.0,2.0,3.0,4.0,5.42}", "{0.0,1.0,2.0,3.0,4.0,5.0}" ]
+            - [ 2, "{-1.0,2.0,3.0,4.0,5.42}", "{0.0,1.0,2.0,3.0,4.0,5.0}" ]
+            - [ 10, "{-1.0,2.0,3.0,4.0,5.42}", "{0.0,1.0,2.0,3.0,4.0,5.0}" ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS array_table;"
 
   - name: Test non Vanilla Arrays
     description: Selecting sliced arrays
-    exclude: ["golang", "sqlx"]
+    exclude: [ "golang", "sqlx" ]
     prepare:
       - action: execute
         query: "CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]] arr FROM long_sequence(1))"
@@ -205,37 +213,37 @@ tests:
         query: "SELECT arr[1:2] slice FROM tango"
         expect:
           result:
-            - ["{{1.0,2.0}}"]
+            - [ "{{1.0,2.0}}" ]
       - action: query
         query: "SELECT arr[2:] slice FROM tango"
         expect:
           result:
-            - ["{{3.0,4.0},{5.0,6.0}}"]
+            - [ "{{3.0,4.0},{5.0,6.0}}" ]
       - action: query
         query: "SELECT arr[3:, 1:2] slice FROM tango"
         expect:
           result:
-            - ["{{5.0}}"]
+            - [ "{{5.0}}" ]
       - action: query
         query: "SELECT arr[3:, 2] slice FROM tango"
         expect:
           result:
-            - ["{6.0}"]
+            - [ "{6.0}" ]
       - action: query
         query: "SELECT arr[1:3] slice FROM tango"
         expect:
           result:
-            - ["{{1.0,2.0},{3.0,4.0}}"]
+            - [ "{{1.0,2.0},{3.0,4.0}}" ]
       - action: query
         query: "SELECT arr[1:3, 1:2] slice FROM tango"
         expect:
           result:
-            - ["{{1.0},{3.0}}"]
+            - [ "{{1.0},{3.0}}" ]
       - action: query
         query: "SELECT arr[2, 2] element FROM tango"
         expect:
           result:
-            - [4.0]
+            - [ 4.0 ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS tango;"
@@ -243,7 +251,7 @@ tests:
   - name: Bindvar gaps with subqueries
     description: https://github.com/questdb/questdb/issues/5512
     exclude:
-      ["psycopg2", "psycopg3", "asyncpg", "rust", "php", "nodejs-postgres"]
+      [ "psycopg2", "psycopg3", "asyncpg", "rust", "php", "nodejs-postgres" ]
     prepare:
       - action: execute
         query: "CREATE TABLE test_table (value double, state symbol, opened_at timestamp) timestamp(opened_at) PARTITION BY YEAR BYPASS WAL;"
@@ -263,9 +271,9 @@ tests:
             type: "VARCHAR"
         expect:
           result:
-            - ["CLOSED", "2002-01-01T00:00:00.000000Z"]
-            - ["CLOSED", "2003-01-01T00:00:00.000000Z"]
-            - ["CLOSED", "2005-01-01T00:00:00.000000Z"]
+            - [ "CLOSED", "2002-01-01T00:00:00.000000Z" ]
+            - [ "CLOSED", "2003-01-01T00:00:00.000000Z" ]
+            - [ "CLOSED", "2005-01-01T00:00:00.000000Z" ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS test_table;"
@@ -291,7 +299,7 @@ tests:
                   type: "VARCHAR"
               expect:
                 result:
-                  - [1]
+                  - [ 1 ]
       - action: query
         query: "SELECT $[1], * FROM ${table_name} WHERE vch IN ($[2], $[3]);"
         parameters:
@@ -303,8 +311,8 @@ tests:
             type: "VARCHAR"
         expect:
           result:
-            - ["42", "2023-10-01T10:00:00.000000Z", "2"]
-            - ["42", "2023-10-01T10:00:00.000000Z", "3"]
+            - [ "42", "2023-10-01T10:00:00.000000Z", "2" ]
+            - [ "42", "2023-10-01T10:00:00.000000Z", "3" ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
@@ -330,7 +338,7 @@ tests:
                   type: "VARCHAR"
               expect:
                 result:
-                  - [1]
+                  - [ 1 ]
       - action: query
         query: "SELECT * FROM ${table_name} WHERE vch IN ($[1], $[2], $[3]);"
         parameters:
@@ -342,8 +350,8 @@ tests:
             type: "VARCHAR"
         expect:
           result:
-            - ["2023-10-01T10:00:00.000000Z", "1"]
-            - ["2023-10-01T10:00:00.000000Z", "2"]
+            - [ "2023-10-01T10:00:00.000000Z", "1" ]
+            - [ "2023-10-01T10:00:00.000000Z", "2" ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
@@ -377,12 +385,12 @@ tests:
                   type: "TIMESTAMP"
               expect:
                 result:
-                  - [1]
+                  - [ 1 ]
       - action: query
         query: "SELECT 1, COUNT(*) FROM ${table_name};"
         expect:
           result:
-            - [1, 10]
+            - [ 1, 10 ]
       - action: execute
         description: Insert a row with a unique timestamp so we can query it later
         query: "INSERT INTO ${table_name} (id, temperature, b, d, ch, timestamp) VALUES ($[1], $[2], $[3], $[4], $[5], $[6]);"
@@ -401,7 +409,7 @@ tests:
             type: "TIMESTAMP"
         expect:
           result:
-            - [1]
+            - [ 1 ]
       - action: query
         description: Query the row we inserted with a unique timestamp
         query: "SELECT * FROM ${table_name} WHERE timestamp = $[1];"
@@ -412,29 +420,29 @@ tests:
         expect:
           result:
             - [
-                11,
-                11.5,
-                False,
-                "2024-10-02T00:00:00.000000Z",
-                "-",
-                "2024-10-01T10:00:00.000000Z",
-              ]
+              11,
+              11.5,
+              False,
+              "2024-10-02T00:00:00.000000Z",
+              "-",
+              "2024-10-01T10:00:00.000000Z",
+            ]
       - action: query
         query: "SELECT id, temperature, timestamp FROM ${table_name};"
         expect:
           result_contains:
-            - [1, 1.5, "2023-10-01T10:00:00.000000Z"]
-            - [2, 2.5, "2023-10-01T10:00:00.000000Z"]
-            - [3, 3.5, "2023-10-01T10:00:00.000000Z"]
-            - [4, 4.5, "2023-10-01T10:00:00.000000Z"]
-            - [5, 5.5, "2023-10-01T10:00:00.000000Z"]
+            - [ 1, 1.5, "2023-10-01T10:00:00.000000Z" ]
+            - [ 2, 2.5, "2023-10-01T10:00:00.000000Z" ]
+            - [ 3, 3.5, "2023-10-01T10:00:00.000000Z" ]
+            - [ 4, 4.5, "2023-10-01T10:00:00.000000Z" ]
+            - [ 5, 5.5, "2023-10-01T10:00:00.000000Z" ]
       - action: query
         query: "TRUNCATE TABLE ${table_name};"
       - action: query
         query: "SELECT COUNT(*) FROM ${table_name};"
         expect:
           result:
-            - [0]
+            - [ 0 ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
@@ -447,11 +455,11 @@ tests:
         query: "SELECT x FROM long_sequence(5)"
         expect:
           result:
-            - [1]
-            - [2]
-            - [3]
-            - [4]
-            - [5]
+            - [ 1 ]
+            - [ 2 ]
+            - [ 3 ]
+            - [ 4 ]
+            - [ 5 ]
 
   - name: Parquet test
     description: This test uses the built-in Parquet demo data
@@ -464,12 +472,12 @@ tests:
         expect:
           result_contains:
             - [
-                "BTC-USD",
-                "buy",
-                66991.56,
-                0.00014933,
-                "2024-07-26T07:52:48.243272Z",
-              ]
+              "BTC-USD",
+              "buy",
+              66991.56,
+              0.00014933,
+              "2024-07-26T07:52:48.243272Z",
+            ]
 
   - name: Large Result Set test
     description: Fetches a large result set
@@ -482,8 +490,8 @@ tests:
         query: "SELECT 0, * FROM ${table_name};"
         expect:
           result_contains:
-            - [0, 1, "1"]
-            - [0, 1000000, "1000000"]
+            - [ 0, 1, "1" ]
+            - [ 0, 1000000, "1000000" ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
@@ -512,14 +520,14 @@ tests:
                   type: "TIMESTAMP"
               expect:
                 result:
-                  - [1]
+                  - [ 1 ]
       - action: execute
         query: "ALTER TABLE ${table_name} ADD COLUMN ts2 timestamp;"
       - action: execute
         query: "UPDATE ${table_name} SET ts2 = timestamp;"
         expect:
           result:
-            - [1000]
+            - [ 1000 ]
       - action: query
         query: "SELECT * FROM ${table_name} WHERE ts2 = $[1];"
         parameters:
@@ -528,11 +536,11 @@ tests:
         expect:
           result:
             - [
-                999,
-                999.5,
-                "2023-10-01T10:00:00.999000Z",
-                "2023-10-01T10:00:00.999000Z",
-              ]
+              999,
+              999.5,
+              "2023-10-01T10:00:00.999000Z",
+              "2023-10-01T10:00:00.999000Z",
+            ]
       - action: execute
         query: "ALTER TABLE ${table_name} DROP COLUMN timestamp;"
     #        # The action below is currently failing with: cached query plan cannot be used because table schema has changed
@@ -566,8 +574,8 @@ tests:
         # let's use the exact match here since it only returns one row
         expect:
           result:
-            - ["Sym2", 50, "1970-01-01T00:00:29.700000Z"]
-            - ["Sym1", 49, "1970-01-01T00:00:29.900000Z"]
+            - [ "Sym2", 50, "1970-01-01T00:00:29.700000Z" ]
+            - [ "Sym1", 49, "1970-01-01T00:00:29.900000Z" ]
       - action: query
         description: Check with second limits
         query: "SELECT col1, sum(status) as sum, last(ts) as last FROM ${table_name} ORDER BY 2 DESC LIMIT $[1],$[2]"
@@ -578,7 +586,7 @@ tests:
             type: "INT8"
         expect:
           result:
-            - ["Sym2", 50, "1970-01-01T00:00:29.700000Z"]
+            - [ "Sym2", 50, "1970-01-01T00:00:29.700000Z" ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
@@ -614,7 +622,7 @@ tests:
             type: "TIMESTAMP"
         expect:
           result:
-            - [1, "2.5", "2023-10-01T10:00:00.100000Z"]
+            - [ 1, "2.5", "2023-10-01T10:00:00.100000Z" ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS decimals;"

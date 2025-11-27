@@ -170,7 +170,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private Utf8String namedPortal;
     private Utf8String namedStatement;
     private Operation operation = null;
-    private int outResendArrayFlatIndex = 0;
+    private int outResendArrayFlatIndex = -1; // -1 indicates the array header has not been sent yet
     private int outResendColumnIndex = 0;
     private boolean outResendCursorRecord = false;
     private boolean outResendRecordHeader = true;
@@ -306,6 +306,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         factory = Misc.free(factory);
         msgBindParameterValueCount = 0;
         msgBindSelectFormatCodeCount = 0;
+        outResendArrayFlatIndex = -1;
         outResendColumnIndex = 0;
         outResendCursorRecord = false;
         outResendRecordHeader = true;
@@ -1073,6 +1074,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
             // number of bits or chars for geohash
             final int geohashSize = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
+
+            // outResendArrayFlatIndex applies to the column we were sending before we ran out of space
+            // all other array columns will be sent in full
+            final int effectiveOutResendArrayFlatIndex = i == outResendColumnIndex ? outResendArrayFlatIndex : -1;
+
             final int columnValueSize = calculateColumnBinSize(
                     this,
                     record,
@@ -1080,7 +1086,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     columnType,
                     geohashSize,
                     maxBlobSize,
-                    outResendArrayFlatIndex
+                    effectiveOutResendArrayFlatIndex
             );
 
             if (columnValueSize < 0) {
@@ -1712,10 +1718,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return;
         }
         short elemType = array.getElemType();
-        if (outResendArrayFlatIndex == 0) {
-            // Send the header. We must ensure at least one element follows the header, otherwise the
-            // outResendArrayFlatIndex stays at 0 even though the header was already sent, which will cause
-            // the header to be sent again.
+        if (outResendArrayFlatIndex == -1) {
             int nDims = array.getDimCount();
             int componentTypeOid = getTypeOid(elemType);
             int notNullCount = PGUtils.countNotNull(array, 0);
@@ -1723,7 +1726,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // The size field indicates the size of what follows, excluding its own size,
             // that's why we subtract Integer.BYTES from it. The same method is used to calculate
             // the full size of the message, and in that case this field must be included.
-            utf8Sink.putNetworkInt(PGUtils.calculateArrayColBinSize(array, notNullCount) - Integer.BYTES);
+            utf8Sink.putNetworkInt(PGUtils.calculateArrayColBinSizeIncludingHeader(array, notNullCount) - Integer.BYTES);
             utf8Sink.putNetworkInt(nDims);
             utf8Sink.putIntDirect(notNullCount < array.getCardinality() ? 1 : 0); // "has nulls" flag
             utf8Sink.putNetworkInt(componentTypeOid);
@@ -1731,6 +1734,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 utf8Sink.putNetworkInt(array.getDimLen(i)); // length of each dimension
                 utf8Sink.putNetworkInt(1); // lower bound, always 1 in QuestDB
             }
+            utf8Sink.bookmark();
+            outResendArrayFlatIndex = 0;
         }
         try {
             if (array.isVanilla()) {
@@ -1759,7 +1764,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             } else {
                 outColBinArrRecursive(utf8Sink, array, elemType, 0, 0, 0);
             }
-            outResendArrayFlatIndex = 0;
+            outResendArrayFlatIndex = -1;
         } catch (NoSpaceLeftInResponseBufferException e) {
             utf8Sink.resetToBookmark();
             throw e;
