@@ -45,6 +45,15 @@ stages:
               # Trigger the enterprise CI pipeline via Azure DevOps REST API
               AUTH_HEADER="Authorization: Basic $(printf ':%s' "$AZURE_DEVOPS_ENT_PAT" | base64 -w0)"
 
+              # For PR builds, Azure uses an ephemeral merge commit, not the actual PR head.
+              # Fetch the real PR head commit from GitHub API.
+              if [ -n "$OSS_PR_NUMBER" ]; then
+                OSS_COMMIT=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                  "https://api.github.com/repos/questdb/questdb/pulls/$OSS_PR_NUMBER" \
+                  | jq -r '.head.sha')
+                echo "Fetched PR head commit from GitHub API: $OSS_COMMIT"
+              fi
+
               # Check if matching branch exists in enterprise repo (private, requires auth)
               BRANCH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
                 -H "Authorization: token $GH_TOKEN" \
@@ -96,8 +105,6 @@ stages:
             env:
               AZURE_DEVOPS_ENT_PAT: $(AZURE_DEVOPS_ENT_PAT)
               GH_TOKEN: $(GH_TOKEN)
-              # Use the actual PR head commit, not the ephemeral merge commit that Azure creates for PR builds
-              OSS_COMMIT: ${{ coalesce(variables['System.PullRequest.SourceCommitId'], variables['Build.SourceVersion']) }}
               OSS_PR_NUMBER: $(System.PullRequest.PullRequestNumber)
               OSS_BRANCH: $(System.PullRequest.SourceBranch)
 
