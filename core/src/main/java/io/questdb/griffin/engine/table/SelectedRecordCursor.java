@@ -60,6 +60,11 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void expectLimitedIteration() {
+        baseCursor.expectLimitedIteration();
+    }
+
+    @Override
     public Record getRecord() {
         return recordA;
     }

@@ -63,15 +63,16 @@ import static org.junit.Assert.fail;
 // This is not a fuzz test in traditional sense, but it's multithreaded, and we want to run it
 // in CI frequently along with other fuzz tests.
 public class ParallelGroupByFuzzTest extends AbstractCairoTest {
+    private static final int MIN_PAGE_FRAME_MAX_ROWS = 100;
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
-    private static final int PAGE_FRAME_MAX_ROWS = 100;
-    private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
+    private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * MIN_PAGE_FRAME_MAX_ROWS;
     private final boolean convertToParquet;
     private final boolean enableJitCompiler;
     private final boolean enableParallelGroupBy;
+    private final Rnd rnd;
 
     public ParallelGroupByFuzzTest() {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        this.rnd = TestUtils.generateRandom(LOG);
         this.enableParallelGroupBy = rnd.nextBoolean();
         this.enableJitCompiler = rnd.nextBoolean();
         this.convertToParquet = rnd.nextBoolean();
@@ -80,15 +81,17 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, PAGE_FRAME_MAX_ROWS);
+        final int pageFrameMaxRows = MIN_PAGE_FRAME_MAX_ROWS + rnd.nextInt(10);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, pageFrameMaxRows);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, pageFrameMaxRows);
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1 + rnd.nextInt(4));
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1 + rnd.nextInt(PAGE_FRAME_COUNT));
         // Set the sharding threshold to a small value to test sharding.
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 2);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1 + rnd.nextInt(50));
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
         super.setUp();
     }
@@ -361,7 +364,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "insert into tab " +
                                                 "select rnd_int(), rnd_ipv4(), rnd_symbol(100,4,4,2), " +
                                                 "rnd_long(), rnd_uuid4(), rnd_long256(), " + timestamp + "::timestamp " +
-                                                "from long_sequence(" + PAGE_FRAME_MAX_ROWS + ")",
+                                                "from long_sequence(" + MIN_PAGE_FRAME_MAX_ROWS + ")",
                                         sqlExecutionContext
                                 );
                             } else {
@@ -371,7 +374,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "insert into tab " +
                                                 "select rnd_int(), rnd_ipv4(), rnd_symbol(100,4,4,2), " +
                                                 "rnd_long(), rnd_uuid4(), rnd_long256(), " + timestamp + "::timestamp " +
-                                                "from long_sequence(" + (PAGE_FRAME_MAX_ROWS + 1) + ")",
+                                                "from long_sequence(" + (MIN_PAGE_FRAME_MAX_ROWS + 1) + ")",
                                         sqlExecutionContext
                                 );
                             }
@@ -1936,7 +1939,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByThrowsOnTimeout() throws Exception {
-        final Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
         // We want the timeout to happen in reduce.
         // Page frame count is 40.
         final long tripWhenTicks = Math.max(10, rnd.nextLong(39));
@@ -2688,7 +2690,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelSingleKeyGroupByThrowsOnTimeout() throws Exception {
-        final Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
         // We want the timeout to happen in either reduce or merge.
         // Page frame count is 40 and shard count is 8.
         final long tripWhenTicks = Math.max(10, rnd.nextLong(48));
@@ -4105,9 +4106,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // Validate parallel GROUP BY factories.
         Assume.assumeTrue(enableParallelGroupBy);
         // The test is very sensitive to sharding threshold and page frame sizes.
-        Assert.assertEquals(2, configuration.getGroupByShardingThreshold());
-        final int rowCount = ROW_COUNT;
-        Assert.assertEquals(40, rowCount / configuration.getSqlPageFrameMaxRows());
+        Assume.assumeTrue(configuration.getGroupByShardingThreshold() <= 5);
+        Assume.assumeTrue(ROW_COUNT / configuration.getSqlPageFrameMaxRows() >= 20);
         assertMemoryLeak(() -> {
             circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                 private final AtomicLong ticks = new AtomicLong();
@@ -4145,7 +4145,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                     sqlExecutionContext
                             );
                             engine.execute(
-                                    "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + rowCount + ")",
+                                    "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")",
                                     sqlExecutionContext
                             );
                             if (convertToParquet) {

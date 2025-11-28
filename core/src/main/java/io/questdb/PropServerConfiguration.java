@@ -452,6 +452,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlOrderBySortEnabled;
     private final int sqlPageFrameMaxRows;
     private final int sqlPageFrameMinRows;
+    private final int sqlParallelFilterDispatchLimit;
     private final boolean sqlParallelFilterEnabled;
     private final double sqlParallelFilterPreTouchThreshold;
     private final boolean sqlParallelGroupByEnabled;
@@ -1826,7 +1827,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + writeWorkers + networkPoolWorkerCount);
 
-            final int defaultReduceQueueCapacity = queryWorkers > 0 ? Math.min(2 * queryWorkers, 64) : 0;
+            final int defaultReduceQueueCapacity = Math.min(4 * queryWorkers, 256);
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 10_000);
@@ -1838,6 +1839,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             final int defaultReduceShardCount = queryWorkers > 0 ? Math.min(queryWorkers, 4) : 0;
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, defaultReduceShardCount);
             this.sqlParallelFilterPreTouchThreshold = getDouble(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD, "0.05");
+            this.sqlParallelFilterDispatchLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, Math.min(queryWorkers, 32));
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
 
             final boolean defaultParallelSqlEnabled = queryWorkers > 0;
@@ -3878,6 +3880,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlPageFrameMinRows() {
             return sqlPageFrameMinRows;
+        }
+
+        @Override
+        public int getSqlParallelFilterDispatchLimit() {
+            return sqlParallelFilterDispatchLimit;
         }
 
         @Override
