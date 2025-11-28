@@ -189,6 +189,14 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                             """,
                     "SELECT weighted_avg(x, x - 6) FROM long_sequence(11)"
             );
+            // Weights all negative
+            assertSql(
+                    """
+                            weighted_avg
+                            4.333333333333333
+                            """,
+                    "SELECT weighted_avg(x, x - 12) FROM long_sequence(11)"
+            );
         });
     }
 

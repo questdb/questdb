@@ -213,6 +213,14 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
                             """,
                     "SELECT weighted_stddev_freq(x, x - 6) FROM long_sequence(11)"
             );
+            // Weights all negative
+            assertSql(
+                    """
+                            weighted_stddev_freq
+                            null
+                            """,
+                    "SELECT weighted_stddev_freq(x, x - 12) FROM long_sequence(11)"
+            );
         });
     }
 }

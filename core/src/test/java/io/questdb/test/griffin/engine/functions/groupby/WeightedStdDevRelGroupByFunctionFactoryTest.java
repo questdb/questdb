@@ -260,6 +260,21 @@ public class WeightedStdDevRelGroupByFunctionFactoryTest extends AbstractCairoTe
                             """,
                     "SELECT weighted_stddev(x, x - 6) FROM long_sequence(11)"
             );
+            // Weights all negative
+            assertSql(
+                    """
+                            weighted_stddev_rel
+                            null
+                            """,
+                    "SELECT weighted_stddev_rel(x, x - 12) FROM long_sequence(11)"
+            );
+            assertSql(
+                    """
+                            weighted_stddev
+                            null
+                            """,
+                    "SELECT weighted_stddev(x, x - 12) FROM long_sequence(11)"
+            );
         });
     }
 }
