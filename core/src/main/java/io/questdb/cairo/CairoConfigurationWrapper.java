@@ -777,11 +777,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getScoreboardFormat() {
-        return getDelegate().getScoreboardFormat();
-    }
-
-    @Override
     public long getSequencerCheckInterval() {
         return getDelegate().getSequencerCheckInterval();
     }
@@ -1004,6 +999,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlPageFrameMinRows() {
         return getDelegate().getSqlPageFrameMinRows();
+    }
+
+    @Override
+    public int getSqlParallelFilterDispatchLimit() {
+        return getDelegate().getSqlParallelFilterDispatchLimit();
     }
 
     @Override

@@ -483,8 +483,6 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
-    int getScoreboardFormat();
-
     long getSequencerCheckInterval();
 
     /**
@@ -587,6 +585,8 @@ public interface CairoConfiguration {
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
+
+    int getSqlParallelFilterDispatchLimit();
 
     double getSqlParallelFilterPreTouchThreshold();
 
