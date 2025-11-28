@@ -3783,6 +3783,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelWeightedGroupByStdDev() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT round(weighted_stddev(adouble, adouble), 14) FROM tab", """
+                        round
+                        0.23570127111382
+                        """,
+                "SELECT round(weighted_stddev_freq(adouble, adouble), 14) FROM tab", """
+                        round
+                        0.23572478930163
+                        """,
+                "SELECT round(weighted_stddev_rel(adouble, adouble), 14) FROM tab", """
+                        round
+                        0.23570127111382
+                        """
+        );
+    }
+
+    @Test
     public void testStringKeyGroupByEmptyTable() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
