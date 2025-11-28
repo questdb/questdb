@@ -96,7 +96,8 @@ stages:
             env:
               AZURE_DEVOPS_ENT_PAT: $(AZURE_DEVOPS_ENT_PAT)
               GH_TOKEN: $(GH_TOKEN)
-              OSS_COMMIT: $(Build.SourceVersion)
+              # Use the actual PR head commit, not the ephemeral merge commit that Azure creates for PR builds
+              OSS_COMMIT: ${{ coalesce(variables['System.PullRequest.SourceCommitId'], variables['Build.SourceVersion']) }}
               OSS_PR_NUMBER: $(System.PullRequest.PullRequestNumber)
               OSS_BRANCH: $(System.PullRequest.SourceBranch)
 
