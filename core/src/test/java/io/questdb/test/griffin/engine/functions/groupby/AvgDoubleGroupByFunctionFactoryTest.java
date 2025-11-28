@@ -82,8 +82,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         SELECT CASE
                             WHEN rnd_double() > 0.6 then 1.0
                             ELSE 0.0
-                        END
-                        val FROM long_sequence(100)
+                        END val FROM long_sequence(100)
                     )""");
             assertSql(
                     """
