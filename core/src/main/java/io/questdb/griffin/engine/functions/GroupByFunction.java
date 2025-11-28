@@ -246,6 +246,7 @@ public interface GroupByFunction extends Function, Mutable {
         throw new UnsupportedOperationException();
     }
 
+    // used by generated code
     default void setEmpty(MapValue value) {
         setNull(value);
     }

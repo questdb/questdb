@@ -188,6 +188,11 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.UPDATE_REFRESH_INTERVALS, null);
     }
 
+    @TestOnly
+    public Queue<MatViewRefreshTask> getTaskQueue() {
+        return taskQueue;
+    }
+
     @Override
     public MatViewState getViewState(TableToken matViewToken) {
         final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());

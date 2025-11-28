@@ -431,10 +431,6 @@ public final class ColumnType {
         return isArray(columnType) && (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0;
     }
 
-    public static boolean isAssignableFrom(int fromType, int toType) {
-        return isToSameOrWider(fromType, toType) || isNarrowingCast(fromType, toType);
-    }
-
     public static boolean isBinary(int columnType) {
         return columnType == BINARY;
     }
@@ -443,22 +439,28 @@ public final class ColumnType {
         return columnType == ColumnType.BOOLEAN;
     }
 
+    /**
+     * Checks if a type conversion can be performed using built-in Function getters without a cast wrapper.
+     * <p>
+     * This method returns true when the Function base class for {@code fromType} already implements
+     * the getter method for {@code toType}, eliminating the need for a cast wrapper function.
+     * </p>
+     * <p>
+     * <b>Important:</b> This method is intentionally conservative. Some Function base classes implement
+     * additional getters beyond standard widening (e.g., BooleanFunction has getInt(), CharFunction has
+     * getByte()), but this method returns false for such conversions. This is to avoid implicit casting
+     * in SQL where it could be surprising for users.
+     *
+     * @param fromType the source column type
+     * @param toType   the target column type
+     * @return true if conversion can use built-in getter without a wrapper, false otherwise
+     * @see #isToSameOrWider(int, int) for safe conversions that may require a cast wrapper
+     * @see #isNarrowingCast(int, int) for lossy conversions requiring explicit cast
+     */
     public static boolean isBuiltInWideningCast(int fromType, int toType) {
-        // This method returns true when a cast is not needed from type to type
-        // because of the way typed functions are implemented.
-        // For example IntFunction has getDouble() method implemented and does not need
-        // additional wrap function to CAST to double.
-        // This is usually case for widening conversions.
-        fromType = tagOf(fromType);
-        toType = tagOf(toType);
-        return (fromType >= BYTE && toType >= BYTE && toType <= DOUBLE && fromType < toType) || fromType == NULL
-                // char can be short and short can be char for symmetry
-                || (fromType == CHAR && toType == SHORT)
-                // Same with bytes and booleans
-                || (fromType == BYTE && toType == BOOLEAN)
-                || (fromType == TIMESTAMP && toType == LONG)
-                || (fromType == DATE && toType == LONG)
-                || (fromType == STRING && (toType >= BYTE && toType <= DOUBLE));
+        final short fromTag = tagOf(fromType);
+        final short toTag = tagOf(toType);
+        return isBuiltInWideningCast0(fromTag, toTag);
     }
 
     /**
@@ -475,6 +477,26 @@ public final class ColumnType {
     public static boolean isComparable(int columnType) {
         short typeTag = tagOf(columnType);
         return typeTag != BINARY && typeTag != INTERVAL && typeTag != ARRAY;
+    }
+
+    /**
+     * Checks if a value of {@code fromType} can be converted to {@code toType} through any available conversion,
+     * including both safe (widening) and unsafe (narrowing) conversions.
+     * <p>
+     * <strong>Warning:</strong> When this function returns true it does not imply that you can treat <code>fromType</code>
+     * as if it was the <code>toType</code>. It merely says a conversion is possible, but it might require wrapping the
+     * <code>from</code> function with a casting function. If you fail to add a casting function where required, then
+     * you will get UnsupportedOperationException at runtime!
+     *
+     * @param fromType the source column type
+     * @param toType   the target column type
+     * @return true if any conversion (safe or unsafe) is possible, false otherwise
+     * @see #isBuiltInWideningCast(int, int) for conversions that don't need cast wrappers
+     * @see #isToSameOrWider(int, int) for safe conversions that preserve precision or range
+     * @see #isNarrowingCast(int, int) for explicitly narrowing conversions
+     */
+    public static boolean isConvertibleFrom(int fromType, int toType) {
+        return isToSameOrWider(fromType, toType) || isNarrowingCast(fromType, toType);
     }
 
     public static boolean isCursor(int columnType) {
@@ -538,6 +560,22 @@ public final class ColumnType {
 
     public static boolean isPersisted(int columnType) {
         return nonPersistedTypes.excludes(columnType);
+    }
+
+    public static boolean isSameOrBuiltInWideningCast(int fromType, int toType) {
+        if (fromType == toType) {
+            return true;
+        }
+        return isBuiltInWideningCast(fromType, toType);
+    }
+
+    public static boolean isSameTagOrBuiltInWideningCast(int fromType, int toType) {
+        short fromTag = tagOf(fromType);
+        short toTag = tagOf(toType);
+        if (fromTag == toTag) {
+            return true;
+        }
+        return isBuiltInWideningCast0(fromTag, toTag);
     }
 
     public static boolean isString(int columnType) {
@@ -721,6 +759,19 @@ public final class ColumnType {
                 && decodeWeakArrayDimensionality(fromType) == decodeWeakArrayDimensionality(toType);
     }
 
+    private static boolean isBuiltInWideningCast0(short fromTag, short toTag) {
+        boolean isNumericWidening = (fromTag >= BYTE && toTag >= BYTE && toTag <= DOUBLE && fromTag < toTag)
+                && (fromTag != BYTE || (toTag != CHAR && toTag != DATE && toTag != TIMESTAMP)) // exception #1: cannot widen byte to char/temporal
+                && (fromTag != SHORT || (toTag != DATE && toTag != TIMESTAMP)) // exception #2: cannot widen short to temporal
+                && (fromTag != CHAR || (toTag != DATE && toTag != TIMESTAMP)); // exception #3: cannot widen char to temporal
+
+        return isNumericWidening
+                || fromTag == NULL
+                || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can be converted to SHORT
+                || ((fromTag == TIMESTAMP || fromTag == DATE) && toTag == LONG)  // Temporal to long
+                || ((fromTag == STRING || fromTag == VARCHAR) && (toTag >= BYTE && toTag <= DOUBLE));  // String-ish parsing to numeric
+    }
+
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
         final int fromTag = tagOf(fromType);
@@ -750,11 +801,13 @@ public final class ColumnType {
     private static boolean isImplicitParsingCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
         return switch (fromType) {
-            case CHAR -> toTag == GEOBYTE && getGeoHashBits(toType) < 6;
+            case CHAR -> (toTag == GEOBYTE && getGeoHashBits(toType) < 6) || (toTag == DATE || toTag == TIMESTAMP);
             case STRING, VARCHAR -> switch (toTag) {
                 case GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256 -> true;
                 default -> false;
             };
+            case BYTE -> toTag == CHAR || toTag == DATE || toTag == TIMESTAMP;
+            case SHORT -> toTag == DATE || toTag == TIMESTAMP;
             case SYMBOL -> toTag == TIMESTAMP;
             default -> false;
         };

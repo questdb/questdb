@@ -22,22 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.sqllogictest;
+package io.questdb.griffin.engine.functions.groupby;
 
-import org.junit.runners.Parameterized;
-
-import java.util.Collection;
-
-/**
- * Tests various SQL features.
- */
-public class SqlTest extends AbstractSqllogicTestRunner {
-    public SqlTest(String testFile) {
-        super(testFile);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> files() {
-        return files("sql");
+public class WeightedStdDevGroupByFunctionFactory extends WeightedStdDevReliabilityGroupByFunctionFactory {
+    @Override
+    public String getSignature() {
+        return "weighted_stddev(DD)";
     }
 }

@@ -65,8 +65,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT;
-
 public class ParallelFilterTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
@@ -165,9 +163,11 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private static final String symbolStaticInCursorQueryLimit = "select v, s from x where s in (select rnd_varchar('C', 'B') from long_sequence(100)) order by v limit 10";
     private static final String varcharQueryNoLimit = "select l, v from x where l > 3326086085493629941L and l < 4326086085493629941L order by l";
     private final boolean convertToParquet;
+    private final Rnd rnd;
 
     public ParallelFilterTest() {
-        this.convertToParquet = TestUtils.generateRandom(LOG).nextBoolean();
+        this.rnd = TestUtils.generateRandom(LOG);
+        this.convertToParquet = rnd.nextBoolean();
     }
 
     @Before
@@ -175,9 +175,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
-        setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1 + rnd.nextInt(4));
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1 + rnd.nextInt(PAGE_FRAME_COUNT));
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         super.setUp();
         inputRoot = root;
     }
