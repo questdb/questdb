@@ -22,15 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.functions.catalogue;
 
-public class TxnScoreboardPoolFactory {
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-    public static TxnScoreboardPool createPool(CairoConfiguration configuration) {
-        if (configuration.getScoreboardFormat() == 1) {
-            return new TxnScoreboardPoolV1(configuration);
-        } else {
-            return new TxnScoreboardPoolV2(configuration);
-        }
+public class CurrentCatalogFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "current_catalog()";
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return CurrentDatabaseFunctionFactory.INSTANCE;
     }
 }
