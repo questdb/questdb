@@ -332,7 +332,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 if (periodLo == Numbers.LONG_NULL) {
                     periodLo = baseTableReader.getMinTimestamp();
                 }
-                if (periodLo < rangeTo) {
+                // Check the last refresh txn: -1 means that there was no initial refresh, and we can
+                // ignore this range refresh. If we don't ignore it and later on the base table/view
+                // gets any range replace txns, the subsequent initial refresh may leave some dangling
+                // rows in the view since it only considers min/max timestamps from the table reader.
+                if (periodLo < rangeTo && viewState.getLastRefreshBaseTxn() != -1) {
                     minTs = periodLo;
                     maxTs = rangeTo;
                     // Bump lastPeriodHi once we're done. Its value is exclusive.

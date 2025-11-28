@@ -796,11 +796,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getScoreboardFormat() {
-        return 2;
-    }
-
-    @Override
     public long getSequencerCheckInterval() {
         return 10_000;
     }
