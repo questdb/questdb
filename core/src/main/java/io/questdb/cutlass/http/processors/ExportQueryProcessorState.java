@@ -33,13 +33,11 @@ import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
-import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
@@ -51,10 +49,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     final StringSink fileName = new StringSink();
     final StringSink sqlText = new StringSink();
     final CopyExportRequestTask task = new CopyExportRequestTask();
-    private final CopyExportResult copyExportResult;
     private final StringSink errorMessage = new StringSink();
     private final ExportModel exportModel = new ExportModel();
-    private final FilesFacade filesFacade;
     private final HttpConnectionContext httpConnectionContext;
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     int columnIndex;
@@ -70,10 +66,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     RecordMetadata metadata;
     boolean noMeta = false;
     PageFrameCursor pageFrameCursor;
-    long parquetFileAddress = 0;
-    long parquetFileFd = -1;
     long parquetFileOffset = 0;
-    long parquetFileSize = 0;
     boolean pausedQuery = false;
     int queryState;
     Record record;
@@ -89,8 +82,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, FilesFacade filesFacade) {
         this.httpConnectionContext = httpConnectionContext;
-        this.copyExportResult = new CopyExportResult();
-        this.filesFacade = filesFacade;
         clear();
     }
 
@@ -129,8 +120,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         parquetExportTableName = null;
         parquetFileOffset = 0;
         exportModel.clear();
-        cleanupParquetState();
-        copyExportResult.clear();
         errorMessage.clear();
         errorPosition = 0;
         serialExporterInit = false;
@@ -146,10 +135,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     public ExportModel getExportModel() {
         return exportModel;
-    }
-
-    public CopyExportResult getExportResult() {
-        return copyExportResult;
     }
 
     public long getFd() {
@@ -170,19 +155,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     public void setParquetTempTableCreate(CreateTableOperation createOp) {
         this.createParquetOp = createOp;
-    }
-
-    private void cleanupParquetState() {
-        if (parquetFileAddress != 0) {
-            filesFacade.munmap(parquetFileAddress, parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
-            parquetFileAddress = 0;
-            parquetFileSize = 0;
-        }
-        if (parquetFileFd != -1) {
-            filesFacade.close(parquetFileFd);
-            parquetFileFd = -1;
-        }
-        copyExportResult.cleanUpTempPath(filesFacade);
     }
 
     void resumeError(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {

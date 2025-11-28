@@ -167,7 +167,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 task.of(
                         entry,
                         createOp,
-                        null,
                         tableName,
                         fileName,
                         compressionCodec,

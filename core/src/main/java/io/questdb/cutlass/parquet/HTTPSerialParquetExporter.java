@@ -1,0 +1,238 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.parquet;
+
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.CopyDataProgressReporter;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+
+public class HTTPSerialParquetExporter {
+    private static final Log LOG = LogFactory.getLog(HTTPSerialParquetExporter.class);
+    protected final CopyExportContext copyExportContext;
+    protected final ProgressReporter insertSelectReporter = new ProgressReporter();
+    protected final SqlExecutionContextImpl sqlExecutionContext;
+    protected SqlExecutionCircuitBreaker circuitBreaker;
+    protected CopyExportRequestTask task;
+
+    public HTTPSerialParquetExporter(CairoEngine engine) {
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+        this.copyExportContext = engine.getCopyExportContext();
+    }
+
+    public void of(CopyExportRequestTask task) {
+        this.task = task;
+        this.circuitBreaker = task.getCircuitBreaker();
+        sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, circuitBreaker);
+    }
+
+    public CopyExportRequestTask.Phase process() throws Exception {
+        if (processStreamExport(true)) {
+            copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+            return CopyExportRequestTask.Phase.SUCCESS;
+        }
+
+        CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
+        TableToken tableToken = null;
+        CopyExportContext.ExportTaskEntry entry = task.getEntry();
+        final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
+        CreateTableOperation createOp = task.getCreateOp();
+        RecordCursorFactory factory = null;
+
+        try {
+            if (createOp != null) {
+                insertSelectReporter.of(circuitBreaker, entry, task.getCopyID(), task.getTableName());
+                createOp.setCopyDataProgressReporter(insertSelectReporter);
+                phase = CopyExportRequestTask.Phase.POPULATING_TEMP_TABLE;
+                entry.setPhase(phase);
+                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+                LOG.info().$("starting to create temporary table and populate with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(task.getTableName()).$(']').$();
+                createOp.execute(sqlExecutionContext, null);
+
+                tableToken = cairoEngine.verifyTableName(task.getTableName());
+                LOG.info().$("completed creating temporary table and populating with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(']').$();
+                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+
+                try (SqlCompiler compiler = cairoEngine.getSqlCompiler()) {
+                    CompiledQuery cc = compiler.compile(task.getTableName(), sqlExecutionContext);
+                    factory = cc.getRecordCursorFactory();
+                    assert factory.supportsPageFrameCursor(); // temp table must support page frame cursor
+                    PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+                    task.setUpStreamPartitionParquetExporter(factory, pageFrameCursor, factory.getMetadata());
+                    factory = null; // transfer ownership to the task
+                    processStreamExport(false);
+                    return CopyExportRequestTask.Phase.SUCCESS;
+                }
+            }
+        } catch (PeerIsSlowToReadException e) {
+            tableToken = null;
+            throw e;
+        } catch (SqlException | CairoException e) {
+            LOG.error().$("parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
+            Misc.free(factory);
+            throw e;
+        } catch (Throwable e) {
+            LOG.error().$("parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e).$(']').$();
+            Misc.free(factory);
+            throw e;
+        } finally {
+            if (tableToken != null && task.getCreateOp() != null) {
+                phase = dropTempTable(cairoEngine, tableToken);
+            }
+        }
+        return phase;
+    }
+
+    private CopyExportRequestTask.Phase dropTempTable(CairoEngine engine, TableToken tableToken) {
+        CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE;
+        task.getEntry().setPhase(phase);
+        try {
+            copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+            engine.dropTableOrMatView(Path.getThreadLocal(""), tableToken);
+            copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+        } catch (CairoException e) {
+            // drop failure doesn't affect task continuation - log and proceed
+            LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
+            copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+        } catch (Throwable e) {
+            LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getMessage()).$(']').$();
+            copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+        }
+        return phase;
+    }
+
+    private boolean processStreamExport(boolean cleanupTempTable) throws Exception {
+        PageFrameCursor pageFrameCursor = task.getPageFrameCursor();
+        if (pageFrameCursor != null) {
+            CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
+            try {
+                if (circuitBreaker.checkIfTripped()) {
+                    LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
+                    throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                }
+                if (exporter.onResume()) {
+                    LOG.info().$("stream export progress (resume) [id=").$hexPadded(task.getCopyID())
+                            .$(", rowsInFrame=").$(exporter.getCurrentFrameRowCount())
+                            .$(", exported totalRows=").$(exporter.getTotalRows())
+                            .$(", partitionIndex=").$(exporter.getCurrentPartitionIndex())
+                            .$(']').$();
+                } else {
+                    copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+                }
+                PageFrame frame;
+                while ((frame = pageFrameCursor.next()) != null) {
+                    if (circuitBreaker.checkIfTripped()) {
+                        LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
+                        throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                    }
+                    long rowsInFrame = frame.getPartitionHi() - frame.getPartitionLo();
+                    int partitionIndex = frame.getPartitionIndex();
+                    exporter.setCurrentPartitionIndex(partitionIndex, rowsInFrame);
+                    exporter.writePageFrame(pageFrameCursor, frame);
+                    LOG.info().$("stream export progress [id=").$hexPadded(task.getCopyID())
+                            .$(", rowsInFrame=").$(rowsInFrame)
+                            .$(", exported totalRows=").$(exporter.getTotalRows())
+                            .$(", partitionIndex=").$(partitionIndex)
+                            .$(']').$();
+                }
+                exporter.finishExport();
+            } catch (PeerIsSlowToReadException e) {
+                cleanupTempTable = false;
+                throw e;
+            } finally {
+                if (cleanupTempTable) {
+                    if (task.getTableName() != null && task.getCreateOp() != null) {
+                        final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
+                        TableToken tableToken = cairoEngine.getTableTokenIfExists(task.getTableName());
+                        dropTempTable(cairoEngine, tableToken);
+                    }
+                }
+            }
+
+            LOG.info().$("stream export completed [id=").$hexPadded(task.getCopyID())
+                    .$(", totalRows=").$(exporter.getTotalRows())
+                    .$(']').$();
+            return true;
+        }
+        return false;
+    }
+
+    static class ProgressReporter implements CopyDataProgressReporter {
+        private final StringSink copyIdHex = new StringSink();
+        private SqlExecutionCircuitBreaker circuitBreaker;
+        private CopyExportContext.ExportTaskEntry entry;
+        private CharSequence tableName;
+
+        public void of(SqlExecutionCircuitBreaker circuitBreaker, CopyExportContext.ExportTaskEntry entry, long copyId, CharSequence name) {
+            this.circuitBreaker = circuitBreaker;
+            this.entry = entry;
+            this.copyIdHex.clear();
+            Numbers.appendHex(copyIdHex, copyId, true);
+            this.tableName = name;
+        }
+
+        @Override
+        public void onProgress(Stage stage, long rows) {
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            switch (stage) {
+                case Start:
+                    entry.setTotalRowCount(rows);
+                    break;
+                case Inserting:
+                    entry.setPopulatedRowCount(rows);
+                    LOG.info().$("populating temporary table progress [id=")
+                            .$(copyIdHex)
+                            .$(", table=")
+                            .$(tableName)
+                            .$(", rows=")
+                            .$(rows).$(']')
+                            .$();
+                    break;
+                case Finish:
+                    entry.setPopulatedRowCount(rows);
+                    break;
+            }
+        }
+    }
+}

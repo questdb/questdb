@@ -49,14 +49,14 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     private final @NotNull MicrosecondClock microsecondClock;
     @TestOnly
     private @Nullable Callable<Exception> callback;
-    private SerialParquetExporter serialExporter;
+    private SQLSerialParquetExporter serialExporter;
 
     public CopyExportRequestJob(final CairoEngine engine) {
         super(engine.getMessageBus().getCopyExportRequestQueue(), engine.getMessageBus().getCopyExportRequestSubSeq());
         microsecondClock = engine.getConfiguration().getMicrosecondClock();
         localTaskCopy = new CopyExportRequestTask();
         try {
-            serialExporter = new SerialParquetExporter(engine);
+            serialExporter = new SQLSerialParquetExporter(engine);
             copyContext = engine.getCopyExportContext();
         } catch (Throwable t) {
             close();
@@ -82,7 +82,6 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             localTaskCopy.of(
                     task.getEntry(),
                     task.getCreateOp(),
-                    task.getResult(),
                     task.getTableName(),
                     // we are copying CharSequence from the queue, and releasing it
                     Chars.toString(task.getFileName()),

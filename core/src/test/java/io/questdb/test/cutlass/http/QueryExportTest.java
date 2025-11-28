@@ -223,10 +223,6 @@ public class QueryExportTest extends AbstractCairoTest {
                                     ) timestamp(ts) partition by hour""");
 
                             var requestResponse = new Object[][]{
-                                    {"select count() from xyz", """
-                                        {"query":"select count() from xyz","error":"parquet export is disabled ['cairo.sql.copy.export.root' is not set]","position":0}"""},
-                                    {"select * from xyz limit 1", """
-                                        {"query":"select * from xyz limit 1","error":"parquet export is disabled ['cairo.sql.copy.export.root' is not set]","position":0}"""},
                                     {"create table abc (ts TIMESTAMP)", """
                                         {"query":"create table abc (ts TIMESTAMP)","error":"/exp endpoint only accepts SELECT","position":0}"""}
                             };

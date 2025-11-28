@@ -807,42 +807,6 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testParquetExportCopyRootNotSet() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        TestUtils.assertMemoryLeak(() -> {
-            int fragmentation = 300 + rnd.nextInt(100);
-            LOG.info().$("=== fragmentation=").$(fragmentation).$();
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
-                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
-                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
-                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), "true",
-                    PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT.getEnvVarName(), ""
-            )) {
-                serverMain.execute("CREATE TABLE basic_parquet_test AS (" +
-                        "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
-                        "FROM long_sequence(5)" +
-                        ")");
-
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
-                    request.GET()
-                            .url("/exp")
-                            .query("fmt", "parquet")
-                            .query("query", "select * from basic_parquet_test limit 10");
-
-                    try (var headers = request.send()) {
-                        headers.await();
-                        TestUtils.assertEquals("400", headers.getStatusCode());
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
     public void testParquetExportDataPageSizeInvalid() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
