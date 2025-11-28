@@ -501,7 +501,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testCastAtAliasPositionIllegal() throws Exception {
-        assertException("SELECT x cast(x as LONG256) FROM long_sequence(1)", 9, "'cast' is not allowed here");
+        String castNotAllowed = "'cast' is not allowed here";
+        assertException("SELECT x cast(x as LONG) FROM long_sequence(1)", 9, castNotAllowed);
+        assertException("SELECT x AS cast(x as LONG) FROM long_sequence(1)", 12,
+                "SQL keywords have to be enclosed in double quotes, such as \"cast\"");
+        assertException("SELECT (x) cast(x as LONG) FROM long_sequence(1)", 11, castNotAllowed);
+        assertException("SELECT ARRAY[DOUBLE] cast(x as LONG) FROM long_sequence(1)", 21, castNotAllowed);
+        assertException("SELECT x[1] cast(x as LONG) FROM long_sequence(1)", 12, castNotAllowed);
+        assertSql("column\n2\n", "SELECT x + cast(x as LONG) FROM long_sequence(1)");
     }
 
     @Test
