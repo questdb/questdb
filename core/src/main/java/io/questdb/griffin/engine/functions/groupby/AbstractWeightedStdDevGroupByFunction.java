@@ -179,6 +179,11 @@ public abstract class AbstractWeightedStdDevGroupByFunction extends DoubleFuncti
     }
 
     @Override
+    public boolean isThreadSafe() {
+        return BinaryFunction.super.isThreadSafe();
+    }
+
+    @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         // Acquire source computation state
         double srcWsum = srcValue.getDouble(valueIndex);
