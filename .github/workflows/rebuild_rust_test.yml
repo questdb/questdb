@@ -84,7 +84,7 @@ jobs:
     container:
       image: debian:buster
     steps:
-      - name: Patch Debian buster repo and install dependencies
+      - name: Patch Debian buster repo
         run: |
           set -eu
           sed -i s/deb.debian.org/archive.debian.org/g /etc/apt/sources.list
