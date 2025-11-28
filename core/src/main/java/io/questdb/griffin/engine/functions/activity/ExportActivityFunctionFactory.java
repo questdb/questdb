@@ -186,6 +186,10 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
                                 msgSink.clear();
                                 msgSink.put("finish partition count: ").put(entry.getFinishedPartitionCount()).put(" / ").put(entry.getTotalPartitionCount());
                                 return msgSink;
+                            case STREAM_SENDING_DATA:
+                                msgSink.clear();
+                                msgSink.put("exported rows: ").put(entry.getStreamingSendRowCount());
+                                return msgSink;
                             default:
                                 return null;
                         }

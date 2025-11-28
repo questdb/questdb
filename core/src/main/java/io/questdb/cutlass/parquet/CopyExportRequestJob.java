@@ -30,7 +30,6 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.network.NetworkError;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -147,17 +146,6 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             } catch (CopyExportException e) {
                 copyContext.updateStatus(
                         e.getPhase(),
-                        circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
-                        null,
-                        Numbers.INT_NULL,
-                        e.getFlyweightMessage(),
-                        e.getErrno(),
-                        localTaskCopy.getTableName(),
-                        localTaskCopy.getCopyID()
-                );
-            } catch (NetworkError e) { // SuspendEvent::trigger() may throw
-                copyContext.updateStatus(
-                        phase,
                         circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
                         null,
                         Numbers.INT_NULL,

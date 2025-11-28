@@ -284,18 +284,11 @@ public class CopyExportRequestTask implements Mutable {
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
             totalRows = 0;
-            if (factory != null) {
-                factory = Misc.free(factory);
-                pageFrameCursor = Misc.free(pageFrameCursor);
-            }
+            freeOwnedPageFrameCursor();
         }
 
         public void finishExport() throws Exception {
             if (streamWriter == -1) {
-                if (factory != null) {
-                    factory = Misc.free(factory);
-                    pageFrameCursor = Misc.free(pageFrameCursor);
-                }
                 return;
             }
             long buffer = finishStreamingParquetWrite(streamWriter);
@@ -305,6 +298,9 @@ public class CopyExportRequestTask implements Mutable {
             closeStreamingParquetWriter(streamWriter);
             streamWriter = -1;
             writeCallback.onWrite(dataPtr, dataSize);
+        }
+
+        public void freeOwnedPageFrameCursor() {
             if (factory != null) {
                 factory = Misc.free(factory);
                 pageFrameCursor = Misc.free(pageFrameCursor);
@@ -328,6 +324,7 @@ public class CopyExportRequestTask implements Mutable {
                 assert writeCallback != null;
                 writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
                 totalRows += currentFrameRowCount;
+                entry.setStreamingSendRowCount(totalRows);
                 streamExportCurrentPtr = 0;
                 streamExportCurrentSize = 0;
                 return true;
@@ -443,6 +440,7 @@ public class CopyExportRequestTask implements Mutable {
                 writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
             }
             totalRows += currentFrameRowCount;
+            entry.setStreamingSendRowCount(totalRows);
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
         }

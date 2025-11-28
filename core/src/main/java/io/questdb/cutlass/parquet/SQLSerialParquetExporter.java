@@ -112,7 +112,6 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                 copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 LOG.info().$("starting to create temporary table and populate with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(task.getTableName()).$(']').$();
                 createOp.execute(sqlExecutionContext, null);
-
                 tableToken = cairoEngine.verifyTableName(task.getTableName());
                 LOG.info().$("completed creating temporary table and populating with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(']').$();
                 copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
@@ -156,10 +155,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                             }
                             final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
-                            if (reader.openPartition(partitionIndex) <= 0) {
-                                entry.setFinishedPartitionCount(partitionIndex + 1);
-                                continue;
-                            }
+                            boolean emptyPartition = reader.openPartition(partitionIndex) <= 0;
 
                             // skip parquet conversion if the partition is already in parquet format
                             if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
@@ -196,7 +192,11 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
 
                             // native partition - convert to parquet
                             numOfFiles++;
-                            PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                            if (emptyPartition) {
+                                PartitionEncoder.populateEmptyPartition(reader, partitionDescriptor, partitionIndex);
+                            } else {
+                                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                            }
                             nameSink.clear();
                             PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy)
                                     .format(partitionTimestamp, DateLocaleFactory.EN_LOCALE, null, nameSink);
