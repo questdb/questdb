@@ -21,7 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use crate::error::{fmt_err, CoreError, CoreErrorExt, CoreResult};
+use crate::error::{CoreError, CoreErrorExt, CoreResult, fmt_err};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
@@ -244,7 +244,7 @@ pub struct ColumnType {
 }
 
 impl ColumnType {
-    pub fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
+    pub const fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
         let shifted_extra_type_info = extra_type_info << 8;
         let code = NonZeroI32::new(tag as i32 | shifted_extra_type_info)
             .expect("column type code should never be zero");

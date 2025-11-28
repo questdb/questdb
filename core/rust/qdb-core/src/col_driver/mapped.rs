@@ -24,6 +24,7 @@
 use crate::col_type::ColumnType;
 use crate::error::{CoreErrorExt, CoreResult, fmt_err};
 use memmap2::Mmap;
+use std::borrow::Cow;
 use std::fs::File;
 use std::path::PathBuf;
 
@@ -37,23 +38,34 @@ pub struct MappedColumn {
 }
 
 impl MappedColumn {
-    pub fn open(
+    // nightly has add_extension
+    pub fn build_file_extension(base_extension: &str, col_version: Option<u64>) -> Cow<'_, str> {
+        match col_version {
+            Some(version) => Cow::Owned(format!("{}.{}", base_extension, version)),
+            _ => Cow::Borrowed(base_extension),
+        }
+    }
+
+    pub fn open_versioned(
         parent_path: impl Into<PathBuf>,
         col_name: impl Into<String>,
         col_type: ColumnType,
+        col_version: Option<u64>,
     ) -> CoreResult<Self> {
         let col_name = col_name.into();
-        let mut path = parent_path.into();
-        path.push(&col_name);
+        let mut column_path = parent_path.into();
+        column_path.push(&col_name);
 
         // Open and map the "data" file which is always present for columns.
-        path.set_extension("d");
-        let data_file = File::open(&path).with_context(|_| {
+        let data_extension = Self::build_file_extension("d", col_version);
+        let mut column_path_data = column_path.clone();
+        column_path_data.set_extension(data_extension.as_ref());
+        let data_file = File::open(&column_path_data).with_context(|_| {
             format!(
                 "Could not open data file for column: {}, col_type: {}, path: {}",
                 col_name,
                 col_type,
-                path.display()
+                column_path_data.display()
             )
         })?;
         let data = unsafe { Mmap::map(&data_file) }.with_context(|_| {
@@ -61,19 +73,21 @@ impl MappedColumn {
                 "Could not map data file for column: {}, col_type: {}, path: {}",
                 col_name,
                 col_type,
-                path.display()
+                column_path_data.display()
             )
         })?;
 
         // Open and map the "aux" file which is present for var-sized types.
         let aux = if col_type.tag().is_var_size() {
-            path.set_extension("i");
-            let aux_file = File::open(&path).with_context(|_| {
+            let mut column_path_aux = column_path;
+            let aux_extension = Self::build_file_extension("i", col_version);
+            column_path_aux.set_extension(aux_extension.as_ref());
+            let aux_file = File::open(&column_path_aux).with_context(|_| {
                 format!(
                     "Could not open aux file for column: {}, col_type: {}, path: {}",
                     col_name,
                     col_type,
-                    path.display()
+                    column_path_aux.display()
                 )
             })?;
             let aux = unsafe { Mmap::map(&aux_file) }.with_context(|_| {
@@ -81,7 +95,7 @@ impl MappedColumn {
                     "Could not map aux file for column: {}, col_type: {}, path: {}",
                     col_name,
                     col_type,
-                    path.display()
+                    column_path_aux.display()
                 )
             })?;
             Some(aux)
@@ -94,22 +108,29 @@ impl MappedColumn {
                     data.len(),
                     col_name,
                     col_type,
-                    path.display(),
+                    column_path_data.display(),
                     fixed_size
                 ));
             }
             None
         };
 
-        // Restore the parent path.
-        path.pop();
+        column_path_data.pop();
         Ok(Self {
             col_type,
             col_name,
-            parent_path: path,
+            parent_path: column_path_data,
             data,
             aux,
         })
+    }
+
+    pub fn open(
+        parent_path: impl Into<PathBuf>,
+        col_name: impl Into<String>,
+        col_type: ColumnType,
+    ) -> CoreResult<Self> {
+        Self::open_versioned(parent_path, col_name, col_type, None)
     }
 }
 
