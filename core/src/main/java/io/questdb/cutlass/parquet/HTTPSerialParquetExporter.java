@@ -101,6 +101,7 @@ public class HTTPSerialParquetExporter {
 
             // start streaming export
             phase = CopyExportRequestTask.Phase.STREAM_SENDING_DATA;
+            entry.setPhase(phase);
             processStreamExport();
         } catch (PeerIsSlowToReadException e) {
             createOp = null;
@@ -171,8 +172,9 @@ public class HTTPSerialParquetExporter {
                 }
             }
         }
+        phase = CopyExportRequestTask.Phase.SUCCESS;
         copyExportContext.updateStatus(
-                CopyExportRequestTask.Phase.SUCCESS,
+                phase,
                 CopyExportRequestTask.Status.FINISHED,
                 null,
                 Numbers.INT_NULL,
@@ -181,7 +183,7 @@ public class HTTPSerialParquetExporter {
                 task.getTableName(),
                 task.getCopyID()
         );
-        phase = CopyExportRequestTask.Phase.SUCCESS;
+        entry.setPhase(CopyExportRequestTask.Phase.SUCCESS);
         return phase;
     }
 

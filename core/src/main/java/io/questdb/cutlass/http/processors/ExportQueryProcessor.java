@@ -622,15 +622,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     private void copyQueryToParquetFile(ExportQueryProcessorState state) throws Exception {
-        if (state.serialExporterInit) {
-            serialParquetExporter.process();
-            return;
-        }
         if (state.copyID != -1) {
             CopyExportContext.ExportTaskEntry entry = null;
+            boolean cleanup = true;
             try {
                 var copyExportContext = engine.getCopyExportContext();
                 entry = copyExportContext.getEntry(state.copyID);
+                if (state.serialExporterInit) {
+                    serialParquetExporter.process();
+                    return;
+                }
                 state.task.of(
                         entry,
                         state.getParquetTempTableCreate(),
@@ -653,8 +654,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 state.task.setUpStreamPartitionParquetExporter();
                 state.serialExporterInit = true;
                 serialParquetExporter.process();
+            } catch (PeerIsSlowToReadException e) {
+                cleanup = false;
+                throw e;
             } finally {
-                if (entry != null) {
+                if (cleanup && entry != null) {
                     engine.getCopyExportContext().releaseEntry(entry);
                 }
             }
