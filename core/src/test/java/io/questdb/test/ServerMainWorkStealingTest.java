@@ -92,17 +92,19 @@ public class ServerMainWorkStealingTest extends AbstractBootstrapTest {
             final int nIterations = 50;
 
             final String query = "SELECT * FROM tab WHERE key = 'k3' LIMIT 10;";
-            final String expectedResult = "ts[TIMESTAMP],key[VARCHAR],price[DOUBLE],quantity[BIGINT]\n" +
-                    "1970-01-01 00:04:19.2,k3,3.0,3\n" +
-                    "1970-01-01 00:11:31.2,k3,8.0,8\n" +
-                    "1970-01-01 00:18:43.2,k3,13.0,13\n" +
-                    "1970-01-01 00:25:55.2,k3,18.0,18\n" +
-                    "1970-01-01 00:33:07.2,k3,23.0,23\n" +
-                    "1970-01-01 00:40:19.2,k3,28.0,28\n" +
-                    "1970-01-01 00:47:31.2,k3,33.0,33\n" +
-                    "1970-01-01 00:54:43.2,k3,38.0,38\n" +
-                    "1970-01-01 01:01:55.2,k3,43.0,43\n" +
-                    "1970-01-01 01:09:07.2,k3,48.0,48\n";
+            final String expectedResult = """
+                    ts[TIMESTAMP],key[VARCHAR],price[DOUBLE],quantity[BIGINT]
+                    1970-01-01 00:04:19.2,k3,3.0,3
+                    1970-01-01 00:11:31.2,k3,8.0,8
+                    1970-01-01 00:18:43.2,k3,13.0,13
+                    1970-01-01 00:25:55.2,k3,18.0,18
+                    1970-01-01 00:33:07.2,k3,23.0,23
+                    1970-01-01 00:40:19.2,k3,28.0,28
+                    1970-01-01 00:47:31.2,k3,33.0,33
+                    1970-01-01 00:54:43.2,k3,38.0,38
+                    1970-01-01 01:01:55.2,k3,43.0,43
+                    1970-01-01 01:09:07.2,k3,48.0,48
+                    """;
 
             final CyclicBarrier startBarrier = new CyclicBarrier(nThreads);
             final SOCountDownLatch doneLatch = new SOCountDownLatch(nThreads);

@@ -106,8 +106,10 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                     );
                 }
 
-                final String expected = "count()[BIGINT]\n" +
-                        "9999999\n";
+                final String expected = """
+                        count()[BIGINT]
+                        9999999
+                        """;
                 try (PreparedStatement stmt = conn.prepareStatement("select count() from x where x != 1")) {
                     // Set RSS limit, so that the SELECT will fail with OOM.
                     // The limit should be high enough to let worker threads fail on reduce.
@@ -148,8 +150,10 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                     );
                 }
 
-                final String expected = "count()[BIGINT]\n" +
-                        "10000000\n";
+                final String expected = """
+                        count()[BIGINT]
+                        10000000
+                        """;
                 try (PreparedStatement stmt = conn.prepareStatement("select count() from (select x from x group by x)")) {
                     // Set RSS limit, so that the SELECT will fail with OOM.
                     // The limit should be high enough to let worker threads fail on reduce.
@@ -181,14 +185,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
 
         // Verify that global cache is correctly synchronized, so that
         // no record cursor factory is used by multiple threads concurrently.
-        class TestCase {
-            final String expectedResult;
-            final String query;
-
-            TestCase(String query, String expectedResult) {
-                this.query = query;
-                this.expectedResult = expectedResult;
-            }
+        record TestCase(String query, String expectedResult) {
         }
         final int nQueries = 10;
         final TestCase[] testCases = new TestCase[nQueries];
@@ -249,24 +246,28 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         ") timestamp (ts) PARTITION BY DAY",
                 convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT /*+ ENABLE_PRE_TOUCH(tab) */ * FROM tab WHERE key = 'k3' LIMIT 10",
-                "QUERY PLAN[VARCHAR]\n" +
-                        "Async Filter workers: 4\n" +
-                        "  limit: 10\n" +
-                        "  filter: key='k3' [pre-touch]\n" +
-                        "    PageFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n",
-                "ts[TIMESTAMP],key[VARCHAR],price[DOUBLE],quantity[BIGINT]\n" +
-                        "1970-01-01 00:43:12.0,k3,3.0,3\n" +
-                        "1970-01-01 01:55:12.0,k3,8.0,8\n" +
-                        "1970-01-01 03:07:12.0,k3,13.0,13\n" +
-                        "1970-01-01 04:19:12.0,k3,18.0,18\n" +
-                        "1970-01-01 05:31:12.0,k3,23.0,23\n" +
-                        "1970-01-01 06:43:12.0,k3,28.0,28\n" +
-                        "1970-01-01 07:55:12.0,k3,33.0,33\n" +
-                        "1970-01-01 09:07:12.0,k3,38.0,38\n" +
-                        "1970-01-01 10:19:12.0,k3,43.0,43\n" +
-                        "1970-01-01 11:31:12.0,k3,48.0,48\n"
+                """
+                        QUERY PLAN[VARCHAR]
+                        Async Filter workers: 4
+                          limit: 10
+                          filter: key='k3' [pre-touch]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """,
+                """
+                        ts[TIMESTAMP],key[VARCHAR],price[DOUBLE],quantity[BIGINT]
+                        1970-01-01 00:43:12.0,k3,3.0,3
+                        1970-01-01 01:55:12.0,k3,8.0,8
+                        1970-01-01 03:07:12.0,k3,13.0,13
+                        1970-01-01 04:19:12.0,k3,18.0,18
+                        1970-01-01 05:31:12.0,k3,23.0,23
+                        1970-01-01 06:43:12.0,k3,28.0,28
+                        1970-01-01 07:55:12.0,k3,33.0,33
+                        1970-01-01 09:07:12.0,k3,38.0,38
+                        1970-01-01 10:19:12.0,k3,43.0,43
+                        1970-01-01 11:31:12.0,k3,48.0,48
+                        """
         );
     }
 
@@ -282,8 +283,10 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 }
 
                 String query = "select count() from (select * from x where l = 42);";
-                String expected = "count()[BIGINT]\n" +
-                        "100\n";
+                String expected = """
+                        count()[BIGINT]
+                        100
+                        """;
                 try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
                     sink.clear();
                     assertResultSet(expected, sink, rs);
@@ -304,8 +307,10 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 }
 
                 String query = "select count_distinct(l1), count_distinct(l2) from x;";
-                String expected = "count_distinct(l1)[BIGINT],count_distinct(l2)[BIGINT]\n" +
-                        "10000,1000\n";
+                String expected = """
+                        count_distinct(l1)[BIGINT],count_distinct(l2)[BIGINT]
+                        10000,1000
+                        """;
                 try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
                     sink.clear();
                     assertResultSet(expected, sink, rs);
@@ -326,10 +331,12 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 }
 
                 String query = "select k, count_distinct(l) from x order by k;";
-                String expected = "k[VARCHAR],count_distinct(l)[BIGINT]\n" +
-                        "k0,10000\n" +
-                        "k1,10000\n" +
-                        "k2,10000\n";
+                String expected = """
+                        k[VARCHAR],count_distinct(l)[BIGINT]
+                        k0,10000
+                        k1,10000
+                        k2,10000
+                        """;
                 try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
                     sink.clear();
                     assertResultSet(expected, sink, rs);
@@ -346,21 +353,25 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         ") timestamp (ts) PARTITION BY DAY",
                 convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT key, min(quantity), max(quantity) FROM tab ORDER BY key DESC",
-                "QUERY PLAN[VARCHAR]\n" +
-                        "Sort light\n" +
-                        "  keys: [key desc]\n" +
-                        "    GroupBy vectorized: true workers: 4\n" +
-                        "      keys: [key]\n" +
-                        "      values: [min(quantity),max(quantity)]\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n",
-                "key[VARCHAR],min(quantity)[BIGINT],max(quantity)[BIGINT]\n" +
-                        "k4,4,9999\n" +
-                        "k3,3,9998\n" +
-                        "k2,2,9997\n" +
-                        "k1,1,9996\n" +
-                        "k0,5,10000\n"
+                """
+                        QUERY PLAN[VARCHAR]
+                        Sort light
+                          keys: [key desc]
+                            GroupBy vectorized: true workers: 4
+                              keys: [key]
+                              values: [min(quantity),max(quantity)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                        """,
+                """
+                        key[VARCHAR],min(quantity)[BIGINT],max(quantity)[BIGINT]
+                        k4,4,9999
+                        k3,3,9998
+                        k2,2,9997
+                        k1,1,9996
+                        k0,5,10000
+                        """
         );
     }
 
@@ -372,14 +383,18 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         ") timestamp (ts) PARTITION BY DAY",
                 convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT min(quantity), max(quantity) FROM tab",
-                "QUERY PLAN[VARCHAR]\n" +
-                        "GroupBy vectorized: true workers: 4\n" +
-                        "  values: [min(quantity),max(quantity)]\n" +
-                        "    PageFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n",
-                "min(quantity)[BIGINT],max(quantity)[BIGINT]\n" +
-                        "1,10000\n"
+                """
+                        QUERY PLAN[VARCHAR]
+                        GroupBy vectorized: true workers: 4
+                          values: [min(quantity),max(quantity)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """,
+                """
+                        min(quantity)[BIGINT],max(quantity)[BIGINT]
+                        1,10000
+                        """
         );
     }
 
@@ -391,29 +406,33 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         ") timestamp (ts) PARTITION BY DAY",
                 convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT day_of_week(ts) day, key, vwap(price, quantity) FROM tab GROUP BY day, key ORDER BY day, key LIMIT 10",
-                "QUERY PLAN[VARCHAR]\n" +
-                        "Sort light lo: 10\n" +
-                        "  keys: [day, key]\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [day,key,vwap(price, quantity)]\n" +
-                        "        Async Group By workers: 4\n" +
-                        "          keys: [day,key]\n" +
-                        "          values: [vwap(price,quantity)]\n" +
-                        "          filter: null\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: tab\n",
-                "day[INTEGER],key[VARCHAR],vwap(price, quantity)[DOUBLE]\n" +
-                        "1,k0,6624.171717171717\n" +
-                        "1,k1,6624.8468153184685\n" +
-                        "1,k10,6612.932687914096\n" +
-                        "1,k100,6623.496749024707\n" +
-                        "1,k11,6613.610770065386\n" +
-                        "1,k12,6281.67243296272\n" +
-                        "1,k13,6598.965586726309\n" +
-                        "1,k14,6599.64534842185\n" +
-                        "1,k15,6600.325238210883\n" +
-                        "1,k16,6601.005256016568\n"
+                """
+                        QUERY PLAN[VARCHAR]
+                        Sort light lo: 10
+                          keys: [day, key]
+                            VirtualRecord
+                              functions: [day,key,vwap(price, quantity)]
+                                Async Group By workers: 4
+                                  keys: [day,key]
+                                  values: [vwap(price,quantity)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                        """,
+                """
+                        day[INTEGER],key[VARCHAR],vwap(price, quantity)[DOUBLE]
+                        1,k0,6624.171717171717
+                        1,k1,6624.8468153184685
+                        1,k10,6612.932687914096
+                        1,k100,6623.496749024707
+                        1,k11,6613.610770065386
+                        1,k12,6281.67243296272
+                        1,k13,6598.965586726309
+                        1,k14,6599.64534842185
+                        1,k15,6600.325238210883
+                        1,k16,6601.005256016568
+                        """
         );
     }
 
@@ -425,27 +444,31 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         ") timestamp (ts) PARTITION BY DAY",
                 convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
                 "SELECT key, count_distinct(x) FROM tab ORDER BY key LIMIT 10",
-                "QUERY PLAN[VARCHAR]\n" +
-                        "Sort light lo: 10\n" +
-                        "  keys: [key]\n" +
-                        "    Async Group By workers: 4\n" +
-                        "      keys: [key]\n" +
-                        "      values: [count_distinct(x)]\n" +
-                        "      filter: null\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n",
-                "key[VARCHAR],count_distinct(x)[BIGINT]\n" +
-                        "k0,99\n" +
-                        "k1,100\n" +
-                        "k10,99\n" +
-                        "k100,99\n" +
-                        "k11,99\n" +
-                        "k12,99\n" +
-                        "k13,99\n" +
-                        "k14,99\n" +
-                        "k15,99\n" +
-                        "k16,99\n"
+                """
+                        QUERY PLAN[VARCHAR]
+                        Sort light lo: 10
+                          keys: [key]
+                            Async Group By workers: 4
+                              keys: [key]
+                              values: [count_distinct(x)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                        """,
+                """
+                        key[VARCHAR],count_distinct(x)[BIGINT]
+                        k0,99
+                        k1,100
+                        k10,99
+                        k100,99
+                        k11,99
+                        k12,99
+                        k13,99
+                        k14,99
+                        k15,99
+                        k16,99
+                        """
         );
     }
 

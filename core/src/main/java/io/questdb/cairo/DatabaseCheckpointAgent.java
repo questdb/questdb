@@ -81,7 +81,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
-    private final boolean lightweightCheckpointSupported;
     private final ReentrantLock lock = new ReentrantLock();
     private final MessageBus messageBus;
     private final WalWriterMetadata metadata; // protected with #lock
@@ -111,7 +110,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         this.ff = configuration.getFilesFacade();
         this.metadata = new WalWriterMetadata(ff);
         this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
-        this.lightweightCheckpointSupported = configuration.getScoreboardFormat() > 1;
     }
 
     @TestOnly
@@ -134,12 +132,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         } finally {
             lock.unlock();
         }
-    }
-
-    @Override
-    public boolean partitionsLocked() {
-        // With new version of scoreboard there is no need to pause partition clean jobs
-        return !lightweightCheckpointSupported && isInProgress();
     }
 
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
@@ -321,21 +313,19 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     reader.getColumnVersionReader().dumpTo(mem);
                                     mem.close(false);
 
-                                    if (lightweightCheckpointSupported) {
-                                        long txn = reader.getTxn();
-                                        TxnScoreboard scoreboard = engine.getTxnScoreboard(tableToken);
-                                        if (!scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, txn)) {
-                                            throw CairoException.nonCritical().put("cannot lock table for checkpoint [table=").put(tableToken).put(']');
-                                        }
-                                        scoreboardTxns.add(txn);
-                                        scoreboardTxns.add(
-                                                Numbers.encodeLowHighInts(
-                                                        reader.getMetadata().getPartitionBy(),
-                                                        reader.getMetadata().getTimestampType()
-                                                )
-                                        );
-                                        scoreboards.add(scoreboard);
+                                    long txn = reader.getTxn();
+                                    TxnScoreboard scoreboard = engine.getTxnScoreboard(tableToken);
+                                    if (!scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, txn)) {
+                                        throw CairoException.nonCritical().put("cannot lock table for checkpoint [table=").put(tableToken).put(']');
                                     }
+                                    scoreboardTxns.add(txn);
+                                    scoreboardTxns.add(
+                                            Numbers.encodeLowHighInts(
+                                                    reader.getMetadata().getPartitionBy(),
+                                                    reader.getMetadata().getTimestampType()
+                                            )
+                                    );
+                                    scoreboards.add(scoreboard);
 
                                     if (isWalTable) {
                                         // Add entry to table name registry copy.
