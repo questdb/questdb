@@ -468,9 +468,8 @@ public final class ColumnType {
 
         return isNumericWidening
                 || fromTag == NULL
-                || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can converted to SHORT
-                || (fromTag == TIMESTAMP && toTag == LONG)  // Temporal to long
-                || (fromTag == DATE && toTag == LONG)  // Temporal to long
+                || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can be converted to SHORT
+                || ((fromTag == TIMESTAMP || fromTag == DATE) && toTag == LONG)  // Temporal to long
                 || ((fromTag == STRING || fromTag == VARCHAR) && (toTag >= BYTE && toTag <= DOUBLE));  // String-ish parsing to numeric
     }
 
