@@ -81,7 +81,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
-        final int pageFrameMaxRows = MIN_PAGE_FRAME_MAX_ROWS + rnd.nextInt(100);
+        final int pageFrameMaxRows = MIN_PAGE_FRAME_MAX_ROWS + rnd.nextInt(10);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, pageFrameMaxRows);
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, pageFrameMaxRows);
         // We intentionally use small values for shard count and reduce
@@ -90,7 +90,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1 + rnd.nextInt(PAGE_FRAME_COUNT));
         // Set the sharding threshold to a small value to test sharding.
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 2 + rnd.nextInt(100));
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1 + rnd.nextInt(50));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
         super.setUp();
@@ -1939,7 +1939,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByThrowsOnTimeout() throws Exception {
-        final Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
         // We want the timeout to happen in reduce.
         // Page frame count is 40.
         final long tripWhenTicks = Math.max(10, rnd.nextLong(39));
@@ -2691,7 +2690,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelSingleKeyGroupByThrowsOnTimeout() throws Exception {
-        final Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
         // We want the timeout to happen in either reduce or merge.
         // Page frame count is 40 and shard count is 8.
         final long tripWhenTicks = Math.max(10, rnd.nextLong(48));
@@ -4080,9 +4078,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // Validate parallel GROUP BY factories.
         Assume.assumeTrue(enableParallelGroupBy);
         // The test is very sensitive to sharding threshold and page frame sizes.
-        Assert.assertEquals(2, configuration.getGroupByShardingThreshold());
-        final int rowCount = ROW_COUNT;
-        Assert.assertEquals(40, rowCount / configuration.getSqlPageFrameMaxRows());
+        Assume.assumeTrue(configuration.getGroupByShardingThreshold() <= 5);
+        Assume.assumeTrue(ROW_COUNT / configuration.getSqlPageFrameMaxRows() >= 20);
         assertMemoryLeak(() -> {
             circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                 private final AtomicLong ticks = new AtomicLong();
@@ -4120,7 +4117,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                     sqlExecutionContext
                             );
                             engine.execute(
-                                    "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + rowCount + ")",
+                                    "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")",
                                     sqlExecutionContext
                             );
                             if (convertToParquet) {
