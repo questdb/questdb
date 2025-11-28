@@ -177,7 +177,7 @@ public class DateGroupByFunctionBatchTest {
 
     @Test
     public void testLastNotNullDateBatch() {
-        LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(0, DateColumn.newInstance(COLUMN_INDEX));
+        LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
         SimpleMapValue value = prepare(function);
         function.setNull(value);
 
@@ -189,7 +189,7 @@ public class DateGroupByFunctionBatchTest {
 
     @Test
     public void testLastNotNullDateBatchAllNulls() {
-        LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(0, DateColumn.newInstance(COLUMN_INDEX));
+        LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
         SimpleMapValue value = prepare(function);
         function.setNull(value);
 
@@ -201,7 +201,7 @@ public class DateGroupByFunctionBatchTest {
 
     @Test
     public void testLastNotNullDateBatchEmpty() {
-        LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(0, DateColumn.newInstance(COLUMN_INDEX));
+        LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
         SimpleMapValue value = prepare(function);
         function.setNull(value);
 
@@ -213,7 +213,7 @@ public class DateGroupByFunctionBatchTest {
 
     @Test
     public void testLastNotNullDateBatchFirst() {
-        LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(0, DateColumn.newInstance(COLUMN_INDEX));
+        LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
         SimpleMapValue value = prepare(function);
         function.setNull(value);
 

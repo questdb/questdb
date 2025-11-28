@@ -210,7 +210,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         if (
                 type == LITERAL
                         && token != null
-                        && token.length() != 0
+                        && !token.isEmpty()
                         && ((token.charAt(0) == '$' && Numbers.isDecimal(token, 1)) || token.charAt(0) == ':')
         ) {
             this.type = BIND_VARIABLE;

@@ -123,14 +123,12 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             // "forward".
             return SCAN_DIRECTION_FORWARD;
         }
-        switch (partitionFrameCursorFactory.getOrder()) {
-            case ORDER_ASC:
-                return SCAN_DIRECTION_FORWARD;
-            case ORDER_DESC:
-                return SCAN_DIRECTION_BACKWARD;
-            default:
-                throw CairoException.critical(0).put("Unexpected factory order [order=").put(partitionFrameCursorFactory.getOrder()).put("]");
-        }
+        return switch (partitionFrameCursorFactory.getOrder()) {
+            case ORDER_ASC -> SCAN_DIRECTION_FORWARD;
+            case ORDER_DESC -> SCAN_DIRECTION_BACKWARD;
+            default ->
+                    throw CairoException.critical(0).put("Unexpected factory order [order=").put(partitionFrameCursorFactory.getOrder()).put("]");
+        };
     }
 
     @Override

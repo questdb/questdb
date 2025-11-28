@@ -33,7 +33,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
 
-    public LastNotNullCharGroupByFunction(int position, @NotNull Function arg) {
+    public LastNotNullCharGroupByFunction(@NotNull Function arg) {
         super(arg);
     }
 

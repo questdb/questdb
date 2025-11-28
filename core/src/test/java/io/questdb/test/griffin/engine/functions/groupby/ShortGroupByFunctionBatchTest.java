@@ -140,7 +140,7 @@ public class ShortGroupByFunctionBatchTest {
 
     @Test
     public void testLastShortBatch() {
-        LastShortGroupByFunction function = new LastShortGroupByFunction(0, ShortColumn.newInstance(COLUMN_INDEX));
+        LastShortGroupByFunction function = new LastShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
         SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
@@ -158,7 +158,7 @@ public class ShortGroupByFunctionBatchTest {
 
     @Test
     public void testLastShortBatchAllNull() {
-        LastShortGroupByFunction function = new LastShortGroupByFunction(0, ShortColumn.newInstance(COLUMN_INDEX));
+        LastShortGroupByFunction function = new LastShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
         SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
@@ -174,7 +174,7 @@ public class ShortGroupByFunctionBatchTest {
 
     @Test
     public void testLastShortSetEmpty() {
-        LastShortGroupByFunction function = new LastShortGroupByFunction(0, ShortColumn.newInstance(COLUMN_INDEX));
+        LastShortGroupByFunction function = new LastShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
         SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());

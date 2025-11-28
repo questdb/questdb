@@ -41,7 +41,7 @@ public class DoubleListTest {
 
         a.add(0, 0);
 
-        Assert.assertEquals(a, new DoubleList(new double[]{0d, 1d, 2d, 3d}));
+        Assert.assertEquals(new DoubleList(new double[]{0d, 1d, 2d, 3d}), a);
     }
 
     @Test
@@ -242,7 +242,7 @@ public class DoubleListTest {
 
         a.reverse();
 
-        Assert.assertEquals(a, new DoubleList(new double[]{1d, 2d, 3d}));
+        Assert.assertEquals(new DoubleList(new double[]{1d, 2d, 3d}), a);
     }
 
     @Test
@@ -293,7 +293,7 @@ public class DoubleListTest {
 
         a.sort();
 
-        Assert.assertEquals(a, new DoubleList(new double[]{1d, 2d, 3d}));
+        Assert.assertEquals(new DoubleList(new double[]{1d, 2d, 3d}), a);
     }
 
     @Test

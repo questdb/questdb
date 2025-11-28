@@ -95,7 +95,7 @@ public class ByteGroupByFunctionBatchTest {
 
     @Test
     public void testLastByteBatch() {
-        LastByteGroupByFunction function = new LastByteGroupByFunction(0, ByteColumn.newInstance(COLUMN_INDEX));
+        LastByteGroupByFunction function = new LastByteGroupByFunction(ByteColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
         SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
@@ -113,7 +113,7 @@ public class ByteGroupByFunctionBatchTest {
 
     @Test
     public void testLastByteBatchSingle() {
-        LastByteGroupByFunction function = new LastByteGroupByFunction(0, ByteColumn.newInstance(COLUMN_INDEX));
+        LastByteGroupByFunction function = new LastByteGroupByFunction(ByteColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
         SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
@@ -129,7 +129,7 @@ public class ByteGroupByFunctionBatchTest {
 
     @Test
     public void testLastByteSetEmpty() {
-        LastByteGroupByFunction function = new LastByteGroupByFunction(0, ByteColumn.newInstance(COLUMN_INDEX));
+        LastByteGroupByFunction function = new LastByteGroupByFunction(ByteColumn.newInstance(COLUMN_INDEX));
         var columnTypes = new ArrayColumnTypes();
         function.initValueTypes(columnTypes);
         SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());

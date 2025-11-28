@@ -32,7 +32,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class LastShortGroupByFunction extends FirstShortGroupByFunction {
 
-    public LastShortGroupByFunction(int position, @NotNull Function arg) {
+    public LastShortGroupByFunction(@NotNull Function arg) {
         super(arg);
     }
 

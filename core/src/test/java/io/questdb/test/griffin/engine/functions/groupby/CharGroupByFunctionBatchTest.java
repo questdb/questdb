@@ -105,7 +105,7 @@ public class CharGroupByFunctionBatchTest {
 
     @Test
     public void testLastNotNullCharBatch() {
-        LastNotNullCharGroupByFunction function = new LastNotNullCharGroupByFunction(0, new CharColumn(COLUMN_INDEX));
+        LastNotNullCharGroupByFunction function = new LastNotNullCharGroupByFunction(new CharColumn(COLUMN_INDEX));
         SimpleMapValue value = prepare(function);
         function.setNull(value);
 

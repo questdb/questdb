@@ -305,16 +305,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testNotSupportedForNonPartitionedTable() throws Exception {
-        class TestCase {
-            final String ddl;
-            final String query;
-            final String table;
-
-            TestCase(String table, String ddl, String query) {
-                this.table = table;
-                this.ddl = ddl;
-                this.query = query;
-            }
+        record TestCase(String table, String ddl, String query) {
         }
 
         final TestCase[] testCases = new TestCase[]{

@@ -55,16 +55,12 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         Function function = args.getQuick(0);
         int type = function.getType();
 
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.GEOBYTE:
-                return new LastNotNullGeoHashGroupByFunctionByte(type, function);
-            case ColumnType.GEOSHORT:
-                return new LastNotNullGeoHashGroupByFunctionShort(type, function);
-            case ColumnType.GEOINT:
-                return new LastNotNullGeoHashGroupByFunctionInt(type, function);
-            default:
-                return new LastNotNullGeoHashGroupByFunctionLong(type, function);
-        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.GEOBYTE -> new LastNotNullGeoHashGroupByFunctionByte(type, function);
+            case ColumnType.GEOSHORT -> new LastNotNullGeoHashGroupByFunctionShort(type, function);
+            case ColumnType.GEOINT -> new LastNotNullGeoHashGroupByFunctionInt(type, function);
+            default -> new LastNotNullGeoHashGroupByFunctionLong(type, function);
+        };
     }
 
     private static class LastNotNullGeoHashGroupByFunctionByte extends FirstGeoHashGroupByFunctionByte {

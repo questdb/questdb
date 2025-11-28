@@ -33,7 +33,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class LastNotNullDateGroupByFunction extends FirstDateGroupByFunction {
 
-    public LastNotNullDateGroupByFunction(int position, @NotNull Function arg) {
+    public LastNotNullDateGroupByFunction(@NotNull Function arg) {
         super(arg);
     }
 

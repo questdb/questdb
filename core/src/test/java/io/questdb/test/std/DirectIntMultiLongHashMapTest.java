@@ -67,7 +67,6 @@ public class DirectIntMultiLongHashMapTest {
             Assert.assertTrue(map.excludes(1));
             Assert.assertTrue(map.excludes(2));
 
-            final int initialCapacity = map.capacity();
             map.restoreInitialCapacity();
             Assert.assertEquals(0, map.size());
             Assert.assertEquals(8, map.capacity()); // Should match initial capacity

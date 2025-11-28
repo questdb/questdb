@@ -32,7 +32,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class LastByteGroupByFunction extends FirstByteGroupByFunction {
 
-    public LastByteGroupByFunction(int position, @NotNull Function arg) {
+    public LastByteGroupByFunction(@NotNull Function arg) {
         super(arg);
     }
 

@@ -1324,9 +1324,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory slave,
             int joinType,
             Function filter,
-            JoinContext context,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
+            JoinContext context
+    ) {
         /*
          * JoinContext provides the following information:
          * a/bIndexes - index of model where join column is coming from
@@ -3941,8 +3940,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slave,
                                         joinType,
                                         joinFilter,
-                                        slaveModel.getJoinContext(),
-                                        executionContext
+                                        slaveModel.getJoinContext()
                                 );
                                 masterAlias = null;
                                 break;

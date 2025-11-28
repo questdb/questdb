@@ -61,16 +61,12 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
         Function function = args.getQuick(0);
         int type = function.getType();
 
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.GEOBYTE:
-                return new FirstNotNullGeoHashGroupByFunctionByte(type, function);
-            case ColumnType.GEOSHORT:
-                return new FirstNotNullGeoHashGroupByFunctionShort(type, function);
-            case ColumnType.GEOINT:
-                return new FirstNotNullGeoHashGroupByFunctionInt(type, function);
-            default:
-                return new FirstNotNullGeoHashGroupByFunctionLong(type, function);
-        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.GEOBYTE -> new FirstNotNullGeoHashGroupByFunctionByte(type, function);
+            case ColumnType.GEOSHORT -> new FirstNotNullGeoHashGroupByFunctionShort(type, function);
+            case ColumnType.GEOINT -> new FirstNotNullGeoHashGroupByFunctionInt(type, function);
+            default -> new FirstNotNullGeoHashGroupByFunctionLong(type, function);
+        };
     }
 
     private static class FirstNotNullGeoHashGroupByFunctionByte extends FirstGeoHashGroupByFunctionByte {

@@ -45,9 +45,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class SqlExecutionContextStub implements SqlExecutionContext {
-    private final CairoEngine engine;
-
+public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutionContext {
     public SqlExecutionContextStub(@NotNull CairoEngine engine) {
         this.engine = engine;
     }

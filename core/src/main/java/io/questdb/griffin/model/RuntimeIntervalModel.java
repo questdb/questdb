@@ -59,10 +59,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     public RuntimeIntervalModel(TimestampDriver timestampDriver, int partitionBy, LongList staticIntervals, ObjList<Function> dynamicRangeList) {
-        this(timestampDriver, partitionBy, staticIntervals, dynamicRangeList, true);
-    }
-
-    public RuntimeIntervalModel(TimestampDriver timestampDriver, int partitionBy, LongList staticIntervals, ObjList<Function> dynamicRangeList, boolean dynamicRangeListOwner) {
         this.intervals = staticIntervals;
         this.dynamicRangeList = dynamicRangeList;
         this.timestampDriver = timestampDriver;
