@@ -203,4 +203,63 @@ public class WeightedStdDevRelGroupByFunctionFactoryTest extends AbstractCairoTe
             );
         });
     }
+
+    @Test
+    public void testWeightedStddevRelZeroAndNegativeWeight() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql(
+                    """
+                            weighted_stddev_rel
+                            null
+                            """,
+                    "SELECT weighted_stddev_rel(x, 0) FROM long_sequence(10)"
+            );
+            assertSql(
+                    """
+                            weighted_stddev
+                            null
+                            """,
+                    "SELECT weighted_stddev(x, 0) FROM long_sequence(10)"
+            );
+            assertSql(
+                    """
+                            weighted_stddev_rel
+                            0.7071067811865476
+                            """,
+                    """
+                            SELECT weighted_stddev_rel(
+                                x,
+                                CASE WHEN x < 3 THEN 1 ELSE 0 END
+                            ) FROM long_sequence(10)
+                            """
+            );
+            assertSql(
+                    """
+                            weighted_stddev
+                            0.7071067811865476
+                            """,
+                    """
+                            SELECT weighted_stddev(
+                                x,
+                                CASE WHEN x < 3 THEN 1 ELSE 0 END
+                            ) FROM long_sequence(10)
+                            """
+            );
+            // Weights sum to zero
+            assertSql(
+                    """
+                            weighted_stddev_rel
+                            null
+                            """,
+                    "SELECT weighted_stddev_rel(x, x - 6) FROM long_sequence(11)"
+            );
+            assertSql(
+                    """
+                            weighted_stddev
+                            null
+                            """,
+                    "SELECT weighted_stddev(x, x - 6) FROM long_sequence(11)"
+            );
+        });
+    }
 }

@@ -181,6 +181,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                             ) FROM long_sequence(10)
                             """
             );
+            // Weights sum to zero
             assertSql(
                     """
                             weighted_avg

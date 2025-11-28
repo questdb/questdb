@@ -182,4 +182,37 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
             );
         });
     }
+
+    @Test
+    public void testWeightedStddevFreqZeroAndNegativeWeight() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql(
+                    """
+                            weighted_stddev_freq
+                            null
+                            """,
+                    "SELECT weighted_stddev_freq(x, 0) FROM long_sequence(10)"
+            );
+            assertSql(
+                    """
+                            weighted_stddev_freq
+                            0.7071067811865476
+                            """,
+                    """
+                            SELECT weighted_stddev_freq(
+                                x,
+                                CASE WHEN x < 3 THEN 1 ELSE 0 END
+                            ) FROM long_sequence(10)
+                            """
+            );
+            // Weights sum to zero
+            assertSql(
+                    """
+                            weighted_stddev_freq
+                            null
+                            """,
+                    "SELECT weighted_stddev_freq(x, x - 6) FROM long_sequence(11)"
+            );
+        });
+    }
 }
