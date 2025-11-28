@@ -46,6 +46,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.IntStack;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -371,6 +372,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.allowNonDeterministicFunction = true;
         this.validationOnly = false;
         this.referencedViews.clear();
+        Misc.clear(securityContext);
     }
 
     @Override
