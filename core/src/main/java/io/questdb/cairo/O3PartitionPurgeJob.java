@@ -414,12 +414,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     }
 
     @Override
-    protected boolean canRun() {
-        // disable the purge job while database checkpoint is in progress
-        return !engine.getCheckpointStatus().partitionsLocked();
-    }
-
-    @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         final O3PartitionPurgeTask task = queue.get(cursor);
         discoverPartitions(

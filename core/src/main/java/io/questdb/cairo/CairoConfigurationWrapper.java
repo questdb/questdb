@@ -772,11 +772,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getScoreboardFormat() {
-        return getDelegate().getScoreboardFormat();
-    }
-
-    @Override
     public long getSequencerCheckInterval() {
         return getDelegate().getSequencerCheckInterval();
     }

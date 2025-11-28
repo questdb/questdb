@@ -481,8 +481,6 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
-    int getScoreboardFormat();
-
     long getSequencerCheckInterval();
 
     /**

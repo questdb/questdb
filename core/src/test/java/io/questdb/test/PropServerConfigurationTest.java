@@ -182,7 +182,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getCairoConfiguration().getTextConfiguration().getTextLexerStringPoolCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getTextConfiguration().getTimestampAdapterPoolCapacity());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getTextConfiguration().getUtf8SinkSize());
-        Assert.assertEquals(2, configuration.getCairoConfiguration().getScoreboardFormat());
         Assert.assertEquals(0, configuration.getHttpServerConfiguration().getBindIPv4Address());
         Assert.assertEquals(9000, configuration.getHttpServerConfiguration().getBindPort());
 
@@ -1753,6 +1752,57 @@ public class PropServerConfigurationTest {
     public void testWebConsolePathChangeUpdatesDefaultDependenciesFuzz() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
 
+        final ObjList<FuzzItem> pathsThatCanBePinned = getFuzzItemObjList();
+
+        String webConsolePath = rnd.nextString(64);
+        Properties properties = new Properties();
+        properties.setProperty("http.context.web.console", webConsolePath);
+        int pinCount = rnd.nextInt(pathsThatCanBePinned.size() - 1) + 1; // at least one
+        IntHashSet pinnedIndexes = new IntHashSet();
+        for (int i = 0; i < pinCount; i++) {
+            int index = rnd.nextPositiveInt() % pathsThatCanBePinned.size();
+            FuzzItem item = pathsThatCanBePinned.getQuick(index);
+            properties.setProperty(item.key, item.value);
+            pinnedIndexes.add(index);
+        }
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        var expected = new ObjHashSet<>();
+
+        for (int i = 0; i < pathsThatCanBePinned.size(); i++) {
+            expected.clear();
+            FuzzItem item = pathsThatCanBePinned.getQuick(i);
+            if (pinnedIndexes.contains(i)) {
+                expected.add(item.value);
+            }
+
+            for (int j = 0; j < item.webConsoleExpectedValue.size(); j++) {
+                expected.add(webConsolePath + item.webConsoleExpectedValue.get(j));
+            }
+            Assert.assertEquals(
+                    expected.toString(),
+                    item.getter.apply(configuration.getHttpServerConfiguration()).toString()
+            );
+        }
+
+        // check the ILP did not move
+        Assert.assertEquals(
+                HttpFullFatServerConfiguration.CONTEXT_PATH_ILP.toString(),
+                configuration.getHttpServerConfiguration().getContextPathILP().toString()
+        );
+
+        Assert.assertEquals(
+                "[/ping]",
+                configuration.getHttpServerConfiguration().getContextPathILPPing().toString()
+        );
+
+        Utf8SequenceObjHashMap<Utf8Sequence> redirectMap = configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRedirectMap();
+        Assert.assertEquals(2, redirectMap.size());
+        Assert.assertEquals(webConsolePath + "/index.html", redirectMap.get(new Utf8String(webConsolePath)).toString());
+        Assert.assertEquals(webConsolePath + "/index.html", redirectMap.get(new Utf8String(webConsolePath + "/")).toString());
+    }
+
+    private static @NotNull ObjList<FuzzItem> getFuzzItemObjList() {
         final ObjList<FuzzItem> pathsThatCanBePinned = new ObjList<>();
         pathsThatCanBePinned.add(
                 new FuzzItem(
@@ -1801,53 +1851,7 @@ public class PropServerConfigurationTest {
                         HttpFullFatServerConfiguration::getContextPathExec
                 )
         );
-
-        String webConsolePath = rnd.nextString(64);
-        Properties properties = new Properties();
-        properties.setProperty("http.context.web.console", webConsolePath);
-        int pinCount = rnd.nextInt(pathsThatCanBePinned.size() - 1) + 1; // at least one
-        IntHashSet pinnedIndexes = new IntHashSet();
-        for (int i = 0; i < pinCount; i++) {
-            int index = rnd.nextPositiveInt() % pathsThatCanBePinned.size();
-            FuzzItem item = pathsThatCanBePinned.getQuick(index);
-            properties.setProperty(item.key, item.value);
-            pinnedIndexes.add(index);
-        }
-
-        PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        var expected = new ObjHashSet<>();
-
-        for (int i = 0; i < pathsThatCanBePinned.size(); i++) {
-            expected.clear();
-            FuzzItem item = pathsThatCanBePinned.getQuick(i);
-            if (pinnedIndexes.contains(i)) {
-                expected.add(item.value);
-            }
-
-            for (int j = 0; j < item.webConsoleExpectedValue.size(); j++) {
-                expected.add(webConsolePath + item.webConsoleExpectedValue.get(j));
-            }
-            Assert.assertEquals(
-                    expected.toString(),
-                    item.getter.apply(configuration.getHttpServerConfiguration()).toString()
-            );
-        }
-
-        // check the ILP did not move
-        Assert.assertEquals(
-                HttpFullFatServerConfiguration.CONTEXT_PATH_ILP.toString(),
-                configuration.getHttpServerConfiguration().getContextPathILP().toString()
-        );
-
-        Assert.assertEquals(
-                "[/ping]",
-                configuration.getHttpServerConfiguration().getContextPathILPPing().toString()
-        );
-
-        Utf8SequenceObjHashMap<Utf8Sequence> redirectMap = configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRedirectMap();
-        Assert.assertEquals(2, redirectMap.size());
-        Assert.assertEquals(webConsolePath + "/index.html", redirectMap.get(new Utf8String(webConsolePath)).toString());
-        Assert.assertEquals(webConsolePath + "/index.html", redirectMap.get(new Utf8String(webConsolePath + "/")).toString());
+        return pathsThatCanBePinned;
     }
 
     private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws Exception {
@@ -1922,7 +1926,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128, configuration.getTextConfiguration().getTextLexerStringPoolCapacity());
         Assert.assertEquals(512, configuration.getTextConfiguration().getTimestampAdapterPoolCapacity());
         Assert.assertEquals(8192, configuration.getTextConfiguration().getUtf8SinkSize());
-        Assert.assertEquals(1, configuration.getScoreboardFormat());
         Assert.assertEquals(4194304, configuration.getSqlCopyBufferSize());
         Assert.assertEquals(64, configuration.getCopyPoolCapacity());
         Assert.assertEquals("test-id-42", configuration.getSnapshotInstanceId());
