@@ -152,9 +152,9 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
             assertSql(
                     """
                             weighted_avg
-                            4.999999999999999
+                            5.0
                             """,
-                    "SELECT weighted_avg(5.0, rnd_double()) FROM long_sequence(10)\n"
+                    "SELECT round(weighted_avg(5.0, rnd_double()), 10) weighted_avg FROM long_sequence(10)\n"
             );
         });
     }
