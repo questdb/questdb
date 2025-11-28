@@ -695,7 +695,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
         final long start = MicrosTimestampDriver.floor("2022-01-02T03");
         final long end = start + (1 + rnd.nextInt(10)) * periodLengthMicros;
-        final long clockJumpLimit = Math.min(end, start + (SPIN_LOCK_TIMEOUT / periodLengthMicros));
+        final long clockJumpLimit = Math.min(end, start + SPIN_LOCK_TIMEOUT);
         currentMicros = start;
 
         final AtomicBoolean stop = new AtomicBoolean();
@@ -709,10 +709,11 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             refreshJobs.add(startTimerJob(i, stop, rnd, timerJob, periodLengthMicros, clockJumpLimit));
         }
 
+        final int sampleByInterval = 1 + rnd.nextInt(length);
         for (int i = 0; i < tableCount; i++) {
             String tableNameBase = testTableName + "_" + i;
             String tableNameMv = tableNameBase + "_mv";
-            String viewSql = "select min(c3), max(c3), ts from " + tableNameBase + " sample by 1" + lengthUnit;
+            String viewSql = "select min(c3), max(c3), ts from " + tableNameBase + " sample by " + sampleByInterval + lengthUnit;
             ObjList<FuzzTransaction> transactions = createTransactionsAndPeriodMv(rnd, tableNameBase, tableNameMv, viewSql, start, end, length, lengthUnit);
             fuzzTransactions.add(transactions);
             viewSqls.add(viewSql);
@@ -775,7 +776,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
         final long start = MicrosTimestampDriver.floor("2022-02-24T17");
         currentMicros = start;
-        final long clockJumpLimit = start + (SPIN_LOCK_TIMEOUT / clockJump);
+        final long clockJumpLimit = start + SPIN_LOCK_TIMEOUT;
 
         final AtomicBoolean stop = new AtomicBoolean();
         // Timer refresh job must be created after currentMicros is set.
@@ -921,7 +922,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                             while (!stop.get()) {
                                 drainMatViewTimerQueue(timerJob);
                                 refreshJob.run(workerId);
-                                Os.sleep(rnd.nextInt(50));
+                                Os.sleep(rnd.nextInt(10));
                                 if (rnd.nextBoolean()) {
                                     // Try to move the clock one jump forward.
                                     long timeBefore = currentMicros;
