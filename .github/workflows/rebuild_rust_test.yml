@@ -84,6 +84,10 @@ jobs:
     container:
       image: debian:buster
     steps:
+      - name: Patch Debian buster repo and install dependencies
+        run: |
+          set -eu
+          sed -i s/deb.debian.org/archive.debian.org/g /etc/apt/sources.list
       - name: Install tools (CXX/NASM/Rust)
         run: |
           ldd --version
