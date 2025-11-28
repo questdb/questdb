@@ -888,14 +888,13 @@ public class ExpressionParser {
 
                             lexer.backTo(lastPos + SqlKeywords.CAST_KEYWORD_LENGTH, castTok);
                             tok = castTok;
-                            if (prevBranch != BRANCH_DOT_DEREFERENCE) {
-                                scopeStack.push(Scope.CAST);
-                                thisBranch = BRANCH_OPERATOR;
-                                opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, "cast", Integer.MIN_VALUE, lastPos));
-                                break;
-                            } else {
+                            if (prevBranch == BRANCH_DOT_DEREFERENCE || isCompletedOperand(prevBranch)) {
                                 throw SqlException.$(lastPos, "'cast' is not allowed here");
                             }
+                            scopeStack.push(Scope.CAST);
+                            thisBranch = BRANCH_OPERATOR;
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, "cast", Integer.MIN_VALUE, lastPos));
+                            break;
                         }
                         processDefaultBranch = true;
                         break;
