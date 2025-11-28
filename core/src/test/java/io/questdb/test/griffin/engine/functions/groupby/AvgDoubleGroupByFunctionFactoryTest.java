@@ -24,7 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -160,6 +162,53 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWeightedAvgSampleByFill() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create table with gaps: data at hour 0 and hour 2, gap at hour 1
+            execute("CREATE TABLE test_fill (value DOUBLE, weight DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            // Hour 0: values 1,2,3 with weight 1 -> avg == 2
+            execute("""
+                    INSERT INTO test_fill VALUES
+                        (1.0, 1.0, '1970-01-01T00:00'),
+                        (2.0, 1.0, '1970-01-01T00:30'),
+                        (3.0, 1.0, '1970-01-01T00:45')
+                    """);
+            // Hour 1: no data (gap to be filled)
+            // Hour 2: values 1,2,3,4,5 with weight 1 -> avg == 3
+            execute("""
+                    INSERT INTO test_fill VALUES
+                        (1.0, 1.0, '1970-01-01T02:00'),
+                        (2.0, 1.0, '1970-01-01T02:15'),
+                        (3.0, 1.0, '1970-01-01T02:30'),
+                        (4.0, 1.0, '1970-01-01T02:45'),
+                        (5.0, 1.0, '1970-01-01T02:50')
+                    """);
+
+            // Get the actual avg values for hour 0 and hour 2
+            String hour0Avg = queryResult("SELECT round(weighted_avg(value, weight), 8) FROM test_fill WHERE ts < '1970-01-01T01'");
+            String hour2Avg = queryResult("SELECT round(weighted_avg(value, weight), 8) FROM test_fill WHERE ts >= '1970-01-01T02'");
+
+            double avg0 = Double.parseDouble(hour0Avg.trim().split("\n")[1]);
+            double avg2 = Double.parseDouble(hour2Avg.trim().split("\n")[1]);
+
+            assertSql(
+                    "ts\tround\n" +
+                            "1970-01-01T00:00:00.000000Z\t" + avg0 + "\n" +
+                            "1970-01-01T01:00:00.000000Z\t" + avg0 + "\n" +
+                            "1970-01-01T02:00:00.000000Z\t" + avg2 + "\n",
+                    "SELECT ts, round(weighted_avg(value, weight), 8) FROM test_fill SAMPLE BY 1h FILL(PREV)"
+            );
+            assertSql(
+                    "ts\tround\n" +
+                            "1970-01-01T00:00:00.000000Z\t" + avg0 + "\n" +
+                            "1970-01-01T01:00:00.000000Z\tnull\n" +
+                            "1970-01-01T02:00:00.000000Z\t" + avg2 + "\n",
+                    "SELECT ts, round(weighted_avg(value, weight), 8) FROM test_fill SAMPLE BY 1h FILL(NULL)"
+            );
+        });
+    }
+
+    @Test
     public void testWeightedAvgZeroAndNegativeWeight() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
@@ -268,5 +317,11 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                             """, "SELECT weighted_stddev_rel(1, 1) FROM long_sequence(10)"
             );
         });
+    }
+
+    private String queryResult(String query) throws Exception {
+        StringSink sink = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, sink);
+        return sink.toString();
     }
 }

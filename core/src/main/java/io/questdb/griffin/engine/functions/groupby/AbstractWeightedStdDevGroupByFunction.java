@@ -155,6 +155,11 @@ public abstract class AbstractWeightedStdDevGroupByFunction extends DoubleFuncti
     }
 
     @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    }
+
+    @Override
     public int getValueIndex() {
         return valueIndex;
     }
@@ -229,11 +234,21 @@ public abstract class AbstractWeightedStdDevGroupByFunction extends DoubleFuncti
     }
 
     @Override
+    public void setDouble(MapValue mapValue, double value) {
+        // We set the state such that getDouble() in both Frequency and Reliability
+        // subclasses end up returning `value`
+        mapValue.putDouble(valueIndex, 2.0); // wSum
+        mapValue.putDouble(valueIndex + 1, 2.0); // wSum2
+        mapValue.putDouble(valueIndex + 2, Double.NaN); // mean
+        mapValue.putDouble(valueIndex + 3, value * value); // S
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putDouble(valueIndex, 0.0);
-        mapValue.putDouble(valueIndex + 1, 0.0);
+        mapValue.putDouble(valueIndex, Double.NaN);
+        mapValue.putDouble(valueIndex + 1, Double.NaN);
         mapValue.putDouble(valueIndex + 2, Double.NaN);
-        mapValue.putDouble(valueIndex + 3, 0.0);
+        mapValue.putDouble(valueIndex + 3, Double.NaN);
     }
 
     @Override

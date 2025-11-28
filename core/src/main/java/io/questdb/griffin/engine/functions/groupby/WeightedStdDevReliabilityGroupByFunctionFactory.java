@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -79,11 +78,6 @@ public class WeightedStdDevReliabilityGroupByFunctionFactory implements Function
         @Override
         public String getName() {
             return "weighted_stddev_rel";
-        }
-
-        @Override
-        public int getSampleByFlags() {
-            return GroupByFunction.SAMPLE_BY_FILL_ALL;
         }
     }
 }
