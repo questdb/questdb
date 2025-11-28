@@ -1023,6 +1023,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParallelFilterDispatchLimit() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
     public double getSqlParallelFilterPreTouchThreshold() {
         return 0.05;
     }

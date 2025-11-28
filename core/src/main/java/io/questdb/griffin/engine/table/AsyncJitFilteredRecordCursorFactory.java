@@ -90,7 +90,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @Nullable ObjList<Function> perWorkerFilters,
             @Nullable Function limitLoFunction,
             int limitLoPos,
-            int sharedQueryWorkerCount,
+            int workerCount,
             boolean enablePreTouch
     ) {
         super(base.getMetadata());
@@ -130,13 +130,13 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 atom,
                 REDUCER,
                 reduceTaskFactory,
-                sharedQueryWorkerCount,
+                workerCount,
                 PageFrameReduceTask.TYPE_FILTER
         );
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
-        this.sharedQueryWorkerCount = sharedQueryWorkerCount;
+        this.sharedQueryWorkerCount = workerCount;
     }
 
     public static void prepareBindVarMemory(
