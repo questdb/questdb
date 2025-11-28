@@ -274,7 +274,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                     table_name_ptr,
                     table_name_size as usize,
                 ))
-                .expect("invalid table name utf8")
+                    .expect("invalid table name utf8")
             };
             err.add_context(format!(
                 "could not encode partition for table {table_name} and timestamp index {timestamp_index}"
@@ -358,7 +358,7 @@ fn create_partition_descriptor(
             table_name_size as usize,
         ))
     }
-    .to_string();
+        .to_string();
 
     let partition = Partition { table, columns };
     Ok(partition)
@@ -417,20 +417,7 @@ impl Write for BufferWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         unsafe {
             let buffer_ref = &mut *self.buffer;
-            eprintln!(
-                "[BufferWriter::write] ENTER: buf.len()={}, buffer.len()={}, buffer.capacity()={}, self.offset={}, self.init_offset={}",
-                buf.len(),
-                buffer_ref.len(),
-                buffer_ref.capacity(),
-                self.offset,
-                self.init_offset
-            );
             if buffer_ref.len() <= self.init_offset {
-                eprintln!(
-                    "[BufferWriter::write] Resetting: set_len({}) and offset={}",
-                    self.init_offset,
-                    self.init_offset
-                );
                 buffer_ref.set_len(self.init_offset);
                 self.offset = self.init_offset;
             }
@@ -438,11 +425,6 @@ impl Write for BufferWriter {
             let total_size = self.offset + buf.len();
             if buffer_ref.capacity() < total_size {
                 let growth = (total_size - buffer_ref.len()).max(8192);
-                eprintln!(
-                    "[BufferWriter::write] Reserving: total_size={}, growth={}",
-                    total_size,
-                    growth
-                );
                 buffer_ref.reserve(growth);
             }
             std::ptr::copy_nonoverlapping(
@@ -452,11 +434,6 @@ impl Write for BufferWriter {
             );
             self.offset += buf.len();
             buffer_ref.set_len(self.offset);
-            eprintln!(
-                "[BufferWriter::write] EXIT: buffer.len()={}, self.offset={}",
-                buffer_ref.len(),
-                self.offset
-            );
         }
         Ok(buf.len())
     }
@@ -606,7 +583,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     _class: JClass,
     encoder: *mut StreamingParquetWriter,
 ) -> *const u8 {
-    // todo remove. Used for debug rust library are recompiled in CI
     eprintln!("finishStreamingParquetWrite called - Rust library has been recompiled!");
 
     if encoder.is_null() {
@@ -618,28 +594,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 
     let encoder = unsafe { &mut *encoder };
     let mut finish = || -> ParquetResult<*const u8> {
-        eprintln!("[finish] BEFORE set_len(0): buffer.len()={}, buffer.capacity()={}, buffer.as_ptr()={:p}",
-            encoder.current_buffer.len(), encoder.current_buffer.capacity(), encoder.current_buffer.as_ptr());
         unsafe {
             encoder.current_buffer.set_len(0);
         }
-        eprintln!("[finish] AFTER set_len(0): buffer.len()={}, buffer.capacity()={}, buffer.as_ptr()={:p}",
-            encoder.current_buffer.len(), encoder.current_buffer.capacity(), encoder.current_buffer.as_ptr());
         encoder
             .chunked_writer
             .finish(encoder.additional_data.clone())?;
-        eprintln!("[finish] AFTER chunked_writer.finish(): buffer.len()={}, buffer.capacity()={}, buffer.as_ptr()={:p}",
-            encoder.current_buffer.len(), encoder.current_buffer.capacity(), encoder.current_buffer.as_ptr());
-
-        if encoder.current_buffer.len() < 8 {
-            eprintln!("[finish] ERROR: buffer.len()={} is less than 8!", encoder.current_buffer.len());
-            eprintln!("[finish] buffer content: {:?}", &encoder.current_buffer[..]);
-        }
-
         let data_len = (encoder.current_buffer.len() - 8) as u64;
-        eprintln!("[finish] data_len={}", data_len);
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
-        eprintln!("[finish] Final buffer first 16 bytes: {:?}", &encoder.current_buffer[..std::cmp::min(16, encoder.current_buffer.len())]);
         Ok(encoder.current_buffer.as_ptr())
     };
 

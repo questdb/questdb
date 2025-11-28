@@ -268,6 +268,7 @@ public class CopyExportRequestTask implements Mutable {
         private final DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false);
         private long currentFrameRowCount = 0;
         private long currentPartitionIndex = -1;
+        private boolean exportFinished = false;
         private long streamExportCurrentPtr;
         private long streamExportCurrentSize;
         private long streamWriter = -1;
@@ -278,27 +279,27 @@ public class CopyExportRequestTask implements Mutable {
             columnNames.close();
             columnData.close();
             columnMetadata.close();
-            if (streamWriter != -1) {
-                closeStreamingParquetWriter(streamWriter);
-                streamWriter = -1;
-            }
+            closeWriter();
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
             totalRows = 0;
             freeOwnedPageFrameCursor();
+            exportFinished = false;
         }
 
         public void finishExport() throws Exception {
-            if (streamWriter == -1) {
+            if (exportFinished) {
+                closeWriter();
                 return;
             }
             long buffer = finishStreamingParquetWrite(streamWriter);
+            exportFinished = true;
             long dataPtr = buffer + Long.BYTES;
             long dataSize = Unsafe.getUnsafe().getLong(buffer);
             assert writeCallback != null;
-            closeStreamingParquetWriter(streamWriter);
-            streamWriter = -1;
             writeCallback.onWrite(dataPtr, dataSize);
+            closeWriter();
+            streamWriter = -1;
         }
 
         public void freeOwnedPageFrameCursor() {
@@ -444,6 +445,13 @@ public class CopyExportRequestTask implements Mutable {
             entry.setStreamingSendRowCount(totalRows);
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
+        }
+
+        private void closeWriter() {
+            if (streamWriter != -1) {
+                closeStreamingParquetWriter(streamWriter);
+                streamWriter = -1;
+            }
         }
     }
 }
