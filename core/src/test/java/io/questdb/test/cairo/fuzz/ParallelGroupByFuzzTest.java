@@ -3783,6 +3783,16 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelWeightedGroupByAvg() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT round(weighted_avg(adouble, adouble), 14) FROM tab", """
+                        round
+                        0.66509333442736
+                        """
+        );
+    }
+
+    @Test
     public void testParallelWeightedGroupByStdDev() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT round(weighted_stddev(adouble, adouble), 14) FROM tab", """
