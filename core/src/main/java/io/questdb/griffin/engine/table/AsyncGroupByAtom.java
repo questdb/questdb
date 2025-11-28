@@ -623,7 +623,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         long mapSize = 0;
         if (sharded) {
             for (int i = 0; i < NUM_SHARDS; i++) {
-                mapSize += destShards.getQuick(i).size();
+                // All destShards should be non-null at this point,
+                // so the null check is merely for future-proof code.
+                final Map destShard = destShards.getQuick(i);
+                mapSize += destShard != null ? destShard.size() : 0;
             }
         } else {
             mapSize = ownerFragment.map.size();
