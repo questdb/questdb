@@ -96,11 +96,11 @@ def execute_step(step, variables, cursor: Cursor, connection: Connection):
         assert_result(expect, result)
 
 
-def run_test(test, global_variables, connection):
+def run_test(test, global_variables, connection, binary):
     variables = global_variables.copy()
     variables.update(test.get('variables', {}))
 
-    cursor = connection.cursor()
+    cursor = connection.cursor(binary=binary)
 
     test_failed = False
     try:
@@ -138,23 +138,27 @@ def main(yaml_file):
     tests = data.get('tests', [])
 
     port = int(os.getenv('PGPORT', 8812))
-    for test in tests:
-        iterations = test.get('iterations', 50)
-        exclusions = test.get('exclude', [])
-        if 'psycopg3' in exclusions:
-            print(f"Skipping test '{test['name']}' because it is excluded for psycopg3.")
-            continue
-        for i in range(iterations):
-            print(f"Running test '{test['name']}' (iteration {i + 1})")
-            connection = psycopg.connect(
-                host='localhost',
-                port=port,
-                user='admin',
-                password='quest',
-                dbname='qdb'
-            )
-            run_test(test, global_variables, connection)
-            connection.close()
+    for binary in [True, False]:
+        binary_mode = "binary" if binary else "text"
+        print(f"\n=== Running tests with {binary_mode} mode ===\n")
+        for test in tests:
+            iterations = test.get('iterations', 50)
+            exclusions = test.get('exclude', [])
+            if 'psycopg3' in exclusions:
+                print(f"Skipping test '{test['name']}' because it is excluded for psycopg3.")
+                continue
+            for i in range(iterations):
+                print(f"Running test '{test['name']}' [{binary_mode}] (iteration {i + 1})")
+                connection = psycopg.connect(
+                    host='localhost',
+                    port=port,
+                    user='admin',
+                    password='quest',
+                    dbname='qdb',
+                    autocommit=True
+                )
+                run_test(test, global_variables, connection, binary)
+                connection.close()
 
 
 if __name__ == '__main__':
