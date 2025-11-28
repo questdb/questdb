@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class WeightedStdDevReliabilityGroupByFunctionFactory implements FunctionFactory {
@@ -48,8 +49,8 @@ public class WeightedStdDevReliabilityGroupByFunctionFactory implements Function
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
