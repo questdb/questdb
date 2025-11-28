@@ -3468,21 +3468,23 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                           CharacterStore bindVariableCharacterStore,
                                           @Transient DirectUtf8String directUtf8String,
                                           @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool) throws PGMessageProcessingException, SqlException {
-        if (isError()) {
+        // SELECTs (and other factories producing cursors) use binding variables at the SYNC time
+        // thus we need to re-populate BindingService before we send data rows to a client.
+        // Q: Why do we need to re-populate the BindingService when a prior EXEC phase already populated it?
+        // A: Async/Batching clients can a sequence Bind/Execute/Bind/Execute/Bind/Execute/Sync
+        //    If we don't repopulate Binding Service before Sync then all entries will see binding variables set during the last Execute
+        //    See: https://github.com/questdb/questdb/issues/6123 and CheckBindVarsInBatchedQueriesAreConsistent C# test in the Compat module
+
+        // INSERTs, UPDATE, ALTER, etc. use binding variables at the EXEC time only -> we don't have to populate it before SYNC
+        if (cursor == null || isError()) {
             return false;
         }
-        return switch (sqlType) {
-            // these query types use binding variables also at the SYNC time
-            case CompiledQuery.EXPLAIN, CompiledQuery.SELECT, CompiledQuery.PSEUDO_SELECT -> {
-                copyParameterValuesToBindVariableService(
-                        sqlExecutionContext,
-                        bindVariableCharacterStore,
-                        directUtf8String,
-                        binarySequenceParamsPool
-                );
-                yield true;
-            }
-            default -> false;
-        };
+        copyParameterValuesToBindVariableService(
+                sqlExecutionContext,
+                bindVariableCharacterStore,
+                directUtf8String,
+                binarySequenceParamsPool
+        );
+        return true;
     }
 }
