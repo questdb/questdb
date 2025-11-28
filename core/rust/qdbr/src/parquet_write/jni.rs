@@ -583,6 +583,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     _class: JClass,
     encoder: *mut StreamingParquetWriter,
 ) -> *const u8 {
+    // todo remove. Used for debug rust library are recompiled in CI
+    eprintln!("finishStreamingParquetWrite called - Rust library has been recompiled!");
+
     if encoder.is_null() {
         let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
         err.add_context("error in StreamingPartitionEncoder.finish");
@@ -813,8 +816,7 @@ fn convert_row_group_buffers_to_partition(
         table: String::new(),
         columns: Vec::with_capacity(partition_template.columns.len()),
     };
-
-    let column_bufs_ptr = unsafe { &*(row_group_bufs as *const _ as *const ColumnBuffersAccess) };
+    let column_bufs = row_group_bufs.column_buffers();
 
     // For each Symbol column: [values_ptr (i64), values_size (i64), offsets_ptr (i64), symbol_count (i64)]
     let symbol_data = if symbol_data_ptr != 0 {
@@ -836,8 +838,7 @@ fn convert_row_group_buffers_to_partition(
     let mut symbol_data_idx = 0;
 
     for (i, column_template) in partition_template.columns.iter().enumerate() {
-        let col_buf_ptr = unsafe { column_bufs_ptr.column_bufs.as_ptr().add(i) };
-        let col_buf = unsafe { &*col_buf_ptr };
+        let col_buf = &column_bufs[i];
         let mut column = *column_template;
         column.row_count = row_count;
         column.column_top = 0;
@@ -870,10 +871,4 @@ fn convert_row_group_buffers_to_partition(
         new_partition.columns.push(column);
     }
     Ok(new_partition)
-}
-
-#[repr(C)]
-struct ColumnBuffersAccess {
-    _column_bufs_ptr: *const crate::parquet_read::ColumnChunkBuffers,
-    column_bufs: crate::allocator::AcVec<crate::parquet_read::ColumnChunkBuffers>,
 }
