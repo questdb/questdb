@@ -233,6 +233,6 @@ public abstract class AbstractWeightedStdDevGroupByFunction extends DoubleFuncti
 
     @Override
     public boolean supportsParallelism() {
-        return true;
+        return BinaryFunction.super.supportsParallelism();
     }
 }
