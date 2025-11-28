@@ -120,7 +120,7 @@ steps:
     displayName: "Ensure Rust is installed"
     # Note, the `prepare_rust_env.py` script exports a number of variables.
 
-  - template: install-llvm.yml
+  - template: steps-install-llvm.yml
     parameters:
       shouldRun: |
         and(

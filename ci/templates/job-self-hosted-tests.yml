@@ -21,7 +21,7 @@ jobs:
       JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-arm64"
       os: Linux
     steps:
-      - template: steps.yml
+      - template: steps-test-run.yml
 
   - job: linux_x64_zfs_jdk17
     workspace:
@@ -45,7 +45,7 @@ jobs:
       JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-openjdk-amd64"
       JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-amd64"
     steps:
-      - template: steps.yml
+      - template: steps-test-run.yml
 
   - job: linux_x64_graal
     workspace:
@@ -69,4 +69,4 @@ jobs:
       JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-amd64"
       os: Linux
     steps:
-      - template: steps.yml
+      - template: steps-test-run.yml

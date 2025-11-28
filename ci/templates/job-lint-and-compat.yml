@@ -24,14 +24,14 @@ jobs:
         lfs: false
         submodules: false
 
-      - template: java-lint.yml
+      - template: steps-java-lint.yml
 
       # Rust lint and test
       - ${{ if eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true') }}:
-        - template: rust-test-and-lint.yml
+          - template: steps-rust-lint.yml
 
       # Compat tests
-      - template: compat-steps.yml
+      - template: steps-compat-tests.yml
 
       # Javadoc
       - task: Maven@3

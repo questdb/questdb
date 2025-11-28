@@ -23,7 +23,7 @@ stages:
   - stage: CheckChanges
     displayName: "Check Changes"
     jobs:
-      - template: templates/check-changes-job.yml
+      - template: templates/job-check-changes.yml
 
   - stage: TriggerEnterpriseCI
     displayName: "Trigger Enterprise CI"
@@ -106,7 +106,7 @@ stages:
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/self-hosted-jobs.yml
+      - template: templates/job-self-hosted-tests.yml
     variables:
       includeTests: "**/griffin/**"
 
@@ -116,7 +116,7 @@ stages:
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/self-hosted-jobs.yml
+      - template: templates/job-self-hosted-tests.yml
     variables:
       includeTests: "**/cairo/**"
 
@@ -126,7 +126,7 @@ stages:
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/self-hosted-jobs.yml
+      - template: templates/job-self-hosted-tests.yml
     variables:
       excludeTests: "**/griffin/**,**/cairo/**"
 
@@ -135,21 +135,21 @@ stages:
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/hosted-jobs.yml
+      - template: templates/job-hosted-tests.yml
 
   - stage: SelfHostedRunTestsCoverageBranches
     displayName: "SelfHosted Running tests with cover"
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/self-hosted-cover-jobs.yml
+      - template: templates/job-self-hosted-coverage.yml
 
   - stage: JavaAndRustLint
     displayName: "Rust Test and Lint"
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/aux-job.yml
+      - template: templates/job-lint-and-compat.yml
 
   - stage: CoverageReports
     displayName: "Coverage Report"
@@ -184,7 +184,7 @@ stages:
           - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
             displayName: "Ensure Rust is installed"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-          - template: templates/install-llvm.yml
+          - template: templates/steps-install-llvm.yml
             parameters:
               shouldRun: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
 
