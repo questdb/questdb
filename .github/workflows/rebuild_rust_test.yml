@@ -40,9 +40,9 @@ jobs:
     strategy:
       matrix:
         # macos-14 = ARM M1
-        # macos-13 = x64
+        # macos-15-intel = x64
         # if you change OS definitions then you need to change conditions in cache-save steps below
-        os: [ macos-14, macos-13 ]
+        os: [ macos-14, macos-15-intel ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +59,7 @@ jobs:
           mkdir -p core/src/test/resources/io/questdb/bin/darwin-aarch64/
           cp core/rust/qdb-sqllogictest/target/release/libqdbsqllogictest.dylib core/src/test/resources/io/questdb/bin/darwin-aarch64/
       - name: Copy darwin-x86-64 Rust Library to the final directory
-        if: ${{ matrix.os == 'macos-13' }}
+        if: ${{ matrix.os == 'macos-15-intel' }}
         run: |
           mkdir -p core/src/test/resources/io/questdb/bin/darwin-x86-64/
           cp core/rust/qdb-sqllogictest/target/release/libqdbsqllogictest.dylib core/src/test/resources/io/questdb/bin/darwin-x86-64/
@@ -71,7 +71,7 @@ jobs:
             core/src/test/resources/io/questdb/bin/darwin-aarch64/libqdbsqllogictest.dylib
           key: nativelibs-armosx-${{ github.sha }}
       - name: Save darwin-x86-64 Libraries to Cache
-        if: ${{ matrix.os == 'macos-13' }}
+        if: ${{ matrix.os == 'macos-15-intel' }}
         uses: actions/cache/save@v3
         with:
           path: |
