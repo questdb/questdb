@@ -460,17 +460,7 @@ public final class ColumnType {
     public static boolean isBuiltInWideningCast(int fromType, int toType) {
         final short fromTag = tagOf(fromType);
         final short toTag = tagOf(toType);
-
-        boolean isNumericWidening = (fromTag >= BYTE && toTag >= BYTE && toTag <= DOUBLE && fromTag < toTag)
-                && (fromTag != BYTE || (toTag != CHAR && toTag != DATE && toTag != TIMESTAMP)) // exception #1: cannot widen byte to char/temporal
-                && (fromTag != SHORT || (toTag != DATE && toTag != TIMESTAMP)) // exception #2: cannot widen short to temporal
-                && (fromTag != CHAR || (toTag != DATE && toTag != TIMESTAMP)); // exception #3: cannot widen char to temporal
-
-        return isNumericWidening
-                || fromTag == NULL
-                || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can be converted to SHORT
-                || ((fromTag == TIMESTAMP || fromTag == DATE) && toTag == LONG)  // Temporal to long
-                || ((fromTag == STRING || fromTag == VARCHAR) && (toTag >= BYTE && toTag <= DOUBLE));  // String-ish parsing to numeric
+        return isBuiltInWideningCast0(fromTag, toTag);
     }
 
     /**
@@ -577,6 +567,15 @@ public final class ColumnType {
             return true;
         }
         return isBuiltInWideningCast(fromType, toType);
+    }
+
+    public static boolean isSameTagOrBuiltInWideningCast(int fromType, int toType) {
+        short fromTag = tagOf(fromType);
+        short toTag = tagOf(toType);
+        if (fromTag == toTag) {
+            return true;
+        }
+        return isBuiltInWideningCast0(fromTag, toTag);
     }
 
     public static boolean isString(int columnType) {
@@ -754,6 +753,19 @@ public final class ColumnType {
                 && decodeArrayElementType(fromType) == decodeArrayElementType(toType)
                 && !isArrayWithWeakDims(fromType) && !isArrayWithWeakDims(toType)
                 && decodeWeakArrayDimensionality(fromType) == decodeWeakArrayDimensionality(toType);
+    }
+
+    private static boolean isBuiltInWideningCast0(short fromTag, short toTag) {
+        boolean isNumericWidening = (fromTag >= BYTE && toTag >= BYTE && toTag <= DOUBLE && fromTag < toTag)
+                && (fromTag != BYTE || (toTag != CHAR && toTag != DATE && toTag != TIMESTAMP)) // exception #1: cannot widen byte to char/temporal
+                && (fromTag != SHORT || (toTag != DATE && toTag != TIMESTAMP)) // exception #2: cannot widen short to temporal
+                && (fromTag != CHAR || (toTag != DATE && toTag != TIMESTAMP)); // exception #3: cannot widen char to temporal
+
+        return isNumericWidening
+                || fromTag == NULL
+                || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can be converted to SHORT
+                || ((fromTag == TIMESTAMP || fromTag == DATE) && toTag == LONG)  // Temporal to long
+                || ((fromTag == STRING || fromTag == VARCHAR) && (toTag >= BYTE && toTag <= DOUBLE));  // String-ish parsing to numeric
     }
 
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
