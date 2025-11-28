@@ -209,11 +209,12 @@ public class CopyExportRequestTask implements Mutable {
         }
     }
 
-    public void setUpStreamPartitionParquetExporter(RecordCursorFactory factory, PageFrameCursor pageFrameCursor, RecordMetadata metadata) {
+    public void setUpStreamPartitionParquetExporter(RecordCursorFactory factory, PageFrameCursor pageFrameCursor, RecordMetadata metadata, boolean descending) {
         assert this.pageFrameCursor == null;
         this.factory = factory;
         this.pageFrameCursor = pageFrameCursor;
         this.metadata = metadata;
+        this.descending = descending;
         streamPartitionParquetExporter.setUp();
     }
 

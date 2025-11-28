@@ -47,6 +47,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
 
 public class HTTPSerialParquetExporter {
     private static final Log LOG = LogFactory.getLog(HTTPSerialParquetExporter.class);
@@ -90,11 +91,19 @@ public class HTTPSerialParquetExporter {
                 copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
 
                 try (SqlCompiler compiler = cairoEngine.getSqlCompiler()) {
-                    CompiledQuery cc = compiler.compile(task.getTableName(), sqlExecutionContext);
+                    int timestampIndex = createOp.getTimestampIndex();
+                    boolean descending = timestampIndex > -1 && createOp.getSelectSqlScanDirection() == SCAN_DIRECTION_BACKWARD;
+                    CharSequence sql = task.getTableName();
+                    if (descending) {
+                        StringSink sink = Misc.getThreadLocalSink();
+                        sink.put(sql).put(" order by ").put(createOp.getColumnName(timestampIndex)).put(" desc");
+                        sql = sink;
+                    }
+                    CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
                     factory = cc.getRecordCursorFactory();
                     assert factory.supportsPageFrameCursor(); // simple temp table must support page frame cursor
                     PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
-                    task.setUpStreamPartitionParquetExporter(factory, pageFrameCursor, factory.getMetadata());
+                    task.setUpStreamPartitionParquetExporter(factory, pageFrameCursor, factory.getMetadata(), descending);
                     factory = null; // transfer ownership to the task
                 }
             }
