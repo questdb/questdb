@@ -239,6 +239,22 @@ public class TimeFrameHelper {
     }
 
     private long binarySearchScrollUp(long low, long high, long timestampLo) {
+        // Binary search until range is small enough for linear scan
+        while (high - low > 16) {
+            final long mid = (low + high) >>> 1;
+            recordAtRowIndex(mid);
+            final long midTimestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
+
+            if (midTimestamp < timestampLo) {
+                // midTimestamp is too small, search right half
+                low = mid + 1;
+            } else {
+                // midTimestamp >= timestampLo, answer is at mid or to the left
+                high = mid;
+            }
+        }
+
+        // Linear scan for small range - avoids binary search overhead
         long timestamp;
         do {
             if (high > low) {

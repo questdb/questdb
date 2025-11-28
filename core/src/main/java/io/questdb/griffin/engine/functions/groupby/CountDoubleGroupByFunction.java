@@ -43,7 +43,7 @@ public class CountDoubleGroupByFunction extends AbstractCountGroupByFunction {
         if (count > 0) {
             final long nonNullCount = Vect.countDouble(ptr, count);
             if (nonNullCount > 0) {
-                mapValue.addLong(valueIndex, nonNullCount);
+                mapValue.putLong(valueIndex, nonNullCount);
             }
         }
     }
