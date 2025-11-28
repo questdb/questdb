@@ -72,6 +72,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -787,22 +788,22 @@ public class WalWriter implements TableWriterAPI {
                     nullers.add(() -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL));
                     break;
                 case ColumnType.DECIMAL8:
-                    nullers.add(() -> dataMem.putByte(Byte.MIN_VALUE));
+                    nullers.add(() -> dataMem.putByte(Decimals.DECIMAL8_NULL));
                     break;
                 case ColumnType.DECIMAL16:
-                    nullers.add(() -> dataMem.putShort(Short.MIN_VALUE));
+                    nullers.add(() -> dataMem.putShort(Decimals.DECIMAL16_NULL));
                     break;
                 case ColumnType.DECIMAL32:
-                    nullers.add(() -> dataMem.putInt(Integer.MIN_VALUE));
+                    nullers.add(() -> dataMem.putInt(Decimals.DECIMAL32_NULL));
                     break;
                 case ColumnType.DECIMAL64:
-                    nullers.add(() -> dataMem.putLong(Long.MIN_VALUE));
+                    nullers.add(() -> dataMem.putLong(Decimals.DECIMAL64_NULL));
                     break;
                 case ColumnType.DECIMAL128:
-                    nullers.add(() -> dataMem.putDecimal128(Long.MIN_VALUE, -1));
+                    nullers.add(() -> dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL));
                     break;
                 case ColumnType.DECIMAL256:
-                    nullers.add(() -> dataMem.putDecimal256(Long.MIN_VALUE, -1, -1, -1));
+                    nullers.add(() -> dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL));
                     break;
                 default:
                     throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));

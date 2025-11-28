@@ -22,15 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.test.griffin.engine.functions.rnd;
 
-public class TxnScoreboardPoolFactory {
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-    public static TxnScoreboardPool createPool(CairoConfiguration configuration) {
-        if (configuration.getScoreboardFormat() == 1) {
-            return new TxnScoreboardPoolV1(configuration);
-        } else {
-            return new TxnScoreboardPoolV2(configuration);
-        }
+public class LongSequenceTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testBadArgumentTypeFailsGracefully() throws SqlException {
+        assertFailure(0, "invalid arguments", 5.0, 5.0, 5.0);
+    }
+
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new LongSequenceFunctionFactory();
     }
 }

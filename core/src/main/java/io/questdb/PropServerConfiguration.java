@@ -181,7 +181,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoSqlLegacyOperatorPrecedence;
     private final long cairoTableRegistryAutoReloadFrequency;
     private final int cairoTableRegistryCompactionThreshold;
-    private final int cairoTxnScoreboardFormat;
     private final long cairoWriteBackOffTimeoutOnMemPressureMs;
     private final boolean checkpointRecoveryEnabled;
     private final String checkpointRoot;
@@ -224,13 +223,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
-    private final ObjHashSet<String> httpContextPathSqlExecute = new ObjHashSet<>();
-    private final ObjHashSet<String> httpContextPathSqlValidate = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathExport = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathILP = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathILPPing = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathImport = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathSettings = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathSqlExecute = new ObjHashSet<>();
+    private final ObjHashSet<String> httpContextPathSqlValidate = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathTableStatus = new ObjHashSet<>();
     private final ObjHashSet<String> httpContextPathWarnings = new ObjHashSet<>();
     private final String httpContextWebConsole;
@@ -453,6 +452,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlOrderBySortEnabled;
     private final int sqlPageFrameMaxRows;
     private final int sqlPageFrameMinRows;
+    private final int sqlParallelFilterDispatchLimit;
     private final boolean sqlParallelFilterEnabled;
     private final double sqlParallelFilterPreTouchThreshold;
     private final boolean sqlParallelGroupByEnabled;
@@ -793,7 +793,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.isQueryTracingEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, false);
         this.cairoTableRegistryAutoReloadFrequency = getMillis(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
-        this.cairoTxnScoreboardFormat = getInt(properties, env, PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, 2);
         this.cairoWriteBackOffTimeoutOnMemPressureMs = getMillis(properties, env, PropertyKey.CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE, 4000);
         this.repeatMigrationFromVersion = getInt(properties, env, PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
@@ -1828,7 +1827,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + writeWorkers + networkPoolWorkerCount);
 
-            final int defaultReduceQueueCapacity = queryWorkers > 0 ? Math.min(2 * queryWorkers, 64) : 0;
+            final int defaultReduceQueueCapacity = Math.min(4 * queryWorkers, 256);
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 10_000);
@@ -1840,6 +1839,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             final int defaultReduceShardCount = queryWorkers > 0 ? Math.min(queryWorkers, 4) : 0;
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, defaultReduceShardCount);
             this.sqlParallelFilterPreTouchThreshold = getDouble(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD, "0.05");
+            this.sqlParallelFilterDispatchLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, Math.min(queryWorkers, 32));
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
 
             final boolean defaultParallelSqlEnabled = queryWorkers > 0;
@@ -2637,6 +2637,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerObsolete("cairo.sql.asof.join.fast");
             registerObsolete("shared.worker.affinity", PropertyKey.SHARED_NETWORK_WORKER_AFFINITY, PropertyKey.SHARED_QUERY_WORKER_AFFINITY, PropertyKey.SHARED_WRITE_WORKER_AFFINITY);
 
+            registerDeprecated(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT);
             registerDeprecated(
                     PropertyKey.HTTP_MIN_BIND_TO,
                     PropertyKey.HTTP_MIN_NET_BIND_TO
@@ -3657,11 +3658,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getScoreboardFormat() {
-            return cairoTxnScoreboardFormat;
-        }
-
-        @Override
         public long getSequencerCheckInterval() {
             return sequencerCheckInterval;
         }
@@ -3884,6 +3880,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlPageFrameMinRows() {
             return sqlPageFrameMinRows;
+        }
+
+        @Override
+        public int getSqlParallelFilterDispatchLimit() {
+            return sqlParallelFilterDispatchLimit;
         }
 
         @Override
@@ -4667,11 +4668,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public ObjHashSet<String> getContextPathSqlValidation() {
-            return httpContextPathSqlValidate;
-        }
-
-        @Override
         public ObjHashSet<String> getContextPathExport() {
             return httpContextPathExport;
         }
@@ -4694,6 +4690,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public ObjHashSet<String> getContextPathSettings() {
             return httpContextPathSettings;
+        }
+
+        @Override
+        public ObjHashSet<String> getContextPathSqlValidation() {
+            return httpContextPathSqlValidate;
         }
 
         @Override
