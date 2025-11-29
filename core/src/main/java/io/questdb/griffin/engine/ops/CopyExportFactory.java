@@ -151,8 +151,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     "queued",
                     0,
                     tableName,
-                    entry.getId(),
-                    null
+                    entry.getId()
             );
 
             do {
@@ -168,7 +167,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 task.of(
                         entry,
                         createOp,
-                        null,
                         tableName,
                         fileName,
                         compressionCodec,
@@ -177,14 +175,17 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         dataPageSize,
                         statisticsEnabled,
                         parquetVersion,
-                        rawArrayEncoding
+                        rawArrayEncoding,
+                        false,
+                        null,
+                        null,
+                        null
                 );
             } finally {
                 copyRequestPubSeq.done(processingCursor);
             }
             // Entry is now owned by the task
             entry = null;
-
             cursor.toTop();
             return cursor;
         } catch (SqlException | CairoException ex) {

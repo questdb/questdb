@@ -692,7 +692,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getParquetExportRowGroupSize() {
-        return 0; // use default (512*512) rows
+        return 100_000;
     }
 
     @Override

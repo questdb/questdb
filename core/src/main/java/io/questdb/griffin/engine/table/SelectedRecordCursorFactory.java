@@ -252,6 +252,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public boolean hasColumnData(int columnIndex) {
+            return baseFrame.hasColumnData(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
         public byte getFormat() {
             return baseFrame.getFormat();
         }

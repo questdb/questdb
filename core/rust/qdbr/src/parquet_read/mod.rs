@@ -52,6 +52,12 @@ pub struct RowGroupBuffers {
     column_bufs: AcVec<ColumnChunkBuffers>,
 }
 
+impl RowGroupBuffers {
+    pub fn column_buffers(&self) -> &AcVec<ColumnChunkBuffers> {
+        &self.column_bufs
+    }
+}
+
 #[repr(C)]
 pub struct RowGroupStatBuffers {
     column_chunk_stats_ptr: *const ColumnChunkStats,
