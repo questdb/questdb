@@ -15,7 +15,7 @@ SELECT weighted_stddev_rel(val, weight) FROM stddev_test
 560.654783
 
 query IR
-SELECT grp, weighted_stddev_rel(val, weight) FROM stddev_test
+SELECT grp, weighted_stddev_rel(val, weight) FROM stddev_test order by 1
 ----
 1 0.707107
 2 677.408296
@@ -32,7 +32,7 @@ SELECT weighted_stddev_freq(val, weight) FROM stddev_test
 494.451042
 
 query IR
-SELECT grp, weighted_stddev_freq(val, weight) FROM stddev_test
+SELECT grp, weighted_stddev_freq(val, weight) FROM stddev_test order by 1
 ----
 1 0.547723
 2 428.430624
