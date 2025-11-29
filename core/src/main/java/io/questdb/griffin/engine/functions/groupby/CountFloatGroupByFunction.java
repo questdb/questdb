@@ -49,7 +49,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
                 }
             }
             if (nonNullCount > 0) {
-                mapValue.addLong(valueIndex, nonNullCount);
+                mapValue.putLong(valueIndex, nonNullCount);
             }
         }
     }
