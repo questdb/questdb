@@ -2933,10 +2933,10 @@ public class SqlParser {
                 tok = tok(lexer, "'preceding'  'following'");
                 if (isPrecedingKeyword(tok)) {
                     if (context.getLoKind() == WindowJoinContext.CURRENT) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "start row is CURRENT, end row not must be PRECEDING");
+                        throw SqlException.$(lexer.lastTokenPosition(), "start row is CURRENT, end row must not be PRECEDING");
                     }
                     if (context.getLoKind() == WindowJoinContext.FOLLOWING) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "start row is FOLLOWING, end row not must be PRECEDING");
+                        throw SqlException.$(lexer.lastTokenPosition(), "start row is FOLLOWING, end row must not be PRECEDING");
                     }
                     context.setHiKind(WindowJoinContext.PRECEDING, lexer.lastTokenPosition());
                 } else if (isFollowingKeyword(tok)) {
@@ -3360,10 +3360,10 @@ public class SqlParser {
                                             if (winCol.getRowsLoKind() == WindowColumn.CURRENT) {
                                                 // As a start point, CURRENT ROW specifies that the window begins at the current row.
                                                 // In this case the end point cannot be value_expr PRECEDING.
-                                                throw SqlException.$(lexer.lastTokenPosition(), "start row is CURRENT, end row not must be PRECEDING");
+                                                throw SqlException.$(lexer.lastTokenPosition(), "start row is CURRENT, end row must not be PRECEDING");
                                             }
                                             if (winCol.getRowsLoKind() == WindowColumn.FOLLOWING) {
-                                                throw SqlException.$(lexer.lastTokenPosition(), "start row is FOLLOWING, end row not must be PRECEDING");
+                                                throw SqlException.$(lexer.lastTokenPosition(), "start row is FOLLOWING, end row must not be PRECEDING");
                                             }
                                             winCol.setRowsHiKind(WindowColumn.PRECEDING, lexer.lastTokenPosition());
                                         } else if (isFollowingKeyword(tok)) {
