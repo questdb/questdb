@@ -39,13 +39,11 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-// This is not a fuzz test in traditional sense, but it's multithreaded, and we want to run it
-// in CI frequently along with other fuzz tests.
 public class WindowJoinFuzzTest extends AbstractCairoTest {
-    private static final CharSequence[] AGGREGATE_FUNCTIONS = new CharSequence[]{
+    private static final String[] AGGREGATE_FUNCTIONS = new String[]{
             "first", "last", "count", "max", "min", "avg", "sum"
     };
-    private static final CharSequence[] EQ_OPERATORS = new CharSequence[]{
+    private static final String[] EQ_OPERATORS = new String[]{
             "<=", ">=", "<>", "!=", "<", ">",
     };
     private static final boolean RUN_ALL_PERMUTATIONS = true;
@@ -87,7 +85,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                     // left table - value filter
                     {false, true},
                     // left table - limit
-                    {false, /*true*/}, // TODO: Fix WindowJoinTest#testMasterFilterLimit before enabling this
+                    {false, true},
                     // symbol eq
                     {false, true},
                     // join filter
@@ -184,8 +182,8 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         sink.put(select);
         // We need to use a sub-query to ensure that slaves are processed in the correct order (timestamp)
         sink.put("(SELECT t.sym, t.price, t.ts, t.id, ");
-        for (int i = 0, n = aggregatedColumns.length; i < n; i++) {
-            sink.put(aggregatedColumns[i]).put(", ");
+        for (CharSequence aggregatedColumn : aggregatedColumns) {
+            sink.put(aggregatedColumn).put(", ");
         }
         sink
                 .put("p.ts, p.id FROM ")
