@@ -75,6 +75,11 @@ import static io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom.*;
  * tables.
  */
 public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFactory {
+    // Index lookahead multiplier. Defines the size of the time interval used to build per-symbol
+    // in-memory index with row ids/timestamps to be used by aggregation. Aimed to improve performance
+    // for the dense master row timestamps case by not having to rebuild the index for each unique
+    // master timestamp.
+    private static final int INDEX_LOOKAHEAD = 2;
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int INITIAL_LIST_CAPACITY = 16;
     private final AbstractWindowJoinFastRecordCursor cursor;
@@ -440,7 +445,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi * 2, masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi * INDEX_LOOKAHEAD, masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             if (masterTimestampHi > lastSlaveTimestamp) {
@@ -710,7 +715,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi * 2, masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi * INDEX_LOOKAHEAD, masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             if (masterTimestampHi > lastSlaveTimestamp) {
