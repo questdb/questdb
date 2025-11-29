@@ -39,6 +39,17 @@ public interface ColumnFunction extends Function {
     int getColumnIndex();
 
     @Override
+    default boolean isEquivalentTo(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof ColumnFunction that) {
+            return getColumnIndex() == that.getColumnIndex();
+        }
+        return false;
+    }
+
+    @Override
     default void toPlan(PlanSink sink) {
         sink.putColumnName(getColumnIndex());
     }

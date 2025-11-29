@@ -51,6 +51,6 @@ public class LastByteGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new LastByteGroupByFunction(position, args.getQuick(0));
+        return new LastByteGroupByFunction(args.getQuick(0));
     }
 }

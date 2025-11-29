@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
@@ -61,6 +62,20 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
     private static class Func extends FirstIPv4GroupByFunction {
         public Func(@NotNull Function arg) {
             super(arg);
+        }
+
+        @Override
+        public void computeBatch(MapValue mapValue, long ptr, int count) {
+            if (count > 0) {
+                final long hi = ptr + count * 4L;
+                for (; ptr < hi; ptr += 4L) {
+                    int value = Unsafe.getUnsafe().getInt(ptr);
+                    if (value != Numbers.IPv4_NULL) {
+                        mapValue.putInt(valueIndex + 1, value);
+                        break;
+                    }
+                }
+            }
         }
 
         @Override

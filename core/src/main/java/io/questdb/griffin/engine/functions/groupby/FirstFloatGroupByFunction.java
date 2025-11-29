@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
@@ -41,6 +42,13 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
 
     public FirstFloatGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putFloat(valueIndex + 1, Unsafe.getUnsafe().getFloat(ptr));
+        }
     }
 
     @Override
@@ -122,6 +130,11 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
     @Override
     public void setNull(MapValue mapValue) {
         setFloat(mapValue, Float.NaN);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override
