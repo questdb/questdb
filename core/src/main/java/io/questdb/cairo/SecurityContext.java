@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -86,6 +87,8 @@ public interface SecurityContext extends Mutable {
 
     void authorizeResumeWal(TableToken tableToken);
 
+    void authorizeSelect(ViewDefinition viewDefinition);
+
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeSelectOnAnyColumn(TableToken tableToken);
@@ -126,6 +129,12 @@ public interface SecurityContext extends Mutable {
     void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeTableVacuum(TableToken tableToken);
+
+    void authorizeViewCompile(TableToken tableToken);
+
+    void authorizeViewCreate();
+
+    void authorizeViewDrop(TableToken tableToken);
 
     /**
      * Should throw an exception if:

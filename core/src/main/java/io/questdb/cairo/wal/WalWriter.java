@@ -218,7 +218,9 @@ public class WalWriter implements TableWriterAPI {
 
             configureColumns();
             openNewSegment();
-            configureSymbolTable();
+            if (!tableToken.isView()) {
+                configureSymbolTable();
+            }
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -1410,7 +1412,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void markColumnRemoved(int columnIndex, int columnType) {
-        if (ColumnType.isSymbol(columnType)) {
+        if (ColumnType.isSymbol(columnType) && !tableToken.isView()) {
             removeSymbolMapReader(columnIndex);
         }
         final int pi = getDataColumnOffset(columnIndex);

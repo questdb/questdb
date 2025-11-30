@@ -54,12 +54,12 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int DESIGNATED_TIMESTAMP_COLUMN = 2;
     private static final int DIRECTORY_NAME_COLUMN = 7;
     private static final int ID_COLUMN = 0;
-    private static final int IS_MAT_VIEW_COLUMN = 11;
     private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 4;
     private static final RecordMetadata METADATA;
     private static final int O3_MAX_LAG_COLUMN = 5;
     private static final int PARTITION_BY_COLUMN = 3;
     private static final int TABLE_NAME = 1;
+    private static final int TABLE_TYPE_COLUMN = 11;
     private static final int TTL_UNIT_COLUMN = 10;
     private static final int TTL_VALUE_COLUMN = 9;
     private static final int WAL_ENABLED_COLUMN = 6;
@@ -183,13 +183,13 @@ public class TablesFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public long size() {
-                return -1;
+            public long preComputedStateSize() {
+                return 0;
             }
 
             @Override
-            public long preComputedStateSize() {
-                return 0;
+            public long size() {
+                return -1;
             }
 
             @Override
@@ -203,16 +203,25 @@ public class TablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public boolean getBool(int col) {
-                    switch (col) {
-                        case WAL_ENABLED_COLUMN:
-                            return table.isWalEnabled();
-                        case DEDUP_NAME_COLUMN:
-                            return table.hasDedup();
-                        case IS_MAT_VIEW_COLUMN:
-                            return table.getTableToken().isMatView();
-                        default:
-                            return false;
+                    return switch (col) {
+                        case WAL_ENABLED_COLUMN -> table.isWalEnabled();
+                        case DEDUP_NAME_COLUMN -> table.hasDedup();
+                        default -> false;
+                    };
+                }
+
+                @Override
+                public char getChar(int col) {
+                    if (col == TABLE_TYPE_COLUMN) {
+                        if (table.getTableToken().isMatView()) {
+                            return 'M';
+                        } else if (table.getTableToken().isView()) {
+                            return 'V';
+                        } else {
+                            return 'T';
+                        }
                     }
+                    return 0;
                 }
 
                 @Override
@@ -235,28 +244,24 @@ public class TablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStrA(int col) {
-                    switch (col) {
-                        case TABLE_NAME:
-                            return table.getTableName();
-                        case PARTITION_BY_COLUMN:
-                            return table.getPartitionByName();
-                        case TTL_UNIT_COLUMN:
-                            return getTtlUnit(table.getTtlHoursOrMonths());
-                        case DESIGNATED_TIMESTAMP_COLUMN:
-                            return table.getTimestampName();
-                        case DIRECTORY_NAME_COLUMN:
+                    return switch (col) {
+                        case TABLE_NAME -> table.getTableName();
+                        case PARTITION_BY_COLUMN -> table.getPartitionByName();
+                        case TTL_UNIT_COLUMN -> getTtlUnit(table.getTtlHoursOrMonths());
+                        case DESIGNATED_TIMESTAMP_COLUMN -> table.getTimestampName();
+                        case DIRECTORY_NAME_COLUMN -> {
                             if (table.isSoftLink()) {
                                 if (lazyStringSink == null) {
                                     lazyStringSink = new StringSink();
                                 }
                                 lazyStringSink.clear();
                                 lazyStringSink.put(table.getDirectoryName()).put(" (->)");
-                                return lazyStringSink;
+                                yield lazyStringSink;
                             }
-                            return table.getDirectoryName();
-                        default:
-                            return null;
-                    }
+                            yield table.getDirectoryName();
+                        }
+                        default -> null;
+                    };
                 }
 
                 @Override
@@ -289,7 +294,7 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("dedup", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("ttlValue", ColumnType.INT));
         metadata.add(new TableColumnMetadata("ttlUnit", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("matView", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("table_type", ColumnType.CHAR));
         METADATA = metadata;
     }
 }

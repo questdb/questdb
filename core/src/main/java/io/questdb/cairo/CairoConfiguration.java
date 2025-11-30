@@ -185,6 +185,8 @@ public interface CairoConfiguration {
 
     int getCommitMode();
 
+    int getCompileViewModelPoolCapacity();
+
     @NotNull
     CharSequence getConfRoot(); // same as root/../conf
 
@@ -659,6 +661,8 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    int getViewLexerPoolCapacity();
+
     @NotNull
     VolumeDefinitions getVolumeDefinitions();
 
@@ -809,6 +813,8 @@ public interface CairoConfiguration {
     default boolean isValidateSampleByFillType() {
         return true;
     }
+
+    boolean isViewEnabled();
 
     boolean isWalApplyEnabled();
 
