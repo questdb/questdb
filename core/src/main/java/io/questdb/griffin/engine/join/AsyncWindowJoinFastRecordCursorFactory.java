@@ -1616,7 +1616,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
                     if (rowIds.size() > 0) {
                         rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
-                        rowLo = rowLo < 0 ? Math.max(-rowLo - 1, 0) : rowLo;
+                        rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
                         slaveData.put(idx, 2, rowLo);
                         long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
