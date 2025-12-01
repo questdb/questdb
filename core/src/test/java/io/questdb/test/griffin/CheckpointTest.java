@@ -344,6 +344,77 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoresViewDefinition() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            // 1. Create base table with data
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
+            execute("insert into test values ('2023-09-20T14:00:00.000000Z', 'c', 30);");
+            drainWalQueue();
+
+            // 2. Create view with predicate (val > 15) - should return 'b' and 'c'
+            execute("create view v as select name, val from test where val > 15;");
+            drainViewQueue();
+
+            // Validate the view returns expected data
+            assertSql(
+                    """
+                            name\tval
+                            b\t20
+                            c\t30
+                            """,
+                    "v;"
+            );
+
+            // 3. Checkpoint
+            execute("checkpoint create;");
+
+            // 4. Drop the view and create a new one with the same name but different predicate (val > 25)
+            execute("drop view v;");
+            drainViewQueue();
+            sqlExecutionContext.getReferencedViews().clear();
+
+            execute("create view v as select name, val from test where val > 25;");
+            drainViewQueue();
+
+            // 5. Validate the new view returns different data (only 'c')
+            assertSql(
+                    """
+                            name\tval
+                            c\t30
+                            """,
+                    "v;"
+            );
+
+            // 6. Restore from the checkpoint
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            sqlExecutionContext.getReferencedViews().clear();
+
+            // 7. Validate the view uses the predicate from before the checkpoint (val > 15)
+            assertSql(
+                    """
+                            name\tval
+                            b\t20
+                            c\t30
+                            """,
+                    "v;"
+            );
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
     public void testCheckpointDbWithWalTable() throws Exception {
         assertMemoryLeak(() -> {
             for (char i = 'a'; i < 'd'; i++) {
