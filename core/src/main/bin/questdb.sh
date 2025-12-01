@@ -150,7 +150,13 @@ function export_java {
 function export_jemalloc() {
     if [[ "$QDB_JEMALLOC" = "true" ]]; then
       if [[ "$QDB_OS" != "Linux" ]]; then
-          echo "Error: jemalloc is only supported on Linux (detected: $QDB_OS)"
+          echo "Error: QDB_JEMALLOC is enabled but jemalloc is only supported on Linux (detected OS: $QDB_OS)"
+          echo "QuestDB works with the default system allocator on this platform."
+          echo ""
+          echo "To disable jemalloc, either:"
+          echo "  - Unset the environment variable: unset QDB_JEMALLOC"
+          echo "  - Set the environment variable to false: export QDB_JEMALLOC=false"
+          echo "  - Remove or comment out 'export QDB_JEMALLOC=true' from your env.sh or shell profile"
           exit 55
       fi
       jemalloc_so=$(ls $BASE/libjemalloc* 2>/dev/null)
@@ -158,7 +164,14 @@ function export_jemalloc() {
           export LD_PRELOAD=${jemalloc_so}
           echo "Using jemalloc"
       else
-          echo "Error: jemalloc library not found in $BASE"
+          echo "Error: QDB_JEMALLOC is enabled but jemalloc library not found in ${BASE}"
+          echo "Your QuestDB distribution may not include jemalloc."
+          echo "QuestDB works with the default system allocator too."
+          echo ""
+          echo "To disable jemalloc, either:"
+          echo "  - Unset the environment variable: unset QDB_JEMALLOC"
+          echo "  - Set the environment variable to false: export QDB_JEMALLOC=false"
+          echo "  - Remove or comment out 'export QDB_JEMALLOC=true' from your env.sh or shell profile"
           exit 55
       fi
     fi
