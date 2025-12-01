@@ -680,42 +680,21 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 timestamps.of(timestampsPtr);
 
                 if (timestamps.size() > 0) {
-                    long prevailingIdx = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, 0, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
-                    if (prevailingIdx < 0) {
-                        prevailingIdx = -prevailingIdx - 2;
-                    } else {
-                        prevailingIdx--;
-                    }
-
-                    if (prevailingIdx >= 0) {
-                        // Process prevailing row
-                        for (int i = 0; i < groupByFuncCount; i++) {
-                            final int mapIndex = mapIndexes.getQuick(i);
-                            final long ptr = slaveData.get(idx, 2 + mapIndex);
-                            if (ptr != 0) {
-                                final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
-                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * prevailingIdx, 1);
-                            } else {
-                                groupByFunctions.getQuick(i).computeBatch(value, 0, 1);
-                            }
-                        }
-                    }
-
-                    long rowLo2 = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
-                    rowLo2 = rowLo2 < 0 ? -rowLo2 - 1 : rowLo2;
-                    slaveData.put(idx, 1, rowLo2);
-                    long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampHi, rowLo2, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
+                    slaveData.put(idx, 1, rowLo);
+                    long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
-                    if (rowLo2 < rowHi) {
+                    if (rowLo < rowHi) {
                         for (int i = 0; i < groupByFuncCount; i++) {
                             final int mapIndex = mapIndexes.getQuick(i);
                             final long ptr = slaveData.get(idx, 2 + mapIndex);
                             if (ptr != 0) {
                                 final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
-                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo2, (int) (rowHi - rowLo2));
+                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
                             } else {
-                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo2));
+                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
                             }
                         }
                     }
@@ -1477,27 +1456,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     timestamps.of(timestampsPtr);
 
                     if (timestamps.size() > 0) {
-                        long prevailingIdx = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, 0, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
-                        if (prevailingIdx < 0) {
-                            prevailingIdx = -prevailingIdx - 2;
-                        }
-
-                        if (prevailingIdx >= 0) {
-                            // Process prevailing row
-                            for (int i = 0; i < groupByFuncCount; i++) {
-                                final int mapIndex = mapIndexes.getQuick(i);
-                                final long ptr = slaveData.get(idx, 2 + mapIndex);
-                                if (ptr != 0) {
-                                    final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
-                                    groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * prevailingIdx, 1);
-                                } else {
-                                    groupByFunctions.getQuick(i).computeBatch(value, 0, 1);
-                                }
-                            }
-                        }
-
                         rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
-                        rowLo = rowLo < 0 ? -rowLo - 1 : rowLo + 1; // +1 to skip the exact match (if any), as it's counted as prevailing
+                        rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
                         slaveData.put(idx, 1, rowLo);
                         long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
@@ -1655,29 +1615,14 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     boolean isNew = true;
 
                     if (rowIds.size() > 0) {
-                        long prevailingIdx = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, 0, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
-                        if (prevailingIdx < 0) {
-                            prevailingIdx = -prevailingIdx - 2;
-                        } else {
-                            prevailingIdx--;
-                        }
-
-                        if (prevailingIdx >= 0) {
-                            long prevailingRowId = rowIds.get(prevailingIdx);
-                            slaveTimeFrameHelper.recordAt(prevailingRowId);
-                            functionUpdater.updateNew(value, joinRecord, prevailingRowId);
-                            isNew = false;
-                            value.setNew(false);
-                        }
-
-                        long rowLo2 = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
-                        rowLo2 = rowLo2 < 0 ? -rowLo2 - 1 : rowLo2;
-                        slaveData.put(idx, 2, rowLo2);
-                        long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampHi, rowLo2, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = rowLo < 0 ? Math.max(-rowLo - 1, 0) : rowLo;
+                        slaveData.put(idx, 2, rowLo);
+                        long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
-                        if (rowLo2 < rowHi) {
-                            for (long i = rowLo2; i < rowHi; i++) {
+                        if (rowLo < rowHi) {
+                            for (long i = rowLo; i < rowHi; i++) {
                                 long windowSlaveRowId = rowIds.get(i);
                                 slaveTimeFrameHelper.recordAt(windowSlaveRowId);
                                 if (isNew) {
@@ -1954,15 +1899,12 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
     ) {
         final int savedFrameIndex = slaveTimeFrameHelper.getBookmarkedFrameIndex();
         final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowId();
-
         if (savedFrameIndex == -1) {
             return;
         }
 
         final int totalSymbols = slaveSymbolLookupTable.size();
         int foundCount = 0;
-
-        // Start scanning from slaveRowId - 1 (all rows before slaveRowId are < slaveTimestampLo)
         long scanStart = slaveRowId - 1;
 
         try {
@@ -1970,13 +1912,10 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             do {
                 long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
                 long rowHi = slaveTimeFrameHelper.getTimeFrameRowHi();
-
-                // Adjust scanStart for current frame
                 if (scanStart >= rowHi) {
                     scanStart = rowHi - 1;
                 }
                 if (scanStart < rowLo) {
-                    // No rows in this frame to scan, move to previous frame
                     scanStart = Long.MAX_VALUE;
                     continue;
                 }
@@ -2000,8 +1939,6 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     timestamps.of(0);
                     timestamps.add(slaveTimestamp);
                     slaveData.put(idx, 0, timestamps.ptr());
-
-                    // Copy column values for vectorized aggregation
                     for (int i = 0, n = groupByFuncArgs.size(); i < n; i++) {
                         var funcArg = groupByFuncArgs.getQuick(i);
                         if (funcArg != null) {
@@ -2010,12 +1947,10 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         }
                     }
 
-                    // Early exit if all symbols have been found
                     if (++foundCount >= totalSymbols) {
                         return;
                     }
                 }
-                // For previous frames, start from the end
                 scanStart = Long.MAX_VALUE;
             } while (slaveTimeFrameHelper.previousFrame());
         } finally {
