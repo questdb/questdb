@@ -22,7 +22,8 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <name>QuestDB</name>
     <description>QuestDB is high performance SQL time series database</description>
@@ -192,7 +193,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.3</version>
                 <configuration>
-                    <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory" />
+                    <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory"/>
                     <useModulePath>true</useModulePath>
                     <includes>
                         <include>${test.include}</include>
@@ -570,7 +571,6 @@
                 <runtime.name>questdb-${project.version}-rt-osx-x86-64</runtime.name>
                 <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
                 <platform.dir.name>darwin-x86-64</platform.dir.name>
-                <jemalloc.so>libjemalloc.dylib</jemalloc.so>
             </properties>
         </profile>
         <profile>
@@ -586,7 +586,6 @@
                 <runtime.name>questdb-${project.version}-rt-osx-aarch64</runtime.name>
                 <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
                 <platform.dir.name>darwin-aarch64</platform.dir.name>
-                <jemalloc.so>libjemalloc.dylib</jemalloc.so>
             </properties>
         </profile>
         <profile>

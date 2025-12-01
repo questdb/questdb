@@ -149,14 +149,17 @@ function export_java {
 
 function export_jemalloc() {
     if [[ "$QDB_JEMALLOC" = "true" ]]; then
-      jemalloc_so=$(ls $BASE/libjemalloc*)
-      if [[ "$QDB_OS" != "FreeBSD" && -r "${jemalloc_so}" ]]; then
-          if [[ "$QDB_OS" == "Darwin" ]]; then
-              export DYLD_INSERT_LIBRARIES=${jemalloc_so}
-          else
-              export LD_PRELOAD=${jemalloc_so}
-          fi
+      if [[ "$QDB_OS" != "Linux" ]]; then
+          echo "Error: jemalloc is only supported on Linux (detected: $QDB_OS)"
+          exit 55
+      fi
+      jemalloc_so=$(ls $BASE/libjemalloc* 2>/dev/null)
+      if [[ -r "${jemalloc_so}" ]]; then
+          export LD_PRELOAD=${jemalloc_so}
           echo "Using jemalloc"
+      else
+          echo "Error: jemalloc library not found in $BASE"
+          exit 55
       fi
     fi
 }

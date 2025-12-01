@@ -1,4 +1,4 @@
-if (OS_WINDOWS)
+if (OS_WINDOWS OR OS_DARWIN)
     return()
 endif ()
 
