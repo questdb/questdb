@@ -356,10 +356,10 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                         && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
 
                 // Sometimes TableWriter can create a partition folder before committing the transaction
-                // and then clean it before the commiting because it was not necessary to do a copy on write.
-                // We reed partition directories before reading the txn file, so it is possible to see such partitions
+                // and then clean it before committing because it was not necessary to do a copy on write.
+                // We read partition directories before reading the txn file, so it is possible to see such partitions
                 // that don't exist when the txn file was committed.
-                // Check that the partition version we think rely on is indeed still exits.
+                // Check that the partition version we think we rely on indeed still exists.
                 if (rangeUnlocked) {
                     path.trimTo(tableRootLen);
                     TableUtils.setPathForNativePartition(
