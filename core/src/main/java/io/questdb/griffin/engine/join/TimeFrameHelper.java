@@ -305,6 +305,14 @@ public class TimeFrameHelper {
         }
     }
 
+    public int getBookmarkedFrameIndex() {
+        return bookmarkedFrameIndex;
+    }
+
+    public long getBookmarkedRowId() {
+        return bookmarkedRowId;
+    }
+
     public Record getRecord() {
         return record;
     }
@@ -351,12 +359,59 @@ public class TimeFrameHelper {
         toTop();
     }
 
+    public boolean previousFrame() {
+        if (bookmarkedFrameIndex <= 0) {
+            return false;
+        }
+        timeFrameCursor.jumpTo(bookmarkedFrameIndex - 1);
+        if (timeFrameCursor.open() > 0) {
+            bookmarkedFrameIndex = timeFrame.getFrameIndex();
+            bookmarkedRowId = timeFrame.getRowHi() - 1;
+            recordAtRowIndex(bookmarkedRowId);
+            return true;
+        }
+        return false;
+    }
+
     public void recordAt(long rowId) {
         timeFrameCursor.recordAt(record, rowId);
     }
 
     public void recordAtRowIndex(long rowIndex) {
         timeFrameCursor.recordAtRowIndex(record, rowIndex);
+    }
+
+    public long scanBackwardForPrevailing(long timestampLo) {
+        long rowHi = timeFrame.getRowHi();
+        long rowLo = timeFrame.getRowLo();
+
+        // Binary search to find the last row with timestamp < timestampLo
+        long low = rowLo;
+        long high = rowHi - 1;
+        long prevailing = Long.MIN_VALUE;
+
+        while (low <= high) {
+            long mid = (low + high) >>> 1;
+            recordAtRowIndex(mid);
+            long midTs = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
+
+            if (midTs < timestampLo) {
+                prevailing = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        if (prevailing != Long.MIN_VALUE) {
+            recordAtRowIndex(prevailing);
+        }
+        return prevailing;
+    }
+
+    public void setBookmark(int frameIndex, long rowId) {
+        this.bookmarkedFrameIndex = frameIndex;
+        this.bookmarkedRowId = rowId;
     }
 
     public void toTop() {

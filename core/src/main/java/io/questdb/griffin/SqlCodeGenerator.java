@@ -334,8 +334,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -3493,8 +3493,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 final WindowJoinContext context = slaveModel.getWindowJoinContext();
-                                // already validated by SqlOptimiser
-                                assert !context.isIncludePrevailing();
                                 final TimestampDriver timestampDriver = getTimestampDriver(masterMetadata.getTimestampType());
                                 long hi = context.getHi();
                                 if (context.getHiExprTimeUnit() != 0) {
@@ -3795,6 +3793,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         parent,
                                                         joinMetadata
                                                 ),
+                                                context.isIncludePrevailing(),
                                                 leftSymbolIndex,
                                                 rightSymbolIndex,
                                                 lo,
@@ -3834,6 +3833,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 columnIndex,
                                                 master,
                                                 slave,
+                                                context.isIncludePrevailing(),
                                                 joinFilter,
                                                 compileWorkerFilterConditionally(
                                                         executionContext,

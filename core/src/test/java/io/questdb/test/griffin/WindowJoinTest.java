@@ -1922,26 +1922,6 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowJoinFailsOnIncludePrevailing() throws Exception {
-        // timestamp types don't matter for this test
-        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
-        assertMemoryLeak(() -> {
-            prepareTable();
-
-            assertExceptionNoLeakCheck(
-                    "select t.*, sum(p.price) as window_price " +
-                            "from trades t " +
-                            "window join prices p " +
-                            "on (t.sym = p.sym) " +
-                            " range between 2 minute preceding and 2 minute following including prevailing;",
-                    162,
-                    "including prevailing is not supported in WINDOW joins"
-            );
-        });
-    }
-
-    @Test
     public void testWindowJoinFailsOnInvalidBoundaries() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
