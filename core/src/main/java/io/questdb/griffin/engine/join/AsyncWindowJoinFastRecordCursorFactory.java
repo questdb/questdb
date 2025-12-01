@@ -621,7 +621,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     groupByFuncArgs,
                     groupByFuncTypes,
                     slaveTsScale,
-                    slaveTimestampLo
+                    slaveRowId
             );
 
             // Scan forward to collect window rows
@@ -792,7 +792,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     rowIds,
                     timestamps,
                     slaveTsScale,
-                    slaveTimestampLo
+                    slaveRowId
             );
 
             if (slaveRowId != Long.MIN_VALUE) {
@@ -845,33 +845,17 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 long rowLo = slaveData.get(idx, 2);
                 rowIds.of(rowIdsPtr);
                 timestamps.of(timestampsPtr);
-
                 boolean isNew = true;
 
                 if (rowIds.size() > 0) {
-                    long prevailingIdx = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, 0, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
-                    if (prevailingIdx < 0) {
-                        prevailingIdx = -prevailingIdx - 2;
-                    } else {
-                        prevailingIdx--;
-                    }
-
-                    if (prevailingIdx >= 0) {
-                        long prevailingRowId = rowIds.get(prevailingIdx);
-                        slaveTimeFrameHelper.recordAt(prevailingRowId);
-                        functionUpdater.updateNew(value, joinRecord, prevailingRowId);
-                        isNew = false;
-                        value.setNew(false);
-                    }
-
-                    long rowLo2 = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
-                    rowLo2 = rowLo2 < 0 ? -rowLo2 - 1 : rowLo2;
-                    slaveData.put(idx, 2, rowLo2);
-                    long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampHi, rowLo2, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
+                    slaveData.put(idx, 2, rowLo);
+                    long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
-                    if (rowLo2 < rowHi) {
-                        for (long i = rowLo2; i < rowHi; i++) {
+                    if (rowLo < rowHi) {
+                        for (long i = rowLo; i < rowHi; i++) {
                             long windowSlaveRowId = rowIds.get(i);
                             slaveTimeFrameHelper.recordAt(windowSlaveRowId);
                             if (isNew) {
@@ -1434,7 +1418,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         groupByFuncArgs,
                         groupByFuncTypes,
                         slaveTsScale,
-                        slaveTimestampLo
+                        slaveRowId
                 );
 
                 if (slaveRowId != Long.MIN_VALUE) {
@@ -1614,7 +1598,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         rowIds,
                         timestamps,
                         slaveTsScale,
-                        slaveTimestampLo
+                        slaveRowId
                 );
 
                 if (slaveRowId != Long.MIN_VALUE) {
@@ -1894,33 +1878,33 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             GroupByLongList rowIds,
             GroupByLongList timestamps,
             long slaveTsScale,
-            long slaveTimestampLo
+            long slaveRowId
     ) {
         final int savedFrameIndex = slaveTimeFrameHelper.getBookmarkedFrameIndex();
         final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowId();
         if (savedFrameIndex == -1) {
             return;
         }
-
         final int totalSymbols = slaveSymbolLookupTable.size();
         int foundCount = 0;
+        long scanStart = slaveRowId - 1;
 
         try {
             slaveTimeFrameHelper.setBookmark(savedFrameIndex, 0);
             do {
-                long scanStart = slaveTimeFrameHelper.scanBackwardForPrevailing(slaveTimestampLo);
-                if (scanStart == Long.MIN_VALUE) {
+                long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
+                long rowHi = slaveTimeFrameHelper.getTimeFrameRowHi();
+                if (scanStart >= rowHi) {
+                    scanStart = rowHi - 1;
+                }
+                if (scanStart < rowLo) {
+                    scanStart = Long.MAX_VALUE;
                     continue;
                 }
 
-                long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
-                long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
                 for (long r = scanStart; r >= rowLo; r--) {
                     slaveTimeFrameHelper.recordAtRowIndex(r);
-                    final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
-                    if (slaveTimestamp >= slaveTimestampLo) {
-                        continue;
-                    }
 
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
                     final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
@@ -1934,6 +1918,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         continue;
                     }
 
+                    final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                     rowIds.of(0);
                     timestamps.of(0);
                     rowIds.add(baseSlaveRowId + r);
@@ -1944,6 +1929,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         return;
                     }
                 }
+                // For previous frames, start from the end
+                scanStart = Long.MAX_VALUE;
             } while (slaveTimeFrameHelper.previousFrame());
         } finally {
             slaveTimeFrameHelper.setBookmark(savedFrameIndex, savedRowId);
@@ -1963,7 +1950,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             ObjList<Function> groupByFuncArgs,
             IntList groupByFuncTypes,
             long slaveTsScale,
-            long slaveTimestampLo
+            long slaveRowId
     ) {
         final int savedFrameIndex = slaveTimeFrameHelper.getBookmarkedFrameIndex();
         final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowId();
@@ -1975,21 +1962,27 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final int totalSymbols = slaveSymbolLookupTable.size();
         int foundCount = 0;
 
+        // Start scanning from slaveRowId - 1 (all rows before slaveRowId are < slaveTimestampLo)
+        long scanStart = slaveRowId - 1;
+
         try {
             slaveTimeFrameHelper.setBookmark(savedFrameIndex, 0);
             do {
-                long scanStart = slaveTimeFrameHelper.scanBackwardForPrevailing(slaveTimestampLo);
-                if (scanStart == Long.MIN_VALUE) {
+                long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
+                long rowHi = slaveTimeFrameHelper.getTimeFrameRowHi();
+
+                // Adjust scanStart for current frame
+                if (scanStart >= rowHi) {
+                    scanStart = rowHi - 1;
+                }
+                if (scanStart < rowLo) {
+                    // No rows in this frame to scan, move to previous frame
+                    scanStart = Long.MAX_VALUE;
                     continue;
                 }
 
-                long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
                 for (long r = scanStart; r >= rowLo; r--) {
                     slaveTimeFrameHelper.recordAtRowIndex(r);
-                    final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
-                    if (slaveTimestamp >= slaveTimestampLo) {
-                        continue;
-                    }
 
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
                     final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
@@ -2003,6 +1996,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         continue;
                     }
 
+                    final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                     timestamps.of(0);
                     timestamps.add(slaveTimestamp);
                     slaveData.put(idx, 0, timestamps.ptr());
@@ -2021,6 +2015,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         return;
                     }
                 }
+                // For previous frames, start from the end
+                scanStart = Long.MAX_VALUE;
             } while (slaveTimeFrameHelper.previousFrame());
         } finally {
             slaveTimeFrameHelper.setBookmark(savedFrameIndex, savedRowId);
