@@ -415,6 +415,148 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointDoesNotRestoreViewCreatedAfterCheckpoint() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            // 1. Create base table with data
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
+            drainWalQueue();
+
+            // 2. Checkpoint BEFORE creating the view
+            execute("checkpoint create;");
+
+            // 3. Create view AFTER the checkpoint
+            execute("create view v as select name, val from test where val > 15;");
+            drainViewQueue();
+
+            // 4. Verify view exists and works
+            assertSql("count\n1\n", "select count() from views() where view_name = 'v';");
+            assertSql(
+                    """
+                            name\tval
+                            b\t20
+                            """,
+                    "v;"
+            );
+
+            // 5. Restore from checkpoint
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            // 6. View should NOT exist (it was created after checkpoint)
+            // TODO: investigate why it's not removed from metadata
+            assertSql("count\n0\n", "select count() from views() where view_name = 'v';");
+
+            // 7. Querying the view should fail
+            assertException("select * from v", 14, "view does not exist");
+
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoresNestedViews() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            // 1. Create base table with data
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
+            execute("insert into test values ('2023-09-20T14:00:00.000000Z', 'c', 30);");
+            drainWalQueue();
+
+            // 2. Create view_a: selects rows with val > 5 (returns a, b, c)
+            execute("create view view_a as select name, val from test where val > 5;");
+            drainViewQueue();
+
+            // 3. Create view_b: selects from view_a with val > 15 (returns b, c)
+            execute("create view view_b as select name, val from view_a where val > 15;");
+            drainViewQueue();
+
+            // 4. Verify both views work correctly
+            assertSql(
+                    """
+                            name\tval
+                            a\t10
+                            b\t20
+                            c\t30
+                            """,
+                    "view_a;"
+            );
+            assertSql(
+                    """
+                            name\tval
+                            b\t20
+                            c\t30
+                            """,
+                    "view_b;"
+            );
+
+            // 5. Checkpoint
+            execute("checkpoint create;");
+
+            // 6. Drop both views
+            execute("drop view view_b;");
+            execute("drop view view_a;");
+            drainViewQueue();
+            sqlExecutionContext.getReferencedViews().clear();
+
+            // 7. Verify neither view exists
+            assertSql("count\n0\n", "select count() from views() where view_name = 'view_a';");
+            assertSql("count\n0\n", "select count() from views() where view_name = 'view_b';");
+
+            // 8. Restore from checkpoint
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            sqlExecutionContext.getReferencedViews().clear();
+
+            // 9. Verify both views are restored
+            assertSql("count\n1\n", "select count() from views() where view_name = 'view_a';");
+            assertSql("count\n1\n", "select count() from views() where view_name = 'view_b';");
+
+            // 10. Verify view_a returns correct data (a, b, c)
+            assertSql(
+                    """
+                            name\tval
+                            a\t10
+                            b\t20
+                            c\t30
+                            """,
+                    "view_a;"
+            );
+
+            // 11. Verify view_b returns correct data (b, c) - the nested view chain works
+            assertSql(
+                    """
+                            name\tval
+                            b\t20
+                            c\t30
+                            """,
+                    "view_b;"
+            );
+
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
     public void testCheckpointDbWithWalTable() throws Exception {
         assertMemoryLeak(() -> {
             for (char i = 'a'; i < 'd'; i++) {
