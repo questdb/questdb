@@ -86,6 +86,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.StaleViewCheckFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -4715,6 +4716,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             boolean generateProgressLogger
     ) throws SqlException {
         RecordCursorFactory factory = codeGenerator.generate(selectQueryModel, executionContext);
+        ObjList<ViewDefinition> views = executionContext.getReferencedViews();
+        if (views.size() > 0) {
+            factory = new StaleViewCheckFactory(factory, views, engine);
+        }
         if (generateProgressLogger) {
             return new QueryProgress(queryRegistry, sqlText, factory);
         } else {
