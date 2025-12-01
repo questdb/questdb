@@ -274,6 +274,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     }
                                 }
 
+                                if (tableToken.isView()) {
+                                    // todo: implement me
+                                    LOG.info().$("skipping view checkpoint as it's currently not implemented [view=").$(tableToken).I$();
+                                    break;
+                                }
+
                                 TableReader reader = null;
                                 try {
                                     try {

@@ -198,6 +198,17 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewDoesNotObstructCheckpointCreation() throws Exception {
+        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, name symbol, val int)");
+            execute("create view test_view as select * from test");
+            execute("checkpoint create");
+            execute("checkpoint release");
+        });
+    }
+
+    @Test
     public void testCheckpointDbWithWalTable() throws Exception {
         assertMemoryLeak(() -> {
             for (char i = 'a'; i < 'd'; i++) {
