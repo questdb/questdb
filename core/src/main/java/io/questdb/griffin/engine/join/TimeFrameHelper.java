@@ -176,6 +176,135 @@ public class TimeFrameHelper {
         }
     }
 
+    public long findRowLoWithPrevailing(long timestampLo, long timestampHi) {
+        long rowLo = Long.MIN_VALUE;
+        // record prevailing candidate across frames
+        long prevailingRowId = Long.MIN_VALUE;
+        int prevailingFrameIndex = -1;
+
+        if (bookmarkedFrameIndex != -1) {
+            timeFrameCursor.jumpTo(bookmarkedFrameIndex);
+            if (timeFrameCursor.open() > 0) {
+                // Check if bookmarked position is still valid for this search
+                long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi(), scale);
+                if (frameTsHi < timestampLo) {
+                    // Record as prevailing candidate
+                    prevailingRowId = timeFrame.getRowHi() - 1;
+                    prevailingFrameIndex = timeFrame.getFrameIndex();
+                    bookmarkCurrentFrame(0);
+                } else {
+                    rowLo = bookmarkedRowId;
+                }
+            }
+        }
+
+        for (; ; ) {
+            if (rowLo == Long.MIN_VALUE) {
+                while (timeFrameCursor.next()) {
+                    long frameEstimateHi = scaleTimestamp(timeFrame.getTimestampEstimateHi(), scale);
+                    long frameEstimateLo = scaleTimestamp(timeFrame.getTimestampEstimateLo(), scale);
+
+                    if (frameEstimateHi < timestampLo) {
+                        if (timeFrameCursor.open() > 0) {
+                            // Record as prevailing candidate
+                            prevailingRowId = timeFrame.getRowHi() - 1;
+                            prevailingFrameIndex = timeFrame.getFrameIndex();
+                        }
+                        bookmarkCurrentFrame(0);
+                        continue;
+                    }
+
+                    if (frameEstimateLo <= timestampHi) {
+                        if (timeFrameCursor.open() == 0) {
+                            continue;
+                        }
+
+                        long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi(), scale);
+                        long frameTsLo = scaleTimestamp(timeFrame.getTimestampLo(), scale);
+
+                        if (frameTsHi < timestampLo) {
+                            prevailingRowId = timeFrame.getRowHi() - 1;
+                            prevailingFrameIndex = timeFrame.getFrameIndex();
+                            bookmarkCurrentFrame(0);
+                            continue;
+                        }
+
+                        if (frameTsLo <= timestampHi) {
+                            if (frameTsLo == timestampLo) {
+                                // Exact match at frame start
+                                bookmarkCurrentFrame(timeFrame.getRowLo());
+                                timeFrameCursor.recordAt(record, Rows.toRowID(timeFrame.getFrameIndex(), timeFrame.getRowLo()));
+                                return timeFrame.getRowLo();
+                            }
+                            if (frameTsLo > timestampLo) {
+                                // Frame starts after timestampLo, return prevailing if exists
+                                if (prevailingRowId != Long.MIN_VALUE) {
+                                    bookmarkedFrameIndex = prevailingFrameIndex;
+                                    bookmarkedRowId = prevailingRowId;
+                                    timeFrameCursor.recordAt(record, Rows.toRowID(prevailingFrameIndex, prevailingRowId));
+                                    return prevailingRowId;
+                                }
+                                bookmarkCurrentFrame(timeFrame.getRowLo());
+                                timeFrameCursor.recordAt(record, Rows.toRowID(timeFrame.getFrameIndex(), timeFrame.getRowLo()));
+                                return timeFrame.getRowLo();
+                            }
+                            rowLo = timeFrame.getRowLo();
+                            break;
+                        }
+                    }
+
+                    if (prevailingRowId != Long.MIN_VALUE) {
+                        bookmarkedFrameIndex = prevailingFrameIndex;
+                        bookmarkedRowId = prevailingRowId;
+                        timeFrameCursor.recordAt(record, Rows.toRowID(prevailingFrameIndex, prevailingRowId));
+                        return prevailingRowId;
+                    }
+                    bookmarkCurrentFrame(0);
+                    return Long.MIN_VALUE;
+                }
+
+                if (rowLo == Long.MIN_VALUE) {
+                    if (prevailingRowId != Long.MIN_VALUE) {
+                        bookmarkedFrameIndex = prevailingFrameIndex;
+                        bookmarkedRowId = prevailingRowId;
+                        timeFrameCursor.recordAt(record, Rows.toRowID(prevailingFrameIndex, prevailingRowId));
+                        return prevailingRowId;
+                    }
+                    return Long.MIN_VALUE;
+                }
+            }
+
+            bookmarkCurrentFrame(rowLo);
+            timeFrameCursor.recordAt(record, Rows.toRowID(timeFrame.getFrameIndex(), timeFrame.getRowLo()));
+
+            // Try linear scan first
+            final long scanResult = linearScanWithPrevailing(timestampLo, timestampHi, rowLo);
+            if (scanResult >= 0) {
+                bookmarkCurrentFrame(scanResult);
+                return scanResult;
+            } else if (scanResult == Long.MIN_VALUE) {
+                // Try next frame
+                if (scaleTimestamp(timeFrame.getTimestampHi(), scale) > timestampHi) {
+                    return Long.MIN_VALUE;
+                }
+                rowLo = Long.MIN_VALUE;
+                continue;
+            }
+
+            long lastScanned = -scanResult - 2;
+            final long searchResult = binarySearchWithPrevailing(timestampLo, timestampHi, lastScanned + 1);
+            if (searchResult == Long.MIN_VALUE) {
+                if (scaleTimestamp(timeFrame.getTimestampHi(), scale) > timestampHi) {
+                    return Long.MIN_VALUE;
+                }
+                rowLo = Long.MIN_VALUE;
+                continue;
+            }
+            bookmarkCurrentFrame(searchResult);
+            return searchResult;
+        }
+    }
+
     public Record getRecord() {
         return record;
     }
@@ -268,6 +397,56 @@ public class TimeFrameHelper {
         return high + 1;
     }
 
+    // Binary search that returns timestamp <= timestampLo (prevailing/exact match),
+    // or first row in [timestampLo, timestampHi] if no prevailing exists.
+    // The prevailingFromLinearScan parameter carries forward any prevailing found during linear scan.
+    private long binarySearchWithPrevailing(long timestampLo, long timestampHi, long rowLo) {
+        long low = rowLo;
+        long high = timeFrame.getRowHi() - 1;
+        // Start with the row just before rowLo as prevailing candidate (from linear scan)
+        long prevailingCandidate = rowLo > timeFrame.getRowLo() ? rowLo - 1 : Long.MIN_VALUE;
+
+        while (high - low > 65) {
+            final long mid = (low + high) >>> 1;
+            recordAtRowIndex(mid);
+            long midTimestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
+
+            if (midTimestamp < timestampLo) {
+                prevailingCandidate = mid;
+                low = mid + 1;
+            } else if (midTimestamp == timestampLo) {
+                return mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        for (long r = low; r <= high; r++) {
+            recordAtRowIndex(r);
+            long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
+
+            if (timestamp < timestampLo) {
+                prevailingCandidate = r;
+            } else if (timestamp == timestampLo) {
+                return r;
+            } else {
+                if (prevailingCandidate != Long.MIN_VALUE) {
+                    recordAtRowIndex(prevailingCandidate);
+                    return prevailingCandidate;
+                }
+                if (timestamp <= timestampHi) {
+                    return r;
+                }
+                return Long.MIN_VALUE;
+            }
+        }
+
+        if (prevailingCandidate != Long.MIN_VALUE) {
+            recordAtRowIndex(prevailingCandidate);
+        }
+        return prevailingCandidate;
+    }
+
     private void bookmarkCurrentFrame(long rowId) {
         bookmarkedFrameIndex = timeFrame.getFrameIndex();
         bookmarkedRowId = rowId;
@@ -290,5 +469,43 @@ public class TimeFrameHelper {
             }
         }
         return -rowLo - lookahead - 1;
+    }
+
+    // Linear scan that returns timestamp <= timestampLo (prevailing/exact match).
+    // Returns:
+    //   >= 0: found row index (prevailing or exact match)
+    //   Long.MIN_VALUE: no prevailing found (all rows > timestampLo)
+    //   negative value: need binary search, encoded as -(last scanned row) - 2
+    private long linearScanWithPrevailing(long timestampLo, long timestampHi, long rowLo) {
+        final long scanHi = Math.min(rowLo + lookahead, timeFrame.getRowHi());
+        long prevailingRow = Long.MIN_VALUE;
+
+        for (long r = rowLo; r < scanHi; r++) {
+            recordAtRowIndex(r);
+            final long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
+
+            if (timestamp < timestampLo) {
+                prevailingRow = r;
+            } else if (timestamp == timestampLo) {
+                return r;
+            } else {
+                if (prevailingRow != Long.MIN_VALUE) {
+                    recordAtRowIndex(prevailingRow);
+                    return prevailingRow;
+                }
+                if (timestamp <= timestampHi) {
+                    return r;
+                }
+                return Long.MIN_VALUE;
+            }
+        }
+
+        if (scanHi < timeFrame.getRowHi()) {
+            return -(scanHi - 1) - 2;
+        }
+        if (prevailingRow != Long.MIN_VALUE) {
+            recordAtRowIndex(prevailingRow);
+        }
+        return prevailingRow;
     }
 }
