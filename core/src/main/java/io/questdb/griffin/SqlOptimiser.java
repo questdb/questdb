@@ -98,6 +98,7 @@ public class SqlOptimiser implements Mutable {
     public static final int REWRITE_STATUS_USE_OUTER_MODEL = 8;
     public static final int REWRITE_STATUS_USE_WINDOW_MODEL = 2;
     private static final int JOIN_OP_AND = 2;
+    private static final int JOIN_OP_CIDR = 5;
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
@@ -131,7 +132,6 @@ public class SqlOptimiser implements Mutable {
     private final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
     private final CharSequenceObjHashMap<ExpressionNode> constNameToNode = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
-    private final ObjectPool<JoinContext> contextPool;
     private final IntHashSet deletedContexts = new IntHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
@@ -142,6 +142,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
+    private final ObjectPool<JoinContext> joinContextPool;
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final IntHashSet literalCollectorAIndexes = new IntHashSet();
@@ -198,7 +199,7 @@ public class SqlOptimiser implements Mutable {
         this.queryModelPool = queryModelPool;
         this.queryColumnPool = queryColumnPool;
         this.functionParser = functionParser;
-        this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
+        this.joinContextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
         this.maxRecursion = configuration.getSqlWindowMaxRecursion();
         initialiseOperatorExpressions();
@@ -233,7 +234,7 @@ public class SqlOptimiser implements Mutable {
 
     public void clear() {
         clearForUnionModelInJoin();
-        contextPool.clear();
+        joinContextPool.clear();
         intHashSetPool.clear();
         joinClausesSwap1.clear();
         joinClausesSwap2.clear();
@@ -522,7 +523,7 @@ public class SqlOptimiser implements Mutable {
             addWhereNode(parent, ai, node);
         } else {
             // (different tables)
-            JoinContext jc = contextPool.next();
+            JoinContext jc = joinContextPool.next();
             jc.aIndexes.add(ai);
             jc.aNames.add(an);
             jc.aNodes.add(ao);
@@ -576,9 +577,9 @@ public class SqlOptimiser implements Mutable {
         QueryModel jm = parent.getJoinModels().getQuick(context.slaveIndex);
         JoinContext other = jm.getJoinContext();
         if (other == null || other.slaveIndex == -1) {
-            jm.setContext(context);
+            jm.setJoinContext(context);
         } else {
-            jm.setContext(mergeContexts(parent, other, context));
+            jm.setJoinContext(mergeContexts(parent, other, context));
         }
     }
 
@@ -909,7 +910,7 @@ public class SqlOptimiser implements Mutable {
                         && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorBIndexes.get(0)).getJoinType())
                 ) {
                     // single table reference + constant
-                    jc = contextPool.next();
+                    jc = joinContextPool.next();
                     jc.slaveIndex = literalCollectorBIndexes.get(0);
 
                     addWhereNode(parent, jc.slaveIndex, node);
@@ -924,7 +925,143 @@ public class SqlOptimiser implements Mutable {
                 }
                 break;
             case 1:
-                jc = contextPool.next();
+                jc = joinContextPool.next();
+                int lhi = literalCollectorAIndexes.get(0);
+                if (bSize == 1) {
+                    int rhi = literalCollectorBIndexes.get(0);
+                    if (lhi == rhi) {
+                        // single table reference
+                        jc.slaveIndex = lhi;
+                        if (canMovePredicate) {
+                            // we can't push anything into another left/right join
+                            if (jc.slaveIndex != joinIndex &&
+                                    joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
+                                addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
+                            } else {
+                                addWhereNode(parent, lhi, node);
+                            }
+                            return;
+                        }
+                    } else if (lhi < rhi) {
+                        // we must align "a" nodes with slave index
+                        // compiler will always be checking "a" columns
+                        // against metadata of the slave the context is assigned to
+                        jc.aNodes.add(node.lhs);
+                        jc.bNodes.add(node.rhs);
+                        jc.aNames.add(literalCollectorANames.getQuick(0));
+                        jc.bNames.add(literalCollectorBNames.getQuick(0));
+                        jc.aIndexes.add(lhi);
+                        jc.bIndexes.add(rhi);
+                        jc.slaveIndex = rhi;
+                        jc.parents.add(lhi);
+                    } else {
+                        jc.aNodes.add(node.rhs);
+                        jc.bNodes.add(node.lhs);
+                        jc.aNames.add(literalCollectorBNames.getQuick(0));
+                        jc.bNames.add(literalCollectorANames.getQuick(0));
+                        jc.aIndexes.add(rhi);
+                        jc.bIndexes.add(lhi);
+                        jc.slaveIndex = lhi;
+                        jc.parents.add(rhi);
+                    }
+
+                    if (canMovePredicate || jc.slaveIndex == joinIndex) {
+                        //we can't push anything into another left/right join
+                        if (jc.slaveIndex != joinIndex && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
+                            addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
+                        } else {
+                            addJoinContext(parent, jc);
+                            if (lhi != rhi) {
+                                linkDependencies(parent, Math.min(lhi, rhi), Math.max(lhi, rhi));
+                            }
+                        }
+                    } else {
+                        addOuterJoinExpression(parent, joinModel, joinIndex, node);
+                    }
+                } else if (bSize == 0
+                        && literalCollector.nullCount == 0
+                        && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorAIndexes.get(0)).getJoinType())) {
+                    // single table reference + constant
+                    if (!canMovePredicate) {
+                        addOuterJoinExpression(parent, joinModel, joinIndex, node);
+                        break;
+                    }
+                    jc.slaveIndex = lhi;
+                    addWhereNode(parent, lhi, node);
+                    addJoinContext(parent, jc);
+
+                    CharSequence cs = literalCollectorANames.getQuick(0);
+                    constNameToIndex.put(cs, lhi);
+                    constNameToNode.put(cs, node.rhs);
+                    constNameToToken.put(cs, node.token);
+                } else {
+                    if (canMovePredicate) {
+                        parent.addParsedWhereNode(node, innerPredicate);
+                    } else {
+                        addOuterJoinExpression(parent, joinModel, joinIndex, node);
+                    }
+                }
+                break;
+            default:
+                if (canMovePredicate) {
+                    node.innerPredicate = innerPredicate;
+                    parent.addParsedWhereNode(node, innerPredicate);
+                } else {
+                    addOuterJoinExpression(parent, joinModel, joinIndex, node);
+                }
+
+                break;
+        }
+    }
+
+    private void analyseCidrContains(QueryModel parent, ExpressionNode node, boolean innerPredicate, QueryModel joinModel) throws SqlException {
+        traverseNamesAndIndices(parent, node);
+        int aSize = literalCollectorAIndexes.size();
+        int bSize = literalCollectorBIndexes.size();
+
+        JoinContext jc;
+        boolean canMovePredicate = joinBarriers.excludes(joinModel.getJoinType());
+        int joinIndex = parent.getJoinModels().indexOfRef(joinModel);
+
+        //the switch code below assumes expression are simple column references
+        if (literalCollector.functionCount > 0) {
+            node.innerPredicate = innerPredicate;
+            if (canMovePredicate) {
+                parent.addParsedWhereNode(node, innerPredicate);
+            } else {
+                addOuterJoinExpression(parent, joinModel, joinIndex, node);
+            }
+            return;
+        }
+
+        switch (aSize) {
+            case 0:
+                if (!canMovePredicate) {
+                    addOuterJoinExpression(parent, joinModel, joinIndex, node);
+                    break;
+                }
+                if (bSize == 1
+                        && literalCollector.nullCount == 0
+                        // the table must not be OUTER or ASOF joined
+                        && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorBIndexes.get(0)).getJoinType())
+                ) {
+                    // single table reference + constant
+                    jc = joinContextPool.next();
+                    jc.slaveIndex = literalCollectorBIndexes.get(0);
+
+                    addWhereNode(parent, jc.slaveIndex, node);
+                    addJoinContext(parent, jc);
+
+                    CharSequence cs = literalCollectorBNames.getQuick(0);
+                    constNameToIndex.put(cs, jc.slaveIndex);
+                    constNameToNode.put(cs, node.lhs);
+                    constNameToToken.put(cs, node.token);
+                } else {
+                    parent.addParsedWhereNode(node, innerPredicate);
+                }
+                break;
+            case 1:
+                jc = joinContextPool.next();
                 int lhi = literalCollectorAIndexes.get(0);
                 if (bSize == 1) {
                     int rhi = literalCollectorBIndexes.get(0);
@@ -1463,7 +1600,7 @@ public class SqlOptimiser implements Mutable {
             if (joinsRequiringTimestamp[m.getJoinType()]) {
                 linkDependencies(parent, 0, i);
                 if (m.getJoinContext() == null) {
-                    m.setContext(jc = contextPool.next());
+                    m.setJoinContext(jc = joinContextPool.next());
                     jc.parents.add(0);
                     jc.slaveIndex = i;
                 }
@@ -2511,28 +2648,34 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             QueryModel m = joinModels.getQuick(i);
             JoinContext c = m.getJoinContext();
-
-            if (m.getJoinType() == QueryModel.JOIN_CROSS) {
-                if (c != null && c.parents.size() > 0) {
-                    m.setJoinType(QueryModel.JOIN_INNER);
+            switch (m.getJoinType()) {
+                case JOIN_CROSS -> {
+                    if (c != null && c.parents.size() > 0) {
+                        m.setJoinType(JOIN_INNER);
+                    }
                 }
-            } else if (m.getJoinType() == QueryModel.JOIN_LEFT_OUTER &&
-                    c == null &&
-                    m.getJoinCriteria() != null) {
-                m.setJoinType(QueryModel.JOIN_CROSS_LEFT);
-            } else if (m.getJoinType() == QueryModel.JOIN_RIGHT_OUTER &&
-                    c == null &&
-                    m.getJoinCriteria() != null) {
-                m.setJoinType(QueryModel.JOIN_CROSS_RIGHT);
-            } else if (m.getJoinType() == QueryModel.JOIN_FULL_OUTER &&
-                    c == null &&
-                    m.getJoinCriteria() != null) {
-                m.setJoinType(QueryModel.JOIN_CROSS_FULL);
-            } else if (m.getJoinType() != QueryModel.JOIN_ASOF &&
-                    m.getJoinType() != QueryModel.JOIN_SPLICE &&
-                    (c == null || c.parents.size() == 0)
-            ) {
-                m.setJoinType(QueryModel.JOIN_CROSS);
+                case JOIN_LEFT_OUTER -> {
+                    if (c == null && m.getJoinCriteria() != null) {
+                        m.setJoinType(JOIN_CROSS_LEFT);
+                    }
+                }
+                case JOIN_RIGHT_OUTER -> {
+                    if (c == null && m.getJoinCriteria() != null) {
+                        m.setJoinType(JOIN_CROSS_RIGHT);
+                    }
+                }
+                case JOIN_FULL_OUTER -> {
+                    if (c == null && m.getJoinCriteria() != null) {
+                        m.setJoinType(JOIN_CROSS_FULL);
+                    }
+                }
+                case JOIN_ASOF, JOIN_SPLICE, JOIN_IPV4_CIDR -> {
+                }
+                default -> {
+                    if ((c == null || c.parents.size() == 0)) {
+                        m.setJoinType(JOIN_CROSS);
+                    }
+                }
             }
         }
     }
@@ -2642,7 +2785,7 @@ public class SqlOptimiser implements Mutable {
         assert a.slaveIndex == b.slaveIndex;
 
         deletedContexts.clear();
-        JoinContext r = contextPool.next();
+        JoinContext r = joinContextPool.next();
         // check if we are merging a.x = b.x to a.y = b.y
         // or a.x = b.x to a.x = b.y, e.g., one of the columns in the same table
         for (int i = 0, n = b.aNames.size(); i < n; i++) {
@@ -2740,7 +2883,7 @@ public class SqlOptimiser implements Mutable {
         int p = 0;
         int m = positions.size();
 
-        JoinContext result = contextPool.next();
+        JoinContext result = joinContextPool.next();
         result.slaveIndex = from.slaveIndex;
 
         for (int i = 0, n = from.aIndexes.size(); i < n; i++) {
@@ -3213,6 +3356,28 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void optimiseCidrJoins(QueryModel model) {
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel m = joinModels.getQuick(i);
+            ExpressionNode joinCriteria = m.getJoinCriteria();
+            if (joinCriteria != null && Chars.equalsIgnoreCase(joinCriteria.token, "cidr_contains")) {
+                // todo: extract this for complex join condition, move rest of the filter into post-join-where
+                m.setJoinType(JOIN_IPV4_CIDR);
+                JoinContext jc = joinContextPool.next();
+                jc.bNodes.add(joinCriteria.lhs);
+                jc.bNames.add(joinCriteria.lhs.token);
+                jc.bIndexes.add(i);
+
+                jc.aNodes.add(joinCriteria.rhs);
+                jc.aNames.add(joinCriteria.rhs.token);
+                jc.aIndexes.add(i - 1);
+                m.setJoinContext(jc);
+                joinModels.getQuick(i - 1).parseWhereClause().clear();
+            }
+        }
+    }
+
     private void optimiseExpressionModels(
             QueryModel model,
             SqlExecutionContext executionContext,
@@ -3282,6 +3447,7 @@ public class SqlOptimiser implements Mutable {
 
             processEmittedJoinClauses(model);
             createImpliedDependencies(model);
+            optimiseCidrJoins(model);
             homogenizeCrossJoins(model);
             reorderTables(model);
             assignFilters(model);
@@ -3509,35 +3675,39 @@ public class SqlOptimiser implements Mutable {
         sqlNodeStack.clear();
         while (!sqlNodeStack.isEmpty() || n != null) {
             if (n != null) {
-                switch (joinOps.get(n.token)) {
-                    case JOIN_OP_EQUAL:
+                n = switch (joinOps.get(n.token)) {
+                    case JOIN_OP_EQUAL -> {
                         analyseEquals(parent, n, innerPredicate, joinModel);
-                        n = null;
-                        break;
-                    case JOIN_OP_AND:
+                        yield null;
+                    }
+                    case JOIN_OP_AND -> {
                         if (n.rhs != null) {
                             sqlNodeStack.push(n.rhs);
                         }
-                        n = n.lhs;
-                        break;
-                    case JOIN_OP_REGEX:
+                        yield n.lhs;
+                    }
+                    case JOIN_OP_REGEX -> {
                         analyseRegex(parent, n);
                         if (joinBarriers.contains(joinModel.getJoinType())) {
                             addOuterJoinExpression(parent, joinModel, joinIndex, n);
                         } else {
                             parent.addParsedWhereNode(n, innerPredicate);
                         }
-                        n = null;
-                        break;
-                    default:
+                        yield null;
+                    }
+                    case JOIN_OP_CIDR -> {
+                        analyseCidrContains(parent, n, innerPredicate, joinModel);
+                        yield null;
+                    }
+                    default -> {
                         if (joinBarriers.contains(joinModel.getJoinType())) {
                             addOuterJoinExpression(parent, joinModel, joinIndex, n);
                         } else {
                             parent.addParsedWhereNode(n, innerPredicate);
                         }
-                        n = null;
-                        break;
-                }
+                        yield null;
+                    }
+                };
             } else {
                 n = sqlNodeStack.poll();
             }
@@ -6912,10 +7082,10 @@ public class SqlOptimiser implements Mutable {
         if (clausesToSteal.size() < zc) {
             QueryModel target = parent.getJoinModels().getQuick(to);
             if (jc == null) {
-                target.setContext(jc = contextPool.next());
+                target.setJoinContext(jc = joinContextPool.next());
             }
             jc.slaveIndex = to;
-            jm.setContext(moveClauses(parent, that, jc, clausesToSteal));
+            jm.setJoinContext(moveClauses(parent, that, jc, clausesToSteal));
             if (target.getJoinType() == QueryModel.JOIN_CROSS) {
                 target.setJoinType(QueryModel.JOIN_INNER);
             }
@@ -7584,6 +7754,7 @@ public class SqlOptimiser implements Mutable {
         joinOps.put("and", JOIN_OP_AND);
         joinOps.put("or", JOIN_OP_OR);
         joinOps.put("~", JOIN_OP_REGEX);
+        joinOps.put("cidr_contains", JOIN_OP_CIDR);
 
         flexColumnModelTypes.add(QueryModel.SELECT_MODEL_CHOOSE);
         flexColumnModelTypes.add(QueryModel.SELECT_MODEL_NONE);

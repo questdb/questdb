@@ -30,6 +30,7 @@ import io.questdb.griffin.model.JoinContext;
 
 public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
+    // todo: this is a pooled object, factories must not hold on to it
     protected final JoinContext joinContext;
     protected final RecordCursorFactory masterFactory;
     protected final RecordCursorFactory slaveFactory;

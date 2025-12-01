@@ -574,6 +574,24 @@ public final class Numbers {
         return i;
     }
 
+    public static CharSequence cidrToString(long cidr) {
+        if (cidr == Numbers.LONG_NULL) {
+            return null;
+        }
+
+        StringSink sink = Misc.getThreadLocalSink();
+
+        // Decode: addr = v >> 6, prefix = v & 0x3F
+        int addr = (int) (cidr >> 6);
+        int prefix = (int) (cidr & 0x3F);
+
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, addr);
+        sink.putAscii('/');
+        sink.put(prefix);
+        return sink;
+    }
+
     public static int compare(double a, double b) {
         if (equals(a, b)) {
             return 0;
@@ -829,6 +847,12 @@ public final class Numbers {
         append(sink, value & 0xff);
     }
 
+    public static CharSequence intToIPv4String(int value) {
+        StringSink sink = Misc.getThreadLocalSink();
+        intToIPv4Sink(sink, value);
+        return sink;
+    }
+
     public static long intToLong(int value) {
         if (value != Numbers.INT_NULL) {
             return value;
@@ -919,6 +943,120 @@ public final class Numbers {
 
     public static boolean notDigit(char c) {
         return c < '0' || c > '9';
+    }
+
+    /**
+     * Parses a CIDR string and encodes it as a 64-bit long value.
+     * <p>
+     * Encoding format: (normalized_ipv4 &lt;&lt; 6) | prefix
+     * <p>
+     * Where:
+     * <ul>
+     *   <li>normalized_ipv4 is the IPv4 address with host bits zeroed according to the prefix</li>
+     *   <li>prefix is the CIDR prefix length (0-32), stored in the lower 6 bits</li>
+     * </ul>
+     * <p>
+     * This encoding allows proper sorting: networks are ordered by address first,
+     * then by prefix length (smaller prefix first for same address).
+     *
+     * @param sequence CIDR notation string (e.g., "192.168.1.0/24")
+     * @return encoded CIDR value
+     * @throws NumericException if the input is not a valid CIDR
+     */
+    public static long parseCidr(CharSequence sequence) throws NumericException {
+        int slashPos = Chars.indexOf(sequence, 0, '/');
+        if (slashPos == -1) {
+            throw NumericException.instance().put("invalid CIDR format, missing '/': ").put(sequence);
+        }
+
+        // Parse prefix length directly (e.g., "24" from "192.168.1.0/24")
+        int prefix = parseInt0(sequence, slashPos + 1, sequence.length());
+        if (prefix < 0 || prefix > 32) {
+            throw NumericException.instance().put("CIDR prefix out of range [0-32]: ").put(prefix);
+        }
+
+        // Parse IPv4 address
+        return toCidr(parseIPv4_0(sequence, 0, slashPos), prefix);
+    }
+
+    /**
+     * Parses a CIDR string and encodes it as a 64-bit long value.
+     * <p>
+     * Encoding format: (normalized_ipv4 &lt;&lt; 6) | prefix
+     * <p>
+     * Where:
+     * <ul>
+     *   <li>normalized_ipv4 is the IPv4 address with host bits zeroed according to the prefix</li>
+     *   <li>prefix is the CIDR prefix length (0-32), stored in the lower 6 bits</li>
+     * </ul>
+     * <p>
+     * This encoding allows proper sorting: networks are ordered by address first,
+     * then by prefix length (smaller prefix first for same address).
+     *
+     * @param sequence CIDR notation string (e.g., "192.168.1.0/24")
+     * @return encoded CIDR value
+     * @throws NumericException if the input is not a valid CIDR
+     */
+    public static long parseCidr(Utf8Sequence sequence) throws NumericException {
+        int size = sequence.size();
+        int slashPos = -1;
+
+        // Find slash position
+        for (int i = 0; i < size; i++) {
+            if (sequence.byteAt(i) == '/') {
+                slashPos = i;
+                break;
+            }
+        }
+
+        if (slashPos == -1) {
+            throw NumericException.instance().put("invalid CIDR format, missing '/': ").put(sequence);
+        }
+
+        // Parse prefix length directly using byteAt()
+        int prefix = 0;
+        for (int i = slashPos + 1; i < size; i++) {
+            int b = sequence.byteAt(i);
+            if (b < '0' || b > '9') {
+                throw NumericException.instance().put("invalid CIDR prefix");
+            }
+            prefix = prefix * 10 + (b - '0');
+        }
+        if (prefix < 0 || prefix > 32) {
+            throw NumericException.instance().put("CIDR prefix out of range [0-32]: ").put(prefix);
+        }
+
+        // Parse IPv4 address using byteAt()
+        int ipv4 = 0;
+        int octet = 0;
+        int octetCount = 0;
+        for (int i = 0; i < slashPos; i++) {
+            int b = sequence.byteAt(i);
+            if (b == '.') {
+                if (octet > 255) {
+                    throw NumericException.instance().put("IPv4 octet out of range [0-255]: ").put(octet);
+                }
+                ipv4 = (ipv4 << 8) | octet;
+                octet = 0;
+                octetCount++;
+            } else if (b >= '0' && b <= '9') {
+                octet = octet * 10 + (b - '0');
+            } else {
+                throw NumericException.instance().put("invalid character in IPv4 address");
+            }
+        }
+        // Last octet
+        if (octet > 255) {
+            throw NumericException.instance().put("IPv4 octet out of range [0-255]: ").put(octet);
+        }
+        ipv4 = (ipv4 << 8) | octet;
+        octetCount++;
+
+        if (octetCount != 4) {
+            throw NumericException.instance().put("IPv4 address must have 4 octets");
+        }
+
+        return toCidr(ipv4, prefix);
     }
 
     public static double parseDouble(CharSequence sequence) throws NumericException {
@@ -2127,6 +2265,11 @@ public final class Numbers {
         v = (v | (v << 2)) & 0x3333333333333333L;
         v = (v | (v << 1)) & 0x5555555555555555L;
         return v;
+    }
+
+    public static long toCidr(int ipv4, int prefix) {
+        long ipv4Long = ipv4 & 0xFFFFFFFFL;
+        return (ipv4Long & (0xffffffffL << (32 - prefix))) << 6 | prefix;
     }
 
     public static String toHexStrPadded(long value) {

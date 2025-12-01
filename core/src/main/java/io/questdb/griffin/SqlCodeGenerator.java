@@ -206,6 +206,7 @@ import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
+import io.questdb.griffin.engine.join.IpV4AndCidrJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
@@ -1301,7 +1302,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory slave,
             int joinType,
             Function filter,
-            JoinContext context
+            JoinContext joinContext
     ) {
         /*
          * JoinContext provides the following information:
@@ -1337,7 +1338,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterKeyCopier,
                         slaveKeyCopier,
                         masterMetadata.getColumnCount(),
-                        context
+                        joinContext
                 );
             }
 
@@ -1356,7 +1357,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slaveKeyCopier,
                         masterMetadata.getColumnCount(),
                         filter,
-                        context,
+                        joinContext,
                         joinType
                 );
             }
@@ -1371,7 +1372,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterKeyCopier,
                     slaveKeyCopier,
                     masterMetadata.getColumnCount(),
-                    context,
+                    joinContext,
                     joinType
             );
         }
@@ -1399,7 +1400,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slaveKeyCopier,
                     slaveSink,
                     masterMetadata.getColumnCount(),
-                    context
+                    joinContext
             );
         }
 
@@ -1416,7 +1417,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slaveSink,
                     masterMetadata.getColumnCount(),
                     filter,
-                    context,
+                    joinContext,
                     joinType
             );
         }
@@ -1432,7 +1433,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 slaveKeyCopier,
                 slaveSink,
                 masterMetadata.getColumnCount(),
-                context,
+                joinContext,
                 joinType
         );
     }
@@ -3196,9 +3197,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         Function filter = null;
 
                         switch (joinType) {
-                            case JOIN_CROSS_LEFT:
-                            case JOIN_CROSS_RIGHT:
-                            case JOIN_CROSS_FULL:
+                            case JOIN_CROSS_LEFT, JOIN_CROSS_RIGHT, JOIN_CROSS_FULL -> {
                                 assert slaveModel.getOuterJoinExpressionClause() != null;
                                 joinMetadata = createJoinMetadata(
                                         masterAlias,
@@ -3237,8 +3236,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     default -> throw new AssertionError("unreachable");
                                 };
                                 masterAlias = null;
-                                break;
-                            case JOIN_CROSS:
+                            }
+                            case JOIN_CROSS -> {
                                 validateOuterJoinExpressions(slaveModel, "CROSS");
                                 master = new CrossJoinRecordCursorFactory(
                                         createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
@@ -3247,9 +3246,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         masterMetadata.getColumnCount()
                                 );
                                 masterAlias = null;
-                                break;
-                            case JOIN_ASOF:
-                            case JOIN_LT:
+                            }
+                            case JOIN_ASOF, JOIN_LT -> {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, joinType == JOIN_ASOF ? "ASOF" : "LT");
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
@@ -3264,8 +3262,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 masterAlias = null;
                                 // from now on, master owns slave, so we don't have to close it
                                 closeSlaveOnFail = false;
-                                break;
-                            case JOIN_SPLICE:
+                            }
+                            case JOIN_SPLICE -> {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 validateOuterJoinExpressions(slaveModel, "SPLICE");
@@ -3292,25 +3290,76 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("splice join doesn't support full fat mode");
                                     }
                                 }
-                                break;
-                            default:
-                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
-                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
+                            }
+                            case JOIN_IPV4_CIDR -> {
+                                // this is single join condition join: master are ipv4 values, slave are CIDR
+                                // networks encoded as long values. CIDR networks are hashed
+                                // join key types are always "long"
+                                joinMetadata = createJoinMetadata(
+                                        masterAlias,
+                                        masterMetadata,
+                                        slaveModel.getName(),
+                                        slaveMetadata,
+                                        masterMetadata.getTimestampIndex()
+                                );
+
+                                processJoinContextForCidrJoin(
+                                        index == 1,
+                                        slaveModel.getJoinContext(),
+                                        masterMetadata,
+                                        slaveMetadata
+                                );
+
+                                // todo: this join is insensitive to the ordering of the slave, mare sure any order
+                                //    on the slave is erased
+
+                                master = new IpV4AndCidrJoinLightRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        slave,
+                                        keyTypes,
+                                        valueTypes,
+                                        masterMetadata.getColumnCount(),
+                                        slaveModel.getJoinContext(),
+                                        listColumnFilterA.getColumnIndexFactored(0),
+                                        listColumnFilterB.getColumnIndexFactored(0)
+                                );
+                            }
+                            default -> {
+                                processJoinContext(
+                                        index == 1,
+                                        isSameTable(master, slave),
+                                        slaveModel.getJoinContext(),
+                                        masterMetadata,
+                                        slaveMetadata
+                                );
+                                joinMetadata = createJoinMetadata(
+                                        masterAlias,
+                                        masterMetadata,
+                                        slaveModel.getName(),
+                                        slaveMetadata,
+                                        joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex()
+                                );
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
                                     filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 }
 
                                 if (filter != null && filter.isConstant() && !filter.getBool(null)) {
-                                    if (joinType == JOIN_LEFT_OUTER) {
-                                        Misc.free(slave);
-                                        slave = new EmptyTableRecordCursorFactory(slaveMetadata);
-                                    } else if (joinType == JOIN_INNER) {
-                                        Misc.free(master);
-                                        Misc.free(slave);
-                                        return new EmptyTableRecordCursorFactory(joinMetadata);
-                                    } else if (joinType == JOIN_RIGHT_OUTER) {
-                                        Misc.free(master);
-                                        master = new EmptyTableRecordCursorFactory(masterMetadata);
+                                    switch (joinType) {
+                                        case JOIN_LEFT_OUTER -> {
+                                            Misc.free(slave);
+                                            slave = new EmptyTableRecordCursorFactory(slaveMetadata);
+                                        }
+                                        case JOIN_INNER -> {
+                                            Misc.free(master);
+                                            Misc.free(slave);
+                                            return new EmptyTableRecordCursorFactory(joinMetadata);
+                                        }
+                                        case JOIN_RIGHT_OUTER -> {
+                                            Misc.free(master);
+                                            master = new EmptyTableRecordCursorFactory(masterMetadata);
+                                        }
                                     }
                                 }
 
@@ -3327,7 +3376,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slaveModel.getJoinContext()
                                 );
                                 masterAlias = null;
-                                break;
+                            }
                         }
                     }
                 } catch (Throwable th) {
@@ -6912,41 +6961,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // check the type of the column, not all are supported
                 int columnType = myMeta.getColumnType(index);
                 switch (ColumnType.tagOf(columnType)) {
-                    case ColumnType.BOOLEAN:
-                    case ColumnType.BYTE:
-                    case ColumnType.CHAR:
-                    case ColumnType.SHORT:
-                    case ColumnType.INT:
-                    case ColumnType.IPv4:
-                    case ColumnType.LONG:
-                    case ColumnType.DATE:
-                    case ColumnType.TIMESTAMP:
-                    case ColumnType.FLOAT:
-                    case ColumnType.DOUBLE:
-                    case ColumnType.LONG256:
-                    case ColumnType.STRING:
-                    case ColumnType.VARCHAR:
-                    case ColumnType.SYMBOL:
-                    case ColumnType.UUID:
-                    case ColumnType.GEOBYTE:
-                    case ColumnType.GEOSHORT:
-                    case ColumnType.GEOINT:
-                    case ColumnType.GEOLONG:
-                    case ColumnType.LONG128:
+                    case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.SHORT, ColumnType.INT,
+                         ColumnType.IPv4, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.FLOAT,
+                         ColumnType.DOUBLE, ColumnType.LONG256, ColumnType.STRING, ColumnType.VARCHAR,
+                         ColumnType.SYMBOL, ColumnType.UUID, ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT,
+                         ColumnType.GEOLONG, ColumnType.LONG128 -> {
                         // we are reusing collections which leads to confusing naming for this method
                         // keyTypes are types of columns we collect 'latest by' for
                         keyTypes.add(columnType);
                         // listColumnFilterA are indexes of columns we collect 'latest by' for
                         listColumnFilterA.add(index + 1);
-                        break;
-
-                    default:
-                        throw SqlException
-                                .position(latestByNode.position)
-                                .put(latestByNode.token)
-                                .put(" (")
-                                .put(ColumnType.nameOf(columnType))
-                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON");
+                    }
+                    default -> throw SqlException
+                            .position(latestByNode.position)
+                            .put(latestByNode.token)
+                            .put(" (")
+                            .put(ColumnType.nameOf(columnType))
+                            .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON");
                 }
             }
         }
@@ -7026,6 +7057,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 keyTypes.add(columnTypeB);
             }
         }
+    }
+
+    private void processJoinContextForCidrJoin(
+            boolean vanillaMaster,
+            JoinContext jc,
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata
+    ) throws SqlException {
+        lookupColumnIndexesUsingVanillaNames(listColumnFilterA, jc.aNames, slaveMetadata);
+        if (vanillaMaster) {
+            lookupColumnIndexesUsingVanillaNames(listColumnFilterB, jc.bNames, masterMetadata);
+        } else {
+            lookupColumnIndexes(listColumnFilterB, jc.bNodes, masterMetadata);
+        }
+
+        // compare types and populate keyTypes
+        writeSymbolAsString.clear();
+        writeStringAsVarcharA.clear();
+        writeStringAsVarcharB.clear();
+        writeTimestampAsNanosA.clear();
+        writeTimestampAsNanosB.clear();
+        keyTypes.clear();
+        keyTypes.add(LONG);
+
+        valueTypes.clear();
+        valueTypes.add(INT);
+        valueTypes.add(INT);
     }
 
     private void processNodeQueryModels(ExpressionNode node, ModelOperator operator) {

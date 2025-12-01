@@ -62,6 +62,7 @@ import static io.questdb.griffin.SqlParser.ZERO_OFFSET;
 public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int JOIN_ASOF = 4;
+    public static final int JOIN_IPV4_CIDR = 13;
     public static final int JOIN_CROSS = 3;
     public static final int JOIN_CROSS_FULL = 12;
     public static final int JOIN_CROSS_LEFT = 8;
@@ -70,7 +71,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_INNER = 1;
     public static final int JOIN_LEFT_OUTER = 2;
     public static final int JOIN_LT = 6;
-    public static final int JOIN_MAX = JOIN_CROSS_FULL;
+    public static final int JOIN_MAX = JOIN_IPV4_CIDR;
     public static final int JOIN_RIGHT_OUTER = 9;
     public static final int JOIN_SPLICE = 5;
     public static final int LATEST_BY_DEPRECATED = 1;
@@ -1309,7 +1310,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.constWhereClause = constWhereClause;
     }
 
-    public void setContext(JoinContext context) {
+    public void setJoinContext(JoinContext context) {
         this.context = context;
     }
 

@@ -93,33 +93,28 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor == null) {
             switch (joinType) {
-                case QueryModel.JOIN_LEFT_OUTER:
-                    cursor = new HashLeftOuterJoinLightRecordCursor(
-                            columnSplit,
-                            NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                            joinKeyMap,
-                            slaveChain
-                    );
-                    break;
-                case QueryModel.JOIN_RIGHT_OUTER:
-                    cursor = new HashRightOuterJoinLightRecordCursor(
-                            columnSplit,
-                            NullRecordFactory.getInstance(masterFactory.getMetadata()),
-                            joinKeyMap,
-                            slaveChain
-                    );
-                    break;
-                case QueryModel.JOIN_FULL_OUTER:
-                    cursor = new HashFullOuterJoinLightRecordCursor(
-                            columnSplit,
-                            NullRecordFactory.getInstance(masterFactory.getMetadata()),
-                            NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                            joinKeyMap,
-                            slaveChain
-                    );
-                    break;
-                default:
+                case QueryModel.JOIN_LEFT_OUTER -> cursor = new HashLeftOuterJoinLightRecordCursor(
+                        columnSplit,
+                        NullRecordFactory.getInstance(slaveFactory.getMetadata()),
+                        joinKeyMap,
+                        slaveChain
+                );
+                case QueryModel.JOIN_RIGHT_OUTER -> cursor = new HashRightOuterJoinLightRecordCursor(
+                        columnSplit,
+                        NullRecordFactory.getInstance(masterFactory.getMetadata()),
+                        joinKeyMap,
+                        slaveChain
+                );
+                case QueryModel.JOIN_FULL_OUTER -> cursor = new HashFullOuterJoinLightRecordCursor(
+                        columnSplit,
+                        NullRecordFactory.getInstance(masterFactory.getMetadata()),
+                        NullRecordFactory.getInstance(slaveFactory.getMetadata()),
+                        joinKeyMap,
+                        slaveChain
+                );
+                default -> {
                     assert false : "invalid join type " + joinType;
+                }
             }
             this.joinKeyMap = null;
             this.slaveChain = null;

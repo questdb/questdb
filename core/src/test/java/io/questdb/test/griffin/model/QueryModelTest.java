@@ -51,7 +51,7 @@ public class QueryModelTest {
         model.setLimitImplemented(true);
         model.setLimitPosition(42);
         model.setTimestamp(newExpressionNode());
-        model.setContext(new JoinContext());
+        model.setJoinContext(new JoinContext());
         model.setIsUpdate(true);
         model.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
         model.setSelectTranslation(true);
