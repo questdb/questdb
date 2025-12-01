@@ -102,41 +102,35 @@ public class MapFactory {
     ) {
         final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
 
-        final int keySize = totalSize(keyTypes);
         final int valueSize = totalSize(valueTypes);
-        if (keySize > 0) {
-            if (keySize == Short.BYTES && valueSize <= maxEntrySize) {
-                return new Unordered2Map(keyTypes, valueTypes);
-            } else if (keySize == Integer.BYTES && Integer.BYTES + valueSize <= maxEntrySize) {
+        if (keyTypes.getColumnCount() == 1) {
+            final int keyType = keyTypes.getColumnType(0);
+            if (Unordered4Map.isSupportedKeyType(keyType) && Integer.BYTES + valueSize <= maxEntrySize) {
                 return new Unordered4Map(
-                        keyTypes,
+                        keyType,
                         valueTypes,
                         keyCapacity,
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes()
                 );
-            } else if (keySize == Long.BYTES && Long.BYTES + valueSize <= maxEntrySize) {
+            } else if (Unordered8Map.isSupportedKeyType(keyType) && Long.BYTES + valueSize <= maxEntrySize) {
                 return new Unordered8Map(
-                        keyTypes,
+                        keyType,
                         valueTypes,
                         keyCapacity,
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes()
+                );
+            } else if (keyType == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
+                return new UnorderedVarcharMap(
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes(),
+                        configuration.getGroupByAllocatorDefaultChunkSize(),
+                        configuration.getGroupByAllocatorMaxChunkSize()
                 );
             }
-        }
-
-        if (keyTypes.getColumnCount() == 1
-                && keyTypes.getColumnType(0) == ColumnType.VARCHAR
-                && 2 * Long.BYTES + valueSize <= maxEntrySize) {
-            return new UnorderedVarcharMap(
-                    valueTypes,
-                    keyCapacity,
-                    configuration.getSqlFastMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes(),
-                    configuration.getGroupByAllocatorDefaultChunkSize(),
-                    configuration.getGroupByAllocatorMaxChunkSize()
-            );
         }
 
         return new OrderedMap(
