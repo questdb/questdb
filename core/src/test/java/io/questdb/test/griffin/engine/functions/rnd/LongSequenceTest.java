@@ -22,22 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.sqllogictest;
+package io.questdb.test.griffin.engine.functions.rnd;
 
-import org.junit.runners.Parameterized;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-import java.util.Collection;
+public class LongSequenceTest extends AbstractFunctionFactoryTest {
 
-/**
- * Tests various SQL features.
- */
-public class SqlTest extends AbstractSqllogicTestRunner {
-    public SqlTest(String testFile) {
-        super(testFile);
+    @Test
+    public void testBadArgumentTypeFailsGracefully() throws SqlException {
+        assertFailure(0, "invalid arguments", 5.0, 5.0, 5.0);
     }
 
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> files() {
-        return files("sql");
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new LongSequenceFunctionFactory();
     }
 }

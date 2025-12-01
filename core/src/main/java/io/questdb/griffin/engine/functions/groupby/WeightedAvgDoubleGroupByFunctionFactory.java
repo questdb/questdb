@@ -26,17 +26,17 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.Transient;
 
-public class StdDevPopGroupByFunctionFactory implements FunctionFactory {
+public class WeightedAvgDoubleGroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "stddev_pop(D)";
+        return "weighted_avg(DD)";
     }
 
     @Override
@@ -47,34 +47,11 @@ public class StdDevPopGroupByFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new StdDevPopGroupByFunction(args.getQuick(0));
-    }
-
-    private static class StdDevPopGroupByFunction extends AbstractStdDevGroupByFunction {
-
-        public StdDevPopGroupByFunction(@NotNull Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            long count = rec.getLong(valueIndex + 2);
-            if (count > 0) {
-                double sum = rec.getDouble(valueIndex + 1);
-                double variance = sum / count;
-                return Math.sqrt(variance);
-            }
-            return Double.NaN;
-        }
-
-        @Override
-        public String getName() {
-            return "stddev_pop";
-        }
+        return new WeightedAvgDoubleGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 }
