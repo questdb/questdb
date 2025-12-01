@@ -915,6 +915,8 @@ public class SqlOptimiser implements Mutable {
     // - only predicates relating to LEFT table may be pushed down
     // - predicates on both or right table may be added to post join clause as long as they're marked properly (via ExpressionNode.isOuterJoinPredicate)
     private void analyseEquals(QueryModel parent, ExpressionNode node, boolean innerPredicate, QueryModel joinModel) throws SqlException {
+        // CAST ELIMINATION: Removes redundant casts on join keys
+        eliminateRedundantCastsInJoinKeys(node, parent);
         traverseNamesAndIndices(parent, node);
         int aSize = literalCollectorAIndexes.size();
         int bSize = literalCollectorBIndexes.size();
@@ -1048,6 +1050,107 @@ public class SqlOptimiser implements Mutable {
 
                 break;
         }
+    }
+
+    // Redundant Casts on join keys are eliminated here, which ensures that the most efficient query plan is executed regardless of the misuse of Cast by the user on join keys
+    // Casts on join keys are considered redundant, if type of both the keys are already the same
+    private void eliminateRedundantCastsInJoinKeys(ExpressionNode equalityNode, QueryModel parentModel) throws SqlException {
+        if (equalityNode == null || equalityNode.type != ExpressionNode.OPERATION || !"=".contentEquals(equalityNode.token)) {
+            return;
+        }
+
+        // Recursively unwrap casts on both sides
+        ExpressionNode unwrappedLeft = unwrapAllCasts(equalityNode.lhs);
+        ExpressionNode unwrappedRight = unwrapAllCasts(equalityNode.rhs);
+
+        if (isSimpleColumn(unwrappedLeft) && isSimpleColumn(unwrappedRight)) {
+            int leftType = findType(unwrappedLeft, parentModel);
+            int rightType = findType(unwrappedRight, parentModel);
+
+            // Remove casts only if underlying column types match exactly
+            if (leftType != ColumnType.UNDEFINED && leftType == rightType) {
+                equalityNode.lhs = unwrappedLeft;
+                equalityNode.rhs = unwrappedRight;
+            }
+        }
+    }
+
+    private int findType(ExpressionNode expr, QueryModel model) {
+        if (expr == null || expr.type != ExpressionNode.LITERAL) {
+            return ColumnType.UNDEFINED;
+        }
+        CharSequence columnName = expr.token;
+        if (columnName == null || model == null) {
+            return ColumnType.UNDEFINED;
+        }
+
+        // Extract column name from qualified name if needed (e.g. t2.symbol -> symbol)
+        CharSequence pureColumnName = extractColumnName(columnName);
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel joinModel = joinModels.getQuick(i);
+
+            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumn = joinModel.getAliasToColumnMap();
+            if (aliasToColumn != null) {
+                QueryColumn queryColumn = aliasToColumn.get(pureColumnName);
+                if (queryColumn != null) {
+                    return queryColumn.getColumnType();
+                }
+            }
+
+            LowerCaseCharSequenceObjHashMap<CharSequence> columnToAlias = joinModel.getColumnNameToAliasMap();
+            if (columnToAlias != null && aliasToColumn != null) {
+                CharSequence alias = columnToAlias.get(pureColumnName);
+                if (alias != null) {
+                    QueryColumn queryColumn = aliasToColumn.get(alias);
+                    if (queryColumn != null) {
+                        return queryColumn.getColumnType();
+                    }
+                }
+            }
+        }
+
+        return ColumnType.UNDEFINED;
+    }
+
+    private CharSequence extractColumnName(CharSequence qualifiedName) {
+        if (qualifiedName == null) {
+            return null;
+        }
+        int dotIndex = Chars.indexOfLastUnquoted(qualifiedName, '.');
+        if (dotIndex == -1) {
+            return qualifiedName;
+        }
+        // Return substring after the dot, which is the pure column name
+        return qualifiedName.subSequence(dotIndex + 1, qualifiedName.length());
+    }
+
+    private ExpressionNode unwrapAllCasts(ExpressionNode node) {
+        if (node == null) {
+            return null;
+        }
+        ExpressionNode current = node;
+        while (isCastFunction(current)) {
+            current = current.lhs;
+            if (current == null) {
+                break;
+            }
+        }
+        return current;
+    }
+
+    private boolean isCastFunction(ExpressionNode node) {
+        return node != null
+                && node.type == ExpressionNode.FUNCTION
+                && node.token != null
+                && SqlKeywords.isCastKeyword(node.token)
+                && node.paramCount == 2
+                && node.lhs != null;
+    }
+
+    private boolean isSimpleColumn(ExpressionNode node) {
+        return node != null && node.type == ExpressionNode.LITERAL;
     }
 
     private void analyseRegex(QueryModel parent, ExpressionNode node) throws SqlException {
