@@ -86,6 +86,7 @@ public class CheckpointTest extends AbstractCairoTest {
         path = new Path();
         triggerFilePath = new Path();
         ff = testFilesFacade;
+        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
     }
 
@@ -101,6 +102,7 @@ public class CheckpointTest extends AbstractCairoTest {
         // sync() system call is not available on Windows, so we skip the whole test suite there.
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
+        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
         super.setUp();
         ff = testFilesFacade;
         path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).slash();
@@ -205,6 +207,139 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("create view test_view as select * from test");
             execute("checkpoint create");
             execute("checkpoint release");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoresDroppedView() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            drainViewQueue();
+
+            execute("create view v as select * from test where val > 0;");
+
+            drainViewQueue();
+
+            // sanity check: the view exists and works
+            assertSql("count\n1\n", "select count() from views() where view_name = 'v';");
+            assertSql("count\n1\n", "select count() from v;");
+
+            execute("checkpoint create;");
+
+            // drop the view after checkpoint
+            execute("drop view v;");
+            drainViewQueue();
+            sqlExecutionContext.getReferencedViews().clear(); // todo: explicit view clear should NOT be needed, we need to improve lifecycle of SQL Execution Context
+
+            assertSql("count\n0\n", "select count() from views() where view_name = 'v';");
+
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            // the dropped view should be restored
+            assertSql("count\n1\n", "select count() from views() where view_name = 'v';");
+            assertSql(
+                    """
+                            ts\tname\tval
+                            2023-09-20T12:39:01.933062Z\tfoobar\t42
+                            """,
+                    "v;"
+            );
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoresViewWithBaseTableData() throws Exception {
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
+            drainWalQueue();
+
+            execute("create view test_view as select name, val from test where val > 15;");
+
+            assertSql(
+                    """
+                            name\tval
+                            b\t20
+                            """,
+                    "test_view;"
+            );
+
+            execute("checkpoint create;");
+
+            // insert more data after checkpoint
+            execute("insert into test values ('2023-09-20T14:00:00.000000Z', 'c', 30);");
+            drainWalQueue();
+
+            // view should now show 2 rows
+            assertSql("count\n2\n", "select count() from test_view;");
+
+            // Recover from checkpoint
+            engine.clear();
+            engine.closeNameRegistry();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            // After recovery, view should only show data from checkpoint time (1 row)
+            assertSql(
+                    """
+                            name\tval
+                            b\t20
+                            """,
+                    "test_view;"
+            );
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointViewMetadataFiles() throws Exception {
+        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create view test_view as select * from test;");
+
+            execute("checkpoint create;");
+
+            // view directory exists in checkpoint
+            TableToken viewToken = engine.getTableTokenIfExists("test_view");
+            Assert.assertNotNull(viewToken);
+
+            path.trimTo(rootLen).concat(viewToken.getDirName()).slash$();
+            Assert.assertTrue("View directory should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // _view file exists
+            path.trimTo(rootLen).concat(viewToken.getDirName()).concat("_view").$();
+            Assert.assertTrue("_view file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // check txn_seq directory exists (views have sequencers)
+            path.trimTo(rootLen).concat(viewToken.getDirName()).concat(WalUtils.SEQ_DIR).slash$();
+            Assert.assertTrue("txn_seq directory should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // check txn_seq/_meta file exists
+            path.trimTo(rootLen).concat(viewToken.getDirName()).concat(WalUtils.SEQ_DIR).concat(TableUtils.META_FILE_NAME).$();
+            Assert.assertTrue("txn_seq/_meta file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            execute("checkpoint release;");
         });
     }
 
