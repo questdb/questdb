@@ -950,7 +950,6 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 value.setNew(true);
                 rows.skip(valueSizeInLongs);
                 functionUpdater.updateEmpty(value);
-
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
                 final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
                 final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
@@ -963,6 +962,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 rowIds.of(rowIdsPtr);
                 timestamps.of(timestampsPtr);
                 boolean isNew = true;
+                // TODO @victor, the current implementation has issue
                 long prevailingRowId = findPrevailingForMasterRow(
                         slaveTimeFrameHelper,
                         slaveRecord,
@@ -983,7 +983,6 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     value.setNew(false);
                 }
 
-                // Then process rows in the window
                 if (rowIds.size() > 0) {
                     rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
@@ -1753,7 +1752,6 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
                     final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
                     final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
-
                     final int masterKey = record.getInt(masterSymbolIndex);
                     final int idx = toSymbolMapKey(masterKey);
                     long rowIdsPtr = slaveData.get(idx, 0);
@@ -1762,6 +1760,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     rowIds.of(rowIdsPtr);
                     timestamps.of(timestampsPtr);
                     boolean isNew = true;
+                    // TODO @victor, the current implementation has issue
                     long prevailingRowId = findPrevailingForMasterRow(
                             slaveTimeFrameHelper,
                             slaveRecord,
@@ -1782,7 +1781,6 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         value.setNew(false);
                     }
 
-                    // Then process rows in the window
                     if (rowIds.size() > 0) {
                         rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
@@ -1974,12 +1972,10 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowId();
 
         try {
-            int frameIndex = savedFrameIndex;
-            if (frameIndex == -1) {
+            if (savedFrameIndex == -1) {
                 return Long.MIN_VALUE;
             }
-
-            slaveTimeFrameHelper.setBookmark(frameIndex, 0);
+            slaveTimeFrameHelper.setBookmark(savedFrameIndex, 0);
 
             do {
                 long scanStart = slaveTimeFrameHelper.scanBackwardForPrevailing(masterSlaveTimestampLo);
