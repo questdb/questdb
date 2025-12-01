@@ -1,8 +1,42 @@
 statement ok
-create table stddev_test(val int, grp int)
+create table stddev_test(val int, weight int, grp int)
 
 statement ok
-insert into stddev_test values (42, 1), (43, 1), (42, 2), (1000, 2), (NULL, 1), (NULL, 3)
+insert into stddev_test values (42, 2, 1), (43, 3, 1), (42, 1, 2), (1000, 4, 2), (NULL, 1, 1), (NULL, 2, 3)
+
+query R
+SELECT weighted_stddev_rel(1, 1)
+----
+NULL
+
+query R
+SELECT weighted_stddev_rel(val, weight) FROM stddev_test
+----
+560.654783
+
+query IR
+SELECT grp, weighted_stddev_rel(val, weight) FROM stddev_test order by 1
+----
+1 0.707107
+2 677.408296
+3 NULL
+
+query R
+SELECT weighted_stddev_freq(1, 1)
+----
+NULL
+
+query R
+SELECT weighted_stddev_freq(val, weight) FROM stddev_test
+----
+494.451042
+
+query IR
+SELECT grp, weighted_stddev_freq(val, weight) FROM stddev_test order by 1
+----
+1 0.547723
+2 428.430624
+3 NULL
 
 query I
 SELECT stddev_samp(1)
@@ -131,4 +165,3 @@ query I
 select stddev(0) from long_sequence(10)
 ----
 0.000000
-

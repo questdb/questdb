@@ -31,12 +31,13 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class StdDevPopGroupByFunctionFactory implements FunctionFactory {
+public class WeightedStdDevReliabilityGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "stddev_pop(D)";
+        return "weighted_stddev_rel(DD)";
     }
 
     @Override
@@ -47,34 +48,36 @@ public class StdDevPopGroupByFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new StdDevPopGroupByFunction(args.getQuick(0));
+        return new WeightedStdDevReliabilityGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class StdDevPopGroupByFunction extends AbstractStdDevGroupByFunction {
+    private static class WeightedStdDevReliabilityGroupByFunction extends AbstractWeightedStdDevGroupByFunction {
 
-        public StdDevPopGroupByFunction(@NotNull Function arg) {
-            super(arg);
+        public WeightedStdDevReliabilityGroupByFunction(@NotNull Function sampleArg, @NotNull Function weightArg) {
+            super(sampleArg, weightArg);
         }
 
         @Override
         public double getDouble(Record rec) {
-            long count = rec.getLong(valueIndex + 2);
-            if (count > 0) {
-                double sum = rec.getDouble(valueIndex + 1);
-                double variance = sum / count;
-                return Math.sqrt(variance);
+            double wSum = rec.getDouble(valueIndex);
+            double wSum2 = rec.getDouble(valueIndex + 1);
+            double s = rec.getDouble(valueIndex + 3);
+            double divisor = wSum - wSum2 / wSum;
+            if (divisor <= 0.0) {
+                return Double.NaN;
             }
-            return Double.NaN;
+            double variance = s / divisor;
+            return Math.sqrt(variance);
         }
 
         @Override
         public String getName() {
-            return "stddev_pop";
+            return "weighted_stddev_rel";
         }
     }
 }
