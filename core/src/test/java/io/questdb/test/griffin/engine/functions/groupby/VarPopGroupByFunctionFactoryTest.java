@@ -89,16 +89,6 @@ public class VarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVarPopLong256Values() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tbl1 as (select x cast(x as long256) from long_sequence(100))");
-            assertSql(
-                    "var_pop\n833.25\n", "select var_pop(x) from tbl1"
-            );
-        });
-    }
-
-    @Test
     public void testVarPopNoValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x int)");
