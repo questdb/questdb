@@ -139,6 +139,113 @@ public class TimeFrameHelperTest {
     }
 
     @Test
+    public void testFindRowLoPrevailingCandidateAtFrameStart() {
+        FrameData frame1 = frame(new long[]{10, 20}, 10, 20);
+        FrameData frame2 = frame(new long[]{30, 40, 50}, 30, 50);
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(Arrays.asList(frame1, frame2), 0);
+        TimeFrameHelper helper = new TimeFrameHelper(2, 1);
+        helper.of(cursor);
+
+        long row = helper.findRowLo(25, 45, true);
+        Assert.assertEquals(0, row);
+        Assert.assertEquals(30, helper.getRecord().getTimestamp(0));
+        Assert.assertEquals(0, helper.getPrevailingFrameIndex());
+        Assert.assertEquals(1, helper.getPrevailingRowId());
+    }
+
+    @Test
+    public void testFindRowLoPrevailingCandidateBasic() {
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(List.of(frame(10, 20, 30, 40)), 0);
+        TimeFrameHelper helper = new TimeFrameHelper(2, 1);
+        helper.of(cursor);
+        long row = helper.findRowLo(25, 35, true);
+        Assert.assertEquals(2, row);
+        Assert.assertEquals(30, helper.getRecord().getTimestamp(0));
+        Assert.assertEquals(0, helper.getPrevailingFrameIndex());
+        Assert.assertEquals(1, helper.getPrevailingRowId());
+    }
+
+    @Test
+    public void testFindRowLoPrevailingCandidateCrossFrame() {
+        FrameData frame1 = frame(new long[]{10, 20, 30}, 10, 30);
+        FrameData frame2 = frame(new long[]{100, 110, 120}, 100, 120);
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(Arrays.asList(frame1, frame2), 0);
+        TimeFrameHelper helper = new TimeFrameHelper(2, 1);
+        helper.of(cursor);
+        long row = helper.findRowLo(50, 110, true);
+        Assert.assertEquals(0, row);
+        Assert.assertEquals(100, helper.getRecord().getTimestamp(0));
+        Assert.assertEquals(0, helper.getPrevailingFrameIndex());
+        Assert.assertEquals(2, helper.getPrevailingRowId());
+    }
+
+    @Test
+    public void testFindRowLoPrevailingCandidateExactMatch() {
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(List.of(frame(10, 20, 30, 40)), 0);
+        TimeFrameHelper helper = new TimeFrameHelper(2, 1);
+        helper.of(cursor);
+        long row = helper.findRowLo(20, 35, true);
+        Assert.assertEquals(1, row);
+        Assert.assertEquals(20, helper.getRecord().getTimestamp(0));
+        Assert.assertEquals(0, helper.getPrevailingFrameIndex());
+        Assert.assertEquals(0, helper.getPrevailingRowId());
+    }
+
+    @Test
+    public void testFindRowLoPrevailingCandidateMultipleFramesNoDataInRange() {
+        FrameData frame1 = frame(new long[]{10, 20}, 10, 20);
+        FrameData frame2 = frame(new long[]{30, 40}, 30, 40);
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(Arrays.asList(frame1, frame2), 0);
+        TimeFrameHelper helper = new TimeFrameHelper(2, 1);
+        helper.of(cursor);
+        long row = helper.findRowLo(50, 60, true);
+        Assert.assertEquals(Long.MIN_VALUE, row);
+        Assert.assertEquals(1, helper.getPrevailingFrameIndex());
+        Assert.assertEquals(1, helper.getPrevailingRowId());
+    }
+
+    @Test
+    public void testFindRowLoPrevailingCandidateNoDataInRange() {
+        FrameData frame1 = frame(new long[]{10, 20, 30}, 10, 30);
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(List.of(frame1), 0);
+        TimeFrameHelper helper = new TimeFrameHelper(2, 1);
+        helper.of(cursor);
+        long row = helper.findRowLo(50, 60, true);
+        Assert.assertEquals(Long.MIN_VALUE, row);
+        Assert.assertEquals(0, helper.getPrevailingFrameIndex());
+        Assert.assertEquals(2, helper.getPrevailingRowId());
+    }
+
+    @Test
+    public void testFindRowLoPrevailingCandidateNoPrevailing() {
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(List.of(frame(10, 20, 30)), 0);
+        TimeFrameHelper helper = new TimeFrameHelper(2, 1);
+        helper.of(cursor);
+
+        long row = helper.findRowLo(5, 15, true);
+        Assert.assertEquals(0, row);
+        Assert.assertEquals(10, helper.getRecord().getTimestamp(0));
+        Assert.assertEquals(-1, helper.getPrevailingFrameIndex());
+        Assert.assertEquals(Long.MIN_VALUE, helper.getPrevailingRowId());
+    }
+
+    @Test
+    public void testFindRowLoPrevailingCandidateWithBinarySearch() {
+        long[] timestamps = new long[100];
+        for (int i = 0; i < 100; i++) {
+            timestamps[i] = i * 10;
+        }
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(List.of(frame(timestamps, 0, 990)), 0);
+        TimeFrameHelper helper = new TimeFrameHelper(2, 1); // small lookahead to trigger binary search
+        helper.of(cursor);
+        long row = helper.findRowLo(555, 600, true);
+        Assert.assertEquals(56, row);
+        Assert.assertEquals(560, helper.getRecord().getTimestamp(0));
+        Assert.assertEquals(0, helper.getPrevailingFrameIndex());
+        Assert.assertEquals(55, helper.getPrevailingRowId());
+    }
+
+    @Test
     public void testFindRowLoReturnsFirstRowWhenFrameStartsInsideInterval() {
         MockTimeFrameCursor cursor = new MockTimeFrameCursor(List.of(frame(10, 20, 30)), 0);
         TimeFrameHelper helper = new TimeFrameHelper(2, 1);

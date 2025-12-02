@@ -39,6 +39,8 @@ public class TimeFrameHelper {
     private final long scale;
     private int bookmarkedFrameIndex = -1;
     private long bookmarkedRowId = Long.MIN_VALUE;
+    private int prevailingFrameIndex = -1;
+    private long prevailingRowId = Long.MIN_VALUE;
     private Record record;
     private TimeFrame timeFrame;
     private TimeFrameCursor timeFrameCursor;
@@ -83,9 +85,18 @@ public class TimeFrameHelper {
         return Long.MIN_VALUE;
     }
 
-    // finds the first row id within the given interval and load the record to it
     public long findRowLo(long timestampLo, long timestampHi) {
+        return findRowLo(timestampLo, timestampHi, false);
+    }
+
+    // finds the first row id within the given interval and load the record to it
+    // Also records the prevailing candidate (last row with timestamp < timestampLo)
+    public long findRowLo(long timestampLo, long timestampHi, boolean recordPrevailing) {
         long rowLo = Long.MIN_VALUE;
+        // Reset prevailing candidate
+        prevailingFrameIndex = -1;
+        prevailingRowId = Long.MIN_VALUE;
+
         // let's start with the last found frame and row id
         if (bookmarkedFrameIndex != -1) {
             timeFrameCursor.jumpTo(bookmarkedFrameIndex);
@@ -99,6 +110,10 @@ public class TimeFrameHelper {
                 while (timeFrameCursor.next()) {
                     // carry on if the frame is to the left of the interval
                     if (scaleTimestamp(timeFrame.getTimestampEstimateHi(), scale) < timestampLo) {
+                        if (recordPrevailing && timeFrameCursor.open() > 0) {
+                            prevailingFrameIndex = timeFrame.getFrameIndex();
+                            prevailingRowId = timeFrame.getRowHi() - 1;
+                        }
                         // bookmark the frame, so that next time we search we start with it
                         bookmarkCurrentFrame(0);
                         continue;
@@ -110,6 +125,10 @@ public class TimeFrameHelper {
                         }
                         // now we know the exact boundaries of the frame, let's check them
                         if (scaleTimestamp(timeFrame.getTimestampHi(), scale) <= timestampLo) {
+                            if (recordPrevailing) {
+                                prevailingFrameIndex = timeFrame.getFrameIndex();
+                                prevailingRowId = timeFrame.getRowHi() - 1;
+                            }
                             bookmarkCurrentFrame(0);
                             continue;
                         }
@@ -144,7 +163,10 @@ public class TimeFrameHelper {
             timeFrameCursor.recordAt(record, Rows.toRowID(timeFrame.getFrameIndex(), timeFrame.getRowLo()));
             final long scanResult = linearScan(timestampLo, timestampHi, rowLo);
             if (scanResult >= 0) {
-                // we've found the row
+                if (recordPrevailing && scanResult > timeFrame.getRowLo()) {
+                    prevailingFrameIndex = timeFrame.getFrameIndex();
+                    prevailingRowId = scanResult - 1;
+                }
                 bookmarkCurrentFrame(scanResult);
                 return scanResult;
             } else if (scanResult == Long.MIN_VALUE) {
@@ -170,7 +192,10 @@ public class TimeFrameHelper {
                 rowLo = Long.MIN_VALUE;
                 continue;
             }
-            // we've found the row
+            if (recordPrevailing && searchResult > timeFrame.getRowLo()) {
+                prevailingFrameIndex = timeFrame.getFrameIndex();
+                prevailingRowId = searchResult - 1;
+            }
             bookmarkCurrentFrame(searchResult);
             return searchResult;
         }
@@ -311,6 +336,14 @@ public class TimeFrameHelper {
 
     public long getBookmarkedRowId() {
         return bookmarkedRowId;
+    }
+
+    public int getPrevailingFrameIndex() {
+        return prevailingFrameIndex;
+    }
+
+    public long getPrevailingRowId() {
+        return prevailingRowId;
     }
 
     public Record getRecord() {
