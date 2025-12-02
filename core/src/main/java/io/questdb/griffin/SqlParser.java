@@ -2334,7 +2334,7 @@ public class SqlParser {
         final CharSequence tok = tok(lexer, "'create', 'format', 'insert', 'update', 'select' or 'with'");
 
         if (isSelectKeyword(tok)) {
-            return parseSelect(executionContext, lexer, sqlParserCallback, null);
+            return parseSelect(lexer, sqlParserCallback, null);
         }
 
         if (isCreateKeyword(tok)) {
@@ -2350,7 +2350,7 @@ public class SqlParser {
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(executionContext, lexer, sqlParserCallback, null);
+            return parseWith(lexer, sqlParserCallback, null);
         }
 
         if (isDropKeyword(tok) || isAlterKeyword(tok) || isRefreshKeyword(tok)) {
@@ -2359,7 +2359,7 @@ public class SqlParser {
             ).put(" expected");
         }
 
-        return parseSelect(executionContext, lexer, sqlParserCallback, null);
+        return parseSelect(lexer, sqlParserCallback, null);
     }
 
     private int parseExplainOptions(GenericLexer lexer, CharSequence prevTok) throws SqlException {
@@ -3107,7 +3107,6 @@ public class SqlParser {
     }
 
     private ExecutionModel parseSelect(
-            SqlExecutionContext executionContext,
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
@@ -3756,7 +3755,6 @@ public class SqlParser {
     @SuppressWarnings("SameParameterValue")
     @NotNull
     private ExecutionModel parseWith(
-            SqlExecutionContext executionContext,
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
@@ -3764,7 +3762,7 @@ public class SqlParser {
         parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, decls);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (isSelectKeyword(tok)) {
-            return parseSelect(executionContext, lexer, sqlParserCallback, decls);
+            return parseSelect(lexer, sqlParserCallback, decls);
         }
 
         if (isUpdateKeyword(tok)) {
@@ -4475,7 +4473,7 @@ public class SqlParser {
         }
 
         if (isSelectKeyword(tok)) {
-            return parseSelect(executionContext, lexer, sqlParserCallback, null);
+            return parseSelect(lexer, sqlParserCallback, null);
         }
 
         if (isCreateKeyword(tok)) {
@@ -4499,7 +4497,7 @@ public class SqlParser {
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(executionContext, lexer, sqlParserCallback, null);
+            return parseWith(lexer, sqlParserCallback, null);
         }
 
         if (isCompileKeyword(tok)) {
@@ -4510,7 +4508,7 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "Did you mean 'select * from'?");
         }
 
-        return parseSelect(executionContext, lexer, sqlParserCallback, null);
+        return parseSelect(lexer, sqlParserCallback, null);
     }
 
     QueryModel parseAsSubQuery(
