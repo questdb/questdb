@@ -30,7 +30,7 @@ stages:
         displayName: "on"
         strategy:
           matrix:
-            ubuntu-latest:
+            hetzner:
               os: Linux
               jdk: "1.17"
               testset: "all"
