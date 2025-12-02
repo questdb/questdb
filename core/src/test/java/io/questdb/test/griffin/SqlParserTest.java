@@ -11771,8 +11771,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testMissingClosingParenthesisInFunctionCall() throws Exception {
-        // Test case from issue #6010
-        assertException(
+        assertSyntaxError(
                 "SELECT rnd_symbol('A', 'B'), " +
                 "abs(1000*rnd_double()), " +
                 "abs(100000*rnd_double(), " +  // missing )
@@ -11785,7 +11784,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testMissingClosingParenthesisSimple() throws Exception {
-        assertException(
+        assertSyntaxError(
                 "SELECT abs(100 FROM x",
                 10,  // position of (
                 "missing ')' in 'abs()' function call"
@@ -11795,7 +11794,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testMissingClosingParenthesisNoFunction() throws Exception {
         // When there's no function name before (
-        assertException(
+        assertSyntaxError(
                 "SELECT (100 + 200 FROM x",
                 7,  // position of (
                 "missing ')'"
