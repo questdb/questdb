@@ -24,7 +24,13 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -39,6 +45,34 @@ public class ViewModificationTest extends AbstractViewTest {
         inputRoot = getCsvRoot();
         inputWorkRoot = unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
         AbstractViewTest.setUpStatic();
+    }
+
+    @Test
+    public void testFactoryIsInvalidatedOnViewDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table prices (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by day wal"
+            );
+
+            createView("v", "select sym, last(price) as price, ts from prices sample by 1h", "prices");
+
+            try (RecordCursorFactory select = engine.select("select * from v", sqlExecutionContext)) {
+                Assert.assertNotNull(select);
+                try (RecordCursor cursor = select.getCursor(sqlExecutionContext)) {
+                    // sanity check - we can read from the view
+                }
+
+                engine.execute("drop view v");
+
+                try (RecordCursor cursor = select.getCursor(sqlExecutionContext)) {
+                    Assert.fail("should not be able to read from a dropped view");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "does not exist");
+                }
+            }
+        });
     }
 
     @Test
