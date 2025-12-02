@@ -159,6 +159,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return getCairoEngine().getReader(tableName);
     }
 
+    @Nullable
     default ObjList<ViewDefinition> getReferencedViews() {
         return null;
     }
