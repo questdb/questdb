@@ -1675,7 +1675,16 @@ public class ExpressionParser {
 
             while ((node = opStack.pop()) != null) {
                 if (!node.token.isEmpty() && node.token.charAt(0) == '(') {
-                    throw SqlException.$(node.position, "unbalanced (");
+                    // Extract function name before the opening parenthesis for better error message
+                    CharSequence content = lexer.getContent();
+                    int openParenPos = node.position;
+                    String functionName = extractFunctionName(content, openParenPos);
+                    
+                    if (functionName != null && !functionName.isEmpty()) {
+                        throw SqlException.$(openParenPos, "missing ')' in '" + functionName + "()' function call");
+                    } else {
+                        throw SqlException.$(openParenPos, "missing ')'");
+                    }
                 }
 
                 // our array dereference is dangling
@@ -1743,5 +1752,40 @@ public class ExpressionParser {
 
         allFunctions.put("<>", "<>all");
         allFunctions.put("!=", "<>all");
+    }
+
+    private String extractFunctionName(CharSequence content, int openParenPos) {
+        if (openParenPos == 0) {
+            return null;
+        }
+        
+        // Find the position before the opening parenthesis, skipping whitespace
+        int pos = openParenPos - 1;
+        while (pos >= 0 && Character.isWhitespace(content.charAt(pos))) {
+            pos--;
+        }
+        
+        if (pos < 0) {
+            return null;
+        }
+        
+        // Find the start of the identifier (function name)
+        int end = pos + 1;
+        while (pos >= 0) {
+            char ch = content.charAt(pos);
+            if (Character.isLetterOrDigit(ch) || ch == '_') {
+                pos--;
+            } else {
+                break;
+            }
+        }
+        pos++;
+        
+        // Extract and return the function name if valid
+        if (pos < end && pos < openParenPos) {
+            return content.subSequence(pos, end).toString();
+        }
+        
+        return null;
     }
 }

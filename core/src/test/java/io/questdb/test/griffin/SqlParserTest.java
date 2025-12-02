@@ -11770,6 +11770,39 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testMissingClosingParenthesisInFunctionCall() throws Exception {
+        // Test case from issue #6010
+        assertException(
+                "SELECT rnd_symbol('A', 'B'), " +
+                "abs(1000*rnd_double()), " +
+                "abs(100000*rnd_double(), " +  // missing )
+                "timestamp_sequence('2022-07-01', 1000000) " +
+                "FROM long_sequence(1000000)",
+                56,  // position of the opening ( in the second abs
+                "missing ')' in 'abs()' function call"
+        );
+    }
+
+    @Test
+    public void testMissingClosingParenthesisSimple() throws Exception {
+        assertException(
+                "SELECT abs(100 FROM x",
+                10,  // position of (
+                "missing ')' in 'abs()' function call"
+        );
+    }
+
+    @Test
+    public void testMissingClosingParenthesisNoFunction() throws Exception {
+        // When there's no function name before (
+        assertException(
+                "SELECT (100 + 200 FROM x",
+                7,  // position of (
+                "missing ')'"
+        );
+    }
+
+    @Test
     public void testUndefinedBindVariables() throws SqlException {
         assertQuery(
                 "select-virtual $1 + 1 column, $2 $2, $3 $3 from (long_sequence(10))",

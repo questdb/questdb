@@ -122,7 +122,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
     public void testCastNullGeoHashMissingSize3() throws Exception {
         assertException("cast(null as GEOHASH(21b)",
                 4,
-                "unbalanced (");
+                "missing ')'");
     }
 
     @Test
