@@ -31,8 +31,6 @@ stages:
         strategy:
           matrix:
             ubuntu-latest:
-              imageName: "ubuntu-latest"
-              poolName: "Azure Pipelines"
               os: Linux
               jdk: "1.17"
               testset: "all"
@@ -40,8 +38,7 @@ stages:
               javadoc_step: ""
               javadoc_profile: ""
         pool:
-          vmImage: $(imageName)
-          name: $(poolName)
+          name: hetzner-docker
         timeoutInMinutes: 60
         variables:
           SOURCE_CODE_CHANGED: true
