@@ -12212,6 +12212,84 @@ create table tab as (
         }, () -> setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true"));
     }
 
+    @Test
+    public void testViewDropAndRecreate() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create table tango (x int, y int, ts timestamp) timestamp(ts) partition by hour");
+                stmt.execute("create view v_tango as select x from tango");
+            }
+
+            drainWalQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from v_tango")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                                    x[INTEGER]
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("drop view v_tango");
+                stmt.execute("create view v_tango as select y from tango");
+            }
+        }, () -> setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true"));
+    }
+
+    @Test
+    public void testViewDroppedAndRecreatedWithDifferentDefinition() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create table tango (x int, y int, ts timestamp) timestamp(ts) partition by hour");
+                stmt.execute("insert into tango values (1, 2, '2000'), (3, 4, '2001')");
+                stmt.execute("create view v_tango as select x from tango");
+            }
+
+            drainWalQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from v_tango")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                                    x[INTEGER]
+                                    1
+                                    3
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("drop view v_tango");
+                stmt.execute("create view v_tango as select y from tango");
+            }
+
+            drainViewQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from v_tango")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                                    y[INTEGER]
+                                    2
+                                    4
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+
+        }, () -> setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true"));
+    }
+
     private static int executeAndCancelQuery(PgConnection connection) throws SQLException, InterruptedException {
         int backendPid;
         AtomicBoolean isCancelled = new AtomicBoolean(false);
