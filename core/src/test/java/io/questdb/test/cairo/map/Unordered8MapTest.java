@@ -352,7 +352,7 @@ public class Unordered8MapTest extends AbstractCairoTest {
             ) {
                 for (int i = 0; i < 100; i++) {
                     MapKey key = map.withKey();
-                    key.putLong(i);
+                    key.putTimestamp(i);
 
                     MapValue value = key.createValue();
                     value.putLong(0, i);

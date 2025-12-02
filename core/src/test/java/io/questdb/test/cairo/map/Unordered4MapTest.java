@@ -89,7 +89,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
                 final int N = 100;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(rnd.nextInt());
+                    key.putIPv4(rnd.nextInt());
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -132,7 +132,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
                 // assert that all values are good
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(rnd.nextInt());
+                    key.putIPv4(rnd.nextInt());
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
