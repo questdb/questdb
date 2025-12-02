@@ -26,6 +26,7 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.WorkerPool;
@@ -193,6 +194,52 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelWindowJoinOnSymbolFilteredWithBindVariables() throws Exception {
+        testParallelWindowJoin(
+                (sqlExecutionContext) -> {
+                    BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+                    bindVariableService.clear();
+                    bindVariableService.setStr("side", "sell");
+                },
+                "SELECT avg(price) avg_price, max(max_bid_str) max_bid_str " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid::string) max_bid_str " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                        "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
+                        "  WHERE t.side = :side " +
+                        ")",
+                """
+                        avg_price\tmax_bid_str
+                        19.98409342766\t9.996687893222216
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelWindowJoinOnSymbolFilteredWithBindVariablesVectorized() throws Exception {
+        testParallelWindowJoin(
+                (sqlExecutionContext) -> {
+                    BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+                    bindVariableService.clear();
+                    bindVariableService.setStr("side", "sell");
+                },
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                        "  RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
+                        "  WHERE t.side = :side " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.98409342766\t14.982510448352535\t5.010953919128168
+                        """
+        );
+    }
+
+    @Test
     public void testParallelWindowJoinOnSymbolThreadUnsafeVectorized() throws Exception {
         // covers case when we need to clone group by functions per-worker since their args aren't thread-safe
         testParallelWindowJoin(
@@ -245,11 +292,19 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
     }
 
     private void testParallelWindowJoin(String... queriesAndExpectedResults) throws Exception {
+        testParallelWindowJoin(null, queriesAndExpectedResults);
+    }
+
+    private void testParallelWindowJoin(BindVariablesInitializer initializer, String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
+                        if (initializer != null) {
+                            initializer.init(sqlExecutionContext);
+                        }
+
                         engine.execute(
                                 """
                                         CREATE TABLE IF NOT EXISTS trades (
@@ -315,5 +370,9 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                     expected
             );
         }
+    }
+
+    private interface BindVariablesInitializer {
+        void init(SqlExecutionContext sqlExecutionContext) throws SqlException;
     }
 }
