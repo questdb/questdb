@@ -8,6 +8,8 @@ pr: none
 variables:
   MVN_VERSION: "3.6.3"
   MVN: "apache-maven-$(MVN_VERSION)"
+  JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-openjdk-arm64"
+  JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-arm64"
 
 stages:
   - stage: BuildSnapshotMaster
@@ -15,8 +17,7 @@ stages:
     jobs:
       - job: BuildOnLinux
         displayName: "Build on Linux"
-        pool:
-          vmImage: "ubuntu-latest"
+        pool: hetzner-docker
         steps:
           - checkout: self
             fetchDepth: 1
@@ -45,8 +46,7 @@ stages:
         condition: succeeded()
         displayName: "Upload snapshot to S3"
         container: pypy:3.7-slim-buster
-        pool:
-          vmImage: "ubuntu-latest"
+        pool: hetzner-docker
         steps:
           - checkout: none
           - task: DownloadBuildArtifacts@0
