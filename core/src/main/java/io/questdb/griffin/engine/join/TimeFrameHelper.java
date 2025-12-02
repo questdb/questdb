@@ -413,35 +413,6 @@ public class TimeFrameHelper {
         timeFrameCursor.recordAtRowIndex(record, rowIndex);
     }
 
-    // todo @victor remove me
-    public long scanBackwardForPrevailing(long timestampLo) {
-        long rowHi = timeFrame.getRowHi();
-        long rowLo = timeFrame.getRowLo();
-
-        // Binary search to find the last row with timestamp < timestampLo
-        long low = rowLo;
-        long high = rowHi - 1;
-        long prevailing = Long.MIN_VALUE;
-
-        while (low <= high) {
-            long mid = (low + high) >>> 1;
-            recordAtRowIndex(mid);
-            long midTs = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
-
-            if (midTs < timestampLo) {
-                prevailing = mid;
-                low = mid + 1;
-            } else {
-                high = mid - 1;
-            }
-        }
-
-        if (prevailing != Long.MIN_VALUE) {
-            recordAtRowIndex(prevailing);
-        }
-        return prevailing;
-    }
-
     public void setBookmark(int frameIndex, long rowId) {
         this.bookmarkedFrameIndex = frameIndex;
         this.bookmarkedRowId = rowId;
