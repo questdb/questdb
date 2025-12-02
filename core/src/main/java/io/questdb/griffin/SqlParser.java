@@ -701,8 +701,8 @@ public class SqlParser {
         return false;
     }
 
-    private boolean isExcludingPrevailing(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (isExcluding(tok)) {
+    private boolean isExcludePrevailing(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (isExcludeKeyword(tok)) {
             tok = tok(lexer, "'prevailing'");
             if (isPrevailingKeyword(tok)) {
                 return true;
@@ -716,8 +716,8 @@ public class SqlParser {
         return Chars.equals(tok, ')') || Chars.equals(tok, ',');
     }
 
-    private boolean isIncludingPrevailing(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (isIncluding(tok)) {
+    private boolean isIncludePrevailing(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (isIncludeKeyword(tok)) {
             tok = tok(lexer, "'prevailing'");
             if (isPrevailingKeyword(tok)) {
                 return true;
@@ -2948,9 +2948,9 @@ public class SqlParser {
 
             tok = optTok(lexer);
             if (tok != null) {
-                if (isIncludingPrevailing(lexer, tok)) {
+                if (isIncludePrevailing(lexer, tok)) {
                     context.setIncludePrevailing(true, lexer.lastTokenPosition());
-                } else if (isExcludingPrevailing(lexer, tok)) {
+                } else if (isExcludePrevailing(lexer, tok)) {
                     context.setIncludePrevailing(false, lexer.lastTokenPosition());
                 } else {
                     lexer.unparseLast();
@@ -3242,11 +3242,11 @@ public class SqlParser {
                             throw SqlException.$(lexer.lastTokenPosition(), "'rows', 'groups', 'range' or ')' expected");
                         }
 
-                    /* PG documentation:
-                       The default framing option is RANGE UNBOUNDED PRECEDING, which is the same as RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
-                       With ORDER BY, this sets the frame to be all rows from the partition start up through the current row's last ORDER BY peer.
-                       Without ORDER BY, this means all rows of the partition are included in the window frame, since all rows become peers of the current row.
-                     */
+                        /* PG documentation:
+                           The default framing option is RANGE UNBOUNDED PRECEDING, which is the same as RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
+                           With ORDER BY, this sets the frame to be all rows from the partition start up through the current row's last ORDER BY peer.
+                           Without ORDER BY, this means all rows of the partition are included in the window frame, since all rows become peers of the current row.
+                         */
 
                         if (framingMode != -1) {
                             winCol.setFramingMode(framingMode);

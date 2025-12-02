@@ -71,6 +71,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 symbols[i] = "sym" + i;
             }
 
+            boolean includePrevailing = rnd.nextBoolean();
             long avgTradeSpread = generateTradeSpread(rnd);
             int tradeSize = rnd.nextInt(100) + 1;
             int duplicatePercentage = 30 + rnd.nextInt(71);
@@ -89,7 +90,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                     // symbol eq
                     {false, true},
                     // join filter
-                    {false, true}
+                    {false, true},
             };
 
             final Object[][] allPermutations = TestUtils.cartesianProduct(allOpts);
@@ -139,7 +140,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 }
                 var joinFilter = sink.toString();
 
-                assertFuzzExecute(leftTable, joinFilter, preceding, following, aggregates, aggregatedColumns);
+                assertFuzzExecute(leftTable, joinFilter, preceding, following, aggregates, aggregatedColumns, includePrevailing);
             }
         });
     }
@@ -150,7 +151,8 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             long preceding,
             long following,
             CharSequence aggregates,
-            CharSequence[] aggregatedColumns
+            CharSequence[] aggregatedColumns,
+            boolean includePrevailing
     ) throws SqlException {
         sink.clear();
         sink
@@ -168,11 +170,14 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         if (!joinFilter.isEmpty()) {
             sink.put(" ON ").put(joinFilter);
         }
-        sink.put(" RANGE BETWEEN ")
+        sink
+                .put(" RANGE BETWEEN ")
                 .put(preceding)
                 .put(" microseconds PRECEDING AND ")
                 .put(following)
-                .put(" microseconds FOLLOWING ORDER BY t.ts, t.sym, t.id");
+                .put(" microseconds FOLLOWING ")
+                .put(includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ")
+                .put(" ORDER BY t.ts, t.sym, t.id");
 
         var windowQuery = sink.toString();
         // endregion
@@ -180,23 +185,66 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         // region oracle - left-join query
         sink.clear();
         sink.put(select);
-        // We need to use a sub-query to ensure that slaves are processed in the correct order (timestamp)
-        sink.put("(SELECT t.sym, t.price, t.ts, t.id, ");
-        for (CharSequence aggregatedColumn : aggregatedColumns) {
-            sink.put(aggregatedColumn).put(", ");
+        if (includePrevailing) {
+            // We need to union the same query as for EXCLUDE PREVAILING and ASOF JOIN equivalent to get what we want.
+            // LEFT JOIN + LATEST ON is used for the ASOF JOIN equivalent to be able to use join filters.
+            sink
+                    .put("(SELECT * FROM (")
+                    .put("SELECT t.sym, t.price, t.ts, t.id, ");
+            for (CharSequence aggregatedColumn : aggregatedColumns) {
+                sink.put(aggregatedColumn).put(", ");
+            }
+            sink
+                    .put("p.id as pid FROM ")
+                    .put(leftTable)
+                    .put(" LEFT JOIN prices p ON p.ts >= dateadd('u', -")
+                    .put(preceding)
+                    .put(", t.ts) AND p.ts <= dateadd('u', ")
+                    .put(following)
+                    .put(", t.ts)");
+            if (!joinFilter.isEmpty()) {
+                sink.put(" AND (").put(joinFilter).put(')');
+            }
+            sink.put(" UNION ")
+                    .put("SELECT sym, price, ts, id, ");
+            for (CharSequence aggregatedColumn : aggregatedColumns) {
+                sink.put(aggregatedColumn).put(", ");
+            }
+            sink.put("pid FROM (SELECT t.sym, t.price, t.ts, t.id, ");
+            for (CharSequence aggregatedColumn : aggregatedColumns) {
+                sink.put(aggregatedColumn).put(", ");
+            }
+            sink
+                    .put("p.id as pid, p.ts as pts FROM ")
+                    .put(leftTable)
+                    .put(" LEFT JOIN prices p ON p.ts <= dateadd('u', -")
+                    .put(preceding)
+                    .put(", t.ts)");
+            if (!joinFilter.isEmpty()) {
+                sink.put(" AND (").put(joinFilter).put(')');
+            }
+            sink
+                    .put(" ORDER BY pts, pid) LATEST ON pts PARTITION BY ts, sym, price, id")
+                    .put(") ORDER BY ts, pid) t ORDER BY t.ts, t.sym, t.id");
+        } else {
+            // We need to use a sub-query to ensure that slaves are processed in the correct order (timestamp)
+            sink.put("(SELECT t.sym, t.price, t.ts, t.id, ");
+            for (CharSequence aggregatedColumn : aggregatedColumns) {
+                sink.put(aggregatedColumn).put(", ");
+            }
+            sink
+                    .put("p.ts, p.id FROM ")
+                    .put(leftTable)
+                    .put(" LEFT JOIN prices p ON p.ts >= dateadd('u', -")
+                    .put(preceding)
+                    .put(", t.ts) AND p.ts <= dateadd('u', ")
+                    .put(following)
+                    .put(", t.ts)");
+            if (!joinFilter.isEmpty()) {
+                sink.put(" AND (").put(joinFilter).put(')');
+            }
+            sink.put(" ORDER BY t.ts, p.id) t ORDER BY t.ts, t.sym, t.id");
         }
-        sink
-                .put("p.ts, p.id FROM ")
-                .put(leftTable)
-                .put(" LEFT JOIN prices p ON p.ts >= dateadd('u', -")
-                .put(preceding)
-                .put(", t.ts) AND p.ts <= dateadd('u', ")
-                .put(following)
-                .put(", t.ts)");
-        if (!joinFilter.isEmpty()) {
-            sink.put(" AND (").put(joinFilter).put(')');
-        }
-        sink.put(" ORDER BY t.ts, p.id) t ORDER BY t.ts, t.sym, t.id");
 
         var leftJoinQuery = sink.toString();
         // endregion

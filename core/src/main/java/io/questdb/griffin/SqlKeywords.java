@@ -594,19 +594,6 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'e';
     }
 
-    public static boolean isExcluding(CharSequence tok) {
-        return tok.length() == 9
-                && (tok.charAt(0) | 32) == 'e'
-                && (tok.charAt(1) | 32) == 'x'
-                && (tok.charAt(2) | 32) == 'c'
-                && (tok.charAt(3) | 32) == 'l'
-                && (tok.charAt(4) | 32) == 'u'
-                && (tok.charAt(5) | 32) == 'd'
-                && (tok.charAt(6) | 32) == 'i'
-                && (tok.charAt(7) | 32) == 'n'
-                && (tok.charAt(8) | 32) == 'g';
-    }
-
     public static boolean isExclusiveKeyword(CharSequence tok) {
         return tok.length() == 9
                 && (tok.charAt(0) | 32) == 'e'
@@ -852,17 +839,15 @@ public class SqlKeywords {
                 && (tok.charAt(1) | 32) == 'n';
     }
 
-    public static boolean isIncluding(CharSequence tok) {
-        return tok.length() == 9
+    public static boolean isIncludeKeyword(CharSequence tok) {
+        return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'i'
                 && (tok.charAt(1) | 32) == 'n'
                 && (tok.charAt(2) | 32) == 'c'
                 && (tok.charAt(3) | 32) == 'l'
                 && (tok.charAt(4) | 32) == 'u'
                 && (tok.charAt(5) | 32) == 'd'
-                && (tok.charAt(6) | 32) == 'i'
-                && (tok.charAt(7) | 32) == 'n'
-                && (tok.charAt(8) | 32) == 'g';
+                && (tok.charAt(6) | 32) == 'e';
     }
 
     public static boolean isIncrementalKeyword(CharSequence tok) {
