@@ -37,7 +37,6 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
@@ -47,7 +46,6 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.IntStack;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -67,7 +65,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final Decimal64 decimal64 = new Decimal64();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
-    private final ObjList<ViewDefinition> referencedViews = new ObjList<>();
     private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
@@ -270,11 +267,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public ObjList<ViewDefinition> getReferencedViews() {
-        return referencedViews;
-    }
-
-    @Override
     public long getRequestFd() {
         return requestFd;
     }
@@ -355,23 +347,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void recordViews(ObjList<ViewDefinition> viewDefinitions) {
-        for (int i = 0, n = viewDefinitions.size(); i < n; i++) {
-            final ViewDefinition viewDefinition = viewDefinitions.getQuick(i);
-            if (!referencedViews.contains(viewDefinition)) {
-                referencedViews.add(viewDefinition);
-            }
-        }
-    }
-
-    @Override
     public void reset() {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
         this.allowNonDeterministicFunction = true;
         this.validationOnly = false;
-        this.referencedViews.clear();
         Misc.clear(securityContext);
     }
 

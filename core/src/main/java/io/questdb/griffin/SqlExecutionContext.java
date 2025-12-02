@@ -36,14 +36,12 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
-import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
@@ -159,10 +157,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return getCairoEngine().getReader(tableName);
     }
 
-    default ObjList<ViewDefinition> getReferencedViews() {
-        return null;
-    }
-
     long getRequestFd();
 
     @NotNull
@@ -217,11 +211,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isTimestampRequired();
 
-    boolean isValidationOnly();
-
     default boolean isUninterruptible() {
         return false;
     }
+
+    boolean isValidationOnly();
 
     boolean isWalApplication();
 
@@ -234,9 +228,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void popTimestampRequiredFlag();
 
     void pushTimestampRequiredFlag(boolean flag);
-
-    default void recordViews(ObjList<ViewDefinition> viewDefinitions) {
-    }
 
     void reset();
 

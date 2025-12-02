@@ -3116,7 +3116,7 @@ public class SqlParser {
         final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
-            executionContext.recordViews(recordedViews);
+            model.recordViews(recordedViews);
             return model;
         }
         if (Chars.equals(tok, ":=")) {

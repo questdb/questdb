@@ -1,8 +1,6 @@
 package io.questdb.griffin.engine;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
@@ -19,9 +17,9 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class StaleViewCheckFactory implements RecordCursorFactory {
-    private final TableToken[] viewTokens;
     private final RecordCursorFactory base;
     private final CairoEngine engine;
+    private final TableToken[] viewTokens;
 
     public StaleViewCheckFactory(RecordCursorFactory base, ObjList<ViewDefinition> views, CairoEngine engine) {
         this.base = base;

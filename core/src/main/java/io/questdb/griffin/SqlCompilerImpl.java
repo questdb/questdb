@@ -4716,7 +4716,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             boolean generateProgressLogger
     ) throws SqlException {
         RecordCursorFactory factory = codeGenerator.generate(selectQueryModel, executionContext);
-        ObjList<ViewDefinition> views = executionContext.getReferencedViews();
+        ObjList<ViewDefinition> views = selectQueryModel.getReferencedViews();
         if (views.size() > 0) {
             factory = new StaleViewCheckFactory(factory, views, engine);
         }
