@@ -252,6 +252,10 @@ public class RandomSelectGenerator {
     private void generateAggregateSelectClause(StringSink sql, ObjList<TableInfo> selectedTables, CharSequenceObjHashMap<TableMetadata> metadataCache) {
         TableInfo table = selectedTables.get(rnd.nextInt(selectedTables.size()));
         RecordMetadata metadata = metadataCache.get(table.tableName());
+        for (int i = 0, n = selectedTables.size(); i < n && metadata.getTimestampIndex() < 0; i++) {
+            table = selectedTables.get(i);
+            metadata = metadataCache.get(table.tableName());
+        }
 
         int columnCount = metadata.getColumnCount();
         if (columnCount == 0) {
@@ -533,8 +537,8 @@ public class RandomSelectGenerator {
         }
     }
 
-    private void generateSelectClause(StringSink sql, ObjList<TableInfo> selectedTables, boolean useGroupBy, CharSequenceObjHashMap<TableMetadata> metadataCache) {
-        if (useGroupBy) {
+    private void generateSelectClause(StringSink sql, ObjList<TableInfo> selectedTables, boolean useAggregation, CharSequenceObjHashMap<TableMetadata> metadataCache) {
+        if (useAggregation) {
             generateAggregateSelectClause(sql, selectedTables, metadataCache);
         } else {
             generateSimpleSelectClause(sql, selectedTables, metadataCache);

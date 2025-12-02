@@ -522,7 +522,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
             drainWalQueue();
 
             fixInvalidView(VIEW1);
-            drainViewQueue();
+            drainWalAndViewQueues();
 
             assertViewDefinition(VIEW1, viewQuery);
             assertViewDefinitionFile(VIEW1, viewQuery);
