@@ -1541,11 +1541,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void drainViewQueue() {
         drainViewQueue(engine);
-        drainWalQueue(engine);
     }
 
     protected static void drainWalAndMatViewQueues() {
         drainWalAndMatViewQueues(engine);
+    }
+
+    protected static void drainWalAndViewQueues() {
+        drainWalAndViewQueues(engine);
     }
 
     protected static void drainWalQueue(QuestDBTestNode node) {

@@ -536,20 +536,17 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         // cannot create new view via PG
         final String query2 = "select ts, k2, max(v) as v_max from " + TABLE1 + " where v > 6";
         assertSqlFailureViaPG(
-                "create view " + VIEW2 + " as (" + query2 + ")",
-                "views are disabled, set 'cairo.view.enabled=true' in the config to enable them"
+                "create view " + VIEW2 + " as (" + query2 + ")"
         );
 
         // cannot compile existing view via PG
         assertSqlFailureViaPG(
-                "compile view " + VIEW1,
-                "views are disabled, set 'cairo.view.enabled=true' in the config to enable them"
+                "compile view " + VIEW1
         );
 
         // cannot drop existing view via PG
         assertSqlFailureViaPG(
-                "drop view " + VIEW1,
-                "views are disabled, set 'cairo.view.enabled=true' in the config to enable them"
+                "drop view " + VIEW1
         );
 
         try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
@@ -631,12 +628,12 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         }
     }
 
-    private static void assertSqlFailureViaPG(String sql, String expectedErrorMessage) {
+    private static void assertSqlFailureViaPG(String sql) {
         try {
             runSqlViaPG(sql);
             fail("Expected SQLException missing");
         } catch (SQLException e) {
-            assertContains(e.getMessage(), expectedErrorMessage);
+            assertContains(e.getMessage(), "views are disabled, set 'cairo.view.enabled=true' in the config to enable them");
         }
     }
 
@@ -720,8 +717,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     }
 
     private void drainViewQueue() {
-        drainViewQueue(questdb.getEngine());
-        drainWalQueue(questdb.getEngine());
+        drainWalAndViewQueues(questdb.getEngine());
     }
 
     private void drainWalQueue() {

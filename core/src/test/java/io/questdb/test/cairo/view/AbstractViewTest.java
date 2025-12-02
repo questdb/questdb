@@ -196,7 +196,7 @@ class AbstractViewTest extends AbstractCairoTest {
 
     void createView(String viewName, String viewQuery, String... expectedDependencies) throws SqlException {
         execute("CREATE VIEW " + viewName + " AS (" + viewQuery + ")");
-        drainViewQueue();
+        drainWalAndViewQueues();
         assertViewDefinition(viewName, viewQuery, expectedDependencies);
         assertViewDefinitionFile(viewName, viewQuery);
         assertViewState(viewName);

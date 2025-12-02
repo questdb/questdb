@@ -154,6 +154,12 @@ public class AbstractTest {
         drainWalQueue(engine);
     }
 
+    protected static void drainWalAndViewQueues(CairoEngine engine) {
+        drainWalQueue(engine);
+        drainViewQueue(engine);
+        drainWalQueue(engine);
+    }
+
     protected static void drainWalQueue(CairoEngine engine) {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
             drainWalQueue(walApplyJob, engine);
