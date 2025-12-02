@@ -1574,6 +1574,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) throws Exception {
+            sqlExecutionContext.getReferencedViews().clear();
             CharacterStoreEntry entry = sqlTextCharacterStore.newEntry();
             entry.put(queryText);
             pipelineCurrentEntry.ofSimpleQuery(

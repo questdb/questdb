@@ -393,6 +393,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
                 }
                 CompiledQuery cq = compiler.compile(sqlText, sqlExecutionContext);
+                sqlExecutionContext.getReferencedViews().clear();
                 // copy actual bind variable types as supplied by the client + defined by the SQL compiler
                 msgParseCopyOutTypeDescriptionTypeOIDs(sqlExecutionContext.getBindVariableService());
                 setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
@@ -691,6 +692,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         } finally {
             // after execute is complete, bind variable values have been used and no longer needed in the cache
             bindVariableCharacterStore.clear();
+            sqlExecutionContext.getReferencedViews().clear();
         }
         return transactionState;
     }
