@@ -76,7 +76,9 @@ public class RandomSelectGenerator {
     private double orderByProbability = 0.4;
     // SAMPLE BY probability: aggregationProbability * sampleByProbability
     // GROUP BY probability: aggregationProbability * (1 - sampleByProbability)
-    private double sampleByProbability = 0.5;
+    // todo: fix sample by generation
+    //  have to guarantee asc ordering on timestamp column!
+    private double sampleByProbability = 0.0;
     private double whereClauseProbability = 0.6;
 
     /**
