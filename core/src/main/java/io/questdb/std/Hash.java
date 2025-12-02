@@ -30,7 +30,7 @@ import io.questdb.std.str.Utf8String;
 public final class Hash {
 
     // Constant from Rust compiler's FxHasher.
-    private static final long M2 = 0x517cc1b727220a95L;
+    public static final long M2 = 0x517cc1b727220a95L;
     private static final int MURMUR3_SEED = 95967;
     private static final long MURMUR3_X64_128_C1 = 0x87c37b91114253d5L;
     private static final long MURMUR3_X64_128_C2 = 0x4cf5ad432745937fL;
@@ -68,8 +68,20 @@ public final class Hash {
         return k * M2;
     }
 
+    /**
+     * Murmur finalizer.
+     */
+    public static long fmix64(long h) {
+        h = (h ^ (h >>> 33)) * 0xff51afd7ed558ccdL;
+        h = (h ^ (h >>> 33)) * 0xc4ceb9fe1a85ec53L;
+        return h ^ (h >>> 33);
+    }
+
     public static long hashInt64(int k) {
-        return fmix64(Integer.toUnsignedLong(k));
+        // hand-inlined and simplified version of fmix64()
+        long h = k * 0xff51afd7ed558ccdL;
+        h = (h ^ (h >>> 33)) * 0xc4ceb9fe1a85ec53L;
+        return h ^ (h >>> 33);
     }
 
     public static int hashLong128_32(long key1, long key2) {
@@ -104,9 +116,9 @@ public final class Hash {
      * @param len memory length in bytes
      * @return hash code
      */
-    public static long hashMem64(long p, long len) {
+    public static long hashMem64(long p, int len) {
         long h = 0;
-        long i = 0;
+        int i = 0;
         for (; i + 7 < len; i += 8) {
             h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
         }
@@ -125,7 +137,7 @@ public final class Hash {
     }
 
     /**
-     * Same as {@link #hashMem64(long, long)}, but with direct UTF8 string
+     * Same as {@link #hashMem64(long, int)}, but with direct UTF8 string
      * instead of direct unsafe access.
      */
     public static int hashUtf8(DirectUtf8Sequence seq) {
@@ -133,7 +145,7 @@ public final class Hash {
     }
 
     /**
-     * Same as {@link #hashMem64(long, long)}, but with on-heap char sequence
+     * Same as {@link #hashMem64(long, int)}, but with on-heap char sequence
      * instead of direct unsafe access.
      */
     public static int hashUtf8(Utf8String us) {
@@ -189,15 +201,6 @@ public final class Hash {
      */
     public static int spread(int h) {
         return (h ^ (h >>> 16)) & SPREAD_HASH_BITS;
-    }
-
-    /**
-     * Murmur finalizer.
-     */
-    private static long fmix64(long h) {
-        h = (h ^ (h >>> 33)) * 0xff51afd7ed558ccdL;
-        h = (h ^ (h >>> 33)) * 0xc4ceb9fe1a85ec53L;
-        return h ^ (h >>> 33);
     }
 
     /**

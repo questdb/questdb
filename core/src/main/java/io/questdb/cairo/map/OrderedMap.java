@@ -102,7 +102,7 @@ public class OrderedMap implements Map, Reopenable {
     private final Key key;
     private final long keyOffset;
     // Set to -1 when key is var-size.
-    private final long keySize;
+    private final int keySize;
     private final int listMemoryTag;
     private final double loadFactor;
     private final int maxResizes;
@@ -194,7 +194,7 @@ public class OrderedMap implements Map, Reopenable {
             this.maxResizes = maxResizes;
 
             final int keyColumnCount = keyTypes.getColumnCount();
-            long keySize = 0;
+            int keySize = 0;
             for (int i = 0; i < keyColumnCount; i++) {
                 final int columnType = keyTypes.getColumnType(i);
                 final int size = ColumnType.sizeOf(columnType);
@@ -212,7 +212,7 @@ public class OrderedMap implements Map, Reopenable {
 
             long valueOffset = 0;
             long[] valueOffsets = null;
-            long valueSize = 0;
+            int valueSize = 0;
             if (valueTypes != null) {
                 valueColumnCount = valueTypes.getColumnCount();
                 valueOffsets = new long[valueColumnCount];
@@ -434,7 +434,7 @@ public class OrderedMap implements Map, Reopenable {
             while ((destOffset = decompressOffset(Unsafe.getUnsafe().getInt(destP))) > -1) {
                 if (
                         hashCodeLo == Unsafe.getUnsafe().getInt(destP + 4)
-                                && Vect.memeq(heapAddr + destOffset, srcStartAddr, keySize)
+                                && memeqFixedSizeKey(heapAddr + destOffset, srcStartAddr, keySize)
                 ) {
                     // Match found, merge values.
                     mergeFunc.merge(
@@ -611,6 +611,42 @@ public class OrderedMap implements Map, Reopenable {
         return value.of(startAddr, valueAddr, heapLimit, newValue);
     }
 
+    /**
+     * Specialized version of {@link Hash#hashMem64(long, int)} with fast-paths for popular key sizes.
+     */
+    static long hashFixedSizeKey(long p, int len) {
+        switch (len) {
+            case 4:
+                // hand-inlined and simplified version of fmix64()
+                long h = Unsafe.getUnsafe().getInt(p) * 0xff51afd7ed558ccdL;
+                h = (h ^ (h >>> 33)) * 0xc4ceb9fe1a85ec53L;
+                return h ^ (h >>> 33);
+            case 8:
+                return Hash.fmix64(Unsafe.getUnsafe().getLong(p));
+            case 12:
+                return Hash.fmix64(Unsafe.getUnsafe().getLong(p) * Hash.M2 + Unsafe.getUnsafe().getInt(p + 8));
+            case 16:
+                return Hash.fmix64(Unsafe.getUnsafe().getLong(p) * Hash.M2 + Unsafe.getUnsafe().getLong(p + 8));
+            default:
+                return Hash.hashMem64(p, len);
+        }
+    }
+
+    /**
+     * Specialized version of {@link Vect#memeq(long, long, long)} with fast-paths for popular key sizes.
+     */
+    static boolean memeqFixedSizeKey(long a, long b, int len) {
+        return switch (len) {
+            case 4 -> Unsafe.getUnsafe().getInt(a) == Unsafe.getUnsafe().getInt(b);
+            case 8 -> Unsafe.getUnsafe().getLong(a) == Unsafe.getUnsafe().getLong(b);
+            case 12 -> Unsafe.getUnsafe().getLong(a) == Unsafe.getUnsafe().getLong(b)
+                    && Unsafe.getUnsafe().getInt(a + 8) == Unsafe.getUnsafe().getInt(b + 8);
+            case 16 -> Unsafe.getUnsafe().getLong(a) == Unsafe.getUnsafe().getLong(b)
+                    && Unsafe.getUnsafe().getLong(a + 8) == Unsafe.getUnsafe().getLong(b + 8);
+            default -> Vect.memeq(a, b, len);
+        };
+    }
+
     long keySize() {
         return keySize;
     }
@@ -639,7 +675,7 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
-        public void copyFromRawKey(long srcPtr, long srcSize) {
+        public void copyFromRawKey(long srcPtr, int srcSize) {
             assert srcSize == keySize;
             Vect.memcpy(appendAddr, srcPtr, srcSize);
             appendAddr += srcSize;
@@ -647,7 +683,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public long hash() {
-            return Hash.hashMem64(startAddr, keySize);
+            return hashFixedSizeKey(startAddr, keySize);
         }
 
         public FixedSizeKey init() {
@@ -795,7 +831,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         protected boolean eq(long offset) {
-            return Vect.memeq(heapAddr + offset, startAddr, keySize);
+            return memeqFixedSizeKey(heapAddr + offset, startAddr, keySize);
         }
     }
 
@@ -878,18 +914,18 @@ public class OrderedMap implements Map, Reopenable {
             }
         }
 
-        abstract void copyFromRawKey(long srcPtr, long srcSize);
+        abstract void copyFromRawKey(long srcPtr, int srcSize);
 
         protected abstract boolean eq(long offset);
     }
 
     class VarSizeKey extends Key {
-        private long len;
+        private int len;
 
         @Override
         public long commit() {
-            len = appendAddr - startAddr - keyOffset;
-            Unsafe.getUnsafe().putInt(startAddr, (int) len);
+            len = (int) (appendAddr - startAddr - keyOffset);
+            Unsafe.getUnsafe().putInt(startAddr, len);
             return len;
         }
 
@@ -900,7 +936,7 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
-        public void copyFromRawKey(long srcPtr, long srcSize) {
+        public void copyFromRawKey(long srcPtr, int srcSize) {
             checkCapacity(srcSize);
             Vect.memcpy(appendAddr, srcPtr, srcSize);
             appendAddr += srcSize;

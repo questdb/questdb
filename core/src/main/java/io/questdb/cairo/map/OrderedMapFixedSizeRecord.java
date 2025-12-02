@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -42,6 +41,8 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.map.OrderedMap.hashFixedSizeKey;
+
 /**
  * Provides Record access interface for FastMap key-value pairs with fixed-size keys.
  * <p>
@@ -52,10 +53,10 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     private final Interval[] intervals;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
-    private final long keySize;
+    private final int keySize;
     private final OrderedMapValue value;
     private final long[] valueOffsets;
-    private final long valueSize;
+    private final int valueSize;
     private long keyAddress;
     private long limit;
     private IntList symbolTableIndex;
@@ -63,8 +64,8 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     private long valueAddress;
 
     OrderedMapFixedSizeRecord(
-            long keySize,
-            long valueSize,
+            int keySize,
+            int valueSize,
             long[] valueOffsets,
             OrderedMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
@@ -148,8 +149,8 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     }
 
     private OrderedMapFixedSizeRecord(
-            long keySize,
-            long valueSize,
+            int keySize,
+            int valueSize,
             long[] valueOffsets,
             long[] columnOffsets,
             Long256Impl[] keyLong256A,
@@ -373,7 +374,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
 
     @Override
     public long keyHashCode() {
-        return Hash.hashMem64(keyAddress, keySize);
+        return hashFixedSizeKey(keyAddress, keySize);
     }
 
     @Override

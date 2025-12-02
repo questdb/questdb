@@ -24,7 +24,12 @@
 
 package io.questdb.test.std;
 
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.Hash;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -117,6 +122,6 @@ public class HashTest {
     }
 
     private interface HashFunction {
-        long hash(long p, long len);
+        long hash(long p, int len);
     }
 }
