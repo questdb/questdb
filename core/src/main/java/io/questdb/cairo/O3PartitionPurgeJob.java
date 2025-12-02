@@ -355,6 +355,29 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 boolean rangeUnlocked = previousNameVersion < nextNameVersion
                         && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
 
+                // Sometimes TableWriter can create a partition folder before committing the transaction
+                // and then clean it before committing because it was not necessary to do a copy on write.
+                // We read partition directories before reading the txn file, so it is possible to see such partitions
+                // that don't exist when the txn file was committed.
+                // Check that the partition version we think we rely on indeed still exists.
+                if (rangeUnlocked) {
+                    path.trimTo(tableRootLen);
+                    TableUtils.setPathForNativePartition(
+                            path,
+                            timestampType,
+                            partitionBy,
+                            partitionTimestamp,
+                            nextNameVersion - 1
+                    );
+                    if (!ff.exists(path.$())) {
+                        // We see some phantom partitions, the best way is to abort processing this partition
+                        LOG.info().$("partition dir removed after scanning the directories, aborting processing the partition [partition=")
+                                .$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path)
+                                .I$();
+                        return;
+                    }
+                }
+
                 path.trimTo(tableRootLen);
                 TableUtils.setPathForNativePartition(
                         path,
