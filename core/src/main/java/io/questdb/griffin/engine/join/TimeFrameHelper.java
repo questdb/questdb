@@ -210,7 +210,6 @@ public class TimeFrameHelper {
         if (bookmarkedFrameIndex != -1) {
             timeFrameCursor.jumpTo(bookmarkedFrameIndex);
             if (timeFrameCursor.open() > 0) {
-                // Check if bookmarked position is still valid for this search
                 long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi(), scale);
                 if (frameTsHi < timestampLo) {
                     // Record as prevailing candidate
@@ -414,6 +413,7 @@ public class TimeFrameHelper {
         timeFrameCursor.recordAtRowIndex(record, rowIndex);
     }
 
+    // todo @victor remove me
     public long scanBackwardForPrevailing(long timestampLo) {
         long rowHi = timeFrame.getRowHi();
         long rowLo = timeFrame.getRowLo();
@@ -445,6 +445,8 @@ public class TimeFrameHelper {
     public void setBookmark(int frameIndex, long rowId) {
         this.bookmarkedFrameIndex = frameIndex;
         this.bookmarkedRowId = rowId;
+        timeFrameCursor.jumpTo(bookmarkedFrameIndex);
+        timeFrameCursor.open();
     }
 
     public void toTop() {
