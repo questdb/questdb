@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -47,7 +46,6 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
@@ -60,6 +58,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
 public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
@@ -141,22 +140,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
         this.sharedQueryWorkerCount = workerCount;
-    }
-
-    public static void prepareBindVarMemory(
-            SqlExecutionContext executionContext,
-            SymbolTableSource symbolTableSource,
-            ObjList<Function> bindVarFunctions,
-            MemoryCARW bindVarMemory
-    ) throws SqlException {
-        // don't trigger memory allocation if there are no variables
-        if (bindVarFunctions.size() > 0) {
-            bindVarMemory.truncate();
-            for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
-                Function function = bindVarFunctions.getQuick(i);
-                writeBindVarFunction(bindVarMemory, function, symbolTableSource, executionContext);
-            }
-        }
     }
 
     @Override
@@ -362,77 +345,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         // Pre-touch native columns, if asked.
         if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
             atom.preTouchColumns(record, rows, frameRowCount);
-        }
-    }
-
-    private static void writeBindVarFunction(
-            MemoryCARW bindVarMemory,
-            Function function,
-            SymbolTableSource symbolTableSource,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        final int columnType = function.getType();
-        final int columnTypeTag = ColumnType.tagOf(columnType);
-        switch (columnTypeTag) {
-            case ColumnType.BOOLEAN:
-                bindVarMemory.putLong(function.getBool(null) ? 1 : 0);
-                return;
-            case ColumnType.BYTE:
-                bindVarMemory.putLong(function.getByte(null));
-                return;
-            case ColumnType.GEOBYTE:
-                bindVarMemory.putLong(function.getGeoByte(null));
-                return;
-            case ColumnType.SHORT:
-                bindVarMemory.putLong(function.getShort(null));
-                return;
-            case ColumnType.GEOSHORT:
-                bindVarMemory.putLong(function.getGeoShort(null));
-                return;
-            case ColumnType.CHAR:
-                bindVarMemory.putLong(function.getChar(null));
-                return;
-            case ColumnType.INT:
-                bindVarMemory.putLong(function.getInt(null));
-                return;
-            case ColumnType.IPv4:
-                bindVarMemory.putLong(function.getIPv4(null));
-                return;
-            case ColumnType.GEOINT:
-                bindVarMemory.putLong(function.getGeoInt(null));
-                return;
-            case ColumnType.SYMBOL:
-                assert function instanceof CompiledFilterSymbolBindVariable;
-                function.init(symbolTableSource, executionContext);
-                bindVarMemory.putLong(function.getInt(null));
-                return;
-            case ColumnType.FLOAT:
-                // compiled filter function will read only the first word
-                bindVarMemory.putFloat(function.getFloat(null));
-                bindVarMemory.putFloat(Float.NaN);
-                return;
-            case ColumnType.LONG:
-                bindVarMemory.putLong(function.getLong(null));
-                return;
-            case ColumnType.GEOLONG:
-                bindVarMemory.putLong(function.getGeoLong(null));
-                return;
-            case ColumnType.DATE:
-                bindVarMemory.putLong(function.getDate(null));
-                return;
-            case ColumnType.TIMESTAMP:
-                bindVarMemory.putLong(function.getTimestamp(null));
-                return;
-            case ColumnType.DOUBLE:
-                bindVarMemory.putDouble(function.getDouble(null));
-                return;
-            case ColumnType.UUID:
-                long lo = function.getLong128Lo(null);
-                long hi = function.getLong128Hi(null);
-                bindVarMemory.putLong128(lo, hi);
-                return;
-            default:
-                throw SqlException.position(0).put("unsupported bind variable type: ").put(ColumnType.nameOf(columnTypeTag));
         }
     }
 
