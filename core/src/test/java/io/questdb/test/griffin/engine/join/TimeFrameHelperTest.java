@@ -326,7 +326,6 @@ public class TimeFrameHelperTest {
         long row = helper.findRowLo(30, 100, true);
         Assert.assertEquals(0, row); // first row
         Assert.assertEquals(30, helper.getRecord().getTimestamp(0));
-        // No prevailing
         Assert.assertEquals(-1, helper.getPrevailingFrameIndex());
         Assert.assertEquals(Long.MIN_VALUE, helper.getPrevailingRowId());
     }
