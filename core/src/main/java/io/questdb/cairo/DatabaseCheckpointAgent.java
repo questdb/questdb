@@ -449,7 +449,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 Path srcPath = new Path();
                 Path dstPath = new Path();
                 MemoryCMARW memFile = Vm.getCMARWInstance();
-                TableFilesRecoveryAgent recoveryAgent = new TableFilesRecoveryAgent(configuration)
+                TableSnapshotRestore recoveryAgent = new TableSnapshotRestore(configuration)
         ) {
             // use current checkpoint root if it exists and don't
             // bother checking that legacy path is there or not
@@ -553,18 +553,16 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     srcPath.$(), (pUtf8NameZ, type) -> {
                         if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
                             dstPath.trimTo(rootLen).concat(pUtf8NameZ);
-                            int srcPathLen = srcPath.size();
-                            int dstPathLen = dstPath.size();
 
-                            recoveryAgent.copyMetadataFiles(srcPath, dstPath, srcPathLen, dstPathLen,
-                                    recoveredMetaFiles, recoveredTxnFiles, recoveredCVFiles);
-                            // Reset _todo_ file otherwise TableWriter will start restoring metadata on open.
-                            TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
-                            recoveryAgent.rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount, true, false);
-
-                            srcPath.trimTo(srcPathLen);
-                            dstPath.trimTo(dstPathLen);
-                            recoveryAgent.processWalSequencerMetadata(srcPath, dstPath, srcPathLen, dstPathLen, recoveredWalFiles, memFile);
+                            recoveryAgent.restoreTableFiles(
+                                    srcPath,
+                                    dstPath,
+                                    recoveredMetaFiles,
+                                    recoveredTxnFiles,
+                                    recoveredCVFiles,
+                                    recoveredWalFiles,
+                                    symbolFilesCount
+                            );
                         }
                     }
             );
