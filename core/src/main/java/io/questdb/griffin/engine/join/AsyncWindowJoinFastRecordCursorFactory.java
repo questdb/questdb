@@ -179,13 +179,18 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         PageFrameReducer reducer;
         if (includePrevailing) {
             if (masterFilter != null) {
-                reducer = atom.isVectorized() ? FILTER_AND_AGGREGATE_VECT_PREVAILING : (joinFilter == null ? FILTER_AND_AGGREGATE_PREVAILING : FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED);
+                reducer = atom.isVectorized()
+                        ? FILTER_AND_AGGREGATE_VECT_PREVAILING
+                        : (joinFilter == null ? FILTER_AND_AGGREGATE_PREVAILING : FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED);
             } else {
-                reducer = atom.isVectorized() ? AGGREGATE_VECT_PREVAILING : (joinFilter == null ? AGGREGATE_PREVAILING : AGGREGATE_PREVAILING_JOIN_FILTERED);
+                reducer = atom.isVectorized()
+                        ? AGGREGATE_VECT_PREVAILING
+                        : (joinFilter == null ? AGGREGATE_PREVAILING : AGGREGATE_PREVAILING_JOIN_FILTERED);
             }
         } else {
-            reducer = masterFilter != null ? atom.isVectorized() ? FILTER_AND_AGGREGATE_VECT : FILTER_AND_AGGREGATE
-                    : atom.isVectorized() ? AGGREGATE_VECT : AGGREGATE;
+            reducer = atom.isVectorized()
+                    ? (masterFilter != null ? FILTER_AND_AGGREGATE_VECT : AGGREGATE_VECT)
+                    : (masterFilter != null ? FILTER_AND_AGGREGATE : AGGREGATE);
         }
 
         this.frameSequence = new PageFrameSequence<>(
@@ -263,6 +268,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         sink.child(slaveFactory);
     }
 
+    /**
+     * Aggregate (no join filter).
+     */
     private static void aggregate(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
@@ -403,6 +411,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
+    /**
+     * Vectorized aggregate (no join filter).
+     */
     private static void aggregateVect(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
@@ -545,7 +556,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
-     * Vectorized aggregate with prevailing support (no joinFilter).
+     * Vectorized aggregate with include prevailing (no join filter).
      */
     private static void aggregateVectWithPrevailing(
             int workerId,
@@ -709,6 +720,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
+    /**
+     * Aggregate with include prevailing (no join filter).
+     */
     private static void aggregateWithPrevailing(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
@@ -860,6 +874,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
+    /**
+     * Aggregate with include prevailing and join filter.
+     */
     private static void aggregateWithPrevailingJoinFiltered(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
@@ -1083,6 +1100,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
+    /**
+     * Aggregate with master filter (no join filter).
+     */
     private static void filterAndAggregate(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
@@ -1234,6 +1254,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
+    /**
+     * Vectorized aggregate with master filter (no join filter).
+     */
     private static void filterAndAggregateVect(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
@@ -1384,6 +1407,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
+    /**
+     * Vectorized aggregate with include prevailing and master filter (no join filter).
+     */
     private static void filterAndAggregateVectWithPrevailing(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
@@ -1555,6 +1581,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
+    /**
+     * Aggregate with include prevailing and master filter (no join filter).
+     */
     private static void filterAndAggregateWithPrevailing(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
@@ -1718,6 +1747,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
+    /**
+     * Aggregate with include prevailing, master filter, and join filter.
+     */
     private static void filterAndAggregateWithPrevailingJoinFiltered(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
