@@ -53,6 +53,7 @@ jobs:
         inputs:
           script: |
             wget https://github.com/redhat-openshift-ecosystem/openshift-preflight/releases/latest/download/preflight-linux-amd64 -O /usr/local/bin/preflight
+            chmod +x /usr/local/bin/preflight
             which preflight
 
       - task: Docker@2
