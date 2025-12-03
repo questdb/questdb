@@ -3071,13 +3071,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public boolean trySkipWalTransactions(long seqTxn, long skipTxnCount) {
         assert skipTxnCount > 0;
         if (txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0) {
-            LOG.info().$("skipping replaced WAL transactions [table=").$(tableToken)
-                    .$("range=[").$(seqTxn)
-                    .$(", ").$(seqTxn + skipTxnCount).$(')')
-                    .I$();
-
-            // Still apply symbol map diffs for symbol columns to keep the
+            // Apply symbol changes for symbol columns to keep the
             // symbol indexes same as if the transactions were applied.
+            int addedSymbols = 0;
             for (long txn = seqTxn, n = seqTxn + skipTxnCount; txn < n; txn++) {
 
                 SymbolMapDiffCursor symbolMapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(txn);
@@ -3111,9 +3107,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         while ((entry = symbolMapDiff.nextEntry()) != null) {
                             final CharSequence symbolValue = entry.getSymbol();
                             mapWriter.put(symbolValue);
+                            addedSymbols++;
                         }
                     }
                 }
+
+                LOG.info().$("skipping replaced WAL transactions [table=").$(tableToken)
+                        .$(", range=[").$(seqTxn)
+                        .$(", ").$(seqTxn + skipTxnCount).$(')')
+                        .$(", addedSymbols=").$(addedSymbols)
+                        .I$();
             }
 
             commitSeqTxn(seqTxn + skipTxnCount - 1);
