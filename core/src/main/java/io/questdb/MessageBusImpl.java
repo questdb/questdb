@@ -44,6 +44,7 @@ import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.tasks.ColumnTask;
 import io.questdb.tasks.GroupByMergeShardTask;
 import io.questdb.tasks.LatestByTask;
+import io.questdb.tasks.MarkoutReduceTask;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionPurgeTask;
@@ -81,6 +82,9 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence latestByPubSeq;
     private final RingQueue<LatestByTask> latestByQueue;
     private final MCSequence latestBySubSeq;
+    private final MPSequence markoutReducePubSeq;
+    private final RingQueue<MarkoutReduceTask> markoutReduceQueue;
+    private final MCSequence markoutReduceSubSeq;
     private final MPSequence o3CopyPubSeq;
     private final RingQueue<O3CopyTask> o3CopyQueue;
     private final MCSequence o3CopySubSeq;
@@ -153,6 +157,11 @@ public class MessageBusImpl implements MessageBus {
             this.latestByPubSeq = new MPSequence(latestByQueue.getCycle());
             this.latestBySubSeq = new MCSequence(latestByQueue.getCycle());
             latestByPubSeq.then(latestBySubSeq).then(latestByPubSeq);
+
+            this.markoutReduceQueue = new RingQueue<>(MarkoutReduceTask::new, configuration.getGroupByMergeShardQueueCapacity());
+            this.markoutReducePubSeq = new MPSequence(markoutReduceQueue.getCycle());
+            this.markoutReduceSubSeq = new MCSequence(markoutReduceQueue.getCycle());
+            markoutReducePubSeq.then(markoutReduceSubSeq).then(markoutReducePubSeq);
 
             this.tableWriterEventQueue = new RingQueue<>(
                     TableWriterTask::new,
@@ -398,6 +407,21 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getLatestBySubSeq() {
         return latestBySubSeq;
+    }
+
+    @Override
+    public MPSequence getMarkoutReducePubSeq() {
+        return markoutReducePubSeq;
+    }
+
+    @Override
+    public RingQueue<MarkoutReduceTask> getMarkoutReduceQueue() {
+        return markoutReduceQueue;
+    }
+
+    @Override
+    public MCSequence getMarkoutReduceSubSeq() {
+        return markoutReduceSubSeq;
     }
 
     @Override

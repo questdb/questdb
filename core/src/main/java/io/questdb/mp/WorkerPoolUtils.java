@@ -37,6 +37,7 @@ import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.MarkoutReduceJob;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.std.AsyncMunmapJob;
@@ -72,6 +73,7 @@ public class WorkerPoolUtils {
         if (configuration.isSqlParallelGroupByEnabled()) {
             sharedPoolQuery.assign(new GroupByVectorAggregateJob(messageBus));
             sharedPoolQuery.assign(new GroupByMergeShardJob(messageBus));
+            sharedPoolQuery.assign(new MarkoutReduceJob(messageBus));
         }
 
         if (configuration.isSqlParallelFilterEnabled() || configuration.isSqlParallelGroupByEnabled()) {
