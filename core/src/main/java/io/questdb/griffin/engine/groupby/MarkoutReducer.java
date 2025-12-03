@@ -54,7 +54,7 @@ public class MarkoutReducer {
     private static final int ITERATOR_OFFSET_MASTER_ROW_INDEX = 0;         // int (4 bytes)
     private static final int ITERATOR_OFFSET_MASTER_TIMESTAMP = 8;         // long (8 bytes)
     private static final int ITERATOR_OFFSET_NEXT_ITER_ADDR = 16;          // long (8 bytes)
-    private static final int ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM = 32;      // int (4 bytes)
+    private static final int ITERATOR_OFFSET_NEXT_SEQUENCE_ROW_NUM = 32;   // int (4 bytes)
     private static final int ITERATOR_OFFSET_NEXT_TIMESTAMP = 24;          // long (8 bytes)
     private static final int ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START = 36; // int (4 bytes)
     private static final int ITERATOR_SIZE = 40;
@@ -67,11 +67,11 @@ public class MarkoutReducer {
     private GroupByFunctionsUpdater functionUpdater;
     private long lastIteratorBlockAddr;
     private Map partialMap;
-    // Shared slave data (read-only)
-    private RecordArray slaveRecordArray;
-    private LongList slaveRecordOffsets;
-    private int slaveRowCount;
-    private int slaveSequenceColumnIndex;
+    // Shared sequence data (read-only)
+    private RecordArray sequenceRecordArray;
+    private LongList sequenceRecordOffsets;
+    private int sequenceRowCount;
+    private int sequenceColumnIndex;
 
     // ==================== Block accessor methods ====================
 
@@ -93,14 +93,14 @@ public class MarkoutReducer {
         if (batch.size() == 0) {
             return;
         }
-        this.slaveRowCount = (int) atom.getSlaveRowCount();
-        if (slaveRowCount == 0) {
+        this.sequenceRowCount = (int) atom.getSequenceRowCount();
+        if (sequenceRowCount == 0) {
             return;
         }
-        this.slaveRecordArray = atom.getSlaveRecordArray();
-        this.slaveRecordOffsets = atom.getSlaveRecordOffsets();
-        this.slaveSequenceColumnIndex = atom.getSlaveSequenceColumnIndex();
-        long firstSlaveTimeOffset = atom.getFirstSlaveTimeOffset();
+        this.sequenceRecordArray = atom.getSequenceRecordArray();
+        this.sequenceRecordOffsets = atom.getSequenceRecordOffsets();
+        this.sequenceColumnIndex = atom.getSequenceColumnIndex();
+        long firstSequenceTimeOffset = atom.getFirstSequenceTimeOffset();
         int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
         this.batch = batch;
         this.partialMap = atom.getMap(slotId);
@@ -126,7 +126,7 @@ public class MarkoutReducer {
                 if (nextMasterRowIndex < batch.size()) {
                     long nextIterTs = iter_nextTimestamp(nextIter);
                     long nextMasterTs = batch.getRowAt(nextMasterRowIndex).getTimestamp(masterTimestampColumnIndex);
-                    long nextInitialTs = nextMasterTs + firstSlaveTimeOffset;
+                    long nextInitialTs = nextMasterTs + firstSequenceTimeOffset;
                     if (nextIterTs == Long.MIN_VALUE || nextInitialTs < nextIterTs) {
                         nextIter = insertIteratorAfter(iter, nextMasterRowIndex, nextMasterTs);
                         nextMasterRowIndex++;
@@ -180,7 +180,7 @@ public class MarkoutReducer {
     }
 
     private static int iter_currentRowNum(long iterAddr) {
-        return iter_nextSlaveRowNum(iterAddr) - 1;
+        return iter_nextSequenceRowNum(iterAddr) - 1;
     }
 
     private static int iter_masterRowIndex(long iterAddr) {
@@ -195,8 +195,8 @@ public class MarkoutReducer {
         return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR);
     }
 
-    private static int iter_nextSlaveRowNum(long iterAddr) {
-        return Unsafe.getUnsafe().getInt(iterAddr + ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM);
+    private static int iter_nextSequenceRowNum(long iterAddr) {
+        return Unsafe.getUnsafe().getInt(iterAddr + ITERATOR_OFFSET_NEXT_SEQUENCE_ROW_NUM);
     }
 
     private static long iter_nextTimestamp(long iterAddr) {
@@ -215,8 +215,8 @@ public class MarkoutReducer {
         Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR, value);
     }
 
-    private static void iter_setNextSlaveRowNum(long iterAddr, int value) {
-        Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM, value);
+    private static void iter_setNextSequenceRowNum(long iterAddr, int value) {
+        Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_NEXT_SEQUENCE_ROW_NUM, value);
     }
 
     private static void iter_setNextTimestamp(long iterAddr, long value) {
@@ -250,18 +250,18 @@ public class MarkoutReducer {
      * Sets Long.MIN_VALUE if exhausted.
      */
     private void computeNextTimestamp(long iterAddr) {
-        int nextSlaveRowNum = iter_nextSlaveRowNum(iterAddr);
+        int nextSequenceRowNum = iter_nextSequenceRowNum(iterAddr);
 
-        if (nextSlaveRowNum >= slaveRowCount) {
+        if (nextSequenceRowNum >= sequenceRowCount) {
             iter_setNextTimestamp(iterAddr, Long.MIN_VALUE);
             return;
         }
 
-        long slaveRecordOffset = slaveRecordOffsets.getQuick(nextSlaveRowNum);
-        Record slaveRec = slaveRecordArray.getRecordAt(slaveRecordOffset);
-        long slaveOffset = slaveRec.getLong(slaveSequenceColumnIndex);
+        long sequenceRecordOffset = sequenceRecordOffsets.getQuick(nextSequenceRowNum);
+        Record sequenceRec = sequenceRecordArray.getRecordAt(sequenceRecordOffset);
+        long sequenceOffset = sequenceRec.getLong(sequenceColumnIndex);
         long masterTimestamp = iter_masterTimestamp(iterAddr);
-        iter_setNextTimestamp(iterAddr, masterTimestamp + slaveOffset);
+        iter_setNextTimestamp(iterAddr, masterTimestamp + sequenceOffset);
     }
 
     // ==================== Iterator management ====================
@@ -287,7 +287,7 @@ public class MarkoutReducer {
         iter_setTradeIndex(iterAddr, tradeIndex);
         iter_setMasterTimestamp(iterAddr, masterTimestamp);
         iter_setNextIterAddr(iterAddr, iterAddr); // Points to itself
-        iter_setNextSlaveRowNum(iterAddr, 0);
+        iter_setNextSequenceRowNum(iterAddr, 0);
         iter_setOffsetFromBlockStart(iterAddr, offsetFromBlockStart);
 
         // Compute first timestamp
@@ -334,23 +334,23 @@ public class MarkoutReducer {
         // Get current horizon row data
         Record masterRecord = batch.getRowAt(iter_masterRowIndex(currentIterAddr));
 
-        int slaveRowNum = iter_currentRowNum(currentIterAddr);
-        long slaveOffset = slaveRecordOffsets.getQuick(slaveRowNum);
-        Record slaveRecord = slaveRecordArray.getRecordAt(slaveOffset);
+        int sequenceRowNum = iter_currentRowNum(currentIterAddr);
+        long sequenceOffset = sequenceRecordOffsets.getQuick(sequenceRowNum);
+        Record sequenceRecord = sequenceRecordArray.getRecordAt(sequenceOffset);
 
         // TODO: Add ASOF JOIN lookup here
         // For now, we just aggregate without the price lookup
-        // Record priceRecord = asofLookup(pricesCursor, horizonTs, tradeRecord);
+        // Record priceRecord = asofLookup(pricesCursor, horizonTs, masterRecord);
 
         // Create map key: (symbol, offset)
         // For now using a simplified key - actual implementation would use the configured key columns
         MapKey key = partialMap.withKey();
-        // The actual key would be populated from trade record and slave record
-        // key.putInt(tradeRecord.getInt(symbolColumnIndex));
-        // key.putLong(slaveRecord.getLong(slaveSequenceColumnIndex));
+        // The actual key would be populated from master record and sequence record
+        // key.putInt(masterRecord.getInt(symbolColumnIndex));
+        // key.putLong(sequenceRecord.getLong(sequenceColumnIndex));
 
-        // For now, just use the slave offset as a key (simplified)
-        key.putLong(slaveRecord.getLong(slaveSequenceColumnIndex));
+        // For now, just use the sequence offset as a key (simplified)
+        key.putLong(sequenceRecord.getLong(sequenceColumnIndex));
 
         MapValue value = key.createValue();
         if (value.isNew()) {
@@ -375,8 +375,8 @@ public class MarkoutReducer {
      * Advance iterator to the next row and compute its timestamp.
      */
     private void gotoNextRow(long iterAddr) {
-        int nextSlaveRowNum = iter_nextSlaveRowNum(iterAddr);
-        iter_setNextSlaveRowNum(iterAddr, nextSlaveRowNum + 1);
+        int nextSequenceRowNum = iter_nextSequenceRowNum(iterAddr);
+        iter_setNextSequenceRowNum(iterAddr, nextSequenceRowNum + 1);
         computeNextTimestamp(iterAddr);
     }
 
@@ -396,7 +396,7 @@ public class MarkoutReducer {
      * Check if iterator is exhausted (no more rows to emit).
      */
     private boolean isEmpty(long iterAddr) {
-        return iter_nextSlaveRowNum(iterAddr) >= slaveRowCount;
+        return iter_nextSequenceRowNum(iterAddr) >= sequenceRowCount;
     }
 
     /**

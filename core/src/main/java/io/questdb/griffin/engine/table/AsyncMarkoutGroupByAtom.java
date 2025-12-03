@@ -66,7 +66,7 @@ import java.io.Closeable;
  * Atom that manages per-worker resources for parallel markout query execution.
  * <p>
  * This class holds:
- * 1. Shared (read-only) slave record array (offset records from the horizons cursor)
+ * 1. Shared (read-only) sequence record array (offset records from the horizons cursor)
  * 2. Per-worker price cursors for ASOF JOIN lookups
  * 3. Per-worker aggregation maps and group by functions
  * 4. Per-worker iterator block memory for the k-way merge algorithm
@@ -81,7 +81,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private static final int ITERATOR_OFFSET_TRADE_INDEX = 0;             // int (4 bytes)
     private static final int ITERATOR_OFFSET_MASTER_TIMESTAMP = 8;        // long (8 bytes)
     private static final int ITERATOR_OFFSET_NEXT_ITER_ADDR = 16;         // long (8 bytes)
-    private static final int ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM = 32;     // int (4 bytes)
+    private static final int ITERATOR_OFFSET_NEXT_SEQUENCE_ROW_NUM = 32;  // int (4 bytes)
     private static final int ITERATOR_OFFSET_NEXT_TIMESTAMP = 24;         // long (8 bytes)
     private static final int ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START = 36; // int (4 bytes)
     private static final int ITERATOR_SIZE = 40;
@@ -89,12 +89,12 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
     private final CairoConfiguration configuration;
 
-    // Shared (read-only) slave data - materialized offset records
-    private final RecordArray slaveRecordArray;
-    private final LongList slaveRecordOffsets = new LongList();
-    private final int slaveSequenceColumnIndex;
-    private long slaveRowCount;
-    private long firstSlaveTimeOffset;
+    // Shared (read-only) sequence data - materialized offset records
+    private final RecordArray sequenceRecordArray;
+    private final LongList sequenceRecordOffsets = new LongList();
+    private final int sequenceColumnIndex;
+    private long sequenceRowCount;
+    private long firstSequenceTimeOffset;
 
     // Master row timestamp column index
     private final int masterTimestampColumnIndex;
@@ -137,11 +137,11 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull RecordCursorFactory pricesFactory,
-            @NotNull RecordCursorFactory slaveCursorFactory,
-            @NotNull RecordSink slaveRecordSink,
+            @NotNull RecordCursorFactory sequenceCursorFactory,
+            @NotNull RecordSink sequenceRecordSink,
             @NotNull RecordSink masterRecordSink,
             int masterTimestampColumnIndex,
-            int slaveSequenceColumnIndex,
+            int sequenceColumnIndex,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
@@ -156,15 +156,15 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             this.configuration = configuration;
             this.pricesFactory = pricesFactory;
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
-            this.slaveSequenceColumnIndex = slaveSequenceColumnIndex;
+            this.sequenceColumnIndex = sequenceColumnIndex;
             this.keyTypes = new ArrayColumnTypes().addAll(keyTypes);
             this.valueTypes = new ArrayColumnTypes().addAll(valueTypes);
             this.masterRecordSink = masterRecordSink;
 
-            // Initialize shared slave record array
-            this.slaveRecordArray = new RecordArray(
-                    slaveCursorFactory.getMetadata(),
-                    slaveRecordSink,
+            // Initialize shared sequence record array
+            this.sequenceRecordArray = new RecordArray(
+                    sequenceCursorFactory.getMetadata(),
+                    sequenceRecordSink,
                     configuration.getSqlHashJoinValuePageSize(),
                     configuration.getSqlHashJoinValueMaxPages()
             );
@@ -250,7 +250,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
     @Override
     public void close() {
-        Misc.free(slaveRecordArray);
+        Misc.free(sequenceRecordArray);
         Misc.free(ownerMap);
         Misc.freeObjList(perWorkerMaps);
         Misc.free(ownerAllocator);
@@ -294,29 +294,29 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     }
 
     /**
-     * Materialize the slave cursor (offset records) into the shared RecordArray.
+     * Materialize the sequence cursor (offset records) into the shared RecordArray.
      * Must be called once before dispatching tasks.
      */
-    public void materializeSlaveCursor(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-        slaveRecordArray.clear();
-        slaveRecordOffsets.clear();
+    public void materializeSequenceCursor(RecordCursor sequenceCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        sequenceRecordArray.clear();
+        sequenceRecordOffsets.clear();
 
-        Record slaveRecord = slaveCursor.getRecord();
-        while (slaveCursor.hasNext()) {
+        Record sequenceRecord = sequenceCursor.getRecord();
+        while (sequenceCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            long offset = slaveRecordArray.put(slaveRecord);
-            slaveRecordOffsets.add(offset);
+            long offset = sequenceRecordArray.put(sequenceRecord);
+            sequenceRecordOffsets.add(offset);
         }
-        slaveRecordArray.toTop();
-        slaveRowCount = slaveRecordOffsets.size();
+        sequenceRecordArray.toTop();
+        sequenceRowCount = sequenceRecordOffsets.size();
 
-        // Cache the first slave's offset value
-        if (slaveRowCount > 0) {
-            long firstSlaveRecordOffset = slaveRecordOffsets.getQuick(0);
-            Record firstSlaveRecord = slaveRecordArray.getRecordAt(firstSlaveRecordOffset);
-            firstSlaveTimeOffset = firstSlaveRecord.getLong(slaveSequenceColumnIndex);
+        // Cache the first sequence's offset value
+        if (sequenceRowCount > 0) {
+            long firstSequenceRecordOffset = sequenceRecordOffsets.getQuick(0);
+            Record firstSequenceRecord = sequenceRecordArray.getRecordAt(firstSequenceRecordOffset);
+            firstSequenceTimeOffset = firstSequenceRecord.getLong(sequenceColumnIndex);
         } else {
-            firstSlaveTimeOffset = 0;
+            firstSequenceTimeOffset = 0;
         }
     }
 
@@ -378,25 +378,25 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         return perWorkerGroupByFunctions.getQuick(slotId);
     }
 
-    // Shared slave data accessors
-    public RecordArray getSlaveRecordArray() {
-        return slaveRecordArray;
+    // Shared sequence data accessors
+    public RecordArray getSequenceRecordArray() {
+        return sequenceRecordArray;
     }
 
-    public LongList getSlaveRecordOffsets() {
-        return slaveRecordOffsets;
+    public LongList getSequenceRecordOffsets() {
+        return sequenceRecordOffsets;
     }
 
-    public int getSlaveSequenceColumnIndex() {
-        return slaveSequenceColumnIndex;
+    public int getSequenceColumnIndex() {
+        return sequenceColumnIndex;
     }
 
-    public long getSlaveRowCount() {
-        return slaveRowCount;
+    public long getSequenceRowCount() {
+        return sequenceRowCount;
     }
 
-    public long getFirstSlaveTimeOffset() {
-        return firstSlaveTimeOffset;
+    public long getFirstSequenceTimeOffset() {
+        return firstSequenceTimeOffset;
     }
 
     public int getMasterTimestampColumnIndex() {

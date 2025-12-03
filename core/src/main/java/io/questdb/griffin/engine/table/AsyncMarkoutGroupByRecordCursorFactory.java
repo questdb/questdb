@@ -58,7 +58,7 @@ import org.jetbrains.annotations.NotNull;
 public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory masterFactory;   // Base master table
     private final RecordCursorFactory pricesFactory;   // Prices table for ASOF JOIN
-    private final RecordCursorFactory offsetsFactory;  // Offset sequence (slave)
+    private final RecordCursorFactory sequenceFactory;  // Offset sequence
     private final AsyncMarkoutGroupByAtom atom;
     private final AsyncMarkoutGroupByRecordCursor cursor;
     private final RecordSink masterRecordSink;
@@ -69,9 +69,9 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             @NotNull RecordMetadata metadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory pricesFactory,
-            @NotNull RecordCursorFactory offsetsFactory,
+            @NotNull RecordCursorFactory sequenceFactory,
             int masterTimestampColumnIndex,
-            int slaveSequenceColumnIndex,
+            int sequenceColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> recordFunctions,
@@ -83,23 +83,23 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
 
         this.masterFactory = masterFactory;
         this.pricesFactory = pricesFactory;
-        this.offsetsFactory = offsetsFactory;
+        this.sequenceFactory = sequenceFactory;
 
         BytecodeAssembler asm = new BytecodeAssembler();
-        RecordSink slaveRecordSink = null;
+        RecordSink sequenceRecordSink = null;
         RecordSink ownerMapSink = null;
         ObjList<RecordSink> perWorkerMapSinks = null;
-        EntityColumnFilter slaveColumnFilter = new EntityColumnFilter();
+        EntityColumnFilter sequenceColumnFilter = new EntityColumnFilter();
         EntityColumnFilter masterColumnFilter = new EntityColumnFilter();
         EntityColumnFilter keyColumnFilter = new EntityColumnFilter();
 
         try {
-            // Create RecordSink for materializing slave (offset) records
-            slaveColumnFilter.of(offsetsFactory.getMetadata().getColumnCount());
-            slaveRecordSink = RecordSinkFactory.getInstance(
+            // Create RecordSink for materializing sequence (offset) records
+            sequenceColumnFilter.of(sequenceFactory.getMetadata().getColumnCount());
+            sequenceRecordSink = RecordSinkFactory.getInstance(
                     asm,
-                    offsetsFactory.getMetadata(),
-                    slaveColumnFilter
+                    sequenceFactory.getMetadata(),
+                    sequenceColumnFilter
             );
 
             // Create RecordSink for materializing master records
@@ -123,11 +123,11 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                     asm,
                     configuration,
                     pricesFactory,
-                    offsetsFactory,
-                    slaveRecordSink,
+                    sequenceFactory,
+                    sequenceRecordSink,
                     masterRecordSink,
                     masterTimestampColumnIndex,
-                    slaveSequenceColumnIndex,
+                    sequenceColumnIndex,
                     keyTypes,
                     valueTypes,
                     groupByFunctions,
@@ -149,7 +149,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         } catch (Throwable th) {
             Misc.free(masterFactory);
             Misc.free(pricesFactory);
-            Misc.free(offsetsFactory);
+            Misc.free(sequenceFactory);
             throw th;
         }
     }
@@ -157,15 +157,15 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = null;
-        RecordCursor slaveCursor = null;
+        RecordCursor sequenceCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            slaveCursor = offsetsFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor, executionContext);
+            sequenceCursor = sequenceFactory.getCursor(executionContext);
+            cursor.of(masterCursor, sequenceCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
             Misc.free(masterCursor);
-            Misc.free(slaveCursor);
+            Misc.free(sequenceCursor);
             throw th;
         }
     }
@@ -184,7 +184,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
     public void toPlan(PlanSink sink) {
         sink.type("Async Markout GroupBy");
         sink.child(masterFactory);
-        sink.child(offsetsFactory);
+        sink.child(sequenceFactory);
         sink.child(pricesFactory);
     }
 
@@ -194,6 +194,6 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         Misc.free(cursor);
         Misc.free(masterFactory);
         Misc.free(pricesFactory);
-        Misc.free(offsetsFactory);
+        Misc.free(sequenceFactory);
     }
 }

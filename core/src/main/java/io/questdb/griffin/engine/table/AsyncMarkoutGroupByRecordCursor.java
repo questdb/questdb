@@ -193,7 +193,7 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
 
     void of(
             RecordCursor masterCursor,
-            RecordCursor slaveCursor,
+            RecordCursor sequenceCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (!isOpen) {
@@ -207,8 +207,8 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
         dispatchedBatchCount = 0;
         nextPoolIndex = 0;
 
-        // Materialize slave cursor into shared RecordArray
-        atom.materializeSlaveCursor(slaveCursor, circuitBreaker);
+        // Materialize sequence cursor into shared RecordArray
+        atom.materializeSequenceCursor(sequenceCursor, circuitBreaker);
     }
 
     private void buildMapConditionally() {
