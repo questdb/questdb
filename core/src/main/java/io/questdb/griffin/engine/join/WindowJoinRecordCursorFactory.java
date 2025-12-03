@@ -60,6 +60,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.findPrevailingForMasterRow;
 
 /**
  * Single-threaded WINDOW JOIN factory.
@@ -72,6 +73,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  */
 public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final WindowJoinRecordCursor cursor;
+    private final boolean includePrevailing;
     private final Function joinFilter;
     private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
@@ -86,6 +88,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull JoinRecordMetadata joinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
+            boolean includePrevailing,
             @Nullable IntList columnIndex,
             long windowLo,
             long windowHi,
@@ -101,22 +104,38 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         this.joinFilter = joinFilter;
         this.windowLo = windowLo;
         this.windowHi = windowHi;
+        this.includePrevailing = includePrevailing;
         final int columnSplit = masterFactory.getMetadata().getColumnCount();
         final RecordMetadata masterMetadata = masterFactory.getMetadata();
         final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
         final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        this.cursor = new WindowJoinRecordCursor(
-                configuration,
-                columnIndex,
-                columnSplit,
-                masterMetadata.getTimestampIndex(),
-                slaveMetadata.getTimestampIndex(),
-                masterMetadata.getTimestampType(),
-                slaveMetadata.getTimestampType(),
-                groupByFunctions,
-                groupByFunctionsUpdater,
-                columnTypes
-        );
+        if (includePrevailing && joinFilter != null) {
+            this.cursor = new WindowJoinWithPrevailingAndJoinFilterRecordCursor(
+                    configuration,
+                    columnIndex,
+                    columnSplit,
+                    masterMetadata.getTimestampIndex(),
+                    slaveMetadata.getTimestampIndex(),
+                    masterMetadata.getTimestampType(),
+                    slaveMetadata.getTimestampType(),
+                    groupByFunctions,
+                    groupByFunctionsUpdater,
+                    columnTypes
+            );
+        } else {
+            this.cursor = new WindowJoinRecordCursor(
+                    configuration,
+                    columnIndex,
+                    columnSplit,
+                    masterMetadata.getTimestampIndex(),
+                    slaveMetadata.getTimestampIndex(),
+                    masterMetadata.getTimestampType(),
+                    slaveMetadata.getTimestampType(),
+                    groupByFunctions,
+                    groupByFunctionsUpdater,
+                    columnTypes
+            );
+        }
     }
 
     @Override
@@ -191,26 +210,26 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private class WindowJoinRecordCursor implements NoRandomAccessRecordCursor {
+        protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
+        protected final JoinRecord internalJoinRecord;
+        protected final int masterTimestampIndex;
+        protected final long masterTimestampScale;
+        protected final SimpleMapValue simpleMapValue;
+        protected final TimeFrameHelper slaveTimeFrameHelper;
+        protected final int slaveTimestampIndex;
+        protected final long slaveTimestampScale;
         private final GroupByAllocator allocator;
         private final int columnSplit;
         private final @Nullable IntList crossIndex;
         private final ObjList<GroupByFunction> groupByFunctions;
-        private final GroupByFunctionsUpdater groupByFunctionsUpdater;
         private final VirtualRecord groupByRecord;
-        private final JoinRecord internalJoinRecord;
         private final JoinRecord joinRecord;
         private final WindowJoinSymbolTableSource joinSymbolTableSource;
-        private final int masterTimestampIndex;
-        private final long masterTimestampScale;
         private final Record record;
-        private final SimpleMapValue simpleMapValue;
-        private final TimeFrameHelper slaveTimeFrameHelper;
-        private final int slaveTimestampIndex;
-        private final long slaveTimestampScale;
-        private SqlExecutionCircuitBreaker circuitBreaker;
+        protected SqlExecutionCircuitBreaker circuitBreaker;
+        protected RecordCursor masterCursor;
+        protected Record masterRecord;
         private boolean isOpen;
-        private RecordCursor masterCursor;
-        private Record masterRecord;
         private TimeFrameCursor slaveCursor;
 
         public WindowJoinRecordCursor(
@@ -301,8 +320,12 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             groupByFunctionsUpdater.updateEmpty(simpleMapValue);
-
-            long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
+            long slaveRowId;
+            if (includePrevailing) {
+                slaveRowId = slaveTimeFrameHelper.findRowLoWithPrevailing(slaveTimestampLo, slaveTimestampHi);
+            } else {
+                slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
+            }
             if (slaveRowId == Long.MIN_VALUE) {
                 return true;
             }
@@ -385,6 +408,124 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             Function.init(groupByFunctions, joinSymbolTableSource, sqlExecutionContext, null);
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+        }
+    }
+
+    private class WindowJoinWithPrevailingAndJoinFilterRecordCursor extends WindowJoinRecordCursor {
+        public WindowJoinWithPrevailingAndJoinFilterRecordCursor(
+                CairoConfiguration configuration,
+                @Nullable IntList columnIndex,
+                int columnSplit,
+                int masterTimestampIndex,
+                int slaveTimestampIndex,
+                int masterTimestampType,
+                int slaveTimestampType,
+                @NotNull ObjList<GroupByFunction> groupByFunctions,
+                @NotNull GroupByFunctionsUpdater groupByFunctionsUpdater,
+                @NotNull ArrayColumnTypes columnTypes
+        ) {
+            super(
+                    configuration,
+                    columnIndex,
+                    columnSplit,
+                    masterTimestampIndex,
+                    slaveTimestampIndex,
+                    masterTimestampType,
+                    slaveTimestampType,
+                    groupByFunctions,
+                    groupByFunctionsUpdater,
+                    columnTypes
+            );
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (!masterCursor.hasNext()) {
+                return false;
+            }
+
+            // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
+            long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+            long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
+
+            groupByFunctionsUpdater.updateEmpty(simpleMapValue);
+
+            long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
+            final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
+            final long prevailingRowIdCandidate = slaveTimeFrameHelper.getPrevailingRowId();
+            if (slaveRowId == Long.MIN_VALUE) {
+                findPrevailingForMasterRow(
+                        slaveTimeFrameHelper,
+                        prevailingFrameIndex,
+                        prevailingRowIdCandidate,
+                        joinFilter,
+                        internalJoinRecord,
+                        groupByFunctionsUpdater,
+                        simpleMapValue
+                );
+                return true;
+            }
+
+            final Record slaveRecord = slaveTimeFrameHelper.getRecord();
+            boolean first = true;
+            boolean needFindPrevailing = true;
+            long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+            slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
+            long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+
+            if (slaveTimestamp == slaveTimestampLo) {
+                if (joinFilter.getBool(internalJoinRecord)) {
+                    groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowId);
+                    first = false;
+                    simpleMapValue.setNew(false);
+                    needFindPrevailing = false;
+                }
+                slaveRowId++;
+            }
+            if (needFindPrevailing) {
+                if (findPrevailingForMasterRow(
+                        slaveTimeFrameHelper,
+                        prevailingFrameIndex,
+                        prevailingRowIdCandidate,
+                        joinFilter,
+                        internalJoinRecord,
+                        groupByFunctionsUpdater,
+                        simpleMapValue
+                )) {
+                    first = false;
+                }
+            }
+
+            for (; ; ) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                if (slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
+                    if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                        break;
+                    }
+                    slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                    baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    // don't forget to switch the record to the new frame
+                    slaveTimeFrameHelper.recordAt(baseSlaveRowId);
+                }
+                slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
+                slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+                if (slaveTimestamp > slaveTimestampHi) {
+                    break;
+                }
+
+                if (joinFilter.getBool(internalJoinRecord)) {
+                    if (first) {
+                        groupByFunctionsUpdater.updateNew(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowId);
+                        first = false;
+                    } else {
+                        groupByFunctionsUpdater.updateExisting(simpleMapValue, internalJoinRecord, baseSlaveRowId + slaveRowId);
+                    }
+                }
+                slaveRowId++;
+            }
+
+            return true;
         }
     }
 }

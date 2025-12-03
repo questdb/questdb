@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -1838,8 +1839,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     rowIds.of(rowIdsPtr);
                     timestamps.of(timestampsPtr);
                     boolean isNew = true;
-
                     boolean needFindPrevailing = true;
+
                     if (rowIds.size() > 0) {
                         rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
@@ -1952,7 +1953,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
-    private static void findInitialPrevailingRows(
+    static void findInitialPrevailingRows(
             TimeFrameHelper slaveTimeFrameHelper,
             Record slaveRecord,
             int slaveSymbolIndex,
@@ -2021,7 +2022,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
-    private static void findInitialPrevailingRowsVect(
+    static void findInitialPrevailingRowsVect(
             TimeFrameHelper slaveTimeFrameHelper,
             Record slaveRecord,
             int slaveSymbolIndex,
@@ -2097,7 +2098,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
-    private static boolean findPrevailingForMasterRow(
+    static boolean findPrevailingForMasterRow(
             TimeFrameHelper slaveTimeFrameHelper,
             Record slaveRecord,
             int slaveSymbolIndex,
@@ -2108,7 +2109,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             Function joinFilter,
             JoinRecord joinRecord,
             GroupByFunctionsUpdater functionUpdater,
-            DirectMapValue value
+            MapValue value
     ) {
         if (slaveRowFrameIndex == -1) {
             return false;

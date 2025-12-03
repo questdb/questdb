@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -541,11 +542,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
-
             long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
             long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
 
-            // Use findRowLoWithPrevailing to include prevailing row
             long slaveRowId = slaveTimeFrameHelper.findRowLoWithPrevailing(slaveTimestampLo, slaveTimestampHi);
             if (slaveRowId != Long.MIN_VALUE) {
                 for (; ; ) {
@@ -818,7 +817,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
                 final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
                 final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
-
                 boolean isNew = true;
                 boolean needFindPrevailing = true;
 
@@ -1685,14 +1683,14 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         }
     }
 
-    private static boolean findPrevailingForMasterRow(
+    static boolean findPrevailingForMasterRow(
             TimeFrameHelper slaveTimeFrameHelper,
             int prevailingFrameIndex,
             long prevailingRowId,
             Function joinFilter,
             JoinRecord joinRecord,
             GroupByFunctionsUpdater functionUpdater,
-            DirectMapValue value
+            MapValue value
     ) {
         if (prevailingFrameIndex == -1) {
             return false;

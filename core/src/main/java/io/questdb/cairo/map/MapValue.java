@@ -124,4 +124,7 @@ public interface MapValue extends Record {
     void putTimestamp(int index, long value);
 
     void setMapRecordHere();
+
+    default void setNew(boolean isNew) {
+    }
 }
