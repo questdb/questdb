@@ -52,7 +52,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
 public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Plannable {
     private final ObjList<Function> bindVarFunctions;
