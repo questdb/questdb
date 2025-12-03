@@ -593,6 +593,63 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoresMatViewMetaFiles() throws Exception {
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            testCheckpointCreateCheckTableMetadataFiles(
+                    "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL",
+                    null,
+                    "base_price"
+            );
+            String viewSql = "select sym, last(price) as price, ts from base_price sample by 1h";
+            String sql = "create materialized view price_1h as (" + viewSql + ") partition by DAY";
+
+            execute(sql);
+
+            assertSql(
+                    """
+                            view_name\trefresh_type\tbase_table_name
+                            price_1h\timmediate\tbase_price
+                            """,
+                    "select view_name,refresh_type,base_table_name from materialized_views();"
+            );
+
+            execute("checkpoint create");
+
+            execute("alter materialized view price_1h SET REFRESH MANUAL");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                    view_name\trefresh_type\tbase_table_name
+                    price_1h\tmanual\tbase_price
+                    """,
+                    "select view_name,refresh_type,base_table_name from materialized_views();"
+            );
+
+
+            // Release readers, writers and table name registry files, but keep the snapshot dir around.
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.buildMatViewGraph();
+
+            assertSql(
+                    """
+                            view_name\trefresh_type\tbase_table_name
+                            price_1h\timmediate\tbase_price
+                            """,
+                    "select view_name,refresh_type,base_table_name from materialized_views();"
+            );
+
+
+            execute("checkpoint release");
+        });
+    }
+
+    @Test
     public void testCheckpointRestoresRenamedWalTableName() throws Exception {
         final String snapshotId = "id1";
         final String restartedId = "id2";
@@ -751,7 +808,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 engine.checkpointRecover();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "could not remove registry file");
+                TestUtils.assertContains(e.getMessage(), "Could not remove registry file");
             } finally {
                 testFilesFacade.errorOnRegistryFileRemoval = false;
             }
