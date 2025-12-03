@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.Rows;
-import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
@@ -52,8 +51,7 @@ public class TimeFrameHelper {
     }
 
     // Finds the first (most-left) value in the given interval.
-    @TestOnly
-    public long binarySearch(long timestampLo, long timestampHi, long rowLo) {
+    public long binarySearch(long timestampLo, long timestampHi, long rowLo, boolean recordPrevailing) {
         long low = rowLo;
         long high = timeFrame.getRowHi() - 1;
         while (high - low > 65) {
@@ -67,7 +65,12 @@ public class TimeFrameHelper {
                 high = mid;
             } else {
                 // In case of multiple values equal to timestampLo, find the first one
-                return binarySearchScrollUp(low, mid, timestampLo);
+                long index = binarySearchScrollUp(low, mid, timestampLo);
+                if (recordPrevailing && index > 0) {
+                    prevailingFrameIndex = timeFrame.getFrameIndex();
+                    prevailingRowId = index - 1;
+                }
+                return index;
             }
         }
 
@@ -76,11 +79,20 @@ public class TimeFrameHelper {
             recordAtRowIndex(r);
             long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
             if (timestamp >= timestampLo) {
+                if (recordPrevailing && r > 0) {
+                    prevailingFrameIndex = timeFrame.getFrameIndex();
+                    prevailingRowId = r - 1;
+                }
                 if (timestamp <= timestampHi) {
                     return r;
                 }
+
                 return Long.MIN_VALUE;
             }
+        }
+        if (recordPrevailing && timeFrame.getRowHi() > 0) {
+            prevailingFrameIndex = timeFrame.getFrameIndex();
+            prevailingRowId = timeFrame.getRowHi() - 1;
         }
         return Long.MIN_VALUE;
     }
@@ -161,12 +173,8 @@ public class TimeFrameHelper {
             // scan the found frame
             // start with a brief linear scan
             timeFrameCursor.recordAt(record, Rows.toRowID(timeFrame.getFrameIndex(), timeFrame.getRowLo()));
-            final long scanResult = linearScan(timestampLo, timestampHi, rowLo);
+            final long scanResult = linearScan(timestampLo, timestampHi, rowLo, recordPrevailing);
             if (scanResult >= 0) {
-                if (recordPrevailing && scanResult > timeFrame.getRowLo()) {
-                    prevailingFrameIndex = timeFrame.getFrameIndex();
-                    prevailingRowId = scanResult - 1;
-                }
                 bookmarkCurrentFrame(scanResult);
                 return scanResult;
             } else if (scanResult == Long.MIN_VALUE) {
@@ -181,9 +189,8 @@ public class TimeFrameHelper {
             }
             // ok, the scan gave us nothing, do the binary search
             rowLo = -scanResult - 1;
-            final long searchResult = binarySearch(timestampLo, timestampHi, rowLo);
+            final long searchResult = binarySearch(timestampLo, timestampHi, rowLo, recordPrevailing);
             if (searchResult == Long.MIN_VALUE) {
-                // there are no timestamps in the wanted interval
                 if (scaleTimestamp(timeFrame.getTimestampHi(), scale) > timestampHi) {
                     // the interval is contained in the frame, no need to try the next one
                     return Long.MIN_VALUE;
@@ -191,10 +198,6 @@ public class TimeFrameHelper {
                 // the next frame may have an intersection with the interval, try it
                 rowLo = Long.MIN_VALUE;
                 continue;
-            }
-            if (recordPrevailing && searchResult > timeFrame.getRowLo()) {
-                prevailingFrameIndex = timeFrame.getFrameIndex();
-                prevailingRowId = searchResult - 1;
             }
             bookmarkCurrentFrame(searchResult);
             return searchResult;
@@ -513,12 +516,16 @@ public class TimeFrameHelper {
         bookmarkedRowId = rowId;
     }
 
-    private long linearScan(long timestampLo, long timestampHi, long rowLo) {
+    private long linearScan(long timestampLo, long timestampHi, long rowLo, boolean recordPrevailing) {
         final long scanHi = Math.min(rowLo + lookahead, timeFrame.getRowHi());
         for (long r = rowLo; ; ) {
             recordAtRowIndex(r);
             final long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
             if (timestamp >= timestampLo) {
+                if (recordPrevailing && r > 0) {
+                    prevailingFrameIndex = timeFrame.getFrameIndex();
+                    prevailingRowId = r - 1;
+                }
                 if (timestamp <= timestampHi) {
                     return r;
                 }

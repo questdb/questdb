@@ -1037,7 +1037,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                                 break;
                             }
                         }
-                        if (needFindPrevailing) {
+                        if (needFindPrevailing && prevailingFrameIndex != -1) {
+                            long baseSlaveRowId = Rows.toRowID(prevailingFrameIndex, 0);
+                            slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                             if (findPrevailingForMasterRow(
                                     slaveTimeFrameHelper,
                                     slaveTimeFrameHelper.getRecord(),
@@ -1080,7 +1082,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             break;
                         }
                     }
-                    if (needFindPrevailing) {
+                    if (needFindPrevailing && prevailingFrameIndex != -1) {
+                        long baseSlaveRowId = Rows.toRowID(prevailingFrameIndex, 0);
+                        slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         if (findPrevailingForMasterRow(
                                 slaveTimeFrameHelper,
                                 slaveTimeFrameHelper.getRecord(),
@@ -1098,7 +1102,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                         }
                     }
                 }
-            } else {
+            } else if (prevailingFrameIndex != -1) {
+                long baseSlaveRowId = Rows.toRowID(prevailingFrameIndex, 0);
+                slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                 findPrevailingForMasterRow(
                         slaveTimeFrameHelper,
                         slaveTimeFrameHelper.getRecord(),
