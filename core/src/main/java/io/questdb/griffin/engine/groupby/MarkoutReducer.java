@@ -51,7 +51,7 @@ public class MarkoutReducer {
     private static final int BLOCK_OFFSET_NEXT_FREE_SLOT = 8;     // int (4 bytes)
     private static final int BLOCK_OFFSET_USED_SLOT_COUNT = 12;   // int (4 bytes)
     private static final int ITERATORS_PER_BLOCK = 1024;
-    private static final int ITERATOR_OFFSET_MASTER_ROW_INDEX = 0;              // int (4 bytes)
+    private static final int ITERATOR_OFFSET_MASTER_ROW_INDEX = 0;         // int (4 bytes)
     private static final int ITERATOR_OFFSET_MASTER_TIMESTAMP = 8;         // long (8 bytes)
     private static final int ITERATOR_OFFSET_NEXT_ITER_ADDR = 16;          // long (8 bytes)
     private static final int ITERATOR_OFFSET_NEXT_SLAVE_ROW_NUM = 32;      // int (4 bytes)
@@ -93,29 +93,21 @@ public class MarkoutReducer {
         if (batch.size() == 0) {
             return;
         }
-
-        // Initialize shared slave data
-        this.slaveRecordArray = atom.getSlaveRecordArray();
-        this.slaveRecordOffsets = atom.getSlaveRecordOffsets();
-        this.slaveSequenceColumnIndex = atom.getSlaveSequenceColumnIndex();
         this.slaveRowCount = (int) atom.getSlaveRowCount();
-        long firstSlaveTimeOffset = atom.getFirstSlaveTimeOffset();
-        int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
-
         if (slaveRowCount == 0) {
             return;
         }
-
-        // Initialize per-batch state
+        this.slaveRecordArray = atom.getSlaveRecordArray();
+        this.slaveRecordOffsets = atom.getSlaveRecordOffsets();
+        this.slaveSequenceColumnIndex = atom.getSlaveSequenceColumnIndex();
+        long firstSlaveTimeOffset = atom.getFirstSlaveTimeOffset();
+        int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
         this.batch = batch;
         this.partialMap = atom.getMap(slotId);
         this.functionUpdater = atom.getFunctionUpdater(slotId);
-
-        // Initialize block management
         this.firstIteratorBlockAddr = 0;
 
         try {
-            // Initialize with first master row
             int nextMasterRowIndex = 0;
             Record firstMasterRow = batch.getRowAt(nextMasterRowIndex++);
             long firstMasterTs = firstMasterRow.getTimestamp(masterTimestampColumnIndex);
@@ -126,40 +118,30 @@ public class MarkoutReducer {
             long iter = createIterator(0, firstMasterTs);
             long prevIter = iter;
 
-            // K-way merge loop
             while (true) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
-
-                // Emit current row and aggregate
                 emitAndAggregate(iter);
-
-                // Advance iterator to next row
                 gotoNextRow(iter);
-
                 long nextIter = iter_nextIterAddr(iter);
-
-                // Check if next master row should be activated
                 if (nextMasterRowIndex < batch.size()) {
                     long nextIterTs = iter_nextTimestamp(nextIter);
-                    Record pendingTrade = batch.getRowAt(nextMasterRowIndex);
-                    long pendingInitialTs = pendingTrade.getTimestamp(masterTimestampColumnIndex) + firstSlaveTimeOffset;
-                    // Insert if pending should come before next, OR if next is exhausted
-                    if (nextIterTs == Long.MIN_VALUE || pendingInitialTs < nextIterTs) {
-                        nextIter = insertIteratorAfter(iter, nextMasterRowIndex, pendingTrade.getTimestamp(masterTimestampColumnIndex));
+                    long nextMasterTs = batch.getRowAt(nextMasterRowIndex).getTimestamp(masterTimestampColumnIndex);
+                    long nextInitialTs = nextMasterTs + firstSlaveTimeOffset;
+                    if (nextIterTs == Long.MIN_VALUE || nextInitialTs < nextIterTs) {
+                        nextIter = insertIteratorAfter(iter, nextMasterRowIndex, nextMasterTs);
                         nextMasterRowIndex++;
                     }
                 }
-
-                // Remove current iterator if exhausted
                 if (isEmpty(iter)) {
+                    // iterator still being empty here implies master batch is exhausted.
+                    // If this is the last iterator, we're all done.
                     nextIter = removeIterator(prevIter, iter);
                     if (nextIter == 0) {
-                        break;  // All done
+                        break;
                     }
                 } else {
                     prevIter = iter;
                 }
-
                 iter = nextIter;
             }
         } finally {
@@ -350,7 +332,7 @@ public class MarkoutReducer {
 
     private void emitAndAggregate(long currentIterAddr) {
         // Get current horizon row data
-        Record tradeRecord = batch.getRowAt(iter_masterRowIndex(currentIterAddr));
+        Record masterRecord = batch.getRowAt(iter_masterRowIndex(currentIterAddr));
 
         int slaveRowNum = iter_currentRowNum(currentIterAddr);
         long slaveOffset = slaveRecordOffsets.getQuick(slaveRowNum);
