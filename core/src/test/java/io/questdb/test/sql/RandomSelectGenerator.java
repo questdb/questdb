@@ -69,7 +69,8 @@ public class RandomSelectGenerator {
     private boolean currentlyUsingSampleBy = false;
     private double generateLiteralProbability = 0.1;
     private double joinProbability = 0.3;
-    private double limitProbability = 0.3;
+    // SAMPLE BY probability: orderByProbability * limitProbability
+    private double limitProbability = 0.6;
     private int maxColumnsInSelect = 5;
     private int maxConditionsInWhere = 3;
     private int maxLimit = 100;
@@ -169,12 +170,13 @@ public class RandomSelectGenerator {
             if (rnd.nextDouble() < orderByProbability) {
                 sql.put(" ");
                 generateOrderByClause(sql, selectedTables, useGroupBy, metadataCache);
-            }
 
-            // Generate LIMIT clause
-            if (rnd.nextDouble() < limitProbability) {
-                sql.put(" LIMIT ");
-                sql.put(1 + rnd.nextInt(maxLimit));
+                // Generate LIMIT clause only after ORDER BY, the result of the generated SELECT could
+                // be non-deterministic if it is not ordered and LIMIT is present
+                if (rnd.nextDouble() < limitProbability) {
+                    sql.put(" LIMIT ");
+                    sql.put(1 + rnd.nextInt(maxLimit));
+                }
             }
 
             return sql.toString();
@@ -481,6 +483,13 @@ public class RandomSelectGenerator {
             // When using GROUP BY, ORDER BY must reference columns in GROUP BY or aggregates
             // Use the GROUP BY column if available
             if (currentGroupByTable != null && currentGroupByColumnIndex >= 0) {
+                RecordMetadata metadata = metadataCache.get(currentGroupByTable.tableName());
+                int colType = metadata.getColumnType(currentGroupByColumnIndex);
+                if (colType == ColumnType.BINARY) {
+                    // ORDER BY with BINARY column is not supported, we skip
+                    return;
+                }
+
                 sql.put("ORDER BY ");
                 if (selectedTables.size() > 1) {
                     sql.put(currentGroupByTable.alias).put(".");
@@ -615,7 +624,7 @@ public class RandomSelectGenerator {
                 colIdx = rnd.nextInt(columnCount);
                 columnType = metadata.getColumnType(colIdx);
 
-                // pick a new column if the column type is BINARY
+                // pick a new column if the column type is BINARY or LONG128
                 if (columnType != ColumnType.BINARY && columnType != ColumnType.LONG128) {
                     break;
                 }

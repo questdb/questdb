@@ -25,7 +25,10 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
@@ -286,8 +289,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             selectGenerator.registerTable(baseTableName);
 
             final ObjList<String> viewSqls = new ObjList<>();
-            for (int i = 0, n = viewNames.length; i < n; i++) {
-                final String viewName = viewNames[i];
+            for (final String viewName : viewNames) {
                 final String viewSql = selectGenerator.generate();
                 viewSqls.add(viewSql);
                 createView(viewName, viewSql);
@@ -318,11 +320,23 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                 for (int i = 0, n = viewNames.length; i < n; i++) {
                     final String viewName = viewNames[i];
                     final String viewSql = viewSqls.getQuick(i);
+
+                    int orderByColumnIndex = 0;
+                    final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+                    try (TableMetadata metadata = engine.getTableMetadata(viewToken)) {
+                        for (int j = 0; j < metadata.getColumnCount(); j++) {
+                            if (metadata.getColumnType(j) != ColumnType.BINARY) {
+                                orderByColumnIndex = j + 1;
+                                break;
+                            }
+                        }
+                    }
+
                     TestUtils.assertSqlCursors(
                             compiler,
                             sqlExecutionContext,
-                            viewSql,
-                            viewName,
+                            orderByColumnIndex > 0 ? "(" + viewSql + ") order by " + orderByColumnIndex : viewSql,
+                            orderByColumnIndex > 0 ? "(" + viewName + ") order by " + orderByColumnIndex : viewName,
                             LOG
                     );
                 }
