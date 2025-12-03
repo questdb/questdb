@@ -621,9 +621,9 @@ public class CheckpointTest extends AbstractCairoTest {
 
             assertSql(
                     """
-                    view_name\trefresh_type\tbase_table_name
-                    price_1h\tmanual\tbase_price
-                    """,
+                            view_name\trefresh_type\tbase_table_name
+                            price_1h\tmanual\tbase_price
+                            """,
                     "select view_name,refresh_type,base_table_name from materialized_views();"
             );
 
