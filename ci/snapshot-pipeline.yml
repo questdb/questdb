@@ -34,7 +34,8 @@ stages:
               goals: "package"
               options:
                 "--batch-mode --quiet -DskipTests -P build-web-console,build-binaries -Dhttp.keepAlive=false -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-              jdkVersionOption: 1.17
+              javaHomeOption: 'Path'
+              jdkDirectory: '$(JAVA_HOME)'
           - bash: |
               cd "$(Build.SourcesDirectory)"/core
               find target \( -name "*rt-linux*.tar.gz" -o -name "*no-jre*.tar.gz" \) -exec mv '{}' "$(Build.BinariesDirectory)"/ \;
