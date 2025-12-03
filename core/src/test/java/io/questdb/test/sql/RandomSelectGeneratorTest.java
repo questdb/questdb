@@ -209,7 +209,7 @@ public class RandomSelectGeneratorTest extends AbstractCairoTest {
             rnd = new Rnd(333, 444);
             RandomSelectGenerator gen2 = new RandomSelectGenerator(engine, rnd, "custom")
                     .setWhereClauseProbability(0.0)
-                    .setOrderByProbability(0.0)
+                    .setOrderByProbability(1.0)
                     .setLimitProbability(1.0)
                     .setAggregationProbability(0.0);
 
