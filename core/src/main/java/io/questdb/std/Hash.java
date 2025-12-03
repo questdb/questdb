@@ -120,10 +120,6 @@ public final class Hash {
         return fmix64(h);
     }
 
-    public static long hashShort64(short k) {
-        return fmix64(Short.toUnsignedLong(k));
-    }
-
     /**
      * Same as {@link #hashMem64(long, long)}, but with direct UTF8 string
      * instead of direct unsafe access.
