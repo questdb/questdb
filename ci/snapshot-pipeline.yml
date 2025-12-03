@@ -8,6 +8,8 @@ pr: none
 variables:
   MVN_VERSION: "3.6.3"
   MVN: "apache-maven-$(MVN_VERSION)"
+  JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-openjdk-amd64"
+  JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-amd64"
 
 stages:
   - stage: BuildSnapshotMaster
@@ -15,8 +17,7 @@ stages:
     jobs:
       - job: BuildOnLinux
         displayName: "Build on Linux"
-        pool:
-          vmImage: "ubuntu-latest"
+        pool: hetzner-docker
         steps:
           - checkout: self
             fetchDepth: 1
@@ -29,7 +30,8 @@ stages:
               goals: "package"
               options:
                 "--batch-mode --quiet -DskipTests -P build-web-console,build-binaries -Dhttp.keepAlive=false -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-              jdkVersionOption: 1.17
+              javaHomeOption: 'Path'
+              jdkDirectory: '$(JAVA_HOME)'
           - bash: |
               cd "$(Build.SourcesDirectory)"/core
               find target \( -name "*rt-linux*.tar.gz" -o -name "*no-jre*.tar.gz" \) -exec mv '{}' "$(Build.BinariesDirectory)"/ \;
@@ -45,8 +47,7 @@ stages:
         condition: succeeded()
         displayName: "Upload snapshot to S3"
         container: pypy:3.7-slim-buster
-        pool:
-          vmImage: "ubuntu-latest"
+        pool: hetzner-docker
         steps:
           - checkout: none
           - task: DownloadBuildArtifacts@0
