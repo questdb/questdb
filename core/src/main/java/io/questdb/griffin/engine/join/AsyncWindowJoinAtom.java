@@ -69,7 +69,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     // kept public for tests
     public static boolean GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP = true;
     protected final ObjList<Function> ownerGroupByFunctionArgs;
-    protected final TimeFrameHelper ownerSlaveTimeFrameHelper;
+    protected final WindowJoinTimeFrameHelper ownerSlaveTimeFrameHelper;
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledMasterFilter;
@@ -109,7 +109,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final ObjList<GroupByLongList> perWorkerLongLists;
     private final ObjList<Function> perWorkerMasterFilters;
     private final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
-    private final ObjList<TimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
+    private final ObjList<WindowJoinTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     private final ObjList<GroupByAllocator> perWorkerTemporaryAllocators;
     private final ObjList<GroupByLongList> perWorkerTimestampLists;
     private final long slaveTsScale;
@@ -165,12 +165,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             this.vectorized = vectorized;
 
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
-            this.ownerSlaveTimeFrameHelper = new TimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
+            this.ownerSlaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
             this.perWorkerSlaveTimeFrameCursors = new ObjList<>(slotCount);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
                 perWorkerSlaveTimeFrameCursors.extendAndSet(i, slaveFactory.newTimeFrameCursor());
-                perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new TimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale));
+                perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale));
             }
 
             this.ownerJoinRecord = new JoinRecord(columnSplit);
@@ -451,7 +451,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return ownerGroupByValue;
     }
 
-    public TimeFrameHelper getSlaveTimeFrameHelper(int slotId) {
+    public WindowJoinTimeFrameHelper getSlaveTimeFrameHelper(int slotId) {
         if (slotId == -1) {
             return ownerSlaveTimeFrameHelper;
         }

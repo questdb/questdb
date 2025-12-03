@@ -379,14 +379,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
                                             and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', -1, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -421,14 +421,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 (
                                         select * from (
                                             select t.sym, t.price, t.ts, p.price
-                                            from trades t 
-                                            left join prices p 
-                                            on (t.sym = p.sym) 
+                                            from trades t
+                                            left join prices p
+                                            on (t.sym = p.sym)
                                             and p.ts >= dateadd('m', 1, t.ts) AND p.ts <= dateadd('m', 2, t.ts)
-                                        union 
+                                        union
                                             select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
-                                            from trades t 
-                                            join prices p 
+                                            from trades t
+                                            join prices p
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', 1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
                                         ) order by ts
                                 )
@@ -1783,27 +1783,27 @@ public class WindowJoinTest extends AbstractCairoTest {
             prepareTable();
             String expect = includePrevailing ?
                     replaceTimestampSuffix("""
-                            ts	sym	window_price1	window_price2
-                            2023-01-01T09:00:00.000000Z		null	null
-                            2023-01-01T09:01:00.000000Z		null	null
-                            2023-01-01T09:02:00.000000Z		null	null
-                            2023-01-01T09:03:00.000000Z		null	null
-                            2023-01-01T09:04:00.000000Z		null	null
-                            2023-01-01T09:05:00.000000Z		null	null
-                            2023-01-01T09:06:00.000000Z		null	null
-                            2023-01-01T09:07:00.000000Z		null	null
-                            2023-01-01T09:08:00.000000Z		null	null
-                            2023-01-01T09:09:00.000000Z		null	null
-                            2023-01-01T09:10:00.000000Z	TSLA	800.0	800.0
-                            2023-01-01T09:11:00.000000Z	TSLA	400.5	800.0
-                            2023-01-01T09:12:00.000000Z	AMZN	1000.0	1501.5
-                            2023-01-01T09:13:00.000000Z	AMZN	500.5	1501.5
-                            2023-01-01T09:14:00.000000Z	META	1200.0	1801.5
-                            2023-01-01T09:15:00.000000Z	META	600.5	2403.0
-                            2023-01-01T09:16:00.000000Z	TSLA	401.5	802.0
-                            2023-01-01T09:17:00.000000Z	AMZN	501.5	1002.0
-                            2023-01-01T09:18:00.000000Z	META	601.5	1202.0
-                            2023-01-01T09:19:00.000000Z	NFLX	699.5	1399.0
+                            ts\tsym\twindow_price1\twindow_price2
+                            2023-01-01T09:00:00.000000Z\t\tnull\tnull
+                            2023-01-01T09:01:00.000000Z\t\tnull\tnull
+                            2023-01-01T09:02:00.000000Z\t\tnull\tnull
+                            2023-01-01T09:03:00.000000Z\t\tnull\tnull
+                            2023-01-01T09:04:00.000000Z\t\tnull\tnull
+                            2023-01-01T09:05:00.000000Z\t\tnull\tnull
+                            2023-01-01T09:06:00.000000Z\t\tnull\tnull
+                            2023-01-01T09:07:00.000000Z\t\tnull\tnull
+                            2023-01-01T09:08:00.000000Z\t\tnull\tnull
+                            2023-01-01T09:09:00.000000Z\t\tnull\tnull
+                            2023-01-01T09:10:00.000000Z\tTSLA\t800.0\t800.0
+                            2023-01-01T09:11:00.000000Z\tTSLA\t400.5\t800.0
+                            2023-01-01T09:12:00.000000Z\tAMZN\t1000.0\t1000.0
+                            2023-01-01T09:13:00.000000Z\tAMZN\t500.5\t1501.5
+                            2023-01-01T09:14:00.000000Z\tMETA\t1200.0\t1801.5
+                            2023-01-01T09:15:00.000000Z\tMETA\t600.5\t1801.5
+                            2023-01-01T09:16:00.000000Z\tTSLA\t401.5\t802.0
+                            2023-01-01T09:17:00.000000Z\tAMZN\t501.5\t1002.0
+                            2023-01-01T09:18:00.000000Z\tMETA\t601.5\t1202.0
+                            2023-01-01T09:19:00.000000Z\tNFLX\t699.5\t699.5
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts	sym	window_price1	window_price2
@@ -1820,8 +1820,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:10:00.000000Z	TSLA	800.0	800.0
                     2023-01-01T09:11:00.000000Z	TSLA	400.5	800.0
                     2023-01-01T09:12:00.000000Z	AMZN	1000.0	1000.0
-                    2023-01-01T09:13:00.000000Z	AMZN	500.5	1000.0
-                    2023-01-01T09:14:00.000000Z	META	1200.0	1200.0
+                    2023-01-01T09:13:00.000000Z	AMZN	500.5	1501.5
+                    2023-01-01T09:14:00.000000Z	META	1200.0	1801.5
                     2023-01-01T09:15:00.000000Z	META	600.5	1801.5
                     2023-01-01T09:16:00.000000Z	TSLA	401.5	401.5
                     2023-01-01T09:17:00.000000Z	AMZN	501.5	501.5
@@ -1835,8 +1835,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    Window Fast Join\n" +
                             "      vectorized: true\n" +
                             "      symbol: t.sym=sym\n" +
-                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
-                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "180000000" : "180000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "180000000" : "180000000000") + " following\n" +
                             "        Async Window Fast Join workers: 1\n" +
                             "          vectorized: true\n" +
                             "          symbol: sym=sym\n" +
@@ -1858,7 +1858,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "window join prices p1 " +
                             "on (t.sym = p1.sym) " +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                            " range between 3 minute preceding and 3 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "order by t.ts, t.sym;",
                     "ts",
                     true,
@@ -1867,27 +1867,27 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             expect = includePrevailing ?
                     replaceTimestampSuffix("""
-                            ts	sym	window_price2
-                            2023-01-01T09:00:00.000000Z		null
-                            2023-01-01T09:01:00.000000Z		null
-                            2023-01-01T09:02:00.000000Z		null
-                            2023-01-01T09:03:00.000000Z		null
-                            2023-01-01T09:04:00.000000Z		null
-                            2023-01-01T09:05:00.000000Z		null
-                            2023-01-01T09:06:00.000000Z		null
-                            2023-01-01T09:07:00.000000Z		null
-                            2023-01-01T09:08:00.000000Z		null
-                            2023-01-01T09:09:00.000000Z		null
-                            2023-01-01T09:10:00.000000Z	TSLA	800.0
-                            2023-01-01T09:11:00.000000Z	TSLA	800.0
-                            2023-01-01T09:12:00.000000Z	AMZN	1501.5
-                            2023-01-01T09:13:00.000000Z	AMZN	1501.5
-                            2023-01-01T09:14:00.000000Z	META	1801.5
-                            2023-01-01T09:15:00.000000Z	META	2403.0
-                            2023-01-01T09:16:00.000000Z	TSLA	802.0
-                            2023-01-01T09:17:00.000000Z	AMZN	1002.0
-                            2023-01-01T09:18:00.000000Z	META	1202.0
-                            2023-01-01T09:19:00.000000Z	NFLX	1399.0
+                            ts\tsym\twindow_price2
+                            2023-01-01T09:00:00.000000Z\t\tnull
+                            2023-01-01T09:01:00.000000Z\t\tnull
+                            2023-01-01T09:02:00.000000Z\t\tnull
+                            2023-01-01T09:03:00.000000Z\t\tnull
+                            2023-01-01T09:04:00.000000Z\t\tnull
+                            2023-01-01T09:05:00.000000Z\t\tnull
+                            2023-01-01T09:06:00.000000Z\t\tnull
+                            2023-01-01T09:07:00.000000Z\t\tnull
+                            2023-01-01T09:08:00.000000Z\t\tnull
+                            2023-01-01T09:09:00.000000Z\t\tnull
+                            2023-01-01T09:10:00.000000Z\tTSLA\t800.0
+                            2023-01-01T09:11:00.000000Z\tTSLA\t800.0
+                            2023-01-01T09:12:00.000000Z\tAMZN\t1000.0
+                            2023-01-01T09:13:00.000000Z\tAMZN\t1501.5
+                            2023-01-01T09:14:00.000000Z\tMETA\t1801.5
+                            2023-01-01T09:15:00.000000Z\tMETA\t1801.5
+                            2023-01-01T09:16:00.000000Z\tTSLA\t802.0
+                            2023-01-01T09:17:00.000000Z\tAMZN\t1002.0
+                            2023-01-01T09:18:00.000000Z\tMETA\t1202.0
+                            2023-01-01T09:19:00.000000Z\tNFLX\t699.5
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts	sym	window_price2
@@ -1904,8 +1904,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:10:00.000000Z	TSLA	800.0
                     2023-01-01T09:11:00.000000Z	TSLA	800.0
                     2023-01-01T09:12:00.000000Z	AMZN	1000.0
-                    2023-01-01T09:13:00.000000Z	AMZN	1000.0
-                    2023-01-01T09:14:00.000000Z	META	1200.0
+                    2023-01-01T09:13:00.000000Z	AMZN	1501.5
+                    2023-01-01T09:14:00.000000Z	META	1801.5
                     2023-01-01T09:15:00.000000Z	META	1801.5
                     2023-01-01T09:16:00.000000Z	TSLA	401.5
                     2023-01-01T09:17:00.000000Z	AMZN	501.5
@@ -1919,8 +1919,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    Window Fast Join\n" +
                             "      vectorized: true\n" +
                             "      symbol: t.sym=sym\n" +
-                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
-                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "180000000" : "180000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "180000000" : "180000000000") + " following\n" +
                             "        Async Window Fast Join workers: 1\n" +
                             "          vectorized: false\n" +
                             "          symbol: sym=sym\n" +
@@ -1935,14 +1935,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.ts, t.sym,  sum(p1.price) as window_price2 " +
+                    "select t.ts, t.sym, sum(p1.price) as window_price2 " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "window join prices p1 " +
                             "on (t.sym = p1.sym) " +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                            " range between 3 minute preceding and 3 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "order by t.ts, t.sym;",
                     "ts",
                     true,
@@ -2094,7 +2094,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             2023-01-01T09:09:00.000000Z		null	null	1
                             2023-01-01T09:10:00.000000Z	TSLA	399.5	400.5	2
                             2023-01-01T09:11:00.000000Z	TSLA	400.5	400.5	1
-                            2023-01-01T09:12:00.000000Z	AMZN	499.5	501.5	2
+                            2023-01-01T09:12:00.000000Z	AMZN	499.5	500.5	2
                             2023-01-01T09:13:00.000000Z	AMZN	500.5	501.5	1
                             2023-01-01T09:14:00.000000Z	META	599.5	601.5	2
                             2023-01-01T09:15:00.000000Z	META	600.5	601.5	1
@@ -2118,8 +2118,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                     2023-01-01T09:10:00.000000Z	TSLA	399.5	400.5	2
                     2023-01-01T09:11:00.000000Z	TSLA	400.5	400.5	1
                     2023-01-01T09:12:00.000000Z	AMZN	499.5	500.5	2
-                    2023-01-01T09:13:00.000000Z	AMZN	500.5	500.5	1
-                    2023-01-01T09:14:00.000000Z	META	599.5	600.5	2
+                    2023-01-01T09:13:00.000000Z	AMZN	500.5	501.5	1
+                    2023-01-01T09:14:00.000000Z	META	599.5	601.5	2
                     2023-01-01T09:15:00.000000Z	META	600.5	601.5	1
                     2023-01-01T09:16:00.000000Z	TSLA	401.5	401.5	1
                     2023-01-01T09:17:00.000000Z	AMZN	501.5	501.5	1
@@ -2133,8 +2133,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    Window Fast Join\n" +
                             "      vectorized: true\n" +
                             "      symbol: t.sym=sym\n" +
-                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
-                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "120000000" : "120000000000") + " following\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "180000000" : "180000000000") + " preceding " + (includePrevailing ? "(include prevailing)\n" : "(exclude prevailing)\n") +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "180000000" : "180000000000") + " following\n" +
                             "        Async Window Fast Join workers: 1\n" +
                             "          vectorized: true\n" +
                             "          symbol: sym=sym\n" +
@@ -2156,7 +2156,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "window join prices p1 " +
                             "on (t.sym = p1.sym) " +
-                            " range between 2 minute preceding and 2 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                            " range between 3 minute preceding and 3 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "order by t.ts, t.sym;",
                     "ts",
                     true,

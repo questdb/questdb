@@ -56,11 +56,13 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
     static final int SLAVE_MAP_INITIAL_CAPACITY = 16;
     static final double SLAVE_MAP_LOAD_FACTOR = 0.5;
     private final int masterSymbolIndex;
+    private final WindowJoinPrevailingCache ownerPrevailingCache;
     private final DirectIntMultiLongHashMap ownerSlaveData;
+    private final ObjList<WindowJoinPrevailingCache> perWorkerPrevailingCache;
     private final ObjList<DirectIntMultiLongHashMap> perWorkerSlaveData;
     private final int slaveSymbolIndex;
     // slave-to-master symbol key lookup hash table
-    private final DirectIntIntHashMap slaveSymbolLookupTable;
+    private final DirectIntIntHashMap slaveSymbolLookupMap;
 
     public AsyncWindowJoinFastAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -117,13 +119,14 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         try {
             this.masterSymbolIndex = masterSymbolIndex;
             this.slaveSymbolIndex = slaveSymbolIndex;
-            this.slaveSymbolLookupTable = new DirectIntIntHashMap(
+            this.slaveSymbolLookupMap = new DirectIntIntHashMap(
                     SLAVE_MAP_INITIAL_CAPACITY,
                     SLAVE_MAP_LOAD_FACTOR,
                     0,
                     StaticSymbolTable.VALUE_NOT_FOUND,
                     MemoryTag.NATIVE_UNORDERED_MAP
             );
+
             final int slaveDataLen = isVectorized() ? 2 + ownerGroupByFunctionArgs.size() : 3;
             // Combined storage with 4 values: rowIds ptr, timestamps ptr, rowLos value, columnSink ptr
             this.ownerSlaveData = new DirectIntMultiLongHashMap(
@@ -145,6 +148,18 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                         MemoryTag.NATIVE_UNORDERED_MAP
                 ));
             }
+
+            if (includePrevailing) {
+                // <symbol_key, rowid> cache for INCLUDE PREVAILING lookups
+                this.ownerPrevailingCache = new WindowJoinPrevailingCache();
+                this.perWorkerPrevailingCache = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
+                    perWorkerPrevailingCache.extendAndSet(i, new WindowJoinPrevailingCache());
+                }
+            } else {
+                this.ownerPrevailingCache = null;
+                this.perWorkerPrevailingCache = null;
+            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -154,9 +169,11 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
     @Override
     public void clear() {
         super.clear();
-        Misc.free(slaveSymbolLookupTable);
+        Misc.free(slaveSymbolLookupMap);
         Misc.free(ownerSlaveData);
         Misc.freeObjListAndKeepObjects(perWorkerSlaveData);
+        Misc.free(ownerPrevailingCache);
+        Misc.freeObjListAndKeepObjects(perWorkerPrevailingCache);
     }
 
     public void clearTemporaryData(int slotId) {
@@ -171,13 +188,22 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
     @Override
     public void close() {
         super.close();
-        Misc.free(slaveSymbolLookupTable);
+        Misc.free(slaveSymbolLookupMap);
         Misc.free(ownerSlaveData);
         Misc.freeObjList(perWorkerSlaveData);
+        Misc.free(ownerPrevailingCache);
+        Misc.freeObjListAndKeepObjects(perWorkerPrevailingCache);
     }
 
     public int getMasterSymbolIndex() {
         return masterSymbolIndex;
+    }
+
+    public WindowJoinPrevailingCache getPrevailingCache(int slotId) {
+        if (slotId == -1) {
+            return ownerPrevailingCache;
+        }
+        return perWorkerPrevailingCache.getQuick(slotId);
     }
 
     public DirectIntMultiLongHashMap getSlaveData(int slotId) {
@@ -191,8 +217,8 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         return slaveSymbolIndex;
     }
 
-    public DirectIntIntHashMap getSlaveSymbolLookupTable() {
-        return slaveSymbolLookupTable;
+    public DirectIntIntHashMap getSlaveSymbolLookupMap() {
+        return slaveSymbolLookupMap;
     }
 
     public void initTimeFrameCursors(
@@ -216,10 +242,16 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                 frameCount
         );
 
-        slaveSymbolLookupTable.reopen();
+        slaveSymbolLookupMap.reopen();
         ownerSlaveData.reopen();
         for (int i = 0, n = perWorkerSlaveData.size(); i < n; i++) {
             perWorkerSlaveData.getQuick(i).reopen();
+        }
+        if (ownerPrevailingCache != null) {
+            ownerPrevailingCache.reopen();
+            for (int i = 0, n = perWorkerPrevailingCache.size(); i < n; i++) {
+                perWorkerPrevailingCache.getQuick(i).reopen();
+            }
         }
 
         final SymbolTableSource slaveSymbolTableSource = ownerSlaveTimeFrameHelper.getSymbolTableSource();
@@ -229,11 +261,11 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             final CharSequence masterSym = masterSymbolTable.valueOf(masterKey);
             final int slaveKey = slaveSymbolTable.keyOf(masterSym);
             if (slaveKey != StaticSymbolTable.VALUE_NOT_FOUND) {
-                slaveSymbolLookupTable.put(slaveKey + KEY_SHIFT, masterKey);
+                slaveSymbolLookupMap.put(slaveKey + KEY_SHIFT, masterKey);
             }
         }
         if (masterSymbolTable.containsNullValue() && slaveSymbolTable.containsNullValue()) {
-            slaveSymbolLookupTable.put(NULL_KEY, StaticSymbolTable.VALUE_IS_NULL);
+            slaveSymbolLookupMap.put(NULL_KEY, StaticSymbolTable.VALUE_IS_NULL);
         }
     }
 

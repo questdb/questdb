@@ -83,7 +83,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private DirectMapValue groupByValue;
     private boolean isOpen;
     private boolean isSlaveTimeFrameCacheBuilt;
-    private PageFrameSequence<AsyncWindowJoinAtom> masterFrameSequence;
+    private PageFrameSequence<? extends AsyncWindowJoinAtom> masterFrameSequence;
     private TablePageFrameCursor slaveFrameCursor;
     private long valueSizeBytes;
 
@@ -484,7 +484,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     void of(
-            PageFrameSequence<AsyncWindowJoinAtom> masterFrameSequence,
+            PageFrameSequence<? extends AsyncWindowJoinAtom> masterFrameSequence,
             TablePageFrameCursor slaveFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {

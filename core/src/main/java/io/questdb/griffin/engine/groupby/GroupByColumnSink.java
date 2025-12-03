@@ -29,9 +29,23 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 
-public class GroupByColumnSink {
+/**
+ * Specialized flyweight char sink used in vectorized reducers from WINDOW JOIN factories.
+ * <p>
+ * Uses provided {@link GroupByAllocator} to allocate the underlying buffer. Grows the buffer when needed.
+ * <p>
+ * Buffer layout is the following:
+ * <pre>
+ * | capacity (in chars) |  size (in bytes)  | column values array |
+ * +---------------------+-------------------+---------------------+
+ * |       4 bytes       |      4 bytes      |          -          |
+ * +---------------------+-------------------+---------------------+
+ * </pre>
+ */
+public class GroupByColumnSink implements Mutable {
     private static final long HEADER_SIZE = 2 * Integer.BYTES;
     private static final long SIZE_OFFSET = Integer.BYTES;
     private static final Decimal128 decimal128 = new Decimal128();
@@ -60,6 +74,13 @@ public class GroupByColumnSink {
             final int newCapacity = Math.max(oldCapacity << 1, capacity);
             ptr = allocator.realloc(oldPtr, oldCapacity + HEADER_SIZE, newCapacity + HEADER_SIZE);
             Unsafe.getUnsafe().putInt(ptr, newCapacity);
+        }
+    }
+
+    @Override
+    public void clear() {
+        if (ptr != 0) {
+            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
         }
     }
 
@@ -151,9 +172,117 @@ public class GroupByColumnSink {
         }
     }
 
+    public void putAt(int index, Record record, Function function, short argType) {
+        switch (argType) {
+            case ColumnType.BYTE:
+                putByteAt(index, function.getByte(record));
+                break;
+            case ColumnType.BOOLEAN:
+                putByteAt(index, function.getBool(record) ? (byte) 1 : (byte) 0);
+                break;
+            case ColumnType.GEOBYTE:
+                putByteAt(index, function.getGeoByte(record));
+                break;
+            case ColumnType.SHORT:
+                putShortAt(index, function.getShort(record));
+                break;
+            case ColumnType.GEOSHORT:
+                putShortAt(index, function.getGeoShort(record));
+                break;
+            case ColumnType.INT:
+                putIntAt(index, function.getInt(record));
+                break;
+            case ColumnType.IPv4:
+                putIntAt(index, function.getIPv4(record));
+                break;
+            case ColumnType.FLOAT:
+                putFloatAt(index, function.getFloat(record));
+                break;
+            case ColumnType.GEOINT:
+                putIntAt(index, function.getGeoInt(record));
+                break;
+            case ColumnType.LONG:
+                putLongAt(index, function.getLong(record));
+                break;
+            case ColumnType.GEOLONG:
+                putLongAt(index, function.getGeoLong(record));
+                break;
+            case ColumnType.DOUBLE:
+                putDoubleAt(index, function.getDouble(record));
+                break;
+            case ColumnType.DATE:
+                putLongAt(index, function.getDate(record));
+                break;
+            case ColumnType.TIMESTAMP:
+                putLongAt(index, function.getTimestamp(record));
+                break;
+            case ColumnType.LONG128, ColumnType.UUID:
+                putLong128At(index, function.getLong128Lo(record), function.getLong128Hi(record));
+                break;
+            case ColumnType.CHAR:
+                putCharAt(index, function.getChar(record));
+                break;
+            case ColumnType.DECIMAL8:
+                putByteAt(index, function.getDecimal8(record));
+                break;
+            case ColumnType.DECIMAL16:
+                putShortAt(index, function.getDecimal16(record));
+                break;
+            case ColumnType.DECIMAL32:
+                putIntAt(index, function.getDecimal32(record));
+                break;
+            case ColumnType.DECIMAL64:
+                putLongAt(index, function.getDecimal64(record));
+                break;
+            case ColumnType.DECIMAL128:
+                function.getDecimal128(record, decimal128);
+                putDecimal128At(index);
+                break;
+            case ColumnType.DECIMAL256:
+                function.getDecimal256(record, decimal256);
+                putDecimal256At(index);
+                break;
+        }
+    }
+
+    public void putByteAt(int index, byte value) {
+        assert index < size();
+        Unsafe.getUnsafe().putByte(ptr + HEADER_SIZE + index, value);
+    }
+
     public void putDouble(double value) {
         long ptr = reserve(Double.BYTES);
         Unsafe.getUnsafe().putDouble(ptr, value);
+    }
+
+    public void putDoubleAt(int index, double value) {
+        long offset = 8L * index;
+        assert offset <= size() - 8;
+        Unsafe.getUnsafe().putDouble(ptr + HEADER_SIZE + offset, value);
+    }
+
+    public void putFloatAt(int index, float value) {
+        long offset = 4L * index;
+        assert offset <= size() - 4;
+        Unsafe.getUnsafe().putFloat(ptr + HEADER_SIZE + offset, value);
+    }
+
+    public void putIntAt(int index, int value) {
+        long offset = 4L * index;
+        assert offset <= size() - 4;
+        Unsafe.getUnsafe().putInt(ptr + HEADER_SIZE + offset, value);
+    }
+
+    public void putLongAt(int index, long value) {
+        long offset = 8L * index;
+        assert offset <= size() - 8;
+        Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE + offset, value);
+    }
+
+    public void putShortAt(int index, short value) {
+        long offset = 2L * index;
+        assert offset <= size() - 2;
+        Unsafe.getUnsafe().putShort(ptr + HEADER_SIZE + offset, value);
     }
 
     public void resetPtr() {
@@ -182,18 +311,42 @@ public class GroupByColumnSink {
         Unsafe.getUnsafe().putChar(ptr, value);
     }
 
+    private void putCharAt(int index, char value) {
+        long offset = 2L * index;
+        assert offset <= size() - 2;
+        Unsafe.getUnsafe().putChar(ptr + HEADER_SIZE + offset, value);
+    }
+
     private void putDecimal128() {
         long ptr = reserve(16);
         Unsafe.getUnsafe().putLong(ptr, decimal128.getHigh());
-        Unsafe.getUnsafe().putLong(ptr + 8L, decimal128.getLow());
+        Unsafe.getUnsafe().putLong(ptr + 8, decimal128.getLow());
+    }
+
+    private void putDecimal128At(int index) {
+        long offset = 16L * index;
+        assert offset <= size() - 16;
+        long p = ptr + HEADER_SIZE + offset;
+        Unsafe.getUnsafe().putLong(p, decimal128.getHigh());
+        Unsafe.getUnsafe().putLong(p + 8, decimal128.getLow());
     }
 
     private void putDecimal256() {
         long ptr = reserve(32);
         Unsafe.getUnsafe().putLong(ptr, decimal256.getHh());
-        Unsafe.getUnsafe().putLong(ptr + 8L, decimal256.getHl());
-        Unsafe.getUnsafe().putLong(ptr + 16L, decimal256.getLh());
-        Unsafe.getUnsafe().putLong(ptr + 24L, decimal256.getLl());
+        Unsafe.getUnsafe().putLong(ptr + 8, decimal256.getHl());
+        Unsafe.getUnsafe().putLong(ptr + 16, decimal256.getLh());
+        Unsafe.getUnsafe().putLong(ptr + 24, decimal256.getLl());
+    }
+
+    private void putDecimal256At(int index) {
+        long offset = 32L * index;
+        assert offset <= size() - 32;
+        long p = ptr + HEADER_SIZE + offset;
+        Unsafe.getUnsafe().putLong(p, decimal256.getHh());
+        Unsafe.getUnsafe().putLong(p + 8, decimal256.getHl());
+        Unsafe.getUnsafe().putLong(p + 16, decimal256.getLh());
+        Unsafe.getUnsafe().putLong(p + 24, decimal256.getLl());
     }
 
     private void putFloat(float value) {
@@ -214,7 +367,15 @@ public class GroupByColumnSink {
     private void putLong128(long lo, long hi) {
         long ptr = reserve(16);
         Unsafe.getUnsafe().putLong(ptr, lo);
-        Unsafe.getUnsafe().putLong(ptr + 8L, hi);
+        Unsafe.getUnsafe().putLong(ptr + 8, hi);
+    }
+
+    private void putLong128At(int index, long lo, long hi) {
+        long offset = 16L * index;
+        assert offset <= size() - 16;
+        long p = ptr + HEADER_SIZE + offset;
+        Unsafe.getUnsafe().putLong(p, lo);
+        Unsafe.getUnsafe().putLong(p + 8, hi);
     }
 
     private void putShort(short value) {

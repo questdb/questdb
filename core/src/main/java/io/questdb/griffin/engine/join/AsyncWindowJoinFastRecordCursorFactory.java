@@ -91,7 +91,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncWindowJoinRecordCursor cursor;
-    private final PageFrameSequence<AsyncWindowJoinAtom> frameSequence;
+    private final PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence;
     private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
@@ -208,7 +208,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
-    public PageFrameSequence<AsyncWindowJoinAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<AsyncWindowJoinFastAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(masterFactory, executionContext, collectSubSeq, order);
     }
 
@@ -250,7 +250,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
     public void toPlan(PlanSink sink) {
         sink.type("Async Window Fast Join");
         sink.meta("workers").val(workerCount);
-        final AsyncWindowJoinFastAtom atom = (AsyncWindowJoinFastAtom) frameSequence.getAtom();
+        final AsyncWindowJoinFastAtom atom = frameSequence.getAtom();
         sink.attr("vectorized").val(atom.isVectorized());
         sink.attr("symbol")
                 .val(masterFactory.getMetadata().getColumnName(atom.getMasterSymbolIndex()))
@@ -301,14 +301,14 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final DirectMapValue value = atom.getMapValue(slotId);
-        final TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+        final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
         joinRecord.of(record, slaveRecord);
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
-        final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+        final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
         Function joinFilter = atom.getJoinFilter(workerId);
 
         atom.clearTemporaryData(workerId);
@@ -330,31 +330,31 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
             long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
 
-            long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
-            if (slaveRowId != Long.MIN_VALUE) {
+            long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
+            if (slaveRowIndex != Long.MIN_VALUE) {
                 long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                 for (; ; ) {
-                    slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
+                    slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                     final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                     if (slaveTimestamp > slaveTimestampHi) {
                         break;
                     }
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                    final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
+                    final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                     if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                         final int idx = toSymbolMapKey(matchingMasterKey);
                         rowIds.of(slaveData.get(idx, 0));
                         timestamps.of(slaveData.get(idx, 1));
-                        rowIds.add(baseSlaveRowId + slaveRowId);
+                        rowIds.add(baseSlaveRowId + slaveRowIndex);
                         timestamps.add(slaveTimestamp);
                         slaveData.put(idx, 0, rowIds.ptr());
                         slaveData.put(idx, 1, timestamps.ptr());
                     }
-                    if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
+                    if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                         if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
                             break;
                         }
-                        slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                        slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
                         baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         // don't forget to switch the record to the new frame
                         slaveTimeFrameHelper.recordAt(baseSlaveRowId);
@@ -380,10 +380,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 long rowIdsPtr = slaveData.get(idx, 0);
                 long timestampsPtr = slaveData.get(idx, 1);
                 long rowLo = slaveData.get(idx, 2);
-                rowIds.of(rowIdsPtr);
-                timestamps.of(timestampsPtr);
 
-                if (rowIds.size() > 0) {
+                if (rowIdsPtr != 0) {
+                    rowIds.of(rowIdsPtr);
+                    assert rowIds.size() > 0;
+                    timestamps.of(timestampsPtr);
+                    assert timestamps.size() > 0;
+
                     rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
                     slaveData.put(idx, 2, rowLo);
@@ -392,15 +395,15 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     if (rowLo < rowHi) {
                         boolean isNew = true;
                         for (long i = rowLo; i < rowHi; i++) {
-                            slaveRowId = rowIds.get(i);
-                            slaveTimeFrameHelper.recordAt(slaveRowId);
+                            slaveRowIndex = rowIds.get(i);
+                            slaveTimeFrameHelper.recordAt(slaveRowIndex);
                             if (joinFilter == null || joinFilter.getBool(joinRecord)) {
                                 if (isNew) {
-                                    functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                                    functionUpdater.updateNew(value, joinRecord, slaveRowIndex);
                                     isNew = false;
                                     value.setNew(false);
                                 } else {
-                                    functionUpdater.updateExisting(value, joinRecord, slaveRowId);
+                                    functionUpdater.updateExisting(value, joinRecord, slaveRowIndex);
                                 }
                             }
                         }
@@ -444,7 +447,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final DirectMapValue value = atom.getMapValue(slotId);
-        final TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+        final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
         joinRecord.of(record, slaveRecord);
@@ -456,7 +459,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final int groupByFuncCount = groupByFunctions.size();
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
-        final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+        final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
         final IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
         atom.clearTemporaryData(workerId);
@@ -477,16 +480,16 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
             long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
 
-            long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
-            if (slaveRowId != Long.MIN_VALUE) {
+            long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
+            if (slaveRowIndex != Long.MIN_VALUE) {
                 for (; ; ) {
-                    slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
+                    slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                     final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                     if (slaveTimestamp > slaveTimestampHi) {
                         break;
                     }
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                    final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
+                    final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                     if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                         final int idx = toSymbolMapKey(matchingMasterKey);
                         long timestampsPtr = slaveData.get(idx, 0);
@@ -498,16 +501,16 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         for (int i = 0, n = groupByFuncArgs.size(); i < n; i++) {
                             var funcArg = groupByFuncArgs.getQuick(i);
                             if (funcArg != null) {
-                                columnSink.of(slaveData.get(idx, 2 + i)).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
+                                columnSink.of(slaveData.get(idx, i + 2)).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
                                 slaveData.put(idx, i + 2, columnSink.ptr());
                             }
                         }
                     }
-                    if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
+                    if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                         if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
                             break;
                         }
-                        slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                        slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
                     }
                 }
             }
@@ -531,9 +534,11 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final int idx = toSymbolMapKey(masterKey);
                 long timestampsPtr = slaveData.get(idx, 0);
                 long rowLo = slaveData.get(idx, 1);
-                timestamps.of(timestampsPtr);
 
-                if (timestamps.size() > 0) {
+                if (timestampsPtr != 0) {
+                    timestamps.of(timestampsPtr);
+                    assert timestamps.size() > 0;
+
                     rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
                     slaveData.put(idx, 1, rowLo);
@@ -541,7 +546,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                     for (int i = 0; i < groupByFuncCount; i++) {
                         final int mapIndex = mapIndexes.getQuick(i);
-                        final long ptr = slaveData.get(idx, 2 + mapIndex);
+                        final long ptr = slaveData.get(idx, mapIndex + 2);
                         if (ptr != 0) {
                             final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                             groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
@@ -588,19 +593,21 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final DirectMapValue value = atom.getMapValue(slotId);
-        final TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+        final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
         joinRecord.of(record, slaveRecord);
 
         final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
         final ObjList<Function> groupByFuncArgs = atom.getGroupByFunctionArgs(workerId);
         final IntList groupByFuncTypes = atom.getGroupByFunctionTypes();
         final int groupByFuncCount = groupByFunctions.size();
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
-        final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+        final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
+        final WindowJoinPrevailingCache prevailingCache = atom.getPrevailingCache(slotId);
         final IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
         atom.clearTemporaryData(workerId);
@@ -618,29 +625,14 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-            long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+            final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+            final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
             long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
-            int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
-            long prevailingRowId = slaveTimeFrameHelper.getPrevailingRowId();
-            findInitialPrevailingRowsVect(
-                    slaveTimeFrameHelper,
-                    slaveRecord,
-                    slaveSymbolIndex,
-                    slaveTimestampIndex,
-                    slaveSymbolLookupTable,
-                    slaveData,
-                    timestamps,
-                    columnSink,
-                    joinRecord,
-                    groupByFuncArgs,
-                    groupByFuncTypes,
-                    slaveTsScale,
-                    prevailingFrameIndex,
-                    prevailingRowId
-            );
+            final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
+            final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
+            prevailingCache.of(prevailingFrameIndex, prevailingRowIndex);
 
-            // Scan forward to collect window rows
+            // Scan forward to collect slave column values within all possible time windows.
             if (slaveRowId != Long.MIN_VALUE) {
                 for (; ; ) {
                     slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
@@ -649,7 +641,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         break;
                     }
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                    final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
+                    final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                     if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                         final int idx = toSymbolMapKey(matchingMasterKey);
                         long timestampsPtr = slaveData.get(idx, 0);
@@ -657,11 +649,17 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         timestamps.add(slaveTimestamp);
                         slaveData.put(idx, 0, timestamps.ptr());
 
-                        // copy the column values to be aggregated
+                        // Copy the column values to be aggregated.
                         for (int i = 0, n = groupByFuncArgs.size(); i < n; i++) {
                             var funcArg = groupByFuncArgs.getQuick(i);
                             if (funcArg != null) {
-                                columnSink.of(slaveData.get(idx, 2 + i)).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
+                                final long sinkPtr = slaveData.get(idx, i + 2);
+                                columnSink.of(sinkPtr);
+                                if (sinkPtr == 0) {
+                                    // Reserve an extra slot for the prevailing value by writing the first value twice.
+                                    columnSink.put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
+                                }
+                                columnSink.put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
                                 slaveData.put(idx, i + 2, columnSink.ptr());
                             }
                         }
@@ -693,26 +691,76 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final int idx = toSymbolMapKey(masterKey);
                 long timestampsPtr = slaveData.get(idx, 0);
                 long rowLo = slaveData.get(idx, 1);
-                timestamps.of(timestampsPtr);
 
-                if (timestamps.size() > 0) {
+                if (timestampsPtr != 0) {
+                    timestamps.of(timestampsPtr);
+                    assert timestamps.size() > 0;
+
                     rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
-                    rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
+                    rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
                     slaveData.put(idx, 1, rowLo);
                     long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
+                    if (rowLo >= rowHi || timestamps.get(rowLo) > masterSlaveTimestampLo) {
+                        // No rows in the time window or the first row has timestamp higher than the low window boundary.
+                        // In both cases we need to include the prevailing value.
+                        if (rowLo > 0) {
+                            // Yay! We already have the prevailing value in the in-memory index.
+                            rowLo--;
+                        } else {
+                            // There are no slave rows corresponding to the time window for the symbol.
+                            // Let's find the prevailing value.
+                            final long rowId = prevailingCache.findPrevailingSlaveRowId(
+                                    slaveTimeFrameHelper,
+                                    slaveRecord,
+                                    slaveSymbolIndex,
+                                    slaveSymbolLookupMap,
+                                    masterKey
+                            );
+                            if (rowId != Long.MIN_VALUE) {
+                                slaveTimeFrameHelper.recordAt(rowId);
+                                // Copy the column values for the prevailing row to zero slot.
+                                for (int i = 0, n = groupByFuncArgs.size(); i < n; i++) {
+                                    var funcArg = groupByFuncArgs.getQuick(i);
+                                    if (funcArg != null) {
+                                        final long sinkPtr = slaveData.get(idx, i + 2);
+                                        assert sinkPtr != 0;
+                                        columnSink.of(sinkPtr).putAt(0, joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
+                                    }
+                                }
+                                // Set rowLo to -1, so that the zero slot value is included into the aggregation.
+                                rowLo = -1;
+                            }
+                        }
+                    }
+
                     if (rowLo < rowHi) {
                         for (int i = 0; i < groupByFuncCount; i++) {
                             final int mapIndex = mapIndexes.getQuick(i);
-                            final long ptr = slaveData.get(idx, 2 + mapIndex);
+                            final long ptr = slaveData.get(idx, mapIndex + 2);
                             if (ptr != 0) {
                                 final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
-                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
-                            } else {
+                                // column values are shifted by one slot, hence `rowLo + 1`
+                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * (rowLo + 1), (int) (rowHi - rowLo));
+                            } else { // no-arg function, e.g. count()
                                 groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
                             }
                         }
+                    }
+                } else {
+                    // There are no slave rows corresponding to the master page frame for the symbol.
+                    // Let's find the prevailing value.
+                    final long rowId = prevailingCache.findPrevailingSlaveRowId(
+                            slaveTimeFrameHelper,
+                            slaveRecord,
+                            slaveSymbolIndex,
+                            slaveSymbolLookupMap,
+                            masterKey
+                    );
+                    if (rowId != Long.MIN_VALUE) {
+                        slaveTimeFrameHelper.recordAt(rowId);
+                        functionUpdater.updateNew(value, joinRecord, rowId);
                     }
                 }
             }
@@ -753,14 +801,14 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final DirectMapValue value = atom.getMapValue(slotId);
-        final TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+        final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
         joinRecord.of(record, slaveRecord);
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
-        final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+        final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
 
         atom.clearTemporaryData(workerId);
         final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
@@ -777,23 +825,23 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+            final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+            final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
             long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
-            long prevailingRowId = slaveTimeFrameHelper.getPrevailingRowId();
+            long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
             findInitialPrevailingRows(
                     slaveTimeFrameHelper,
                     slaveRecord,
                     slaveSymbolIndex,
                     slaveTimestampIndex,
-                    slaveSymbolLookupTable,
+                    slaveSymbolLookupMap,
                     slaveData,
                     rowIds,
                     timestamps,
                     slaveTsScale,
                     prevailingFrameIndex,
-                    prevailingRowId
+                    prevailingRowIndex
             );
 
             if (slaveRowId != Long.MIN_VALUE) {
@@ -805,7 +853,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         break;
                     }
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                    final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
+                    final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                     if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                         final int idx = toSymbolMapKey(matchingMasterKey);
                         rowIds.of(slaveData.get(idx, 0));
@@ -844,11 +892,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 long rowIdsPtr = slaveData.get(idx, 0);
                 long timestampsPtr = slaveData.get(idx, 1);
                 long rowLo = slaveData.get(idx, 2);
-                rowIds.of(rowIdsPtr);
-                timestamps.of(timestampsPtr);
-                boolean isNew = true;
 
-                if (rowIds.size() > 0) {
+                if (rowIdsPtr != 0) {
+                    rowIds.of(rowIdsPtr);
+                    assert rowIds.size() > 0;
+                    timestamps.of(timestampsPtr);
+                    assert timestamps.size() > 0;
+
                     rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
                     slaveData.put(idx, 2, rowLo);
@@ -856,6 +906,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                     if (rowLo < rowHi) {
+                        boolean isNew = true;
                         for (long i = rowLo; i < rowHi; i++) {
                             long windowSlaveRowId = rowIds.get(i);
                             slaveTimeFrameHelper.recordAt(windowSlaveRowId);
@@ -907,14 +958,14 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final DirectMapValue value = atom.getMapValue(slotId);
-        final TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+        final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
         joinRecord.of(record, slaveRecord);
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
-        final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+        final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
         Function joinFilter = atom.getJoinFilter(workerId);
 
         atom.clearTemporaryData(workerId);
@@ -933,12 +984,12 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-            long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+            final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+            final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
 
             long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
-            long prevailingRowId = slaveTimeFrameHelper.getPrevailingRowId();
+            long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
             if (slaveRowId != Long.MIN_VALUE) {
                 long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                 for (; ; ) {
@@ -948,7 +999,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         break;
                     }
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                    final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
+                    final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                     if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                         final int idx = toSymbolMapKey(matchingMasterKey);
                         rowIds.of(slaveData.get(idx, 0));
@@ -986,18 +1037,22 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 long rowIdsPtr = slaveData.get(idx, 0);
                 long timestampsPtr = slaveData.get(idx, 1);
                 long rowLo = slaveData.get(idx, 2);
-                rowIds.of(rowIdsPtr);
-                timestamps.of(timestampsPtr);
-                boolean isNew = true;
-                boolean needFindPrevailing = true;
-                if (rowIds.size() > 0) {
+
+                if (rowIdsPtr != 0) {
+                    rowIds.of(rowIdsPtr);
+                    assert rowIds.size() > 0;
+                    timestamps.of(timestampsPtr);
+                    assert timestamps.size() > 0;
+
                     rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
                     slaveData.put(idx, 2, rowLo);
                     long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
+                    boolean needFindPrevailing = true;
                     if (rowLo < rowHi) {
+                        boolean isNew = true;
                         long rowLoId = rowIds.get(rowLo);
                         if (timestamps.get(rowLo) == masterSlaveTimestampLo) {
                             slaveTimeFrameHelper.recordAt(rowLoId);
@@ -1026,9 +1081,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                                         slaveTimeFrameHelper,
                                         slaveRecord,
                                         slaveSymbolIndex,
-                                        slaveSymbolLookupTable,
+                                        slaveSymbolLookupMap,
                                         prevailingFrameIndex,
-                                        prevailingRowId,
+                                        prevailingRowIndex,
                                         masterKey,
                                         joinFilter,
                                         joinRecord,
@@ -1069,9 +1124,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                                     slaveTimeFrameHelper,
                                     slaveRecord,
                                     slaveSymbolIndex,
-                                    slaveSymbolLookupTable,
+                                    slaveSymbolLookupMap,
                                     prevailingFrameIndex,
-                                    prevailingRowId,
+                                    prevailingRowIndex,
                                     masterKey,
                                     joinFilter,
                                     joinRecord,
@@ -1085,9 +1140,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             slaveTimeFrameHelper,
                             slaveRecord,
                             slaveSymbolIndex,
-                            slaveSymbolLookupTable,
+                            slaveSymbolLookupMap,
                             prevailingFrameIndex,
-                            prevailingRowId,
+                            prevailingRowIndex,
                             masterKey,
                             joinFilter,
                             joinRecord,
@@ -1144,7 +1199,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
 
                 final DirectMapValue value = atom.getMapValue(slotId);
-                final TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+                final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
                 final JoinRecord joinRecord = atom.getJoinRecord(slotId);
@@ -1152,7 +1207,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 Function joinFilter = atom.getJoinFilter(slotId);
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
-                final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+                final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
 
                 atom.clearTemporaryData(workerId);
                 final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
@@ -1171,31 +1226,31 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
                 long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
 
-                long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
-                if (slaveRowId != Long.MIN_VALUE) {
+                long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
+                if (slaveRowIndex != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
-                        slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
+                        slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                         if (slaveTimestamp > slaveTimestampHi) {
                             break;
                         }
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                        final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
+                        final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                             final int idx = toSymbolMapKey(matchingMasterKey);
                             rowIds.of(slaveData.get(idx, 0));
                             timestamps.of(slaveData.get(idx, 1));
-                            rowIds.add(baseSlaveRowId + slaveRowId);
+                            rowIds.add(baseSlaveRowId + slaveRowIndex);
                             timestamps.add(slaveTimestamp);
                             slaveData.put(idx, 0, rowIds.ptr());
                             slaveData.put(idx, 1, timestamps.ptr());
                         }
-                        if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
+                        if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                             if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
                                 break;
                             }
-                            slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                            slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
                             baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                             // don't forget to switch the record to the new frame
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
@@ -1222,10 +1277,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     long rowIdsPtr = slaveData.get(idx, 0);
                     long timestampsPtr = slaveData.get(idx, 1);
                     long rowLo = slaveData.get(idx, 2);
-                    rowIds.of(rowIdsPtr);
-                    timestamps.of(timestampsPtr);
 
-                    if (rowIds.size() > 0) {
+                    if (rowIdsPtr != 0) {
+                        rowIds.of(rowIdsPtr);
+                        assert rowIds.size() > 0;
+                        timestamps.of(timestampsPtr);
+                        assert timestamps.size() > 0;
+
                         rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
                         slaveData.put(idx, 2, rowLo);
@@ -1234,15 +1292,15 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         if (rowLo < rowHi) {
                             boolean isNew = true;
                             for (long i = rowLo; i < rowHi; i++) {
-                                slaveRowId = rowIds.get(i);
-                                slaveTimeFrameHelper.recordAt(slaveRowId);
+                                slaveRowIndex = rowIds.get(i);
+                                slaveTimeFrameHelper.recordAt(slaveRowIndex);
                                 if (joinFilter == null || joinFilter.getBool(joinRecord)) {
                                     if (isNew) {
-                                        functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                                        functionUpdater.updateNew(value, joinRecord, slaveRowIndex);
                                         isNew = false;
                                         value.setNew(false);
                                     } else {
-                                        functionUpdater.updateExisting(value, joinRecord, slaveRowId);
+                                        functionUpdater.updateExisting(value, joinRecord, slaveRowIndex);
                                     }
                                 }
                             }
@@ -1297,7 +1355,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
 
                 final DirectMapValue value = atom.getMapValue(slotId);
-                final TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+                final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 final JoinRecord joinRecord = atom.getJoinRecord(slotId);
                 joinRecord.of(record, slaveRecord);
@@ -1310,7 +1368,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final int groupByFuncCount = groupByFunctions.size();
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
-                final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+                final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
                 final IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
                 atom.clearTemporaryData(workerId);
@@ -1328,16 +1386,16 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
                 long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
 
-                long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
-                if (slaveRowId != Long.MIN_VALUE) {
+                long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
+                if (slaveRowIndex != Long.MIN_VALUE) {
                     for (; ; ) {
-                        slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
+                        slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                         if (slaveTimestamp > slaveTimestampHi) {
                             break;
                         }
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                        final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
+                        final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                             final int idx = toSymbolMapKey(matchingMasterKey);
                             timestamps.of(slaveData.get(idx, 0));
@@ -1348,17 +1406,17 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             for (int i = 0, n = groupByFuncArgs.size(); i < n; i++) {
                                 var funcArg = groupByFuncArgs.getQuick(i);
                                 if (funcArg != null) {
-                                    long ptr = slaveData.get(idx, 2 + i);
+                                    long ptr = slaveData.get(idx, i + 2);
                                     columnSink.of(ptr).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
                                     slaveData.put(idx, i + 2, columnSink.ptr());
                                 }
                             }
                         }
-                        if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
+                        if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                             if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
                                 break;
                             }
-                            slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                            slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
                         }
                     }
                 }
@@ -1382,9 +1440,11 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     final int idx = toSymbolMapKey(masterKey);
                     long timestampsPtr = slaveData.get(idx, 0);
                     long rowLo = slaveData.get(idx, 1);
-                    timestamps.of(timestampsPtr);
 
-                    if (timestamps.size() > 0) {
+                    if (timestampsPtr != 0) {
+                        timestamps.of(timestampsPtr);
+                        assert timestamps.size() > 0;
+
                         rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
                         slaveData.put(idx, 1, rowLo);
@@ -1392,7 +1452,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                         for (int i = 0; i < groupByFuncCount; i++) {
                             final int mapIndex = mapIndexes.getQuick(i);
-                            final long ptr = slaveData.get(idx, 2 + mapIndex);
+                            final long ptr = slaveData.get(idx, mapIndex + 2);
                             if (ptr != 0) {
                                 final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                                 groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
@@ -1450,12 +1510,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
 
                 final DirectMapValue value = atom.getMapValue(slotId);
-                final TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+                final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 final JoinRecord joinRecord = atom.getJoinRecord(slotId);
                 joinRecord.of(record, slaveRecord);
 
                 final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
+                final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
                 final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
                 columnSink.resetPtr();
                 final ObjList<Function> groupByFuncArgs = atom.getGroupByFunctionArgs(workerId);
@@ -1463,7 +1524,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final int groupByFuncCount = groupByFunctions.size();
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
-                final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+                final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
+                final WindowJoinPrevailingCache prevailingCache = atom.getPrevailingCache(slotId);
                 final IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
                 atom.clearTemporaryData(workerId);
@@ -1478,28 +1540,14 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-                long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-                long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+                final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+                final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
                 long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
                 int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
-                long prevailingRowId = slaveTimeFrameHelper.getPrevailingRowId();
-                findInitialPrevailingRowsVect(
-                        slaveTimeFrameHelper,
-                        slaveRecord,
-                        slaveSymbolIndex,
-                        slaveTimestampIndex,
-                        slaveSymbolLookupTable,
-                        slaveData,
-                        timestamps,
-                        columnSink,
-                        joinRecord,
-                        groupByFuncArgs,
-                        groupByFuncTypes,
-                        slaveTsScale,
-                        prevailingFrameIndex,
-                        prevailingRowId
-                );
+                long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
+                prevailingCache.of(prevailingFrameIndex, prevailingRowIndex);
 
+                // Scan forward to collect slave column values within all possible time windows.
                 if (slaveRowId != Long.MIN_VALUE) {
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
@@ -1508,19 +1556,24 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             break;
                         }
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                        final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
+                        final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                             final int idx = toSymbolMapKey(matchingMasterKey);
                             timestamps.of(slaveData.get(idx, 0));
                             timestamps.add(slaveTimestamp);
                             slaveData.put(idx, 0, timestamps.ptr());
 
-                            // Copy column values to be aggregated
+                            // Copy column values to be aggregated.
                             for (int i = 0, n = groupByFuncArgs.size(); i < n; i++) {
                                 var funcArg = groupByFuncArgs.getQuick(i);
                                 if (funcArg != null) {
-                                    long ptr = slaveData.get(idx, 2 + i);
-                                    columnSink.of(ptr).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
+                                    long sinkPtr = slaveData.get(idx, i + 2);
+                                    columnSink.of(sinkPtr);
+                                    if (sinkPtr == 0) {
+                                        // Reserve an extra slot for the prevailing value by writing the first value twice.
+                                        columnSink.put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
+                                    }
+                                    columnSink.put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
                                     slaveData.put(idx, i + 2, columnSink.ptr());
                                 }
                             }
@@ -1553,26 +1606,76 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     final int idx = toSymbolMapKey(masterKey);
                     long timestampsPtr = slaveData.get(idx, 0);
                     long rowLo = slaveData.get(idx, 1);
-                    timestamps.of(timestampsPtr);
 
-                    if (timestamps.size() > 0) {
+                    if (timestampsPtr != 0) {
+                        timestamps.of(timestampsPtr);
+                        assert timestamps.size() > 0;
+
                         rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
-                        rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
+                        rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
                         slaveData.put(idx, 1, rowLo);
                         long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
+                        if (rowLo >= rowHi || timestamps.get(rowLo) > masterSlaveTimestampLo) {
+                            // No rows in the time window or the first row has timestamp higher than the low window boundary.
+                            // In both cases we need to include the prevailing value.
+                            if (rowLo > 0) {
+                                // Yay! We already have the prevailing value in the in-memory index.
+                                rowLo--;
+                            } else {
+                                // There are no slave rows corresponding to the time window for the symbol.
+                                // Let's find the prevailing value.
+                                final long rowId = prevailingCache.findPrevailingSlaveRowId(
+                                        slaveTimeFrameHelper,
+                                        slaveRecord,
+                                        slaveSymbolIndex,
+                                        slaveSymbolLookupMap,
+                                        masterKey
+                                );
+                                if (rowId != Long.MIN_VALUE) {
+                                    slaveTimeFrameHelper.recordAt(rowId);
+                                    // Copy the column values for the prevailing row to zero slot.
+                                    for (int i = 0, n = groupByFuncArgs.size(); i < n; i++) {
+                                        var funcArg = groupByFuncArgs.getQuick(i);
+                                        if (funcArg != null) {
+                                            final long sinkPtr = slaveData.get(idx, i + 2);
+                                            assert sinkPtr != 0;
+                                            columnSink.of(sinkPtr).putAt(0, joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
+                                        }
+                                    }
+                                    // Set rowLo to -1, so that the zero slot value is included into the aggregation.
+                                    rowLo = -1;
+                                }
+                            }
+                        }
+
                         if (rowLo < rowHi) {
                             for (int i = 0; i < groupByFuncCount; i++) {
                                 final int mapIndex = mapIndexes.getQuick(i);
-                                final long ptr = slaveData.get(idx, 2 + mapIndex);
+                                final long ptr = slaveData.get(idx, mapIndex + 2);
                                 if (ptr != 0) {
                                     final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
-                                    groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
-                                } else {
+                                    // column values are shifted by one slot, hence `rowLo + 1`
+                                    groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * (rowLo + 1), (int) (rowHi - rowLo));
+                                } else { // no-arg function, e.g. count()
                                     groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
                                 }
                             }
+                        }
+                    } else {
+                        // There are no slave rows corresponding to the master page frame for the symbol.
+                        // Let's find the prevailing value.
+                        final long rowId = prevailingCache.findPrevailingSlaveRowId(
+                                slaveTimeFrameHelper,
+                                slaveRecord,
+                                slaveSymbolIndex,
+                                slaveSymbolLookupMap,
+                                masterKey
+                        );
+                        if (rowId != Long.MIN_VALUE) {
+                            slaveTimeFrameHelper.recordAt(rowId);
+                            functionUpdater.updateNew(value, joinRecord, rowId);
                         }
                     }
                 }
@@ -1625,14 +1728,14 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
 
                 final DirectMapValue value = atom.getMapValue(slotId);
-                final TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+                final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
                 final JoinRecord joinRecord = atom.getJoinRecord(slotId);
                 joinRecord.of(record, slaveRecord);
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
-                final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+                final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
 
                 atom.clearTemporaryData(workerId);
                 final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
@@ -1648,23 +1751,23 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-                long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-                long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+                final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+                final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
                 long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
                 int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
-                long prevailingRowId = slaveTimeFrameHelper.getPrevailingRowId();
+                long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
                 findInitialPrevailingRows(
                         slaveTimeFrameHelper,
                         slaveRecord,
                         slaveSymbolIndex,
                         slaveTimestampIndex,
-                        slaveSymbolLookupTable,
+                        slaveSymbolLookupMap,
                         slaveData,
                         rowIds,
                         timestamps,
                         slaveTsScale,
                         prevailingFrameIndex,
-                        prevailingRowId
+                        prevailingRowIndex
                 );
 
                 if (slaveRowId != Long.MIN_VALUE) {
@@ -1676,7 +1779,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             break;
                         }
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                        final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
+                        final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                             final int idx = toSymbolMapKey(matchingMasterKey);
                             rowIds.of(slaveData.get(idx, 0));
@@ -1715,12 +1818,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     long rowIdsPtr = slaveData.get(idx, 0);
                     long timestampsPtr = slaveData.get(idx, 1);
                     long rowLo = slaveData.get(idx, 2);
-                    rowIds.of(rowIdsPtr);
-                    timestamps.of(timestampsPtr);
 
-                    boolean isNew = true;
+                    if (rowIdsPtr != 0) {
+                        rowIds.of(rowIdsPtr);
+                        assert rowIds.size() > 0;
+                        timestamps.of(timestampsPtr);
+                        assert timestamps.size() > 0;
 
-                    if (rowIds.size() > 0) {
                         rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
                         slaveData.put(idx, 2, rowLo);
@@ -1728,6 +1832,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                         if (rowLo < rowHi) {
+                            boolean isNew = true;
                             for (long i = rowLo; i < rowHi; i++) {
                                 long windowSlaveRowId = rowIds.get(i);
                                 slaveTimeFrameHelper.recordAt(windowSlaveRowId);
@@ -1791,7 +1896,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
 
                 final DirectMapValue value = atom.getMapValue(slotId);
-                final TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+                final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
                 final JoinRecord joinRecord = atom.getJoinRecord(slotId);
@@ -1799,7 +1904,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 Function joinFilter = atom.getJoinFilter(slotId);
                 final long slaveTsScale = atom.getSlaveTsScale();
                 final long masterTsScale = atom.getMasterTsScale();
-                final DirectIntIntHashMap slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+                final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
 
                 atom.clearTemporaryData(workerId);
                 final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
@@ -1815,12 +1920,12 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-                long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
-                long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+                final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+                final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
 
                 long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
                 int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
-                long prevailingRowId = slaveTimeFrameHelper.getPrevailingRowId();
+                long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
                 if (slaveRowId != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
@@ -1830,7 +1935,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             break;
                         }
                         final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                        final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
+                        final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                         if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
                             final int idx = toSymbolMapKey(matchingMasterKey);
                             rowIds.of(slaveData.get(idx, 0));
@@ -1869,19 +1974,22 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     long rowIdsPtr = slaveData.get(idx, 0);
                     long timestampsPtr = slaveData.get(idx, 1);
                     long rowLo = slaveData.get(idx, 2);
-                    rowIds.of(rowIdsPtr);
-                    timestamps.of(timestampsPtr);
-                    boolean isNew = true;
-                    boolean needFindPrevailing = true;
 
-                    if (rowIds.size() > 0) {
+                    if (rowIdsPtr != 0) {
+                        rowIds.of(rowIdsPtr);
+                        assert rowIds.size() > 0;
+                        timestamps.of(timestampsPtr);
+                        assert timestamps.size() > 0;
+
                         rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
                         slaveData.put(idx, 2, rowLo);
                         long rowHi = Vect.binarySearch64Bit(timestamps.dataPtr(), masterSlaveTimestampHi, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
+                        boolean needFindPrevailing = true;
                         if (rowLo < rowHi) {
+                            boolean isNew = true;
                             long rowLoId = rowIds.get(rowLo);
                             if (timestamps.get(rowLo) == masterSlaveTimestampLo) {
                                 slaveTimeFrameHelper.recordAt(rowLoId);
@@ -1910,9 +2018,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                                             slaveTimeFrameHelper,
                                             slaveRecord,
                                             slaveSymbolIndex,
-                                            slaveSymbolLookupTable,
+                                            slaveSymbolLookupMap,
                                             prevailingFrameIndex,
-                                            prevailingRowId,
+                                            prevailingRowIndex,
                                             masterKey,
                                             joinFilter,
                                             joinRecord,
@@ -1953,9 +2061,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                                         slaveTimeFrameHelper,
                                         slaveRecord,
                                         slaveSymbolIndex,
-                                        slaveSymbolLookupTable,
+                                        slaveSymbolLookupMap,
                                         prevailingFrameIndex,
-                                        prevailingRowId,
+                                        prevailingRowIndex,
                                         masterKey,
                                         joinFilter,
                                         joinRecord,
@@ -1969,9 +2077,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                                 slaveTimeFrameHelper,
                                 slaveRecord,
                                 slaveSymbolIndex,
-                                slaveSymbolLookupTable,
+                                slaveSymbolLookupMap,
                                 prevailingFrameIndex,
-                                prevailingRowId,
+                                prevailingRowIndex,
                                 masterKey,
                                 joinFilter,
                                 joinRecord,
@@ -1986,12 +2094,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
+    // TODO(puzpuzpuz): remove me in favor of lazy, cached backwards scan
     static void findInitialPrevailingRows(
-            TimeFrameHelper slaveTimeFrameHelper,
+            WindowJoinTimeFrameHelper slaveTimeFrameHelper,
             Record slaveRecord,
             int slaveSymbolIndex,
             int slaveTimestampIndex,
-            DirectIntIntHashMap slaveSymbolLookupTable,
+            DirectIntIntHashMap slaveSymbolLookupMap,
             DirectIntMultiLongHashMap slaveData,
             GroupByLongList rowIds,
             GroupByLongList timestamps,
@@ -2003,14 +2112,16 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             return;
         }
         final int savedFrameIndex = slaveTimeFrameHelper.getBookmarkedFrameIndex();
-        final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowId();
-        final int totalSymbols = slaveSymbolLookupTable.size();
+        final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowIndex();
+        final int totalSymbols = slaveSymbolLookupMap.size();
         int foundCount = 0;
 
         try {
-            slaveTimeFrameHelper.setBookmark(prevailingFrameIndex, 0);
+            slaveTimeFrameHelper.restoreBookmark(prevailingFrameIndex, 0);
             do {
                 long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                slaveTimeFrameHelper.recordAt(baseSlaveRowId);
+
                 long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
                 long rowHi = slaveTimeFrameHelper.getTimeFrameRowHi();
                 if (scanStart >= rowHi) {
@@ -2025,7 +2136,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     slaveTimeFrameHelper.recordAtRowIndex(r);
 
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                    final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
+                    final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                     if (matchingMasterKey == StaticSymbolTable.VALUE_NOT_FOUND) {
                         continue;
                     }
@@ -2051,91 +2162,15 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 scanStart = Long.MAX_VALUE;
             } while (slaveTimeFrameHelper.previousFrame());
         } finally {
-            slaveTimeFrameHelper.setBookmark(savedFrameIndex, savedRowId);
-        }
-    }
-
-    static void findInitialPrevailingRowsVect(
-            TimeFrameHelper slaveTimeFrameHelper,
-            Record slaveRecord,
-            int slaveSymbolIndex,
-            int slaveTimestampIndex,
-            DirectIntIntHashMap slaveSymbolLookupTable,
-            DirectIntMultiLongHashMap slaveData,
-            GroupByLongList timestamps,
-            GroupByColumnSink columnSink,
-            JoinRecord joinRecord,
-            ObjList<Function> groupByFuncArgs,
-            IntList groupByFuncTypes,
-            long slaveTsScale,
-            int prevailingFrameIndex,
-            long scanStart
-    ) {
-        if (prevailingFrameIndex == -1) {
-            return;
-        }
-
-        final int savedFrameIndex = slaveTimeFrameHelper.getBookmarkedFrameIndex();
-        final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowId();
-        final int totalSymbols = slaveSymbolLookupTable.size();
-        int foundCount = 0;
-
-        try {
-            slaveTimeFrameHelper.setBookmark(prevailingFrameIndex, 0);
-            do {
-                long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
-                long rowHi = slaveTimeFrameHelper.getTimeFrameRowHi();
-                if (scanStart >= rowHi) {
-                    scanStart = rowHi - 1;
-                }
-                if (scanStart < rowLo) {
-                    scanStart = Long.MAX_VALUE;
-                    continue;
-                }
-
-                for (long r = scanStart; r >= rowLo; r--) {
-                    slaveTimeFrameHelper.recordAtRowIndex(r);
-
-                    final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                    final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
-                    if (matchingMasterKey == StaticSymbolTable.VALUE_NOT_FOUND) {
-                        continue;
-                    }
-
-                    final int idx = toSymbolMapKey(matchingMasterKey);
-                    long existingPtr = slaveData.get(idx, 0);
-                    if (existingPtr != 0) {
-                        continue;
-                    }
-
-                    final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
-                    timestamps.of(0);
-                    timestamps.add(slaveTimestamp);
-                    slaveData.put(idx, 0, timestamps.ptr());
-                    for (int i = 0, n = groupByFuncArgs.size(); i < n; i++) {
-                        var funcArg = groupByFuncArgs.getQuick(i);
-                        if (funcArg != null) {
-                            columnSink.of(0).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
-                            slaveData.put(idx, i + 2, columnSink.ptr());
-                        }
-                    }
-
-                    if (++foundCount >= totalSymbols) {
-                        return;
-                    }
-                }
-                scanStart = Long.MAX_VALUE;
-            } while (slaveTimeFrameHelper.previousFrame());
-        } finally {
-            slaveTimeFrameHelper.setBookmark(savedFrameIndex, savedRowId);
+            slaveTimeFrameHelper.restoreBookmark(savedFrameIndex, savedRowId);
         }
     }
 
     static boolean findPrevailingForMasterRow(
-            TimeFrameHelper slaveTimeFrameHelper,
+            WindowJoinTimeFrameHelper slaveTimeFrameHelper,
             Record slaveRecord,
             int slaveSymbolIndex,
-            DirectIntIntHashMap slaveSymbolLookupTable,
+            DirectIntIntHashMap slaveSymbolLookupMap,
             int slaveRowFrameIndex,
             long scanStart,
             int masterKey,
@@ -2148,11 +2183,14 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             return false;
         }
         final int savedFrameIndex = slaveTimeFrameHelper.getBookmarkedFrameIndex();
-        final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowId();
+        final long savedRowId = slaveTimeFrameHelper.getBookmarkedRowIndex();
 
         try {
-            slaveTimeFrameHelper.setBookmark(slaveRowFrameIndex, 0);
+            slaveTimeFrameHelper.restoreBookmark(slaveRowFrameIndex, 0);
             do {
+                // actual row index doesn't matter here due to the later recordAtRowIndex() call
+                slaveTimeFrameHelper.recordAt(Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0));
+
                 long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
                 long rowHi = slaveTimeFrameHelper.getTimeFrameRowHi();
 
@@ -2167,7 +2205,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 for (long r = scanStart; r >= rowLo; r--) {
                     slaveTimeFrameHelper.recordAtRowIndex(r);
                     final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
-                    final int matchingMasterKey = slaveSymbolLookupTable.get(toSymbolMapKey(slaveKey));
+                    final int matchingMasterKey = slaveSymbolLookupMap.get(toSymbolMapKey(slaveKey));
                     if (matchingMasterKey == StaticSymbolTable.VALUE_NOT_FOUND || matchingMasterKey != masterKey) {
                         continue;
                     }
@@ -2182,7 +2220,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             } while (slaveTimeFrameHelper.previousFrame());
             return false;
         } finally {
-            slaveTimeFrameHelper.setBookmark(savedFrameIndex, savedRowId);
+            slaveTimeFrameHelper.restoreBookmark(savedFrameIndex, savedRowId);
         }
     }
 
