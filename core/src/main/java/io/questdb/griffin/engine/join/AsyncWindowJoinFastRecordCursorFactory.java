@@ -981,7 +981,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
                     if (rowLo < rowHi) {
                         long rowLoId = rowIds.get(rowLo);
-                        if (timestamps.get(rowLoId) == masterSlaveTimestampLo) {
+                        if (timestamps.get(rowLo) == masterSlaveTimestampLo) {
                             slaveTimeFrameHelper.recordAt(rowLoId);
                             if (joinFilter.getBool(joinRecord)) {
                                 functionUpdater.updateNew(value, joinRecord, rowLoId);
@@ -1850,7 +1850,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
                         if (rowLo < rowHi) {
                             long rowLoId = rowIds.get(rowLo);
-                            if (timestamps.get(rowLoId) == masterSlaveTimestampLo) {
+                            if (timestamps.get(rowLo) == masterSlaveTimestampLo) {
                                 slaveTimeFrameHelper.recordAt(rowLoId);
                                 if (joinFilter.getBool(joinRecord)) {
                                     functionUpdater.updateNew(value, joinRecord, rowLoId);
