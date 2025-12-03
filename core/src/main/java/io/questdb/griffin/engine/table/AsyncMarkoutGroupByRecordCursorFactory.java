@@ -24,17 +24,13 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -43,7 +39,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -56,12 +51,11 @@ import org.jetbrains.annotations.NotNull;
  * Master -> MarkoutHorizon (CROSS JOIN) -> ASOF JOIN -> GROUP BY
  */
 public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final AsyncMarkoutGroupByAtom atom;
+    private final AsyncMarkoutGroupByRecordCursor cursor;
     private final RecordCursorFactory masterFactory;   // Base master table
     private final RecordCursorFactory pricesFactory;   // Prices table for ASOF JOIN
     private final RecordCursorFactory sequenceFactory;  // Offset sequence
-    private final AsyncMarkoutGroupByAtom atom;
-    private final AsyncMarkoutGroupByRecordCursor cursor;
-    private final RecordSink masterRecordSink;
 
     public AsyncMarkoutGroupByRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -104,7 +98,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
 
             // Create RecordSink for materializing master records
             masterColumnFilter.of(masterFactory.getMetadata().getColumnCount());
-            this.masterRecordSink = RecordSinkFactory.getInstance(
+            RecordSink masterRecordSink = RecordSinkFactory.getInstance(
                     asm,
                     masterFactory.getMetadata(),
                     masterColumnFilter
@@ -173,11 +167,6 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
-    }
-
-    @Override
-    public boolean supportsUpdateRowId(TableToken tableToken) {
-        return false;
     }
 
     @Override
