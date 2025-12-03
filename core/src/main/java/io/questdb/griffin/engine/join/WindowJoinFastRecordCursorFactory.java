@@ -764,22 +764,25 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 if (includePrevailing) {
                     int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                     long prevailingRowId = slaveTimeFrameHelper.getPrevailingRowId();
-                    findInitialPrevailingRowsVect(
-                            slaveTimeFrameHelper,
-                            slaveRecord,
-                            slaveSymbolIndex,
-                            slaveTimestampIndex,
-                            slaveSymbolLookupTable,
-                            slaveData,
-                            timestamps,
-                            columnSink,
-                            internalJoinRecord,
-                            groupByFunctionArgs,
-                            groupByFunctionTypes,
-                            slaveTimestampScale,
-                            prevailingFrameIndex,
-                            prevailingRowId
-                    );
+                    if (prevailingFrameIndex != -1) {
+                        slaveTimeFrameHelper.recordAt(Rows.toRowID(prevailingFrameIndex, 0));
+                        findInitialPrevailingRowsVect(
+                                slaveTimeFrameHelper,
+                                slaveRecord,
+                                slaveSymbolIndex,
+                                slaveTimestampIndex,
+                                slaveSymbolLookupTable,
+                                slaveData,
+                                timestamps,
+                                columnSink,
+                                internalJoinRecord,
+                                groupByFunctionArgs,
+                                groupByFunctionTypes,
+                                slaveTimestampScale,
+                                prevailingFrameIndex,
+                                prevailingRowId
+                        );
+                    }
                 }
 
                 if (slaveRowId != Long.MIN_VALUE) {

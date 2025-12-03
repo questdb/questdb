@@ -184,7 +184,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
 
         // region oracle - left-join query
         sink.clear();
-        sink.put(select);
+        sink.put(includePrevailing ? select.replace("first", "first_not_null") : select);
         if (includePrevailing) {
             // We need to union the same query as for EXCLUDE PREVAILING and ASOF JOIN equivalent to get what we want.
             // LEFT JOIN + LATEST ON is used for the ASOF JOIN equivalent to be able to use join filters.
@@ -217,7 +217,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             sink
                     .put("p.id as pid, p.ts as pts FROM ")
                     .put(leftTable)
-                    .put(" LEFT JOIN prices p ON p.ts <= dateadd('u', -")
+                    .put(" JOIN prices p ON p.ts <= dateadd('u', -")
                     .put(preceding)
                     .put(", t.ts)");
             if (!joinFilter.isEmpty()) {

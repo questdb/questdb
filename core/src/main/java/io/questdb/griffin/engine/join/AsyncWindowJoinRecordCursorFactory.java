@@ -780,7 +780,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
             long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
-            final long prevailingRowIdCandidate = slaveTimeFrameHelper.getPrevailingRowId();
+            final long prevailingRowId = slaveTimeFrameHelper.getPrevailingRowId();
 
             if (slaveRowId != Long.MIN_VALUE) {
                 long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
@@ -854,7 +854,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                                 if (findPrevailingForMasterRow(
                                         slaveTimeFrameHelper,
                                         prevailingFrameIndex,
-                                        prevailingRowIdCandidate,
+                                        prevailingRowId,
                                         joinFilter,
                                         joinRecord,
                                         functionUpdater,
@@ -893,7 +893,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             findPrevailingForMasterRow(
                                     slaveTimeFrameHelper,
                                     prevailingFrameIndex,
-                                    prevailingRowIdCandidate,
+                                    prevailingRowId,
                                     joinFilter,
                                     joinRecord,
                                     functionUpdater,
@@ -905,7 +905,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     findPrevailingForMasterRow(
                             slaveTimeFrameHelper,
                             prevailingFrameIndex,
-                            prevailingRowIdCandidate,
+                            prevailingRowId,
                             joinFilter,
                             joinRecord,
                             functionUpdater,
@@ -1539,7 +1539,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 long slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
                 long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
                 final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
-                final long prevailingRowIdCandidate = slaveTimeFrameHelper.getPrevailingRowId();
+                final long prevailingRowId = slaveTimeFrameHelper.getPrevailingRowId();
 
                 if (slaveRowId != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
@@ -1617,7 +1617,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                                     if (findPrevailingForMasterRow(
                                             slaveTimeFrameHelper,
                                             prevailingFrameIndex,
-                                            prevailingRowIdCandidate,
+                                            prevailingRowId,
                                             joinFilter,
                                             joinRecord,
                                             functionUpdater,
@@ -1657,7 +1657,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                                 findPrevailingForMasterRow(
                                         slaveTimeFrameHelper,
                                         prevailingFrameIndex,
-                                        prevailingRowIdCandidate,
+                                        prevailingRowId,
                                         joinFilter,
                                         joinRecord,
                                         functionUpdater,
@@ -1669,7 +1669,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         findPrevailingForMasterRow(
                                 slaveTimeFrameHelper,
                                 prevailingFrameIndex,
-                                prevailingRowIdCandidate,
+                                prevailingRowId,
                                 joinFilter,
                                 joinRecord,
                                 functionUpdater,

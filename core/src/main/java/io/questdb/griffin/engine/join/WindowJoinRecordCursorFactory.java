@@ -453,12 +453,14 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
             long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
-            final long prevailingRowIdCandidate = slaveTimeFrameHelper.getPrevailingRowId();
-            if (slaveRowId == Long.MIN_VALUE) {
+            final long prevailingRowId = slaveTimeFrameHelper.getPrevailingRowId();
+            if (slaveRowId == Long.MIN_VALUE && prevailingFrameIndex != -1) {
+                long baseSlaveRowId = Rows.toRowID(prevailingFrameIndex, 0);
+                slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                 findPrevailingForMasterRow(
                         slaveTimeFrameHelper,
                         prevailingFrameIndex,
-                        prevailingRowIdCandidate,
+                        prevailingRowId,
                         joinFilter,
                         internalJoinRecord,
                         groupByFunctionsUpdater,
@@ -487,7 +489,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (findPrevailingForMasterRow(
                         slaveTimeFrameHelper,
                         prevailingFrameIndex,
-                        prevailingRowIdCandidate,
+                        prevailingRowId,
                         joinFilter,
                         internalJoinRecord,
                         groupByFunctionsUpdater,
