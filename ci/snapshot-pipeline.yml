@@ -8,8 +8,8 @@ pr: none
 variables:
   MVN_VERSION: "3.6.3"
   MVN: "apache-maven-$(MVN_VERSION)"
-  JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-openjdk-arm64"
-  JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-arm64"
+  JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-openjdk-amd64"
+  JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-amd64"
 
 stages:
   - stage: BuildSnapshotMaster
@@ -19,10 +19,6 @@ stages:
         displayName: "Build on Linux"
         pool: hetzner-docker
         steps:
-          - bash: |
-              echo "JAVA_HOME: $JAVA_HOME"
-              echo "JAVA_HOME_17_X64: $JAVA_HOME_17_X64"
-              which mvn
           - checkout: self
             fetchDepth: 1
             lfs: false
