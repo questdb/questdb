@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
@@ -1120,6 +1121,7 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
+
     // Demonstration of proper copy export test pattern
     @Test
     public void testCopyTableToParquetWithExportLog() throws Exception {
@@ -1300,6 +1302,32 @@ public class CopyExportTest extends AbstractCairoTest {
                                         2\tworld\t2.5
                                         """,
                                 "select * from read_parquet('" + exportRoot + File.separator + "output13.parquet" + "') order by x");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyWithNowParameter() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor("2023-01-01T10:00:01.000Z"));
+            execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
+            execute("insert into test_table values ('2023-01-01T10:00:00.000Z', 1), ('2023-01-02T10:00:00.000Z', 2)");
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy (select * from test_table where ts < now()) to 'output11' with format parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output11.parquet" + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        // Verify partitioned data
+                        assertSql("""
+                                        ts	x
+                                        2023-01-01T10:00:00.000000Z	1
+                                        """,
+                                "select * from read_parquet('" + exportRoot + File.separator + "output11.parquet') order by ts");
                     });
 
             testCopyExport(stmt, test);

@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.http;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
@@ -462,6 +463,19 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         Os.sleep(100);
                     }
                 }));
+    }
+
+    @Test
+    public void testExportWithNowParameter() throws Exception {
+        getExportTester().withMicrosecondClock(() -> 3000000L)
+                .run((engine, sqlExecutionContext) -> {
+                    sqlExecutionContext.setNowAndFixClock(1000000L, ColumnType.TIMESTAMP_MICRO);
+                    engine.execute("CREATE TABLE basic_parquet_test AS (" +
+                            "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
+                            "FROM long_sequence(5)" +
+                            ")", sqlExecutionContext);
+                    testHttpClient.assertGetParquet("/exp", 1262, "select * from basic_parquet_test where ts < now()");
+                });
     }
 
     @Test

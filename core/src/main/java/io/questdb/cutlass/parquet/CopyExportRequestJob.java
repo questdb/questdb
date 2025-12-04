@@ -92,7 +92,9 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     task.getDataPageSize(),
                     task.isStatisticsEnabled(),
                     task.getParquetVersion(),
-                    task.isRawArrayEncoding()
+                    task.isRawArrayEncoding(),
+                    task.getNowTimestampType(),
+                    task.getNow()
             );
             task.clear();
         } finally {
