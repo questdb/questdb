@@ -495,7 +495,6 @@ public class TimeFrameHelper {
                 return r;
             } else {
                 if (prevailingCandidate != Long.MIN_VALUE) {
-                    recordAtRowIndex(prevailingCandidate);
                     return prevailingCandidate;
                 }
                 if (timestamp <= timestampHi) {
@@ -505,9 +504,6 @@ public class TimeFrameHelper {
             }
         }
 
-        if (prevailingCandidate != Long.MIN_VALUE) {
-            recordAtRowIndex(prevailingCandidate);
-        }
         return prevailingCandidate;
     }
 
@@ -558,7 +554,6 @@ public class TimeFrameHelper {
                 return r;
             } else {
                 if (prevailingRow != Long.MIN_VALUE) {
-                    recordAtRowIndex(prevailingRow);
                     return prevailingRow;
                 }
                 if (timestamp <= timestampHi) {
@@ -570,9 +565,6 @@ public class TimeFrameHelper {
 
         if (scanHi < timeFrame.getRowHi()) {
             return -(scanHi - 1) - 2;
-        }
-        if (prevailingRow != Long.MIN_VALUE) {
-            recordAtRowIndex(prevailingRow);
         }
         return prevailingRow;
     }
