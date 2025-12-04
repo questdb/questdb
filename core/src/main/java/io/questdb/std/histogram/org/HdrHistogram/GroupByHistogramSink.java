@@ -184,9 +184,9 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
     void clearCounts() {
         if (ptr != 0) {
             Vect.memset(ptr + headerSize, countsArrayLength * 8L, 0);
-            Unsafe.getUnsafe().putLong(ptr, 0); // totalCount
-            Unsafe.getUnsafe().putLong(ptr + maxValuePosition, 0); // maxValue
-            Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, Long.MAX_VALUE); // minNonZeroValue
+            Unsafe.getUnsafe().putLong(ptr, 0);
+            Unsafe.getUnsafe().putLong(ptr + maxValuePosition, 0);
+            Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, Long.MAX_VALUE);
         }
         totalCount = 0;
         maxValue = 0;
