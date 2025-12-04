@@ -184,7 +184,7 @@ impl<W: Write> ParquetWriter<W> {
         let (schema, additional_meta) = to_parquet_schema(&partition, self.raw_array_encoding)?;
         let encodings = to_encodings(&partition);
         let mut chunked = self.chunked(schema, encodings)?;
-        chunked.write_chunk(partition)?;
+        chunked.write_chunk(&partition)?;
         chunked.finish(additional_meta)
     }
 }
@@ -199,7 +199,7 @@ pub struct ChunkedWriter<W: Write> {
 
 impl<W: Write> ChunkedWriter<W> {
     /// Write a chunk to the parquet writer.
-    pub fn write_chunk(&mut self, partition: Partition) -> ParquetResult<()> {
+    pub fn write_chunk(&mut self, partition: &Partition) -> ParquetResult<()> {
         let row_group_size = self
             .options
             .row_group_size
@@ -218,7 +218,7 @@ impl<W: Write> ChunkedWriter<W> {
         let schema = &self.parquet_schema;
         for (offset, length) in row_group_range {
             let row_group = create_row_group(
-                &partition,
+                partition,
                 offset,
                 length,
                 schema.fields(),
@@ -228,6 +228,23 @@ impl<W: Write> ChunkedWriter<W> {
             );
             self.writer.write(row_group?)?;
         }
+        Ok(())
+    }
+
+    pub fn write_chunk_as_single_row_group(&mut self, partition: &Partition) -> ParquetResult<()> {
+        let partition_length = partition.columns[0].row_count;
+        let schema = &self.parquet_schema;
+
+        let row_group = create_row_group(
+            partition,
+            0,
+            partition_length,
+            schema.fields(),
+            &self.encodings,
+            self.options,
+            self.parallel,
+        );
+        self.writer.write(row_group?)?;
         Ok(())
     }
 
@@ -809,7 +826,7 @@ fn chunk_to_primitive_page(
             "unexpected symbol type in primitive encoder for column {} (should be handled earlier)",
             column.name,
         )),
-        _ => todo!()
+        _ => todo!(),
     }
 }
 

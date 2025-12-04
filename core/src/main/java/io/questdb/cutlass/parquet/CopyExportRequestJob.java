@@ -30,7 +30,6 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.network.NetworkError;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -49,14 +48,14 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     private final @NotNull MicrosecondClock microsecondClock;
     @TestOnly
     private @Nullable Callable<Exception> callback;
-    private SerialParquetExporter serialExporter;
+    private SQLSerialParquetExporter serialExporter;
 
     public CopyExportRequestJob(final CairoEngine engine) {
         super(engine.getMessageBus().getCopyExportRequestQueue(), engine.getMessageBus().getCopyExportRequestSubSeq());
         microsecondClock = engine.getConfiguration().getMicrosecondClock();
         localTaskCopy = new CopyExportRequestTask();
         try {
-            serialExporter = new SerialParquetExporter(engine);
+            serialExporter = new SQLSerialParquetExporter(engine);
             copyContext = engine.getCopyExportContext();
         } catch (Throwable t) {
             close();
@@ -82,7 +81,6 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             localTaskCopy.of(
                     task.getEntry(),
                     task.getCreateOp(),
-                    task.getResult(),
                     task.getTableName(),
                     // we are copying CharSequence from the queue, and releasing it
                     Chars.toString(task.getFileName()),
@@ -92,7 +90,11 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     task.getDataPageSize(),
                     task.isStatisticsEnabled(),
                     task.getParquetVersion(),
-                    task.isRawArrayEncoding()
+                    task.isRawArrayEncoding(),
+                    task.isDescending(),
+                    task.getPageFrameCursor(),
+                    task.getMetadata(),
+                    task.getWriteCallback()
             );
             task.clear();
         } finally {
@@ -126,8 +128,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         "",
                         0,
                         localTaskCopy.getTableName(),
-                        localTaskCopy.getCopyID(),
-                        localTaskCopy.getResult());
+                        localTaskCopy.getCopyID());
                 serialExporter.of(localTaskCopy);
                 phase = serialExporter.process(); // throws CopyExportException
 
@@ -140,8 +141,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         null,
                         0,
                         localTaskCopy.getTableName(),
-                        localTaskCopy.getCopyID(),
-                        localTaskCopy.getResult()
+                        localTaskCopy.getCopyID()
                 );
             } catch (CopyExportException e) {
                 copyContext.updateStatus(
@@ -152,20 +152,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         e.getFlyweightMessage(),
                         e.getErrno(),
                         localTaskCopy.getTableName(),
-                        localTaskCopy.getCopyID(),
-                        localTaskCopy.getResult()
-                );
-            } catch (NetworkError e) { // SuspendEvent::trigger() may throw
-                copyContext.updateStatus(
-                        phase,
-                        circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
-                        null,
-                        Numbers.INT_NULL,
-                        e.getFlyweightMessage(),
-                        e.getErrno(),
-                        localTaskCopy.getTableName(),
-                        localTaskCopy.getCopyID(),
-                        localTaskCopy.getResult()
+                        localTaskCopy.getCopyID()
                 );
             } catch (Throwable e) {
                 copyContext.updateStatus(
@@ -176,8 +163,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         e.getMessage(),
                         -1,
                         localTaskCopy.getTableName(),
-                        localTaskCopy.getCopyID(),
-                        localTaskCopy.getResult()
+                        localTaskCopy.getCopyID()
                 );
             } finally {
                 localTaskCopy.clear();
