@@ -75,6 +75,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final CompiledFilter compiledMasterFilter;
     private final IntList groupByFunctionToColumnIndex;
     private final IntList groupByFunctionTypes;
+    private final boolean includePrevailing;
     private final WindowJoinSymbolTableSource joinSymbolTableSource;
     private final long joinWindowHi;
     private final long joinWindowLo;
@@ -124,6 +125,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             @Nullable ObjList<Function> perWorkerJoinFilters,
             long joinWindowLo,
             long joinWindowHi,
+            boolean includePrevailing,
             int columnSplit,
             int masterTimestampIndex,
             @Transient @NotNull ArrayColumnTypes valueTypes,
@@ -148,6 +150,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             this.perWorkerJoinFilters = perWorkerJoinFilters;
             this.joinWindowLo = joinWindowLo;
             this.joinWindowHi = joinWindowHi;
+            this.includePrevailing = includePrevailing;
             this.masterTimestampIndex = masterTimestampIndex;
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
@@ -597,6 +600,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         } else {
             sink.val(joinWindowLo).val(" preceding");
         }
+        sink.val(includePrevailing ? " (include prevailing)" : " (exclude prevailing)");
 
         sink.attr("window hi");
         if (joinWindowHi == 0) {

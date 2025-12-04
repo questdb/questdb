@@ -153,6 +153,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 perWorkerJoinFilters,
                 joinWindowLo,
                 joinWindowHi,
+                includePrevailing,
                 columnSplit,
                 masterFactory.getMetadata().getTimestampIndex(),
                 valueTypes,

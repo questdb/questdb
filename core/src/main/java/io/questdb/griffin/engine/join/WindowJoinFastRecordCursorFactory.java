@@ -84,6 +84,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int INITIAL_LIST_CAPACITY = 16;
     private final AbstractWindowJoinFastRecordCursor cursor;
+    private final boolean includePrevailing;
     private final Function joinFilter;
     private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
@@ -119,6 +120,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.slaveFactory = slaveFactory;
             this.joinMetadata = joinMetadata;
             this.joinFilter = joinFilter;
+            this.includePrevailing = includePrevailing;
             this.windowLo = windowLo;
             this.windowHi = windowHi;
             final int columnSplit = masterFactory.getMetadata().getColumnCount();
@@ -148,7 +150,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 this.cursor = new WindowJoinFastVectRecordCursor(
                         configuration,
                         columnIndex,
-                        includePrevailing,
                         columnSplit,
                         masterMetadata.getTimestampIndex(),
                         slaveMetadata.getTimestampIndex(),
@@ -265,6 +266,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         } else {
             sink.val(windowLo).val(" preceding");
         }
+        sink.val(includePrevailing ? " (include prevailing)" : " (exclude prevailing)");
 
         sink.attr("window hi");
         if (windowHi == 0) {
@@ -626,7 +628,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         private final IntList groupByFunctionTypes;
         private final ObjList<GroupByFunction> groupByFunctions;
         private final VirtualRecord groupByRecord;
-        private final boolean includePrevailing;
         private final JoinRecord internalJoinRecord;
         private final JoinRecord joinRecord;
         private final WindowJoinSymbolTableSource joinSymbolTableSource;
@@ -649,7 +650,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         public WindowJoinFastVectRecordCursor(
                 CairoConfiguration configuration,
                 @Nullable IntList columnIndex,
-                boolean includePrevailing,
                 int columnSplit,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
@@ -671,7 +671,6 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.simpleMapValue = new SimpleMapValue(columnTypes.getColumnCount());
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
-            this.includePrevailing = includePrevailing;
             if (masterTimestampType == slaveTimestampType) {
                 masterTimestampScale = slaveTimestampScale = 1L;
             } else {

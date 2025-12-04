@@ -180,6 +180,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         } else {
             sink.val(windowLo).val(" preceding");
         }
+        sink.val(includePrevailing ? " (include prevailing)" : " (exclude prevailing)");
 
         sink.attr("window hi");
         if (windowHi == 0) {

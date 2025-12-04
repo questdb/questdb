@@ -161,6 +161,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 slaveSymbolIndex,
                 joinWindowLo,
                 joinWindowHi,
+                includePrevailing,
                 columnSplit,
                 masterFactory.getMetadata().getTimestampIndex(),
                 valueTypes,
