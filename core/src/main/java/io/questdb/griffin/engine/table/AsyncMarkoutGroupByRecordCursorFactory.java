@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -43,6 +44,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Factory for parallel markout query execution.
@@ -71,6 +73,10 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             @NotNull ObjList<Function> recordFunctions,
             @NotNull ArrayColumnTypes keyTypes,
             @NotNull ArrayColumnTypes valueTypes,
+            @Nullable ColumnTypes asofJoinKeyTypes,
+            @Nullable RecordSink masterKeyCopier,
+            @Nullable RecordSink pricesKeyCopier,
+            int pricesTimestampIndex,
             int workerCount
     ) {
         super(metadata);
@@ -80,9 +86,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         this.sequenceFactory = sequenceFactory;
 
         BytecodeAssembler asm = new BytecodeAssembler();
-        RecordSink sequenceRecordSink = null;
-        RecordSink ownerMapSink = null;
-        ObjList<RecordSink> perWorkerMapSinks = null;
+        ObjList<RecordSink> perWorkerMapSinks;
         EntityColumnFilter sequenceColumnFilter = new EntityColumnFilter();
         EntityColumnFilter masterColumnFilter = new EntityColumnFilter();
         EntityColumnFilter keyColumnFilter = new EntityColumnFilter();
@@ -90,7 +94,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         try {
             // Create RecordSink for materializing sequence (offset) records
             sequenceColumnFilter.of(sequenceFactory.getMetadata().getColumnCount());
-            sequenceRecordSink = RecordSinkFactory.getInstance(
+            RecordSink sequenceRecordSink = RecordSinkFactory.getInstance(
                     asm,
                     sequenceFactory.getMetadata(),
                     sequenceColumnFilter
@@ -106,7 +110,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
 
             // Create owner and per-worker map sinks for the aggregation map key
             keyColumnFilter.of(keyTypes.getColumnCount());
-            ownerMapSink = RecordSinkFactory.getInstance(asm, keyTypes, keyColumnFilter);
+            RecordSink ownerMapSink = RecordSinkFactory.getInstance(asm, keyTypes, keyColumnFilter);
             perWorkerMapSinks = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
                 perWorkerMapSinks.add(RecordSinkFactory.getInstance(asm, keyTypes, keyColumnFilter));
@@ -124,6 +128,10 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                     sequenceColumnIndex,
                     keyTypes,
                     valueTypes,
+                    asofJoinKeyTypes,
+                    masterKeyCopier,
+                    pricesKeyCopier,
+                    pricesTimestampIndex,
                     groupByFunctions,
                     perWorkerGroupByFunctions,
                     ownerMapSink,
@@ -134,6 +142,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             // Create the cursor
             this.cursor = new AsyncMarkoutGroupByRecordCursor(
                     configuration,
+                    engine,
                     engine.getMessageBus(),
                     atom,
                     recordFunctions,

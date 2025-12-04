@@ -323,6 +323,161 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Test that the Async Markout GroupBy factory appears in the query plan.
+     */
+    @Test
+    public void testMarkoutCurveHintQueryPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE prices (
+                        price_ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE)
+                    TIMESTAMP(price_ts) PARTITION BY HOUR
+                    """);
+            execute("""
+                    INSERT INTO prices VALUES
+                        (0_000_000, 'AX', 2),
+                        (1_100_000, 'AX', 4),
+                        (3_100_000, 'AX', 8)
+                    """);
+
+            execute("""
+                    CREATE TABLE orders (
+                        order_ts TIMESTAMP,
+                        sym SYMBOL,
+                        qty DOUBLE
+                    ) TIMESTAMP(order_ts)
+                    """);
+            execute("""
+                    INSERT INTO orders VALUES
+                        (0_000_000, 'AX', 100),
+                        (1_000_000, 'AX', 200),
+                        (2_000_000, 'AX', 300)
+                    """);
+
+            // Query with markout_curve hint (no ORDER BY to avoid plan sink issues)
+            String sql = """
+                    WITH
+                    offsets AS (
+                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
+                        FROM long_sequence(3)
+                    ),
+                    horizon AS (SELECT * FROM (
+                        SELECT /*+ markout_horizon(orders offsets) */ sec_offs, sym, order_ts, order_ts + usec_offs AS horizon_ts
+                        FROM orders CROSS JOIN offsets
+                        ORDER BY order_ts + usec_offs
+                    ) TIMESTAMP(horizon_ts))
+                    SELECT /*+ markout_curve */ sec_offs, avg(price)
+                    FROM horizon l ASOF JOIN prices p ON (l.sym = p.sym)
+                    GROUP BY sec_offs
+                    """;
+
+            // Verify the query plan contains the Async Markout GroupBy factory
+            StringSink planSink = new StringSink();
+            try (RecordCursorFactory planFactory = select("EXPLAIN " + sql);
+                 RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
+            ) {
+                planSink.clear();
+                CursorPrinter.println(cursor, planFactory.getMetadata(), planSink);
+            }
+            TestUtils.assertContains(planSink, "Async Markout GroupBy");
+        });
+    }
+
+    /**
+     * Test end-to-end execution of markout curve GROUP BY with ASOF join.
+     * This test verifies that the Async Markout GroupBy factory produces correct results.
+     */
+    @Test
+    public void testMarkoutCurveHintExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE prices (
+                        price_ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE)
+                    TIMESTAMP(price_ts) PARTITION BY HOUR
+                    """);
+            execute("""
+                    INSERT INTO prices VALUES
+                        (0_000_000, 'AX', 2),
+                        (1_100_000, 'AX', 4),
+                        (3_100_000, 'AX', 8)
+                    """);
+
+            execute("""
+                    CREATE TABLE orders (
+                        order_ts TIMESTAMP,
+                        sym SYMBOL,
+                        qty DOUBLE
+                    ) TIMESTAMP(order_ts)
+                    """);
+            execute("""
+                    INSERT INTO orders VALUES
+                        (0_000_000, 'AX', 100),
+                        (1_000_000, 'AX', 200),
+                        (2_000_000, 'AX', 300)
+                    """);
+
+            // Query without hint (baseline)
+            String sqlWithoutHint = """
+                    WITH
+                    offsets AS (
+                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
+                        FROM long_sequence(3)
+                    ),
+                    horizon AS (SELECT * FROM (
+                        SELECT /*+ markout_horizon(orders offsets) */ sec_offs, sym, order_ts, order_ts + usec_offs AS horizon_ts
+                        FROM orders CROSS JOIN offsets
+                        ORDER BY order_ts + usec_offs
+                    ) TIMESTAMP(horizon_ts))
+                    SELECT sec_offs, avg(price)
+                    FROM horizon l ASOF JOIN prices p ON (l.sym = p.sym)
+                    GROUP BY sec_offs
+                    ORDER BY sec_offs
+                    """;
+
+            // Query with markout_curve hint
+            String sqlWithHint = """
+                    WITH
+                    offsets AS (
+                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
+                        FROM long_sequence(3)
+                    ),
+                    horizon AS (SELECT * FROM (
+                        SELECT /*+ markout_horizon(orders offsets) */ sec_offs, sym, order_ts, order_ts + usec_offs AS horizon_ts
+                        FROM orders CROSS JOIN offsets
+                        ORDER BY order_ts + usec_offs
+                    ) TIMESTAMP(horizon_ts))
+                    SELECT /*+ markout_curve */ sec_offs, avg(price)
+                    FROM horizon l ASOF JOIN prices p ON (l.sym = p.sym)
+                    GROUP BY sec_offs
+                    ORDER BY sec_offs
+                    """;
+
+            // First verify query plan contains Async Markout GroupBy
+            StringSink planSink = new StringSink();
+            try (RecordCursorFactory planFactory = select("EXPLAIN " + sqlWithHint);
+                 RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
+            ) {
+                planSink.clear();
+                CursorPrinter.println(cursor, planFactory.getMetadata(), planSink);
+            }
+            TestUtils.assertContains(planSink, "Async Markout GroupBy");
+
+            // Execute both queries and compare results
+            StringSink resultWithoutHint = new StringSink();
+            StringSink resultWithHint = new StringSink();
+            printSql(sqlWithoutHint, resultWithoutHint);
+            printSql(sqlWithHint, resultWithHint);
+
+            // The results should be identical
+            TestUtils.assertEquals(resultWithoutHint, resultWithHint);
+        });
+    }
+
     @Test
     public void testMasterWithFilter() throws Exception {
         assertMemoryLeak(() -> {

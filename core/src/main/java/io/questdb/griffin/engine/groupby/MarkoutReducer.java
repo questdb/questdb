@@ -25,15 +25,26 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.RecordArray;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.table.AsyncMarkoutGroupByAtom;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Worker logic for parallel markout query execution.
@@ -45,6 +56,7 @@ import io.questdb.std.Unsafe;
  * emits horizons in timestamp order, performs ASOF lookups, and aggregates results.
  */
 public class MarkoutReducer {
+    private static final Log LOG = LogFactory.getLog(MarkoutReducer.class);
     // Native memory layout constants
     private static final int BLOCK_HEADER_SIZE = 16;
     private static final int BLOCK_OFFSET_NEXT_BLOCK_ADDR = 0;    // long (8 bytes)
@@ -72,6 +84,24 @@ public class MarkoutReducer {
     private LongList sequenceRecordOffsets;
     private int sequenceRowCount;
     private int sequenceColumnIndex;
+
+    // ASOF JOIN lookup state
+    private RecordCursor pricesCursor;
+    private Record pricesRecord;
+    private Record pricesRecordB;
+    private Map asofJoinMap;
+    private RecordSink masterKeyCopier;
+    private RecordSink pricesKeyCopier;
+    private int pricesTimestampIndex;
+    private long lastPricesTimestamp;
+    private long lastPricesRowId;
+    private boolean hasBufferedPrice;  // True if we read a price but didn't store it yet
+
+    // Combined record for aggregation - maps baseMetadata columns to source records
+    // baseMetadata: [0: sec_offs (LONG), 1: price (DOUBLE)]
+    // sequenceRecord: [0: usec_offs, 1: sec_offs]
+    // pricesRecord: [0: price, 1: sym, 2: price_ts]
+    private final CombinedRecord combinedRecord = new CombinedRecord();
 
     // ==================== Block accessor methods ====================
 
@@ -106,6 +136,20 @@ public class MarkoutReducer {
         this.partialMap = atom.getMap(slotId);
         this.functionUpdater = atom.getFunctionUpdater(slotId);
         this.firstIteratorBlockAddr = 0;
+
+        // Initialize ASOF lookup state
+        this.pricesCursor = atom.getPricesCursor();
+        this.asofJoinMap = atom.getAsofJoinMap();
+        this.masterKeyCopier = atom.getMasterKeyCopier();
+        this.pricesKeyCopier = atom.getPricesKeyCopier();
+        this.pricesTimestampIndex = atom.getPricesTimestampIndex();
+        if (pricesCursor != null) {
+            this.pricesRecord = pricesCursor.getRecord();
+            this.pricesRecordB = pricesCursor.getRecordB();
+        }
+        this.lastPricesTimestamp = Long.MIN_VALUE;
+        this.lastPricesRowId = Numbers.LONG_NULL;
+        this.hasBufferedPrice = false;
 
         try {
             int nextMasterRowIndex = 0;
@@ -177,10 +221,6 @@ public class MarkoutReducer {
 
     private static void block_setNextFreeSlot(long blockAddr, int slot) {
         Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_NEXT_FREE_SLOT, slot);
-    }
-
-    private static int iter_currentRowNum(long iterAddr) {
-        return iter_nextSequenceRowNum(iterAddr) - 1;
     }
 
     private static int iter_masterRowIndex(long iterAddr) {
@@ -334,31 +374,95 @@ public class MarkoutReducer {
         // Get current horizon row data
         Record masterRecord = batch.getRowAt(iter_masterRowIndex(currentIterAddr));
 
-        int sequenceRowNum = iter_currentRowNum(currentIterAddr);
+        // nextSequenceRowNum is the current row to emit (we haven't called gotoNextRow yet)
+        int sequenceRowNum = iter_nextSequenceRowNum(currentIterAddr);
         long sequenceOffset = sequenceRecordOffsets.getQuick(sequenceRowNum);
         Record sequenceRecord = sequenceRecordArray.getRecordAt(sequenceOffset);
 
-        // TODO: Add ASOF JOIN lookup here
-        // For now, we just aggregate without the price lookup
-        // Record priceRecord = asofLookup(pricesCursor, horizonTs, masterRecord);
+        // Get horizon timestamp
+        long horizonTs = iter_nextTimestamp(currentIterAddr);
 
-        // Create map key: (symbol, offset)
-        // For now using a simplified key - actual implementation would use the configured key columns
+        // ASOF JOIN lookup: find matching prices record
+        Record matchedPricesRecord = null;
+        if (asofJoinMap != null && pricesCursor != null && masterKeyCopier != null) {
+            // Advance prices cursor forward-only up to horizon timestamp
+            advancePricesCursorTo(horizonTs);
+
+            // Look up master's join key
+            MapKey lookupKey = asofJoinMap.withKey();
+            lookupKey.put(masterRecord, masterKeyCopier);
+            MapValue lookupValue = lookupKey.findValue();
+
+            if (lookupValue != null) {
+                long pricesRowId = lookupValue.getLong(0);
+                if (pricesRowId != Numbers.LONG_NULL) {
+                    pricesCursor.recordAt(pricesRecordB, pricesRowId);
+                    matchedPricesRecord = pricesRecordB;
+                }
+            }
+        }
+
+        // Create map key for GROUP BY aggregation
+        // The GROUP BY key column (sec_offs) is column 1 in the compiled sequence record
+        // Column 0 is usec_offs (the timestamp offset for horizon computation)
+        // TODO: Make this configurable based on actual GROUP BY columns
         MapKey key = partialMap.withKey();
-        // The actual key would be populated from master record and sequence record
-        // key.putInt(masterRecord.getInt(symbolColumnIndex));
-        // key.putLong(sequenceRecord.getLong(sequenceColumnIndex));
+        key.putLong(sequenceRecord.getLong(1));
 
-        // For now, just use the sequence offset as a key (simplified)
-        key.putLong(sequenceRecord.getLong(sequenceColumnIndex));
+        // Use combined record that maps baseMetadata columns to source records
+        combinedRecord.of(sequenceRecord, matchedPricesRecord);
 
         MapValue value = key.createValue();
         if (value.isNew()) {
-            // Initialize aggregation
-            functionUpdater.updateNew(value, null, 0);
+            functionUpdater.updateNew(value, combinedRecord, 0);
         } else {
-            // Update aggregation
-            functionUpdater.updateExisting(value, null, 0);
+            functionUpdater.updateExisting(value, combinedRecord, 0);
+        }
+    }
+
+    /**
+     * Advance prices cursor forward-only up to the given horizon timestamp.
+     * Stores joinKey -> rowId mappings in the asofJoinMap.
+     * <p>
+     * This method maintains the cursor position between calls, so it can only
+     * be used when horizons are emitted in strictly increasing timestamp order.
+     */
+    private void advancePricesCursorTo(long horizonTs) {
+        // First, check if we have a buffered price that we can now store
+        if (hasBufferedPrice) {
+            if (lastPricesTimestamp <= horizonTs) {
+                // Store the buffered price
+                MapKey joinKey = asofJoinMap.withKey();
+                joinKey.put(pricesRecord, pricesKeyCopier);
+                MapValue joinValue = joinKey.createValue();
+                joinValue.putLong(0, lastPricesRowId);
+                hasBufferedPrice = false;
+            } else {
+                // Buffered price is still past the horizon, nothing more to do
+                return;
+            }
+        }
+
+        // Advance cursor forward-only
+        while (pricesCursor.hasNext()) {
+            // Note: Column order in factory metadata may differ from table definition
+            // pricesTimestampIndex gives the timestamp column
+            long priceTs = pricesRecord.getTimestamp(pricesTimestampIndex);
+            long rowId = pricesRecord.getRowId();
+            lastPricesTimestamp = priceTs;
+            lastPricesRowId = rowId;
+
+            if (priceTs <= horizonTs) {
+                // Store joinKey -> rowId mapping
+                MapKey joinKey = asofJoinMap.withKey();
+                joinKey.put(pricesRecord, pricesKeyCopier);
+                MapValue joinValue = joinKey.createValue();
+                joinValue.putLong(0, rowId);
+            } else {
+                // Past the horizon, stop and mark as buffered
+                hasBufferedPrice = true;
+                break;
+            }
         }
     }
 
@@ -414,4 +518,123 @@ public class MarkoutReducer {
         return nextAddr;
     }
 
+    /**
+     * Combined record that maps baseMetadata column indices to source records.
+     * <p>
+     * This is a simplified implementation for the markout curve query pattern where:
+     * - baseMetadata column 0 (sec_offs, LONG) maps to sequenceRecord column 1
+     * - baseMetadata column 1 (price, DOUBLE) maps to pricesRecord column 0
+     */
+    private static class CombinedRecord implements Record {
+        private Record sequenceRecord;
+        private Record pricesRecord;
+
+        void of(Record sequenceRecord, Record pricesRecord) {
+            this.sequenceRecord = sequenceRecord;
+            this.pricesRecord = pricesRecord;
+        }
+
+        @Override
+        public long getLong(int col) {
+            // Column 0 (sec_offs) comes from sequence record column 1
+            if (col == 0 && sequenceRecord != null) {
+                return sequenceRecord.getLong(1);
+            }
+            return 0;
+        }
+
+        @Override
+        public double getDouble(int col) {
+            // Column 1 (price) comes from prices record column 0
+            if (col == 1 && pricesRecord != null) {
+                return pricesRecord.getDouble(0);
+            }
+            return Double.NaN;
+        }
+
+        // Implement other Record methods as needed (returning defaults for unused types)
+        @Override
+        public int getInt(int col) { return 0; }
+
+        @Override
+        public byte getByte(int col) { return 0; }
+
+        @Override
+        public short getShort(int col) { return 0; }
+
+        @Override
+        public char getChar(int col) { return 0; }
+
+        @Override
+        public float getFloat(int col) { return Float.NaN; }
+
+        @Override
+        public boolean getBool(int col) { return false; }
+
+        @Override
+        public long getTimestamp(int col) { return Numbers.LONG_NULL; }
+
+        @Override
+        public long getDate(int col) { return Numbers.LONG_NULL; }
+
+        @Override
+        public @Nullable CharSequence getSymA(int col) { return null; }
+
+        @Override
+        public @Nullable CharSequence getSymB(int col) { return null; }
+
+        @Override
+        public @Nullable CharSequence getStrA(int col) { return null; }
+
+        @Override
+        public @Nullable CharSequence getStrB(int col) { return null; }
+
+        @Override
+        public int getStrLen(int col) { return -1; }
+
+        @Override
+        public long getRowId() { return Numbers.LONG_NULL; }
+
+        @Override
+        public void getLong256(int col, CharSink<?> sink) { }
+
+        @Override
+        public @Nullable Long256 getLong256A(int col) { return null; }
+
+        @Override
+        public @Nullable Long256 getLong256B(int col) { return null; }
+
+        @Override
+        public @Nullable BinarySequence getBin(int col) { return null; }
+
+        @Override
+        public long getBinLen(int col) { return -1; }
+
+        @Override
+        public byte getGeoByte(int col) { return 0; }
+
+        @Override
+        public short getGeoShort(int col) { return 0; }
+
+        @Override
+        public int getGeoInt(int col) { return 0; }
+
+        @Override
+        public long getGeoLong(int col) { return 0; }
+
+        @Override
+        public @Nullable Utf8Sequence getVarcharA(int col) { return null; }
+
+        @Override
+        public @Nullable Utf8Sequence getVarcharB(int col) { return null; }
+
+        @Override
+        public int getVarcharSize(int col) { return -1; }
+
+        @Override
+        public int getIPv4(int col) { return 0; }
+
+        @Override
+        public long getUpdateRowId() { return Numbers.LONG_NULL; }
+    }
 }

@@ -74,6 +74,11 @@ public class MarkoutReduceJob extends AbstractQueueConsumerJob<MarkoutReduceTask
         subSeq.done(cursor);
 
         startedCounter.incrementAndGet();
+        LOG.info().$("run: started [batchIndex=").$(batchIndex).$(", workerId=").$(workerId)
+                .$(", circuitBreaker=").$(circuitBreaker)
+                .$(", atom=").$(atom)
+                .$(", masterRowBatch.size=").$(masterRowBatch != null ? masterRowBatch.size() : -1)
+                .$("]").$();
 
         try {
             if (circuitBreaker.checkIfTripped()) {
@@ -94,7 +99,9 @@ public class MarkoutReduceJob extends AbstractQueueConsumerJob<MarkoutReduceTask
 
         } catch (Throwable th) {
             LOG.error().$("markout reduce failed [batchIndex=").$(batchIndex)
-                    .$(", error=").$(th).I$();
+                    .$(", error=").$(th)
+                    .$(", message=").$(th.getMessage())
+                    .I$();
             circuitBreaker.cancel();
         } finally {
             doneLatch.countDown();

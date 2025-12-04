@@ -38,6 +38,7 @@ public final class SqlHints {
     public static final String ASOF_MEMOIZED_HINT = "asof_memoized";
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
+    public static final String MARKOUT_CURVE_HINT = "markout_curve";
     public static final String MARKOUT_HORIZON_HINT = "markout_horizon";
 
     public static boolean hasAsOfDenseHint(
@@ -88,6 +89,11 @@ public final class SqlHints {
         LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
         CharSequence params = hints.get(ENABLE_PRE_TOUCH_HINT);
         return Chars.containsWordIgnoreCase(params, tableName, HINTS_PARAMS_DELIMITER);
+    }
+
+    // checks markout_curve hint for parallel markout aggregation
+    public static boolean hasMarkoutCurveHint(@NotNull QueryModel queryModel) {
+        return queryModel.getHints().contains(MARKOUT_CURVE_HINT);
     }
 
     public static boolean hasMarkoutHorizonHint(

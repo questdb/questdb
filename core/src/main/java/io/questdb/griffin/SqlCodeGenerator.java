@@ -244,6 +244,7 @@ import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncMarkoutGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
@@ -426,6 +427,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
+    private final MarkoutCurveInfo markoutCurveInfo = new MarkoutCurveInfo();
     private final MarkoutHorizonInfo markoutHorizonInfo = new MarkoutHorizonInfo();
     private final LongList prefixes = new LongList();
     private final RecordComparatorCompiler recordComparatorCompiler;
@@ -1600,6 +1602,84 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Detects the markout curve pattern: GROUP BY on top of ASOF JOIN, where the ASOF master is a MarkoutHorizon.
+     * The expected query structure is:
+     * <pre>
+     * SELECT ... GROUP BY dt
+     * FROM horizon ASOF JOIN prices ON ...
+     * WHERE horizon = (SELECT ... FROM master CROSS JOIN long_sequence() ORDER BY markout_ts)
+     * </pre>
+     *
+     * @param model The GROUP BY query model
+     * @return MarkoutCurveInfo if pattern is detected, null otherwise
+     */
+    private MarkoutCurveInfo detectMarkoutCurvePattern(QueryModel model) {
+        // Check for markout_curve hint
+        if (!SqlHints.hasMarkoutCurveHint(model)) {
+            return null;
+        }
+
+        // Find the ASOF JOIN in the nested model hierarchy
+        QueryModel asofJoinModel = findAsofJoinModel(model.getNestedModel());
+        if (asofJoinModel == null) {
+            return null;
+        }
+
+        // Get the join models - first is master, second is slave (with ASOF join type)
+        ObjList<QueryModel> joinModels = asofJoinModel.getJoinModels();
+        if (joinModels.size() != 2) {
+            return null;
+        }
+
+        QueryModel asofMasterModel = joinModels.getQuick(0);
+        QueryModel asofSlaveModel = joinModels.getQuick(1);
+
+        // Verify the second model has ASOF join type
+        if (asofSlaveModel.getJoinType() != QueryModel.JOIN_ASOF) {
+            return null;
+        }
+
+        // Find the CROSS JOIN with markout_horizon hint in the ASOF master model
+        QueryModel crossJoinModel = findMarkoutHorizonCrossJoin(asofMasterModel);
+        if (crossJoinModel == null) {
+            return null;
+        }
+
+        ObjList<QueryModel> crossJoinModels = crossJoinModel.getJoinModels();
+        if (crossJoinModels.size() != 2) {
+            return null;
+        }
+
+        QueryModel crossMasterModel = crossJoinModels.getQuick(0);
+        QueryModel crossSlaveModel = crossJoinModels.getQuick(1);
+
+        // Verify the second model has CROSS join type
+        if (crossSlaveModel.getJoinType() != QueryModel.JOIN_CROSS) {
+            return null;
+        }
+
+        // Get the JoinContext from the ASOF slave model (contains join key info)
+        JoinContext asofJoinContext = asofSlaveModel.getJoinContext();
+
+        // TODO: Extract timestamp and sequence column indices from the models
+        // For now, we'll need to get these during factory generation
+        int masterTimestampColumnIndex = -1;  // Will be resolved later
+        int sequenceColumnIndex = -1;         // Will be resolved later
+
+        return markoutCurveInfo.of(
+                asofJoinModel,
+                asofMasterModel,
+                asofSlaveModel,
+                crossJoinModel,
+                crossMasterModel,
+                crossSlaveModel,
+                asofJoinContext,
+                masterTimestampColumnIndex,
+                sequenceColumnIndex
+        );
+    }
+
+    /**
      * Attempts to detect the "markout horizon" pattern in a cross-join with ORDER BY.
      * <p>
      * The pattern consists of:
@@ -1737,6 +1817,68 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return result;
+    }
+
+    /**
+     * Finds an ASOF JOIN model in the nested model hierarchy.
+     */
+    private QueryModel findAsofJoinModel(QueryModel model) {
+        while (model != null) {
+            ObjList<QueryModel> joinModels = model.getJoinModels();
+            if (joinModels.size() > 1) {
+                // Check if any of the join models is an ASOF join
+                for (int i = 1; i < joinModels.size(); i++) {
+                    if (joinModels.getQuick(i).getJoinType() == QueryModel.JOIN_ASOF) {
+                        return model;
+                    }
+                }
+            }
+            model = model.getNestedModel();
+        }
+        return null;
+    }
+
+    /**
+     * Finds a CROSS JOIN with the markout_horizon hint in the model hierarchy.
+     */
+    private QueryModel findMarkoutHorizonCrossJoin(QueryModel model) {
+        while (model != null) {
+            ObjList<QueryModel> joinModels = model.getJoinModels();
+            if (joinModels.size() > 1) {
+                // Check for CROSS JOIN
+                for (int i = 1; i < joinModels.size(); i++) {
+                    QueryModel joinModel = joinModels.getQuick(i);
+                    if (joinModel.getJoinType() == QueryModel.JOIN_CROSS) {
+                        // Check for markout_horizon hint
+                        QueryModel masterModel = joinModels.getQuick(0);
+                        CharSequence masterAlias = masterModel.getName();
+                        CharSequence slaveAlias = joinModel.getName();
+                        if (SqlHints.hasMarkoutHorizonHint(model, masterAlias, slaveAlias)) {
+                            return model;
+                        }
+                    }
+                }
+            }
+            model = model.getNestedModel();
+        }
+        return null;
+    }
+
+    /**
+     * Finds the column index in the sequence metadata that represents the offset value.
+     * For long_sequence, this is typically the first (and only) column.
+     */
+    private int findSequenceColumnIndex(RecordMetadata sequenceMetadata) {
+        // For long_sequence(n, start, step), the output is a single LONG column
+        // Look for the first LONG column
+        for (int i = 0, n = sequenceMetadata.getColumnCount(); i < n; i++) {
+            int type = sequenceMetadata.getColumnType(i);
+            if (ColumnType.tagOf(type) == ColumnType.LONG) {
+                return i;
+            }
+        }
+        // Fallback to first column if no LONG found
+        return sequenceMetadata.getColumnCount() > 0 ? 0 : -1;
     }
 
     private ObjList<Function> generateCastFunctions(
@@ -3962,6 +4104,205 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Generates the AsyncMarkoutGroupByRecordCursorFactory for the markout curve pattern.
+     *
+     * @param model            The GROUP BY query model
+     * @param curveInfo        The detected markout curve pattern info
+     * @param executionContext The execution context
+     * @return The factory, or null if generation failed
+     */
+    private RecordCursorFactory generateMarkoutCurveGroupBy(
+            QueryModel model,
+            MarkoutCurveInfo curveInfo,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        RecordCursorFactory nestedFactory = null;
+        RecordCursorFactory masterFactory = null;
+        RecordCursorFactory pricesFactory = null;
+        RecordCursorFactory sequenceFactory = null;
+
+        try {
+            // Generate the nested factory (ASOF JOIN over MarkoutHorizon) to get the correct metadata
+            // This metadata represents what the GROUP BY query was written against
+            nestedFactory = generateSubQuery(model, executionContext);
+            RecordMetadata baseMetadata = nestedFactory.getMetadata();
+
+            // Generate component factories for parallel execution
+            masterFactory = generateQuery(curveInfo.crossMasterModel, executionContext, true);
+            pricesFactory = generateQuery(curveInfo.asofSlaveModel, executionContext, true);
+            sequenceFactory = generateQuery(curveInfo.crossSlaveModel, executionContext, true);
+
+            // Get timestamp index from master
+            RecordMetadata masterMetadata = masterFactory.getMetadata();
+            int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
+            if (masterTimestampColumnIndex == -1) {
+                LOG.debug().$("markout_curve: master has no designated timestamp, falling back to standard GROUP BY").$();
+                Misc.free(nestedFactory);
+                Misc.free(masterFactory);
+                Misc.free(pricesFactory);
+                Misc.free(sequenceFactory);
+                return null;
+            }
+
+            // Find the sequence column index (the offset column from long_sequence)
+            RecordMetadata sequenceMetadata = sequenceFactory.getMetadata();
+            int sequenceColumnIndex = findSequenceColumnIndex(sequenceMetadata);
+            if (sequenceColumnIndex == -1) {
+                LOG.debug().$("markout_curve: could not find sequence column, falling back to standard GROUP BY").$();
+                Misc.free(nestedFactory);
+                Misc.free(masterFactory);
+                Misc.free(pricesFactory);
+                Misc.free(sequenceFactory);
+                return null;
+            }
+
+            // Prepare GROUP BY functions using the ASOF JOIN result metadata
+            // This is the metadata the GROUP BY query was written against
+            final int timestampIndex = getTimestampIndex(model, nestedFactory);
+            keyTypes.clear();
+            valueTypes.clear();
+            listColumnFilterA.clear();
+
+            final int columnCount = model.getColumns().size();
+            final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
+            tempInnerProjectionFunctions.clear();
+            tempOuterProjectionFunctions.clear();
+            final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
+            final PriorityMetadata priorityMetadata = new PriorityMetadata(columnCount, baseMetadata);
+            final IntList projectionFunctionFlags = new IntList(columnCount);
+
+            GroupByUtils.assembleGroupByFunctions(
+                    functionParser,
+                    sqlNodeStack,
+                    model,
+                    executionContext,
+                    baseMetadata,
+                    timestampIndex,
+                    true,
+                    groupByFunctions,
+                    groupByFunctionPositions,
+                    tempOuterProjectionFunctions,
+                    tempInnerProjectionFunctions,
+                    recordFunctionPositions,
+                    projectionFunctionFlags,
+                    outerProjectionMetadata,
+                    priorityMetadata,
+                    valueTypes,
+                    keyTypes,
+                    listColumnFilterA,
+                    null,
+                    validateSampleByFillType
+            );
+
+            // Check if parallel execution is supported
+            ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(tempInnerProjectionFunctions, projectionFunctionFlags);
+            if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
+                LOG.debug().$("markout_curve: parallelism not supported for GROUP BY functions, falling back").$();
+                Misc.free(nestedFactory);
+                Misc.free(masterFactory);
+                Misc.free(pricesFactory);
+                Misc.free(sequenceFactory);
+                return null;
+            }
+
+            int workerCount = executionContext.getSharedQueryWorkerCount();
+
+            // Compile per-worker GROUP BY functions
+            ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
+                    executionContext,
+                    model,
+                    groupByFunctions,
+                    workerCount,
+                    baseMetadata
+            );
+
+            // If null (thread-safe functions), create empty per-worker lists that will reuse owner functions
+            if (perWorkerGroupByFunctions == null) {
+                perWorkerGroupByFunctions = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
+                    perWorkerGroupByFunctions.add(groupByFunctions);
+                }
+            }
+
+            ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
+            ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
+
+            // Process ASOF join key information for the join lookup
+            RecordMetadata pricesMetadata = pricesFactory.getMetadata();
+            int pricesTimestampIndex = pricesMetadata.getTimestampIndex();
+            ArrayColumnTypes asofJoinKeyTypes = null;
+            RecordSink masterKeyCopier = null;
+            RecordSink pricesKeyCopier = null;
+
+            JoinContext asofJoinContext = curveInfo.asofJoinContext;
+            if (asofJoinContext != null && !asofJoinContext.isEmpty()) {
+                // Process join context to get key types and column filters
+                // listColumnFilterA -> slave (prices) columns
+                // listColumnFilterB -> master columns
+                lookupColumnIndexesUsingVanillaNames(listColumnFilterA, asofJoinContext.aNames, pricesMetadata);
+                lookupColumnIndexes(listColumnFilterB, asofJoinContext.bNodes, masterMetadata);
+
+                // Build ASOF join key types
+                asofJoinKeyTypes = new ArrayColumnTypes();
+                for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+                    final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
+                    asofJoinKeyTypes.add(pricesMetadata.getColumnType(columnIndexA));
+                }
+
+                // Create key copiers
+                masterKeyCopier = RecordSinkFactory.getInstance(
+                        asm,
+                        masterMetadata,
+                        listColumnFilterB,
+                        writeSymbolAsString,
+                        writeStringAsVarcharB,
+                        writeTimestampAsNanosB
+                );
+                pricesKeyCopier = RecordSinkFactory.getInstance(
+                        asm,
+                        pricesMetadata,
+                        listColumnFilterA,
+                        writeSymbolAsString,
+                        writeStringAsVarcharA,
+                        writeTimestampAsNanosA
+                );
+            }
+
+            // Close the nested factory - we don't need it for execution, only for metadata
+            Misc.free(nestedFactory);
+            nestedFactory = null;
+
+            return new AsyncMarkoutGroupByRecordCursorFactory(
+                    configuration,
+                    executionContext.getCairoEngine(),
+                    outerProjectionMetadata,
+                    masterFactory,
+                    pricesFactory,
+                    sequenceFactory,
+                    masterTimestampColumnIndex,
+                    sequenceColumnIndex,
+                    groupByFunctions,
+                    perWorkerGroupByFunctions,
+                    new ObjList<>(tempOuterProjectionFunctions),
+                    keyTypesCopy,
+                    valueTypesCopy,
+                    asofJoinKeyTypes,
+                    masterKeyCopier,
+                    pricesKeyCopier,
+                    pricesTimestampIndex,
+                    workerCount
+            );
+
+        } catch (Throwable th) {
+            Misc.free(nestedFactory);
+            Misc.free(masterFactory);
+            Misc.free(pricesFactory);
+            Misc.free(sequenceFactory);
+            throw th;
+        }
+    }
+
     private RecordCursorFactory generateNoSelect(
             QueryModel model,
             SqlExecutionContext executionContext
@@ -4925,6 +5266,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ExpressionNode sampleByNode = model.getSampleBy();
         if (sampleByNode != null) {
             return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
+        }
+
+        // Check for markout curve pattern (GROUP BY on ASOF JOIN over MarkoutHorizon)
+        MarkoutCurveInfo curveInfo = detectMarkoutCurvePattern(model);
+        if (curveInfo != null && executionContext.isParallelGroupByEnabled()) {
+            RecordCursorFactory markoutFactory = generateMarkoutCurveGroupBy(model, curveInfo, executionContext);
+            if (markoutFactory != null) {
+                return markoutFactory;
+            }
+            // Fall through to standard GROUP BY if markout factory creation failed
         }
 
         RecordCursorFactory factory = null;
@@ -7324,6 +7675,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @FunctionalInterface
     interface ModelOperator {
         void operate(ObjectPool<ExpressionNode> pool, QueryModel model);
+    }
+
+    /**
+     * Information extracted from detecting the markout curve pattern.
+     * The pattern is: GROUP BY on top of ASOF JOIN, where the ASOF master is a MarkoutHorizon (CROSS JOIN).
+     */
+    private static class MarkoutCurveInfo {
+        JoinContext asofJoinContext;   // Join context from the ASOF JOIN (contains join key info)
+        QueryModel asofJoinModel;      // The model containing the ASOF JOIN
+        QueryModel asofMasterModel;    // Master model of the ASOF JOIN (contains MarkoutHorizon)
+        QueryModel asofSlaveModel;     // Slave model of the ASOF JOIN (prices table)
+        QueryModel crossJoinModel;     // The CROSS JOIN model within the ASOF master
+        QueryModel crossMasterModel;   // Master of the CROSS JOIN (base master table)
+        QueryModel crossSlaveModel;    // Slave of the CROSS JOIN (sequence/long_sequence)
+        int masterTimestampColumnIndex;
+        int sequenceColumnIndex;
+
+        MarkoutCurveInfo of(
+                QueryModel asofJoinModel,
+                QueryModel asofMasterModel,
+                QueryModel asofSlaveModel,
+                QueryModel crossJoinModel,
+                QueryModel crossMasterModel,
+                QueryModel crossSlaveModel,
+                JoinContext asofJoinContext,
+                int masterTimestampColumnIndex,
+                int sequenceColumnIndex
+        ) {
+            this.asofJoinModel = asofJoinModel;
+            this.asofMasterModel = asofMasterModel;
+            this.asofSlaveModel = asofSlaveModel;
+            this.crossJoinModel = crossJoinModel;
+            this.crossMasterModel = crossMasterModel;
+            this.crossSlaveModel = crossSlaveModel;
+            this.asofJoinContext = asofJoinContext;
+            this.masterTimestampColumnIndex = masterTimestampColumnIndex;
+            this.sequenceColumnIndex = sequenceColumnIndex;
+            return this;
+        }
     }
 
     /**

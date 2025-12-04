@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
@@ -98,6 +99,7 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
 
     public AsyncMarkoutGroupByRecordCursor(
             CairoConfiguration configuration,
+            CairoEngine engine,
             MessageBus messageBus,
             AsyncMarkoutGroupByAtom atom,
             ObjList<Function> recordFunctions,
@@ -112,7 +114,7 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
         this.masterMetadata = masterMetadata;
         this.recordA = new VirtualRecord(recordFunctions);
         this.recordB = new VirtualRecord(recordFunctions);
-        this.taskCircuitBreaker = new AtomicBooleanCircuitBreaker(null);
+        this.taskCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
         this.isOpen = true;
     }
 
@@ -128,6 +130,7 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
                 Misc.free(masterRowBatchPool.getQuick(i));
             }
             masterRowBatchPool.clear();
+            atom.clear();
         }
     }
 
@@ -209,6 +212,7 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
 
         // Materialize sequence cursor into shared RecordArray
         atom.materializeSequenceCursor(sequenceCursor, circuitBreaker);
+        atom.initPricesCursors(executionContext);
     }
 
     private void buildMapConditionally() {
@@ -313,6 +317,7 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
     }
 
     private void awaitCompletion(int queuedCount, RingQueue<MarkoutReduceTask> queue, MCSequence subSeq) {
+        int iterations = 0;
         while (!taskDoneLatch.done(queuedCount)) {
             if (circuitBreaker.checkIfTripped()) {
                 taskCircuitBreaker.cancel();
@@ -325,6 +330,10 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
                 MarkoutReduceJob.run(-1, task, subSeq, cursor, atom);
             } else {
                 Os.pause();
+            }
+            iterations++;
+            if (iterations % 100000 == 0) {
+                LOG.info().$("awaitCompletion: still waiting [iterations=").$(iterations).$(", queuedCount=").$(queuedCount).$("]").$();
             }
         }
     }
