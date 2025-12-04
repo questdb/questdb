@@ -4325,6 +4325,11 @@ public class SqlParser {
             return explainModel;
         }
 
+        if (isDescribeKeyword(tok)) {
+            ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback);
+
+        }
+
         if (isSelectKeyword(tok)) {
             return parseSelect(lexer, sqlParserCallback, null);
         }

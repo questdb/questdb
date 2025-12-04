@@ -482,6 +482,18 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'c';
     }
 
+    public static boolean isDescribeKeyword(CharSequence tok) {
+        return tok.length() == 8
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 's'
+                && (tok.charAt(3) | 32) == 'c'
+                && (tok.charAt(4) | 32) == 'r'
+                && (tok.charAt(5) | 32) == 'i'
+                && (tok.charAt(6) | 32) == 'b'
+                && (tok.charAt(6) | 32) == 'e';
+    }
+
     public static boolean isDetachKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'd'
