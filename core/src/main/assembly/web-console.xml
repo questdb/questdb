@@ -34,21 +34,6 @@
             <includes>
                 <include>**/*</include>
             </includes>
-            <excludes>
-                <exclude>**/*.woff</exclude>
-                <exclude>**/*.ttf</exclude>
-            </excludes>
-            <outputDirectory>.</outputDirectory>
-            <fileMode>755</fileMode>
-            <lineEnding>unix</lineEnding>
-        </fileSet>
-        <!-- font files are included separately to avoid corrupting them due to lineEnding -->
-        <fileSet>
-            <directory>${project.build.directory}/site/package/dist/</directory>
-            <includes>
-                <include>**/*.woff</include>
-                <include>**/*.ttf</include>
-            </includes>
             <outputDirectory>.</outputDirectory>
             <fileMode>755</fileMode>
         </fileSet>
