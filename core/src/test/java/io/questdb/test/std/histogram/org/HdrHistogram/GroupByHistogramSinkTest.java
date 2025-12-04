@@ -348,4 +348,43 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
             Assert.assertEquals(onHeap.getMean(), offHeap.getMean(), 0.0);
         }
     }
+
+    @Test
+    public void testRepointingToExistingOffHeapData() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink sink = new GroupByHistogramSink(1, 1000, 3);
+            sink.setAllocator(allocator);
+
+            sink.recordValue(100);
+            sink.recordValue(200);
+            sink.recordValue(300);
+
+            long addr1 = sink.ptr();
+            Assert.assertNotEquals(0, addr1);
+            Assert.assertEquals(3, sink.getTotalCount());
+
+            GroupByHistogramSink other = new GroupByHistogramSink(1, 1000, 3);
+            other.setAllocator(allocator);
+            other.recordValue(500);
+            other.recordValue(600);
+            long addr2 = other.ptr();
+            Assert.assertNotEquals(0, addr2);
+            Assert.assertNotEquals(addr1, addr2);
+
+            sink.of(addr2);
+            Assert.assertEquals(addr2, sink.ptr());
+
+            Assert.assertEquals(2, sink.getTotalCount());
+            Assert.assertEquals(500, sink.getMinValue());
+            Assert.assertEquals(600, sink.getMaxValue());
+
+            sink.of(addr1);
+            Assert.assertEquals(addr1, sink.ptr());
+            Assert.assertEquals(3, sink.getTotalCount());
+
+            sink.of(0);
+            Assert.assertEquals(0, sink.ptr());
+            Assert.assertEquals(0, sink.getTotalCount());
+        }
+    }
 }

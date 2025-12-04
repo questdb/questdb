@@ -30,11 +30,29 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
+/**
+ * Specialized off-heap histogram sink used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
+ * <p>
+ * Uses provided {@link GroupByAllocator} to allocate the underlying buffer. Grows the buffer when needed.
+ * <p>
+ * Buffer layout is the following:
+ * <pre>
+ * | totalCount | normalizingIndexOffset | maxValue | minNonZeroValue | histogram counts array |
+ * +------------+------------------------+----------+-----------------+------------------------+
+ * |  8 bytes   |        4 bytes         | 8 bytes  |    8 bytes      | countsArrayLength * 8  |
+ * +------------+------------------------+----------+-----------------+------------------------+
+ * </pre>
+ */
 public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
 
+    private static final long headerSize = Long.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
+    private static final long normalizingIndexOffsetPosition = Long.BYTES;
+    private static final long maxValuePosition = Long.BYTES + Integer.BYTES;
+    private static final long minNonZeroValuePosition = Long.BYTES + Integer.BYTES + Long.BYTES;
+
     private GroupByAllocator allocator;
-    private long address;
-    private long capacity;
+    private long ptr;
+    private long allocatedSize;
     private int normalizingIndexOffset;
     private long totalCount;
 
@@ -57,11 +75,36 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         this.allocator = allocator;
     }
 
+    public long ptr() {
+        return ptr;
+    }
+
+    public GroupByHistogramSink of(long ptr) {
+        this.ptr = ptr;
+        if (ptr != 0) {
+            this.allocatedSize = headerSize + (countsArrayLength * 8L);
+            this.totalCount = Unsafe.getUnsafe().getLong(ptr);
+            this.normalizingIndexOffset = Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition);
+            this.maxValue = Unsafe.getUnsafe().getLong(ptr + maxValuePosition);
+            this.minNonZeroValue = Unsafe.getUnsafe().getLong(ptr + minNonZeroValuePosition);
+        } else {
+            this.allocatedSize = 0;
+            this.totalCount = 0;
+            this.normalizingIndexOffset = 0;
+            this.maxValue = 0;
+            this.minNonZeroValue = Long.MAX_VALUE;
+        }
+        return this;
+    }
+
     @Override
     public void clear() {
-        address = 0;
-        capacity = 0;
+        ptr = 0;
+        allocatedSize = 0;
         totalCount = 0;
+        normalizingIndexOffset = 0;
+        maxValue = 0;
+        minNonZeroValue = Long.MAX_VALUE;
     }
 
     @Override
@@ -82,15 +125,33 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
 
     @Override
     public long getCountAtIndex(int index) {
-        if (address == 0) {
+        if (ptr == 0) {
             return 0;
         }
-        return Unsafe.getUnsafe().getLong(address + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3));
+        return Unsafe.getUnsafe().getLong(ptr + headerSize + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3));
     }
 
     @Override
     public long getTotalCount() {
         return totalCount;
+    }
+
+    @Override
+    public long getMaxValue() {
+        if (ptr == 0) {
+            return 0;
+        }
+        long maxVal = Unsafe.getUnsafe().getLong(ptr + maxValuePosition);
+        return (maxVal == 0) ? 0 : highestEquivalentValue(maxVal);
+    }
+
+    @Override
+    public long getMinNonZeroValue() {
+        if (ptr == 0) {
+            return Long.MAX_VALUE;
+        }
+        long minVal = Unsafe.getUnsafe().getLong(ptr + minNonZeroValuePosition);
+        return (minVal == Long.MAX_VALUE) ? Long.MAX_VALUE : lowestEquivalentValue(minVal);
     }
 
     @Override
@@ -100,36 +161,44 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
 
     @Override
     int _getEstimatedFootprintInBytes() {
-        return 512 + (int) capacity;
+        return 512 + (int) allocatedSize;
     }
 
     @Override
     void addToCountAtIndex(int index, long value) {
         checkBounds(index);
         ensureCapacity();
-        long addr = address + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3);
+        long addr = ptr + headerSize + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3);
         Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + value);
     }
 
     @Override
     void addToTotalCount(long value) {
         totalCount += value;
+        if (ptr != 0) {
+            Unsafe.getUnsafe().putLong(ptr, totalCount);
+        }
     }
 
     @Override
     void clearCounts() {
-        if (address != 0) {
-            Vect.memset(address, countsArrayLength * 8L, 0);
+        if (ptr != 0) {
+            Vect.memset(ptr + headerSize, countsArrayLength * 8L, 0);
+            Unsafe.getUnsafe().putLong(ptr, 0); // totalCount
+            Unsafe.getUnsafe().putLong(ptr + maxValuePosition, 0); // maxValue
+            Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, Long.MAX_VALUE); // minNonZeroValue
         }
         totalCount = 0;
+        maxValue = 0;
+        minNonZeroValue = Long.MAX_VALUE;
     }
 
     @Override
     long getCountAtNormalizedIndex(int index) {
-        if (address == 0) {
+        if (ptr == 0) {
             return 0;
         }
-        return Unsafe.getUnsafe().getLong(address + ((long) index << 3));
+        return Unsafe.getUnsafe().getLong(ptr + headerSize + ((long) index << 3));
     }
 
     @Override
@@ -141,52 +210,55 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
     void incrementCountAtIndex(int index) {
         checkBounds(index);
         ensureCapacity();
-        long addr = address + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3);
+        long addr = ptr + headerSize + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3);
         Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
     }
 
     @Override
     void incrementTotalCount() {
         totalCount++;
+        if (ptr != 0) {
+            Unsafe.getUnsafe().putLong(ptr, totalCount);
+        }
     }
 
     @Override
     void resize(long newHighestTrackableValue) {
         int oldNormalizedZeroIndex = normalizeIndex(0, normalizingIndexOffset, countsArrayLength);
         int oldCountsArrayLength = countsArrayLength;
-        boolean hadPreviousAllocation = (address != 0);
+        boolean hadPreviousAllocation = (ptr != 0);
 
         establishSize(newHighestTrackableValue);
 
-        long newCapacity = countsArrayLength * 8L;
+        long newCapacity = headerSize + (countsArrayLength * 8L);
 
         if (hadPreviousAllocation) {
-            address = allocator.realloc(address, capacity, newCapacity);
-            capacity = newCapacity;
+            ptr = allocator.realloc(ptr, allocatedSize, newCapacity);
+            allocatedSize = newCapacity;
 
             int countsDelta = countsArrayLength - oldCountsArrayLength;
 
             long bytesToZero = countsDelta * 8L;
-            Vect.memset(address + (oldCountsArrayLength * 8L), bytesToZero, 0);
+            Vect.memset(ptr + headerSize + (oldCountsArrayLength * 8L), bytesToZero, 0);
 
             if (oldNormalizedZeroIndex != 0) {
                 int newNormalizedZeroIndex = oldNormalizedZeroIndex + countsDelta;
                 int lengthToCopy = oldCountsArrayLength - oldNormalizedZeroIndex;
 
-                long srcAddr = address + (oldNormalizedZeroIndex * 8L);
-                long dstAddr = address + (newNormalizedZeroIndex * 8L);
+                long srcAddr = ptr + headerSize + (oldNormalizedZeroIndex * 8L);
+                long dstAddr = ptr + headerSize + (newNormalizedZeroIndex * 8L);
                 long bytesToCopy = lengthToCopy * 8L;
                 Vect.memcpy(dstAddr, srcAddr, bytesToCopy);
 
-                long gapStart = address + (oldNormalizedZeroIndex * 8L);
+                long gapStart = ptr + headerSize + (oldNormalizedZeroIndex * 8L);
                 long gapSize = countsDelta * 8L;
                 Vect.memset(gapStart, gapSize, 0);
             }
         } else {
-            address = allocator.malloc(newCapacity);
-            capacity = newCapacity;
+            ptr = allocator.malloc(newCapacity);
+            allocatedSize = newCapacity;
 
-            Vect.memset(address, newCapacity, 0);
+            Vect.memset(ptr, newCapacity, 0);
         }
     }
 
@@ -194,24 +266,30 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
     void setCountAtIndex(int index, long value) {
         checkBounds(index);
         ensureCapacity();
-        Unsafe.getUnsafe().putLong(address + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3), value);
+        Unsafe.getUnsafe().putLong(ptr + headerSize + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3), value);
     }
 
     @Override
     void setCountAtNormalizedIndex(int index, long value) {
         checkBounds(index);
         ensureCapacity();
-        Unsafe.getUnsafe().putLong(address + ((long) index << 3), value);
+        Unsafe.getUnsafe().putLong(ptr + headerSize + ((long) index << 3), value);
     }
 
     @Override
     void setNormalizingIndexOffset(int offset) {
         this.normalizingIndexOffset = offset;
+        if (ptr != 0) {
+            Unsafe.getUnsafe().putInt(ptr + normalizingIndexOffsetPosition, offset);
+        }
     }
 
     @Override
     void setTotalCount(long totalCount) {
         this.totalCount = totalCount;
+        if (ptr != 0) {
+            Unsafe.getUnsafe().putLong(ptr, totalCount);
+        }
     }
 
     @Override
@@ -219,11 +297,66 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         nonConcurrentNormalizingIndexShift(offsetToAdd, lowestHalfBucketPopulated);
     }
 
+    @Override
+    void updateMinAndMax(long value) {
+        if (ptr == 0) {
+            return;
+        }
+
+        long currentMax = Unsafe.getUnsafe().getLong(ptr + maxValuePosition);
+        if (value > currentMax) {
+            long newMax = value | unitMagnitudeMask;
+            Unsafe.getUnsafe().putLong(ptr + maxValuePosition, newMax);
+            maxValue = newMax;
+        }
+
+        long currentMin = Unsafe.getUnsafe().getLong(ptr + minNonZeroValuePosition);
+        if ((value < currentMin) && (value != 0)) {
+            if (value <= unitMagnitudeMask) {
+                return;
+            }
+            long newMin = value & ~unitMagnitudeMask;
+            Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, newMin);
+            minNonZeroValue = newMin;
+        }
+    }
+
+    @Override
+    protected void updateMaxValue(long value) {
+        if (ptr == 0) {
+            return;
+        }
+        long currentMax = Unsafe.getUnsafe().getLong(ptr + maxValuePosition);
+        long newMax = Math.max(currentMax, value | unitMagnitudeMask);
+        Unsafe.getUnsafe().putLong(ptr + maxValuePosition, newMax);
+        maxValue = newMax;
+    }
+
+    @Override
+    protected void updateMinNonZeroValue(long value) {
+        if (ptr == 0) {
+            return;
+        }
+        if (value <= unitMagnitudeMask) {
+            return;
+        }
+        long currentMin = Unsafe.getUnsafe().getLong(ptr + minNonZeroValuePosition);
+        long newMin = Math.min(currentMin, value & ~unitMagnitudeMask);
+        Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, newMin);
+        minNonZeroValue = newMin;
+    }
+
     private void ensureCapacity() {
-        if (address == 0) {
-            capacity = countsArrayLength * 8L;
-            address = allocator.malloc(capacity);
-            clearCounts();
+        if (ptr == 0) {
+            allocatedSize = headerSize + (countsArrayLength * 8L);
+            ptr = allocator.malloc(allocatedSize);
+
+            Unsafe.getUnsafe().putLong(ptr, 0);
+            Unsafe.getUnsafe().putInt(ptr + normalizingIndexOffsetPosition, 0);
+            Unsafe.getUnsafe().putLong(ptr + maxValuePosition, 0);
+            Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, Long.MAX_VALUE);
+
+            Vect.memset(ptr + headerSize, countsArrayLength * 8L, 0);
         }
     }
 
