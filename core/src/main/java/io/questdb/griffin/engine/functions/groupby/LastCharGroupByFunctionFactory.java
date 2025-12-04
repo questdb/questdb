@@ -44,6 +44,6 @@ public class LastCharGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastCharGroupByFunction(position, args.getQuick(0));
+        return new LastCharGroupByFunction(args.getQuick(0));
     }
 }

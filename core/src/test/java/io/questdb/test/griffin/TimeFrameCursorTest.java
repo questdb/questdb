@@ -31,7 +31,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TimeFrame;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rows;
 import io.questdb.std.datetime.microtime.Micros;
@@ -43,7 +43,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TimeFrameRecordCursorTest extends AbstractCairoTest {
+public class TimeFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyTable() throws Exception {
@@ -57,7 +57,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
 
             try (RecordCursorFactory factory = select("x")) {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());
-                try (TimeFrameRecordCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                try (TimeFrameCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
                     Assert.assertFalse(timeFrameCursor.next());
                     Assert.assertFalse(timeFrameCursor.prev());
                 }
@@ -94,7 +94,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
 
                 try (RecordCursorFactory factory = select("x")) {
                     Assert.assertTrue(factory.supportsTimeFrameCursor());
-                    try (TimeFrameRecordCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                    try (TimeFrameCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
                         Record record = timeFrameCursor.getRecord();
                         TimeFrame frame = timeFrameCursor.getTimeFrame();
                         while (timeFrameCursor.next()) {
@@ -154,7 +154,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
 
                 try (RecordCursorFactory factory = select("x")) {
                     Assert.assertTrue(factory.supportsTimeFrameCursor());
-                    try (TimeFrameRecordCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                    try (TimeFrameCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
                         Record record = timeFrameCursor.getRecord();
                         TimeFrame frame = timeFrameCursor.getTimeFrame();
                         // forward scan
@@ -225,7 +225,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
 
                 try (RecordCursorFactory factory = select("x")) {
                     Assert.assertTrue(factory.supportsTimeFrameCursor());
-                    try (TimeFrameRecordCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                    try (TimeFrameCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
                         Record record = timeFrameCursor.getRecord();
                         TimeFrame frame = timeFrameCursor.getTimeFrame();
                         // forward scan
@@ -277,7 +277,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
 
             try (RecordCursorFactory factory = select("x")) {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());
-                try (TimeFrameRecordCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                try (TimeFrameCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
                     Record record = timeFrameCursor.getRecord();
                     TimeFrame frame = timeFrameCursor.getTimeFrame();
                     // forward scan
@@ -305,16 +305,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
 
     @Test
     public void testNotSupportedForNonPartitionedTable() throws Exception {
-        class TestCase {
-            final String ddl;
-            final String query;
-            final String table;
-
-            TestCase(String table, String ddl, String query) {
-                this.table = table;
-                this.ddl = ddl;
-                this.query = query;
-            }
+        record TestCase(String table, String ddl, String query) {
         }
 
         final TestCase[] testCases = new TestCase[]{
@@ -372,7 +363,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
 
                 try (RecordCursorFactory factory = select("x")) {
                     Assert.assertTrue(factory.supportsTimeFrameCursor());
-                    try (TimeFrameRecordCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                    try (TimeFrameCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
                         Record record = timeFrameCursor.getRecord();
                         TimeFrame frame = timeFrameCursor.getTimeFrame();
                         // forward scan
@@ -438,7 +429,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
 
             try (RecordCursorFactory factory = engine.select("x", executionContext)) {
                 Assert.assertTrue(factory.supportsTimeFrameCursor());
-                try (TimeFrameRecordCursor timeFrameCursor = factory.getTimeFrameCursor(executionContext)) {
+                try (TimeFrameCursor timeFrameCursor = factory.getTimeFrameCursor(executionContext)) {
                     Record record = timeFrameCursor.getRecord();
                     TimeFrame frame = timeFrameCursor.getTimeFrame();
                     long prevSplitTimestampHi = -1;

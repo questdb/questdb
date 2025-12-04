@@ -35,7 +35,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -46,7 +46,7 @@ import io.questdb.std.Rows;
 
 /**
  * Dense ASOF JOIN cursor is an improvement over the Light cursor for the case where
- * the slave cursor is a {@link TimeFrameRecordCursor}. While the Light cursor uses a
+ * the slave cursor is a {@link TimeFrameCursor}. While the Light cursor uses a
  * forward-only scan of the slave cursor, the Dense cursor uses two scans: forward and
  * backward. They both start at the slave row that matches the first master row by
  * timestamp (as determined by {@link AbstractAsOfJoinFastRecordCursor#nextSlave
@@ -103,7 +103,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
-        TimeFrameRecordCursor slaveCursor = null;
+        TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
@@ -286,7 +286,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         }
 
         @Override
-        public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
             fwdScanKeyToRowId.reopen();
             fwdScanKeyToRowId.clear();

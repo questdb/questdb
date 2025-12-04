@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -56,7 +56,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     private final boolean supportsRandomAccess;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
     private BwdTableReaderPageFrameCursor bwdPageFrameCursor;
-    private TimeFrameRecordCursorImpl timeFrameCursor;
+    private TimeFrameCursorImpl timeFrameCursor;
 
     public PageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -123,24 +123,30 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             // "forward".
             return SCAN_DIRECTION_FORWARD;
         }
-        switch (partitionFrameCursorFactory.getOrder()) {
-            case ORDER_ASC:
-                return SCAN_DIRECTION_FORWARD;
-            case ORDER_DESC:
-                return SCAN_DIRECTION_BACKWARD;
-            default:
-                throw CairoException.critical(0).put("Unexpected factory order [order=").put(partitionFrameCursorFactory.getOrder()).put("]");
-        }
+        return switch (partitionFrameCursorFactory.getOrder()) {
+            case ORDER_ASC -> SCAN_DIRECTION_FORWARD;
+            case ORDER_DESC -> SCAN_DIRECTION_BACKWARD;
+            default ->
+                    throw CairoException.critical(0).put("Unexpected factory order [order=").put(partitionFrameCursorFactory.getOrder()).put("]");
+        };
     }
 
     @Override
-    public TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+    public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         if (framingSupported) {
             TablePageFrameCursor pageFrameCursor = initPageFrameCursor(executionContext);
             if (timeFrameCursor == null) {
-                timeFrameCursor = new TimeFrameRecordCursorImpl(configuration, getMetadata());
+                timeFrameCursor = new TimeFrameCursorImpl(configuration, getMetadata());
             }
             return timeFrameCursor.of(pageFrameCursor);
+        }
+        return null;
+    }
+
+    @Override
+    public ConcurrentTimeFrameCursor newTimeFrameCursor() {
+        if (framingSupported) {
+            return new ConcurrentTimeFrameCursor(configuration, getMetadata());
         }
         return null;
     }

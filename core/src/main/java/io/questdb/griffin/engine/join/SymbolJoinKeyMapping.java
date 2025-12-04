@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 
 public interface SymbolJoinKeyMapping {
 
@@ -39,7 +39,7 @@ public interface SymbolJoinKeyMapping {
      */
     int getSlaveKey(Record masterRecord);
 
-    void of(TimeFrameRecordCursor slaveCursor);
+    void of(TimeFrameCursor slaveCursor);
 
     default void of(RecordCursor slaveCursor) {
         throw new UnsupportedOperationException();

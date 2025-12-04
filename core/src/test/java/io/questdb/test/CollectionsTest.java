@@ -155,6 +155,23 @@ public class CollectionsTest {
     }
 
     @Test
+    public void testLongSearch3() {
+        final int N = 100;
+        final LongList list = new LongList();
+
+        for (int i = 0; i < N; i++) {
+            list.add(2 * i);
+        }
+
+        for (int i = 0; i < N; i++) {
+            Assert.assertEquals(i, list.binarySearch(2 * i, Vect.BIN_SEARCH_SCAN_UP));
+            Assert.assertEquals(i, list.binarySearch(2 * i, Vect.BIN_SEARCH_SCAN_DOWN));
+            Assert.assertEquals(-i - 2, list.binarySearch(2 * i + 1, Vect.BIN_SEARCH_SCAN_UP));
+            Assert.assertEquals(-i - 2, list.binarySearch(2 * i + 1, Vect.BIN_SEARCH_SCAN_DOWN));
+        }
+    }
+
+    @Test
     public void testObjIntHashMap() {
         ObjIntHashMap<String> map = new ObjIntHashMap<>();
         Rnd rnd = new Rnd();
