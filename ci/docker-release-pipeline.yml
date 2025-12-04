@@ -113,6 +113,6 @@ jobs:
             echo $docker_tag_name
             docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name} .
             docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name}-rhel --target rhel .
-            preflight check container questdb/questdb:$tag_name-rhel
+            preflight check container questdb/questdb:${docker_tag_name}-rhel
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
