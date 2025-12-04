@@ -283,8 +283,15 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             } else if (lo > -1 && hiFunction == null) {
                 // first N rows
                 countRows();
-                limit = Math.min(rowCount, lo);
-                size = limit;
+                // If countRows() failed or returned 0 (happens with filtered backward scans),
+                // fall back to just taking first N rows without knowing total size
+                if (rowCount == 0 && areRowsCounted) {
+                    limit = lo;
+                    size = -1; // unknown
+                } else {
+                    limit = Math.min(rowCount, lo);
+                    size = limit;
+                }
             } else {
                 // at this stage we have 'hi'
                 if (lo < 0) {
