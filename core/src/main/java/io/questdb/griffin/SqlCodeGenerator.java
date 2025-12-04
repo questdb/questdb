@@ -6829,12 +6829,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 WindowJoinContext windowJoinContext = model.getWindowJoinContext();
                 TimestampDriver driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
                 long hi = windowJoinContext.getHi();
-                long lo = windowJoinContext.getLo();
                 if (windowJoinContext.getHiExprTimeUnit() != 0) {
                     hi = driver.from(hi, windowJoinContext.getHiExprTimeUnit());
                 }
-                if (windowJoinContext.getLoExprTimeUnit() != 0) {
-                    lo = driver.from(lo, windowJoinContext.getLoExprTimeUnit());
+                long lo;
+                if (windowJoinContext.isIncludePrevailing()) {
+                    lo = Numbers.LONG_NULL;
+                } else {
+                    lo = windowJoinContext.getLo();
+                    if (windowJoinContext.getLoExprTimeUnit() != 0) {
+                        lo = driver.from(lo, windowJoinContext.getLoExprTimeUnit());
+                    }
                 }
                 intrinsicModel.mergeIntervalModel((RuntimeIntervalModel) pushedIntervalModel, lo, hi);
             }

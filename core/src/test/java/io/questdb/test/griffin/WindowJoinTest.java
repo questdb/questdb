@@ -107,7 +107,6 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 order by ts, sym;
                                 """,
                         sink);
-                System.out.println(sink);
             }
 
             assertQueryAndPlan(
@@ -531,12 +530,34 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testFastJoinWithJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
-            printSql("select t.*, avg(p.price) window_price " +
-                    "from trades t " +
-                    "left join prices p " +
-                    "on (t.sym = p.sym)" +
-                    " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and p.price < 300 " +
-                    "order by t.ts, t.sym;", sink);
+            if (!includePrevailing) {
+                printSql("select t.*, avg(p.price) window_price " +
+                        "from trades t " +
+                        "left join prices p " +
+                        "on (t.sym = p.sym)" +
+                        " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and p.price < 300 " +
+                        "order by t.ts, t.sym;", sink);
+            } else {
+                printSql("""
+                                select sym,price,ts, avg(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.*, p.price
+                                            from trades t 
+                                            left join prices p 
+                                            on (t.sym = p.sym) 
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) AND p.price < 300 
+                                        union 
+                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            from trades t 
+                                            join prices p 
+                                            on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and p.price < 300) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts, sym;
+                                """,
+                        sink);
+            }
             assertQueryAndPlan(
                     sink,
                     "Sort\n" +
@@ -564,12 +585,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     false
             );
 
-            printSql("select t.*, avg(p.price) window_price " +
-                    "from trades t " +
-                    "left join prices p " +
-                    "on (t.sym = p.sym)" +
-                    " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts)  " +
-                    "order by t.ts, t.sym;", sink);
+            if (!includePrevailing) {
+                printSql("select t.*, avg(p.price) window_price " +
+                        "from trades t " +
+                        "left join prices p " +
+                        "on (t.sym = p.sym)" +
+                        " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts)  " +
+                        "order by t.ts, t.sym;", sink);
+            } else {
+                printSql("""
+                                select sym,price,ts, avg(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.*, p.price
+                                            from trades t 
+                                            left join prices p 
+                                            on (t.sym = p.sym) 
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) 
+                                        union 
+                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            from trades t 
+                                            join prices p 
+                                            on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts, sym;
+                                """,
+                        sink);
+            }
             assertQueryAndPlan(
                     sink,
                     "Sort\n" +
@@ -596,12 +639,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     false
             );
 
-            printSql("select t.*, avg(p.price) window_price " +
-                    "from trades t " +
-                    "left join prices p " +
-                    "on (t.sym = p.sym)" +
-                    " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (p.price < 200 or p.price > 300 ) " +
-                    "order by t.ts, t.sym;", sink);
+            if (!includePrevailing) {
+                printSql("select t.*, avg(p.price) window_price " +
+                        "from trades t " +
+                        "left join prices p " +
+                        "on (t.sym = p.sym)" +
+                        " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (p.price < 200 or p.price > 300 ) " +
+                        "order by t.ts, t.sym;", sink);
+            } else {
+                printSql("""
+                                select sym,price,ts, avg(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.*, p.price
+                                            from trades t 
+                                            left join prices p 
+                                            on (t.sym = p.sym) 
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (p.price < 200 or p.price > 300 )  
+                                        union 
+                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            from trades t 
+                                            join prices p 
+                                            on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and (p.price < 200 or p.price > 300)) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts, sym;
+                                """,
+                        sink);
+            }
             assertQueryAndPlan(
                     sink,
                     "Sort\n" +
@@ -629,12 +694,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     false
             );
 
-            printSql("select t.*, avg(p.price) window_price " +
-                    "from trades t " +
-                    "left join prices p " +
-                    "on (t.sym = p.sym)" +
-                    " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (p.price < 200 and p.price > 300 ) " +
-                    "order by t.ts, t.sym;", sink);
+            if (!includePrevailing) {
+                printSql("select t.*, avg(p.price) window_price " +
+                        "from trades t " +
+                        "left join prices p " +
+                        "on (t.sym = p.sym)" +
+                        " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (p.price < 200 and p.price > 300 ) " +
+                        "order by t.ts, t.sym;", sink);
+            } else {
+                printSql("""
+                                select sym,price,ts, avg(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.*, p.price
+                                            from trades t 
+                                            left join prices p 
+                                            on (t.sym = p.sym) 
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (p.price < 200 and p.price > 300 )  
+                                        union 
+                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            from trades t 
+                                            join prices p 
+                                            on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and (p.price < 200 and p.price > 300)) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts, sym;
+                                """,
+                        sink);
+            }
             assertQueryAndPlan(
                     sink,
                     "Sort\n" +
@@ -663,12 +750,34 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             // with join filter and master filter
-            printSql("select t.*, avg(p.price) window_price " +
-                    "from trades t " +
-                    "left join prices p " +
-                    "on t.ts > 1000 and p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA'" +
-                    " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) " +
-                    "order by t.ts, t.sym;", sink);
+            if (!includePrevailing) {
+                printSql("select t.*, avg(p.price) window_price " +
+                        "from trades t " +
+                        "left join prices p " +
+                        "on t.ts > 1000 and p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA'" +
+                        " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) " +
+                        "order by t.ts, t.sym;", sink);
+            } else {
+                printSql("""
+                                select sym,price,ts, avg(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.*, p.price
+                                            from trades t 
+                                            left join prices p 
+                                            on (t.sym = p.sym) 
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (t.ts > 1000 and p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA' )  
+                                        union 
+                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            from trades t 
+                                            join prices p 
+                                            on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and (t.ts > 1000 and p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA')) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts, sym;
+                                """,
+                        sink);
+            }
             assertQueryAndPlan(
                     sink,
                     "Sort\n" +
@@ -707,12 +816,34 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType.getTimestampType() == rightTableTimestampType.getTimestampType());
         assertMemoryLeak(() -> {
             prepareTable();
-            printSql("select t.*, avg(p.price) window_price " +
-                    "from (select * from trades where price < 300) t " +
-                    "left join prices p " +
-                    "on (t.sym = p.sym) " +
-                    " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) " +
-                    "order by t.ts, t.sym;", sink);
+            if (!includePrevailing) {
+                printSql("select t.*, avg(p.price) window_price " +
+                        "from (select * from trades where price < 300) t " +
+                        "left join prices p " +
+                        "on (t.sym = p.sym) " +
+                        " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) " +
+                        "order by t.ts, t.sym;", sink);
+            } else {
+                printSql("""
+                                select sym,price,ts, avg(price1) window_price from
+                                (
+                                        select * from (
+                                            select t.*, p.price
+                                            from (select * from trades where price < 300) t 
+                                            left join prices p 
+                                            on (t.sym = p.sym) 
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) AND p.price < 300 
+                                        union 
+                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            from (select * from trades where price < 300) t 
+                                            join prices p 
+                                            on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and p.price < 300) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts, sym;
+                                """,
+                        sink);
+            }
             assertQueryAndPlan(
                     sink,
                     "Sort\n" +
@@ -741,12 +872,34 @@ public class WindowJoinTest extends AbstractCairoTest {
                     false
             );
 
-            printSql("select t.sym, t.ts, count(), max(p.ts) " +
-                    "from (select * from trades where price < 300) t " +
-                    "left join prices p " +
-                    "on (t.sym = p.sym) " +
-                    " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) " +
-                    "order by t.ts;", sink);
+            if (!includePrevailing) {
+                printSql("select t.sym, t.ts, count(), max(p.ts) " +
+                        "from (select * from trades where price < 300) t " +
+                        "left join prices p " +
+                        "on (t.sym = p.sym) " +
+                        " and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) " +
+                        "order by t.ts;", sink);
+            } else {
+                printSql("""
+                                select sym,ts, count(), max(pts) from
+                                (
+                                        select * from (
+                                            select t.*, p.price, p.ts pts
+                                            from (select * from trades where price < 300) t 
+                                            left join prices p 
+                                            on (t.sym = p.sym) 
+                                            and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) AND p.price < 300 
+                                        union 
+                                            select sym,price,ts,price1, ts1 pts   from (select t.*, p.price price1, p.ts as ts1
+                                            from (select * from trades where price < 300) t 
+                                            join prices p 
+                                            on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and p.price < 300) LATEST ON ts1 PARTITION BY ts, sym
+                                        ) order by ts
+                                )
+                                order by ts, sym;
+                                """,
+                        sink);
+            }
             assertQueryAndPlan(
                     sink,
                     "Sort\n" +
