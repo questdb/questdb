@@ -106,7 +106,7 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
     @Override
     void addToCountAtIndex(int index, long value) {
         checkBounds(index);
-        ensureAllocated();
+        ensureCapacity();
         long addr = address + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3);
         Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + value);
     }
@@ -140,7 +140,7 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
     @Override
     void incrementCountAtIndex(int index) {
         checkBounds(index);
-        ensureAllocated();
+        ensureCapacity();
         long addr = address + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3);
         Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
     }
@@ -193,14 +193,14 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
     @Override
     void setCountAtIndex(int index, long value) {
         checkBounds(index);
-        ensureAllocated();
+        ensureCapacity();
         Unsafe.getUnsafe().putLong(address + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3), value);
     }
 
     @Override
     void setCountAtNormalizedIndex(int index, long value) {
         checkBounds(index);
-        ensureAllocated();
+        ensureCapacity();
         Unsafe.getUnsafe().putLong(address + ((long) index << 3), value);
     }
 
@@ -219,7 +219,7 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         nonConcurrentNormalizingIndexShift(offsetToAdd, lowestHalfBucketPopulated);
     }
 
-    private void ensureAllocated() {
+    private void ensureCapacity() {
         if (address == 0) {
             capacity = countsArrayLength * 8L;
             address = allocator.malloc(capacity);
