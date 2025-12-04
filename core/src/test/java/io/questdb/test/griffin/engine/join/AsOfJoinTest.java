@@ -875,7 +875,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     "                  intervals: [(\"2025-01-01T00:00:00.000000001Z\",\"MAX\")]\n") +
                             "            SelectedRecord\n" +
                             "                Async " + (JitUtil.isJitSupported() ? "JIT " : "") + "Filter workers: 1\n" +
-                            "                  filter: market_Data_symbol='sym_1'\n" +
+                            "                  filter: market_data_symbol='sym_1'\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: market_data\n",
@@ -885,7 +885,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                     "    Filter filter: oRdERS.price<MD.bid\n" +
                     "        Filtered AsOf Join Fast\n" +
-                    "          filter: market_Data_symbol='sym_1'\n" +
+                    "          filter: market_data_symbol='sym_1'\n" +
                     "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Interval forward scan on: orders\n" +
@@ -1596,7 +1596,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     "                  intervals: [(\"2025-01-01T00:00:00.000000001Z\",\"MAX\")]\n") +
                             "            SelectedRecord\n" +
                             "                Async " + (JitUtil.isJitSupported() ? "JIT " : "") + "Filter workers: 1\n" +
-                            "                  filter: market_Data_symbol='sym_1'\n" +
+                            "                  filter: market_data_symbol='sym_1'\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: market_data\n",
@@ -1606,7 +1606,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                     "    Filter filter: oRdERS.price<MD.bid\n" +
                     "        Filtered AsOf Join Fast\n" +
-                    "          filter: market_Data_symbol='sym_1'\n" +
+                    "          filter: market_data_symbol='sym_1'\n" +
                     "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Interval forward scan on: orders\n" +

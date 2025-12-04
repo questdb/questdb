@@ -47,25 +47,19 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
     int ORDER_DESC = 1;
 
     static CharSequence nameOf(int order) {
-        switch (order) {
-            case ORDER_ASC:
-                return "forward";
-            case ORDER_DESC:
-                return "backward";
-            default:
-                return "any";
-        }
+        return switch (order) {
+            case ORDER_ASC -> "forward";
+            case ORDER_DESC -> "backward";
+            default -> "any";
+        };
     }
 
     static int reverse(int order) {
-        switch (order) {
-            case ORDER_ASC:
-                return ORDER_DESC;
-            case ORDER_DESC:
-                return ORDER_ASC;
-            default:
-                return ORDER_ANY;
-        }
+        return switch (order) {
+            case ORDER_ASC -> ORDER_DESC;
+            case ORDER_DESC -> ORDER_ASC;
+            default -> ORDER_ANY;
+        };
     }
 
     @Override
@@ -83,11 +77,6 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
     int getOrder();
 
     TableToken getTableToken();
-
-    /**
-     * @return whether the partition frame applies time interval(s) to the underlying table.
-     */
-    boolean hasInterval();
 
     boolean supportsTableRowId(TableToken tableToken);
 
