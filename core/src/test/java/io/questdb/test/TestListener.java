@@ -145,4 +145,16 @@ public class TestListener extends RunListener {
         monitor.setDaemon(true);
         monitor.start();
     }
+
+    static {
+        Thread gcThread = new Thread(() -> {
+            while (true) {
+                System.gc();
+                Os.sleep(1000);
+            }
+        }, "GC-Trigger");
+
+        gcThread.setDaemon(true);
+        gcThread.start();
+    }
 }
