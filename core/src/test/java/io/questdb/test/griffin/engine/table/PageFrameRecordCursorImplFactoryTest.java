@@ -105,7 +105,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 String value = symbols[N - 10];
                 int columnIndex;
                 int symbolKey;
@@ -806,7 +806,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 GenericRecordMetadata metadata;
                 try (TableReader reader = engine.getReader("x")) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
@@ -879,7 +879,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
     }
 
     private void testFactory_FullPartitionFrameCursorFactory(long increment, int skip, long expectedNumOfRows, int order) throws SqlException {
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             GenericRecordMetadata metadata;
             TableToken tableToken;
             try (TableReader reader = engine.getReader("x")) {
@@ -1005,7 +1005,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 String value = symbols[0];
                 int columnIndex;
                 int symbolKey;
@@ -1099,7 +1099,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 GenericRecordMetadata metadata;
                 int timestampType;
                 int timestampIndex;
@@ -1194,7 +1194,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 GenericRecordMetadata metadata;
                 try (TableReader reader = engine.getReader("x")) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());

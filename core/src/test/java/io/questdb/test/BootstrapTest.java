@@ -68,7 +68,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
         auxPath.of(root + "\\spaced path").$();
         java.nio.file.Files.createDirectories(java.nio.file.Path.of(auxPath.toString()));
         CairoConfiguration configuration = new DefaultCairoConfiguration(auxPath.toString());
-        CairoEngine engine = new CairoEngine(configuration);
+        CairoEngine engine = new CairoEngine(configuration).prepare();
         engine.close();
     }
 

@@ -1041,8 +1041,10 @@ public class IODispatcherTest extends AbstractTest {
 
         final CairoConfiguration cairoConfiguration = serverConfiguration.getCairoConfiguration();
         final TestWorkerPool workerPool = new TestWorkerPool(2, serverConfiguration.getMetrics());
-        try (CairoEngine cairoEngine = new CairoEngine(cairoConfiguration); HttpServer ignored = createHttpServer(serverConfiguration, cairoEngine, workerPool)) {
-
+        try (
+                CairoEngine cairoEngine = new CairoEngine(cairoConfiguration).prepare();
+                HttpServer ignored = createHttpServer(serverConfiguration, cairoEngine, workerPool)
+        ) {
             workerPool.start(LOG);
             try {
                 // upload file
@@ -1121,8 +1123,10 @@ public class IODispatcherTest extends AbstractTest {
         };
         final CairoConfiguration cairoConfiguration = serverConfiguration.getCairoConfiguration();
         TestWorkerPool workerPool = new TestWorkerPool(2, serverConfiguration.getMetrics());
-        try (CairoEngine cairoEngine = new CairoEngine(cairoConfiguration); HttpServer ignored = createHttpServer(serverConfiguration, cairoEngine, workerPool)) {
-
+        try (
+                CairoEngine cairoEngine = new CairoEngine(cairoConfiguration).prepare();
+                HttpServer ignored = createHttpServer(serverConfiguration, cairoEngine, workerPool)
+        ) {
             workerPool.start(LOG);
             try {
                 // upload file
@@ -2319,7 +2323,10 @@ public class IODispatcherTest extends AbstractTest {
             final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             final WorkerPool workerPool = new TestWorkerPool(3, httpConfiguration.getMetrics());
-            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)).prepare();
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
+            ) {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
                 httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
@@ -2899,7 +2906,10 @@ public class IODispatcherTest extends AbstractTest {
             final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, baseDir, 256, false, false);
             WorkerPool workerPool = new TestWorkerPool(2);
-            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)).prepare();
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
+            ) {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
@@ -4499,7 +4509,10 @@ public class IODispatcherTest extends AbstractTest {
             final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
-            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)).prepare();
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
+            ) {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
@@ -4658,7 +4671,10 @@ public class IODispatcherTest extends AbstractTest {
             final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, baseDir, 256, false, true);
             final WorkerPool workerPool = new TestWorkerPool(2);
-            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)).prepare();
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
+            ) {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
@@ -4705,7 +4721,10 @@ public class IODispatcherTest extends AbstractTest {
             final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, baseDir, 4096, false, true);
             WorkerPool workerPool = new TestWorkerPool(2);
-            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir)).prepare();
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
+            ) {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
@@ -4764,7 +4783,10 @@ public class IODispatcherTest extends AbstractTest {
 
             WorkerPool workerPool = new TestWorkerPool(1);
 
-            try (CairoEngine engine = new CairoEngine(cairoConfiguration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+            try (
+                    CairoEngine engine = new CairoEngine(cairoConfiguration).prepare();
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
+            ) {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
@@ -7309,7 +7331,11 @@ public class IODispatcherTest extends AbstractTest {
 
             WorkerPool workerPool = new TestWorkerPool(1);
 
-            try (CairoEngine engine = new CairoEngine(cairoConfiguration); HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE); SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+            try (
+                    CairoEngine engine = new CairoEngine(cairoConfiguration).prepare();
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
+                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
                 httpServer.bind(new TestJsonQueryProcessorFactory(engine, httpConfiguration, workerPool.getWorkerCount()));
 
@@ -7405,7 +7431,10 @@ public class IODispatcherTest extends AbstractTest {
             }
 
             // run query in separate engine so it doesn't time out
-            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root)); SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root)).prepare();
+                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
                 StringSink sink = new StringSink();
                 TestUtils.assertSql(engine, executionContext, "select count(*) from tab where b=false", sink, "count\n3000\n");
             }

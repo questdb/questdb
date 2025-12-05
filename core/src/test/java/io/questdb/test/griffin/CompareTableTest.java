@@ -53,7 +53,7 @@ public class CompareTableTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
         try (
-                CairoEngine engine = new CairoEngine(configuration);
+                CairoEngine engine = new CairoEngine(configuration).prepare();
                 SqlCompiler compiler = engine.getSqlCompiler();
                 SqlExecutionContext executionContext = new SqlExecutionContextImpl(engine, 1).with(
                         AllowAllSecurityContext.INSTANCE,

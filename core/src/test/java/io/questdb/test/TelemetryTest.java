@@ -100,7 +100,7 @@ public class TelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryCreatesTablesWhenEnabled() throws Exception {
         assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 try (
                         TelemetryJob ignore = new TelemetryJob(engine);
                         Path path = new Path()
@@ -145,7 +145,7 @@ public class TelemetryTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (
-                    CairoEngine engine = new CairoEngine(configuration);
+                    CairoEngine engine = new CairoEngine(configuration).prepare();
                     TelemetryJob ignored = new TelemetryJob(engine)
             ) {
                 assertException(
@@ -160,7 +160,7 @@ public class TelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryStoresNonEvents() throws Exception {
         assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 TelemetryJob telemetryJob = new TelemetryJob(engine);
                 Misc.free(telemetryJob);
                 refreshTablesInBaseEngine();
@@ -195,7 +195,7 @@ public class TelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryStoresUpAndDownEvents() throws Exception {
         assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 TelemetryJob telemetryJob = new TelemetryJob(engine);
                 Misc.free(telemetryJob);
                 refreshTablesInBaseEngine();
@@ -242,7 +242,7 @@ public class TelemetryTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (
-                    CairoEngine engine = new CairoEngine(configuration);
+                    CairoEngine engine = new CairoEngine(configuration).prepare();
                     SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {

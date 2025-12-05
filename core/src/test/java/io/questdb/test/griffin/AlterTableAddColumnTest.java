@@ -543,7 +543,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration)) {
+                    try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             execute(compiler, "alter table x add column meh symbol cache");
                             drainWalQueue(engine);
@@ -726,7 +726,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration)) {
+                    try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             execute(compiler, "alter table x add column meh symbol", sqlExecutionContext);
                             drainWalQueue(engine);

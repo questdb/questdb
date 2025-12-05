@@ -1771,7 +1771,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testFileOpenExceptionThrownIfSequencerCannotBeOpened() throws Exception {
-        assertMemoryLeak(() -> {
+            assertMemoryLeak(() -> {
 
             createTable(testName.getMethodName());
             TableToken tableToken = engine.verifyTableName(testName.getMethodName());

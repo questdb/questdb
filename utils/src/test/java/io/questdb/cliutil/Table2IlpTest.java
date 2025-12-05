@@ -125,7 +125,7 @@ public class Table2IlpTest {
             throw new ExceptionInInitializerError();
         }
         configuration = new DefaultCairoConfiguration(root);
-        engine = new CairoEngine(configuration);
+        engine = new CairoEngine(configuration).prepare();
     }
 
     @BeforeClass

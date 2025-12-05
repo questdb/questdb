@@ -1561,7 +1561,7 @@ public final class TestUtils {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         final BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         try (
-                final CairoEngine engine = new CairoEngine(configuration);
+                final CairoEngine engine = new CairoEngine(configuration).prepare();
                 final SqlCompiler compiler = engine.getSqlCompiler();
                 final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, bindVariableService, workerCount)
         ) {

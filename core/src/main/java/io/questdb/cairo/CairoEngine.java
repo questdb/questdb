@@ -160,6 +160,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
+    private boolean prepared;
     private SqlCompilerPool sqlCompilerPool;
     private final TableFlagResolver tableFlagResolver;
     private final IDGenerator tableIdGenerator;
@@ -1082,11 +1083,11 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.isWalTableDropped(tableDir);
     }
 
-    public void load() {
-        if (loaded) {
-            return;
+    public CairoEngine prepare() {
+        if (prepared) {
+            return this;
         }
-        loaded = true;
+        prepared = true;
 
         initDataID();
 
@@ -1108,6 +1109,16 @@ public class CairoEngine implements Closeable, WriterSource {
             enablePartitionOverwriteControl();
         }
         this.metadataCache = new MetadataCache(this);
+        return this;
+    }
+
+    public void load() {
+        prepare();
+
+        if (loaded) {
+            return;
+        }
+        loaded = true;
 
         // Convert tables to WAL/non-WAL, if necessary.
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);

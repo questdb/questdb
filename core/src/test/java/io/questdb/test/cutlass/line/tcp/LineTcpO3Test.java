@@ -114,7 +114,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
         configuration = serverConf.getCairoConfiguration();
         lineConfiguration = serverConf.getLineTcpReceiverConfiguration();
         sharedWorkerPoolConfiguration = serverConf.getSharedWorkerPoolNetworkConfiguration();
-        engine = new CairoEngine(configuration);
+        engine = new CairoEngine(configuration).prepare();
         serverConf.init(engine, freeOnExit);
         messageBus = engine.getMessageBus();
         LOG.info().$("setup engine completed").$();

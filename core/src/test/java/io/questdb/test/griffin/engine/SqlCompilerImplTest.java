@@ -5052,7 +5052,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     fiddler.run(this);
                     return super.getReader(tableToken, metadataVersion);
                 }
-            }) {
+            }.prepare()) {
                 try (
                         SqlCompiler compiler = engine.getSqlCompiler();
                         SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
@@ -7471,7 +7471,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 fiddler.run(this);
                 return super.getReader(tableToken, metadataVersion);
             }
-        }) {
+        }.prepare()) {
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)

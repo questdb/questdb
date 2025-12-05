@@ -80,7 +80,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                 public boolean getAllowTableRegistrySharedWrite() {
                     return false;
                 }
-            })) {
+            }).prepare()) {
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot lock table name registry file");
@@ -92,7 +92,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
     public void testRoEngineCannotCreateTables() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            try (CairoEngine roEngine = new CairoEngine(roConfig)) {
+            try (CairoEngine roEngine = new CairoEngine(roConfig).prepare()) {
 
                 try {
                     createTable(tableName, roEngine);
@@ -108,7 +108,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
     public void testRoEngineCannotDropTables() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            try (CairoEngine roEngine = new CairoEngine(roConfig)) {
+            try (CairoEngine roEngine = new CairoEngine(roConfig).prepare()) {
                 TableToken token = createTable(tableName, engine);
 
                 roEngine.reloadTableNames();
@@ -129,7 +129,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
     public void testRoEngineCannotRenameTables() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            try (CairoEngine roEngine = new CairoEngine(roConfig)) {
+            try (CairoEngine roEngine = new CairoEngine(roConfig).prepare()) {
                 createTable(tableName, engine);
 
                 roEngine.reloadTableNames();
@@ -154,7 +154,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
     public void testTableNameLoad() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            try (CairoEngine roEngine = new CairoEngine(roConfig)) {
+            try (CairoEngine roEngine = new CairoEngine(roConfig).prepare()) {
                 createTable(tableName, engine);
                 roEngine.reloadTableNames();
                 Assert.assertEquals(
@@ -169,7 +169,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
     public void testTableNameTimeoutLoad() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            try (CairoEngine roEngine = new CairoEngine(roConfig)) {
+            try (CairoEngine roEngine = new CairoEngine(roConfig).prepare()) {
                 createTable(tableName, engine);
 
                 try {

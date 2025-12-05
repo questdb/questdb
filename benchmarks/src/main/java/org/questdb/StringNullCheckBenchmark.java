@@ -93,7 +93,7 @@ public class StringNullCheckBenchmark {
 
     @Setup(Level.Trial)
     public void globalSetup() throws Exception {
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             SqlExecutionContext sqlExecutionContext =
                     new SqlExecutionContextImpl(engine, 8)
                             .with(
@@ -142,7 +142,7 @@ public class StringNullCheckBenchmark {
     @Setup(Level.Iteration)
     public void setup(Blackhole blackHole) throws Exception {
         this.blackHole = blackHole;
-        engine = new CairoEngine(configuration);
+        engine = new CairoEngine(configuration).prepare();
         ctx = new SqlExecutionContextImpl(engine, 1);
         compiler = new SqlCompilerImpl(engine);
 

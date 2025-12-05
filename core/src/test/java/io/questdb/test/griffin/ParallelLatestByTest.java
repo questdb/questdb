@@ -154,7 +154,7 @@ public class ParallelLatestByTest extends AbstractTest {
     ) throws Exception {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount();
         try (
-                final CairoEngine engine = new CairoEngine(configuration);
+                final CairoEngine engine = new CairoEngine(configuration).prepare();
                 final SqlCompiler compiler = engine.getSqlCompiler()
         ) {
             try (final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)

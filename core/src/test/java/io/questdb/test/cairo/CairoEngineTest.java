@@ -101,7 +101,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
             MyListener listener = new MyListener();
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 TableToken x = createX(engine);
 
                 engine.setPoolListener(listener);
@@ -160,7 +160,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 try {
                     //noinspection resource
-                    new CairoEngine(configuration);
+                    new CairoEngine(configuration).prepare();
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
@@ -218,7 +218,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                             // Make it big to prevent second run even on slow machines
                             return Micros.DAY_MICROS;
                         }
-                    })
+                    }).prepare()
             ) {
                 TableToken x = createX(engine);
 
@@ -308,7 +308,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testNewTableRename() throws Exception {
         assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 createX(engine);
                 try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     TableToken y = engine.rename(securityContext, path, mem, "x", otherPath, "y");
@@ -324,7 +324,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
             spinLockTimeout = 1;
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 TableToken x = createX(engine);
                 assertReader(engine, x);
                 assertWriter(engine, x);
@@ -348,7 +348,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveNewTable() {
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             TableToken x = createX(engine);
             engine.dropTableOrMatView(path, x);
             Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getTableStatus(path, x));
@@ -358,7 +358,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testRemoveNonExisting() throws Exception {
         assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 createY(engine);
                 try {
                     engine.dropTableOrMatView(path, engine.verifyTableName("x"));
@@ -373,7 +373,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testRemoveWhenReaderBusy() throws Exception {
         assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 TableToken x = createX(engine);
                 try (TableReader reader = engine.getReader(x)) {
                     Assert.assertNotNull(reader);
@@ -390,7 +390,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testRemoveWhenWriterBusy() throws Exception {
         assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 TableToken x = createX(engine);
                 try (TableWriter writer = getWriter(engine, x.getTableName())) {
                     Assert.assertNotNull(writer);
@@ -407,7 +407,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testRenameExisting() throws Exception {
         assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 TableToken x = createX(engine);
                 assertWriter(engine, x);
                 assertReader(engine, x);
@@ -431,7 +431,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             TableToken x = createX(engine);
             try (TableWriter ignored1 = newOffPoolWriter(configuration, "x")) {
 
-                try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                     try {
                         getWriter(x);
                         Assert.fail();
@@ -469,7 +469,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             AbstractCairoTest.ff = ff;
 
             try (
-                    CairoEngine engine = new CairoEngine(configuration);
+                    CairoEngine engine = new CairoEngine(configuration).prepare();
                     MemoryMARW mem = Vm.getCMARWInstance()
             ) {
                 TableToken x = createX(engine);
@@ -502,7 +502,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             AbstractCairoTest.create(model);
 
             try (
-                    CairoEngine engine = new CairoEngine(configuration);
+                    CairoEngine engine = new CairoEngine(configuration).prepare();
                     MemoryMARW mem = Vm.getCMARWInstance()
             ) {
                 engine.rename(securityContext, path, mem, "x", otherPath, "y");
@@ -517,7 +517,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     public void testRenameToExistingTarget() throws Exception {
         assertMemoryLeak(() -> {
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 TableToken x = createX(engine);
                 TableToken y = createY(engine);
 

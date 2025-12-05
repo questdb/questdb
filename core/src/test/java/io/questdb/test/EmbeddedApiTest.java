@@ -60,7 +60,7 @@ public class EmbeddedApiTest {
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(temp.getRoot().getAbsolutePath());
 
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 // Create table upfront, so that reader sees it
                 try (final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
                     engine.execute("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
@@ -92,7 +92,7 @@ public class EmbeddedApiTest {
 
             Rnd rnd = new Rnd();
             try (
-                    final CairoEngine engine = new CairoEngine(configuration)
+                    final CairoEngine engine = new CairoEngine(configuration).prepare()
             ) {
                 WorkerPoolUtils.setupQueryJobs(workerPool, engine);
                 workerPool.start(log);
@@ -140,7 +140,7 @@ public class EmbeddedApiTest {
         TestUtils.assertMemoryLeak(() -> {
             // write part
             try (
-                    final CairoEngine engine = new CairoEngine(configuration);
+                    final CairoEngine engine = new CairoEngine(configuration).prepare();
                     final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                     final SqlCompiler compiler = engine.getSqlCompiler()
             ) {

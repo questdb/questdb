@@ -2245,7 +2245,7 @@ public class AggregateTest extends AbstractCairoTest {
     ) throws Exception {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount() + 1;
         try (
-                final CairoEngine engine = new CairoEngine(configuration);
+                final CairoEngine engine = new CairoEngine(configuration).prepare();
                 final SqlCompiler compiler = engine.getSqlCompiler();
                 final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)
         ) {

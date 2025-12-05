@@ -70,7 +70,7 @@ public class TableReaderReloadBenchmark {
     private static TableWriter writer;
 
     public static void main(String[] args) throws RunnerException {
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             cairoEngine = engine;
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(

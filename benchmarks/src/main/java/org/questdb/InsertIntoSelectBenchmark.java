@@ -97,7 +97,7 @@ public class InsertIntoSelectBenchmark {
     }
 
     private void executeDdl(String ddl, CairoConfiguration configuration) {
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
                             configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),

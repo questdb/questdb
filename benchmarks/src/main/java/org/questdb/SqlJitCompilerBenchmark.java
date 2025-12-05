@@ -63,7 +63,7 @@ public class SqlJitCompilerBenchmark {
     private RecordCursorFactory factory;
 
     public static void main(String[] args) throws RunnerException {
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
                             configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
@@ -97,7 +97,7 @@ public class SqlJitCompilerBenchmark {
 
     @Setup(Level.Iteration)
     public void setup() throws Exception {
-        engine = new CairoEngine(configuration);
+        engine = new CairoEngine(configuration).prepare();
         ctx = new SqlExecutionContextImpl(engine, 1);
         compiler = new SqlCompilerImpl(engine);
 

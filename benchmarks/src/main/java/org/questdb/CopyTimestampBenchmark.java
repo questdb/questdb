@@ -56,7 +56,7 @@ public class CopyTimestampBenchmark {
     }
 
     private static void execute(String ddl) throws SqlException {
-        try (CairoEngine engine = new CairoEngine(CopyTimestampBenchmark.configuration)) {
+        try (CairoEngine engine = new CairoEngine(CopyTimestampBenchmark.configuration).prepare()) {
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
                             CopyTimestampBenchmark.configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),

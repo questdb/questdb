@@ -74,7 +74,7 @@ public class TableWriterBenchmark {
     private long ts;
 
     public static void main(String[] args) throws RunnerException {
-        cairoEngine = new CairoEngine(configuration);
+        cairoEngine = new CairoEngine(configuration).prepare();
 
         Options opt = new OptionsBuilder()
                 .include(TableWriterBenchmark.class.getSimpleName())
@@ -213,7 +213,7 @@ public class TableWriterBenchmark {
     }
 
     private void executeDdl(String ddl, CairoConfiguration configuration) {
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
                             configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),

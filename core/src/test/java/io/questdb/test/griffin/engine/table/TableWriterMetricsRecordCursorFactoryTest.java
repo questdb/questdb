@@ -67,7 +67,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest
         Metrics.ENABLED.disable();
         assertMemoryLeak(() -> {
             try (
-                    CairoEngine localEngine = new CairoEngine(configuration);
+                    CairoEngine localEngine = new CairoEngine(configuration).prepare();
                     SqlCompiler localCompiler = localEngine.getSqlCompiler();
                     SqlExecutionContext localSqlExecutionContext = TestUtils.createSqlExecutionCtx(localEngine)
             ) {

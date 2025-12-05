@@ -117,7 +117,7 @@ public class SecurityTest extends AbstractCairoTest {
                 return false;
             }
         };
-        memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration);
+        memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration).prepare();
         SqlExecutionCircuitBreaker dummyCircuitBreaker = new SqlExecutionCircuitBreaker() {
             private long deadline;
 

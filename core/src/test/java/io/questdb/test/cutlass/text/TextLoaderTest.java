@@ -1116,7 +1116,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             };
 
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration).prepare();
                     TextLoader loader = new TextLoader(engine)
             ) {
                 configureLoaderDefaults(loader, (byte) ',');
@@ -1404,7 +1404,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                 return textConfiguration;
             }
         };
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             assertNoLeak(
                     engine,
                     textLoader -> {
@@ -1519,7 +1519,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                 return textConfiguration;
             }
         };
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             assertNoLeak(
                     engine,
                     textLoader -> {
@@ -1590,7 +1590,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                 return textConfiguration;
             }
         };
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             assertNoLeak(
                     engine,
                     textLoader -> {
@@ -1651,7 +1651,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                 return textConfiguration;
             }
         };
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             assertNoLeak(
                     engine,
                     textLoader -> {
@@ -1716,7 +1716,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                 return textConfiguration;
             }
         };
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             assertNoLeak(
                     engine,
                     textLoader -> {
@@ -1819,7 +1819,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                 }
             };
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 try (TextLoader loader = new TextLoader(engine)) {
                     configureLoaderDefaults(loader, (byte) ',');
                     playText(
@@ -2490,7 +2490,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             }
         };
 
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             assertNoLeak(
                     engine,
                     textLoader -> {
@@ -3837,7 +3837,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             }
         };
         try (
-                CairoEngine engine = new CairoEngine(configuration);
+                CairoEngine engine = new CairoEngine(configuration).prepare();
                 SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
         ) {
             engine.execute("create table test(StrSym symbol, ts timestamp) " + designatedTimestamp, sqlExecutionContext);
@@ -4024,7 +4024,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                 };
             }
         };
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
             assertNoLeak(
                     engine,
                     textLoader -> {

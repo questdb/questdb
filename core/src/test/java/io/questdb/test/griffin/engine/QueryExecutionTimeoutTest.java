@@ -705,7 +705,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
     ) throws Exception {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount() + 1;
         try (
-                final CairoEngine engine = new CairoEngine(configuration);
+                final CairoEngine engine = new CairoEngine(configuration).prepare();
                 final SqlExecutionContextImpl sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)
         ) {
             sqlExecutionContext.with(circuitBreaker);

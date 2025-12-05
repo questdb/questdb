@@ -200,7 +200,7 @@ public class HttpQueryTestBuilder {
             };
         }
         try (
-                CairoEngine engine = new CairoEngine(cairoConfiguration);
+                CairoEngine engine = new CairoEngine(cairoConfiguration).prepare();
                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
         ) {

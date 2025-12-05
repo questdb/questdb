@@ -1074,7 +1074,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             final CairoConfiguration configuration = createMmapFailingConfiguration(10);
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
@@ -9023,7 +9023,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = createMmapFailingConfiguration(5);
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 0)) {
                         compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", ctx);
@@ -9054,7 +9054,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = createMmapFailingConfiguration(10);
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration).prepare()) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try {
                         try (
