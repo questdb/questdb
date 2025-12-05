@@ -128,7 +128,6 @@ import org.junit.rules.Timeout;
 import org.junit.runner.Description;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -2276,6 +2275,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         FACTORY_TAGS[MemoryTag.NATIVE_OFFLOAD] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_TABLE_READER] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_TXN_SCOREBOARD] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_TABLE_WRITER] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_IMPORT] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_PARALLEL_IMPORT] = false;

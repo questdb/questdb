@@ -99,7 +99,8 @@ public final class MemoryTag {
     public static final int NATIVE_ND_ARRAY_DBG2 = NATIVE_ND_ARRAY_DBG1 + 1;
     public static final int NATIVE_PATH_THREAD_LOCAL = NATIVE_ND_ARRAY_DBG2 + 1;
     public static final int NATIVE_PARQUET_EXPORTER = NATIVE_PATH_THREAD_LOCAL + 1;
-    public static final int SIZE = NATIVE_PARQUET_EXPORTER + 1;
+    public static final int NATIVE_TXN_SCOREBOARD = NATIVE_PARQUET_EXPORTER + 1;
+    public static final int SIZE = NATIVE_TXN_SCOREBOARD + 1;
 
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
@@ -139,6 +140,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(MMAP_PARQUET_PARTITION_DECODER, "MMAP_PARQUET_PARTITION_DECODER");
         tagNameMap.extendAndSet(NATIVE_PATH, "NATIVE_PATH");
         tagNameMap.extendAndSet(NATIVE_TABLE_READER, "NATIVE_TABLE_READER");
+        tagNameMap.extendAndSet(NATIVE_TXN_SCOREBOARD, "NATIVE_TXN_SCOREBOARD");
         tagNameMap.extendAndSet(NATIVE_TABLE_WRITER, "NATIVE_TABLE_WRITER");
         tagNameMap.extendAndSet(NATIVE_CB2, "NATIVE_CB2");
         tagNameMap.extendAndSet(NATIVE_CB3, "NATIVE_CB3");

@@ -287,11 +287,6 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFreeNullAddressAsIndex() {
-        TableUtils.freeTransitionIndex(0);
-    }
-
-    @Test
     public void testLoadMetadataFrom() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.HOUR, timestampType);

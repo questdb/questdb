@@ -152,7 +152,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MatViewGraph matViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
-    private final MetadataCache metadataCache;
+    private MetadataCache metadataCache;
     private final Metrics metrics;
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
     private final QueryRegistry queryRegistry;
@@ -160,12 +160,10 @@ public class CairoEngine implements Closeable, WriterSource {
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
-    private final SettingsStore settingsStore;
-    private final SqlCompilerPool sqlCompilerPool;
+    private SqlCompilerPool sqlCompilerPool;
     private final TableFlagResolver tableFlagResolver;
     private final IDGenerator tableIdGenerator;
     private final TableMetadataPool tableMetadataPool;
-    private final TableNameRegistry tableNameRegistry;
     private final TableSequencerAPI tableSequencerAPI;
     private final ObjList<Telemetry<? extends AbstractTelemetryTask>> telemetries;
     private final Telemetry<TelemetryTask> telemetry;
@@ -194,10 +192,15 @@ public class CairoEngine implements Closeable, WriterSource {
     }; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private FrameFactory frameFactory;
+    private boolean loaded;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
+    private SettingsStore settingsStore;
+    private TableNameRegistry tableNameRegistry;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
+    // Initialization is two-part.
+    // Construct, then once ready, call `.load()`.
     public CairoEngine(CairoConfiguration configuration) {
         try {
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
@@ -227,33 +230,6 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewGraph = new MatViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
-
-            // IMPORTANT: Do not reorder statements!
-            // The backup recovery process needs the `dataID` (since it will set it),
-            // but it's important that's not initialized yet.
-            // The `recoverBackup()` logic also needs to run before any table registry loading.
-            restoreBackup();
-
-            initDataID();
-
-            settingsStore = new SettingsStore(configuration);
-            settingsStore.init();
-
-            tableIdGenerator.open();
-            checkpointRecover();
-
-            // Migrate database files.
-            EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
-            tableNameRegistry = configuration.isReadOnlyInstance()
-                    ? new TableNameRegistryRO(this, tableFlagResolver)
-                    : new TableNameRegistryRW(this, tableFlagResolver);
-            tableNameRegistry.reload();
-
-            this.sqlCompilerPool = new SqlCompilerPool(this);
-            if (configuration.isPartitionO3OverwriteControlEnabled()) {
-                enablePartitionOverwriteControl();
-            }
-            this.metadataCache = new MetadataCache(this);
         } catch (Throwable th) {
             close();
             throw th;
@@ -987,7 +963,9 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void getTableTokens(ObjHashSet<TableToken> bucket, boolean includeDropped) {
-        tableNameRegistry.getTableTokens(bucket, includeDropped);
+        if (tableNameRegistry != null) {
+            tableNameRegistry.getTableTokens(bucket, includeDropped);
+        }
     }
 
     @Override
@@ -1105,6 +1083,32 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void load() {
+        if (loaded) {
+            return;
+        }
+        loaded = true;
+
+        initDataID();
+
+        settingsStore = new SettingsStore(configuration);
+        settingsStore.init();
+
+        tableIdGenerator.open();
+        checkpointRecover();
+
+        // Migrate database files.
+        EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+        tableNameRegistry = configuration.isReadOnlyInstance()
+                ? new TableNameRegistryRO(this, tableFlagResolver)
+                : new TableNameRegistryRW(this, tableFlagResolver);
+        tableNameRegistry.reload();
+
+        this.sqlCompilerPool = new SqlCompilerPool(this);
+        if (configuration.isPartitionO3OverwriteControlEnabled()) {
+            enablePartitionOverwriteControl();
+        }
+        this.metadataCache = new MetadataCache(this);
+
         // Convert tables to WAL/non-WAL, if necessary.
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
         tableNameRegistry.reload(convertedTables);
@@ -1889,9 +1893,5 @@ public class CairoEngine implements Closeable, WriterSource {
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {
         return new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString());
-    }
-
-    protected void restoreBackup() {
-        // Hook for backup functionality. See enterprise subclass.
     }
 }

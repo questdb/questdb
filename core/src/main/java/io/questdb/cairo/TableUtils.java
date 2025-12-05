@@ -694,13 +694,6 @@ public final class TableUtils {
         return exists(ff, volumePath.concat(name));
     }
 
-    public static void freeTransitionIndex(long address) {
-        if (address == 0) {
-            return;
-        }
-        Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_TABLE_READER);
-    }
-
     public static int getColumnCount(Utf8Sequence metaPath, MemoryMR metaMem, long offset) {
         final int columnCount = metaMem.getInt(offset);
         if (columnCount < 0) {

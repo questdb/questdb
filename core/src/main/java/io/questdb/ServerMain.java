@@ -49,8 +49,8 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.Uuid;
+import io.questdb.std.datetime.Clock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -87,7 +87,6 @@ public class ServerMain implements Closeable {
             final ServerConfiguration config = bootstrap.getConfiguration();
             config.init(engine, freeOnExit);
             freeOnExit(config.getFactoryProvider());
-            engine.load();
         } catch (Throwable th) {
             Misc.free(freeOnExit);
             throw th;
@@ -243,6 +242,7 @@ public class ServerMain implements Closeable {
 
     public synchronized void start(boolean addShutdownHook) {
         if (!closed.get() && running.compareAndSet(false, true)) {
+            engine.load();
             initialize(bootstrap.getLog());
 
             if (addShutdownHook) {

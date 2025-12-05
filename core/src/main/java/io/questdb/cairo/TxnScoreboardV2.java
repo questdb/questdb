@@ -29,12 +29,18 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 /**
  * In-memory transaction scoreboard. Each table reader mutates its own
  * slot based on the assigned id. Cross-reader operations require all slots
  * to be checked. On the other hand, single-reader operations are inexpensive.
  */
 public class TxnScoreboardV2 implements TxnScoreboard {
+    private static final int MEMORY_TAG = MemoryTag.NATIVE_TXN_SCOREBOARD;
+    private static final AtomicLong OBJ_ID_CTR = new AtomicLong();
+    private final long objId = OBJ_ID_CTR.getAndIncrement();
+
     private static final long UNLOCKED = -1;
     private static final int VIRTUAL_ID_COUNT = 1;
     private static final int RESERVED_ID_COUNT = VIRTUAL_ID_COUNT + 3;
@@ -60,7 +66,18 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         long bitMapSize = (entryScanCount + Long.SIZE - 1) & -Long.SIZE;
         bitmapCount = (int) (bitMapSize / Long.SIZE);
         memSize = (entryCount + RESERVED_ID_COUNT + bitmapCount) * Long.BYTES;
-        mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_TABLE_READER);
+        mem = Unsafe.malloc(memSize, MEMORY_TAG);
+
+        final long tid = Thread.currentThread().getId();
+        System.err.printf("TxnScoreboardV2.<init> :: (1) [TID: %d, OBJID: %d] %d bytes allocated ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 0x%x%n", tid, objId, memSize, mem);
+        final var st = Thread.currentThread().getStackTrace();
+        for (int i = 2; i < st.length; i++) {
+            final var t = st[i];
+            final int n = i - 1;
+            final int tot = st.length - 2;
+            System.err.printf("TxnScoreboardV2.<init> :: (2) [TID: %d, OBJID: %d] [%d/%d] %s.%s:%d%n",
+                    tid, objId, n, tot, t.getClassName(), t.getMethodName(), t.getLineNumber());
+        }
 
         activeReaderCountMem = mem;
         maxMem = mem + Long.BYTES;
@@ -98,7 +115,18 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     @Override
     public void close() {
-        mem = Unsafe.free(mem, memSize, MemoryTag.NATIVE_TABLE_READER);
+        final long tid = Thread.currentThread().getId();
+        System.err.printf("TxnScoreboardV2.close :: (1) [TID: %d, OBJID: %d] %d bytes freed      ------------------------------------------------------------ 0x%x%n", tid, objId, memSize, mem);
+        final var st = Thread.currentThread().getStackTrace();
+        for (int i = 2; i < st.length; i++) {
+            final var t = st[i];
+            final int n = i - 1;
+            final int tot = st.length - 2;
+            System.err.printf("TxnScoreboardV2.close :: (2) [TID: %d, OBJID: %d] [%d/%d] %s.%s:%d%n",
+                    tid, objId, n, tot, t.getClassName(), t.getMethodName(), t.getLineNumber());
+        }
+
+        mem = Unsafe.free(mem, memSize, MEMORY_TAG);
         entriesMem = 0;
         maxMem = 0;
         activeReaderCountMem = 0;
