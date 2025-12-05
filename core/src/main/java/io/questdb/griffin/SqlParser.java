@@ -60,11 +60,13 @@ import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -2226,6 +2228,48 @@ public class SqlParser {
         return parseSelect(lexer, sqlParserCallback, null);
     }
 
+    private ExecutionModel parseDescribe(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        // Collect all tokens after DESCRIBE into a string
+        final CharSequence content = lexer.getContent();
+        final int startPos = lexer.getPosition();
+
+        // Find the end of the statement (semicolon or end of input)
+        int endPos = startPos;
+        int parenDepth = 0;
+        while (endPos < content.length()) {
+            char c = content.charAt(endPos);
+            if (c == '(') {
+                parenDepth++;
+            } else if (c == ')') {
+                parenDepth--;
+            } else if (c == ';' && parenDepth == 0) {
+                break;
+            }
+            endPos++;
+        }
+
+        // Extract the expression after DESCRIBE
+        CharSequence expr = content.subSequence(startPos, endPos).toString().trim();
+
+        // Build new SQL: SELECT * FROM describe(<expr>)
+        final StringSink rewrittenSql = Misc.getThreadLocalSink();
+        rewrittenSql.put("SELECT * FROM describe(");
+        rewrittenSql.put(expr);
+        rewrittenSql.put(')');
+
+        // Re-lex and parse as SELECT
+        lexer.of(rewrittenSql);
+        // Consume the SELECT token before calling parseSelect
+        CharSequence tok = tok(lexer, "'select'");
+        if (!isSelectKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'select' expected");
+        }
+        return parseSelect(lexer, sqlParserCallback, null);
+    }
+
     private int parseExplainOptions(GenericLexer lexer, CharSequence prevTok) throws SqlException {
         int parenthesisPos = lexer.getPosition();
         CharSequence explainTok = GenericLexer.immutableOf(prevTok);
@@ -4326,8 +4370,7 @@ public class SqlParser {
         }
 
         if (isDescribeKeyword(tok)) {
-            ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback);
-
+            return parseDescribe(lexer, sqlParserCallback);
         }
 
         if (isSelectKeyword(tok)) {

@@ -87,7 +87,7 @@ public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex == 1) {
+            if (columnIndex == 2) {
                 return SqlUtil.ColumnTypeSymbolTable.INSTANCE;
             } else {
                 throw new UnsupportedOperationException();
@@ -191,7 +191,5 @@ public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
         metadata.add(new TableColumnMetadata("column_name", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("data_type", ColumnType.SYMBOL));
         METADATA = metadata;
-
+    }
 }
-
-

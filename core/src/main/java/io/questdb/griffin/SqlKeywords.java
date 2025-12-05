@@ -491,7 +491,7 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'r'
                 && (tok.charAt(5) | 32) == 'i'
                 && (tok.charAt(6) | 32) == 'b'
-                && (tok.charAt(6) | 32) == 'e';
+                && (tok.charAt(7) | 32) == 'e';
     }
 
     public static boolean isDetachKeyword(CharSequence tok) {

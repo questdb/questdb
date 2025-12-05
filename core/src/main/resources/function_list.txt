@@ -897,3 +897,4 @@ io.questdb.griffin.engine.functions.math.IPv4VarcharNetmaskFunctionFactory
 # Only add the new functions here when there are overloads with the same name and different parameter types
 # and the compilation chooses an unexpected overload
 
+io.questdb.griffin.engine.functions.table.DescribeFunctionFactory
