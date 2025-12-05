@@ -45,10 +45,10 @@ import io.questdb.std.Vect;
  */
 public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
 
-    private static final long headerSize = Long.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
     private static final long normalizingIndexOffsetPosition = Long.BYTES;
-    private static final long maxValuePosition = Long.BYTES + Integer.BYTES;
-    private static final long minNonZeroValuePosition = Long.BYTES + Integer.BYTES + Long.BYTES;
+    private static final long maxValuePosition = normalizingIndexOffsetPosition + Integer.BYTES;
+    private static final long minNonZeroValuePosition = maxValuePosition + Long.BYTES;
+    private static final long headerSize = minNonZeroValuePosition + Long.BYTES;
 
     private GroupByAllocator allocator;
     private long ptr;
