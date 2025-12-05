@@ -3076,38 +3076,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int addedSymbols = 0;
             for (long txn = seqTxn, n = seqTxn + skipTxnCount; txn < n; txn++) {
 
-                SymbolMapDiffCursor symbolMapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(txn);
-                if (symbolMapDiffCursor != null) {
-                    SymbolMapDiff symbolMapDiff;
+                long segLo = walTxnDetails.getSegmentRowLo(seqTxn);
+                long segHi = walTxnDetails.getSegmentRowHi(seqTxn);
 
-                    while ((symbolMapDiff = symbolMapDiffCursor.nextSymbolMapDiff()) != null) {
-                        int columnIndex = symbolMapDiff.getColumnIndex();
-                        int columnType = metadata.getColumnType(columnIndex);
-                        if (columnType == -ColumnType.SYMBOL) {
-                            // Scroll the cursor, don't apply, symbol is deleted
-                            symbolMapDiff.drain();
-                            continue;
-                        }
+                // Some very rare commits can be empty, where the rows are cancelled
+                // even with symbol changes, skip them
+                if (segHi > segLo) {
+                    SymbolMapDiffCursor symbolMapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(txn);
+                    if (symbolMapDiffCursor != null) {
+                        SymbolMapDiff symbolMapDiff;
 
-                        if (!ColumnType.isSymbol(columnType)) {
-                            throw CairoException.critical(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
-                                    .put(", seqTxn=").put(txn).put(']')
-                                    .put(", wal=").put(walTxnDetails.getWalId(seqTxn))
-                                    .put(", segment=").put(walTxnDetails.getSegmentId(seqTxn))
-                                    .put(']');
-                        }
+                        while ((symbolMapDiff = symbolMapDiffCursor.nextSymbolMapDiff()) != null) {
+                            int columnIndex = symbolMapDiff.getColumnIndex();
+                            int columnType = metadata.getColumnType(columnIndex);
+                            if (columnType == -ColumnType.SYMBOL) {
+                                // Scroll the cursor, don't apply, symbol is deleted
+                                symbolMapDiff.drain();
+                                continue;
+                            }
 
-                        final MapWriter mapWriter = symbolMapWriters.get(columnIndex);
+                            if (!ColumnType.isSymbol(columnType)) {
+                                throw CairoException.critical(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
+                                        .put(", seqTxn=").put(txn).put(']')
+                                        .put(", wal=").put(walTxnDetails.getWalId(seqTxn))
+                                        .put(", segment=").put(walTxnDetails.getSegmentId(seqTxn))
+                                        .put(']');
+                            }
 
-                        if (symbolMapDiff.hasNullValue()) {
-                            mapWriter.updateNullFlag(true);
-                        }
+                            final MapWriter mapWriter = symbolMapWriters.get(columnIndex);
+                            if (symbolMapDiff.hasNullValue()) {
+                                mapWriter.updateNullFlag(true);
+                            }
 
-                        SymbolMapDiffEntry entry;
-                        while ((entry = symbolMapDiff.nextEntry()) != null) {
-                            final CharSequence symbolValue = entry.getSymbol();
-                            mapWriter.put(symbolValue);
-                            addedSymbols++;
+                            SymbolMapDiffEntry entry;
+                            while ((entry = symbolMapDiff.nextEntry()) != null) {
+                                final CharSequence symbolValue = entry.getSymbol();
+                                mapWriter.put(symbolValue);
+                                addedSymbols++;
+                            }
                         }
                     }
                 }
