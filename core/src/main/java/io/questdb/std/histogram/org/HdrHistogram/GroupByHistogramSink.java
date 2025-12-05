@@ -53,8 +53,6 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
     private GroupByAllocator allocator;
     private long ptr;
     private long allocatedSize;
-    private int normalizingIndexOffset;
-    private long totalCount;
 
     public GroupByHistogramSink(int numberOfSignificantValueDigits) {
         this(1, 2, numberOfSignificantValueDigits);
@@ -81,19 +79,7 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
 
     public GroupByHistogramSink of(long ptr) {
         this.ptr = ptr;
-        if (ptr != 0) {
-            this.allocatedSize = headerSize + (countsArrayLength * 8L);
-            this.totalCount = Unsafe.getUnsafe().getLong(ptr);
-            this.normalizingIndexOffset = Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition);
-            this.maxValue = Unsafe.getUnsafe().getLong(ptr + maxValuePosition);
-            this.minNonZeroValue = Unsafe.getUnsafe().getLong(ptr + minNonZeroValuePosition);
-        } else {
-            this.allocatedSize = 0;
-            this.totalCount = 0;
-            this.normalizingIndexOffset = 0;
-            this.maxValue = 0;
-            this.minNonZeroValue = Long.MAX_VALUE;
-        }
+        this.allocatedSize = (ptr != 0) ? headerSize + (countsArrayLength * 8L) : 0;
         return this;
     }
 
@@ -101,10 +87,6 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
     public void clear() {
         ptr = 0;
         allocatedSize = 0;
-        totalCount = 0;
-        normalizingIndexOffset = 0;
-        maxValue = 0;
-        minNonZeroValue = Long.MAX_VALUE;
     }
 
     @Override
@@ -128,12 +110,13 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         if (ptr == 0) {
             return 0;
         }
+        int normalizingIndexOffset = Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition);
         return Unsafe.getUnsafe().getLong(ptr + headerSize + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3));
     }
 
     @Override
     public long getTotalCount() {
-        return totalCount;
+        return (ptr != 0) ? Unsafe.getUnsafe().getLong(ptr) : 0;
     }
 
     @Override
@@ -168,15 +151,16 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
     void addToCountAtIndex(int index, long value) {
         checkBounds(index);
         ensureCapacity();
+        int normalizingIndexOffset = Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition);
         long addr = ptr + headerSize + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3);
         Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + value);
     }
 
     @Override
     void addToTotalCount(long value) {
-        totalCount += value;
         if (ptr != 0) {
-            Unsafe.getUnsafe().putLong(ptr, totalCount);
+            long totalCount = Unsafe.getUnsafe().getLong(ptr);
+            Unsafe.getUnsafe().putLong(ptr, totalCount + value);
         }
     }
 
@@ -188,9 +172,6 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
             Unsafe.getUnsafe().putLong(ptr + maxValuePosition, 0);
             Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, Long.MAX_VALUE);
         }
-        totalCount = 0;
-        maxValue = 0;
-        minNonZeroValue = Long.MAX_VALUE;
     }
 
     @Override
@@ -203,28 +184,30 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
 
     @Override
     int getNormalizingIndexOffset() {
-        return normalizingIndexOffset;
+        return (ptr != 0) ? Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition) : 0;
     }
 
     @Override
     void incrementCountAtIndex(int index) {
         checkBounds(index);
         ensureCapacity();
+        int normalizingIndexOffset = Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition);
         long addr = ptr + headerSize + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3);
         Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
     }
 
     @Override
     void incrementTotalCount() {
-        totalCount++;
         if (ptr != 0) {
-            Unsafe.getUnsafe().putLong(ptr, totalCount);
+            long totalCount = Unsafe.getUnsafe().getLong(ptr);
+            Unsafe.getUnsafe().putLong(ptr, totalCount + 1);
         }
     }
 
     @Override
     void resize(long newHighestTrackableValue) {
-        int oldNormalizedZeroIndex = normalizeIndex(0, normalizingIndexOffset, countsArrayLength);
+        int oldNormalizingIndexOffset = (ptr != 0) ? Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition) : 0;
+        int oldNormalizedZeroIndex = normalizeIndex(0, oldNormalizingIndexOffset, countsArrayLength);
         int oldCountsArrayLength = countsArrayLength;
         boolean hadPreviousAllocation = (ptr != 0);
 
@@ -278,6 +261,7 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
     void setCountAtIndex(int index, long value) {
         checkBounds(index);
         ensureCapacity();
+        int normalizingIndexOffset = Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition);
         Unsafe.getUnsafe().putLong(ptr + headerSize + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3), value);
     }
 
@@ -290,7 +274,6 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
 
     @Override
     void setNormalizingIndexOffset(int offset) {
-        this.normalizingIndexOffset = offset;
         if (ptr != 0) {
             Unsafe.getUnsafe().putInt(ptr + normalizingIndexOffsetPosition, offset);
         }
@@ -298,7 +281,6 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
 
     @Override
     void setTotalCount(long totalCount) {
-        this.totalCount = totalCount;
         if (ptr != 0) {
             Unsafe.getUnsafe().putLong(ptr, totalCount);
         }
@@ -319,7 +301,6 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         if (value > currentMax) {
             long newMax = value | unitMagnitudeMask;
             Unsafe.getUnsafe().putLong(ptr + maxValuePosition, newMax);
-            maxValue = newMax;
         }
 
         long currentMin = Unsafe.getUnsafe().getLong(ptr + minNonZeroValuePosition);
@@ -329,7 +310,6 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
             }
             long newMin = value & ~unitMagnitudeMask;
             Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, newMin);
-            minNonZeroValue = newMin;
         }
     }
 
@@ -341,7 +321,6 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         long currentMax = Unsafe.getUnsafe().getLong(ptr + maxValuePosition);
         long newMax = Math.max(currentMax, value | unitMagnitudeMask);
         Unsafe.getUnsafe().putLong(ptr + maxValuePosition, newMax);
-        maxValue = newMax;
     }
 
     @Override
@@ -355,7 +334,6 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         long currentMin = Unsafe.getUnsafe().getLong(ptr + minNonZeroValuePosition);
         long newMin = Math.min(currentMin, value & ~unitMagnitudeMask);
         Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, newMin);
-        minNonZeroValue = newMin;
     }
 
     private void ensureCapacity() {
