@@ -35,6 +35,7 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -96,7 +97,10 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final int pricesTimestampIndex;
     private final int sequenceColumnIndex;
     // Shared (read-only) sequence data - materialized offset records
-    private final RecordArray sequenceRecordArray;
+    // Store metadata/sink to recreate RecordArray after clear() frees it
+    private final RecordMetadata sequenceMetadata;
+    private final RecordSink sequenceRecordSink;
+    private RecordArray sequenceRecordArray;  // Freed in clear(), recreated lazily
     private final LongList sequenceRecordOffsets = new LongList();
     private long firstSequenceTimeOffset;
     private Map ownerAsofJoinMap;
@@ -140,9 +144,13 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             this.pricesKeyCopier = pricesKeyCopier;
             this.pricesTimestampIndex = pricesTimestampIndex;
 
+            // Store metadata/sink for recreating sequence record array after clear()
+            this.sequenceMetadata = sequenceCursorFactory.getMetadata();
+            this.sequenceRecordSink = sequenceRecordSink;
+
             // Initialize shared sequence record array
             this.sequenceRecordArray = new RecordArray(
-                    sequenceCursorFactory.getMetadata(),
+                    sequenceMetadata,
                     sequenceRecordSink,
                     configuration.getSqlHashJoinValuePageSize(),
                     configuration.getSqlHashJoinValueMaxPages()
@@ -222,7 +230,12 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
     @Override
     public void clear() {
-        // Clear resources for potential reuse
+        // Free sequence record array - will be recreated in materializeSequenceCursor()
+        Misc.free(sequenceRecordArray);
+        sequenceRecordArray = null;
+        sequenceRecordOffsets.clear();
+
+        // Clear aggregation resources for potential reuse
         Misc.free(ownerMap);
         Misc.freeObjListAndKeepObjects(perWorkerMaps);
         Misc.clearObjList(ownerGroupByFunctions);
@@ -231,17 +244,12 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         }
         Misc.free(ownerAllocator);
         Misc.freeObjListAndKeepObjects(perWorkerAllocators);
-        // Clear per-slot ASOF join maps
+        // Free per-slot ASOF join maps (will be reopened lazily)
         if (ownerAsofJoinMap != null) {
-            ownerAsofJoinMap.clear();
+            Misc.free(ownerAsofJoinMap);
         }
-        for (int i = 0, n = perWorkerAsofJoinMaps.size(); i < n; i++) {
-            Map asofMap = perWorkerAsofJoinMaps.getQuick(i);
-            if (asofMap != null) {
-                asofMap.clear();
-            }
-        }
-        // Close per-slot prices cursors
+        Misc.freeObjListAndKeepObjects(perWorkerAsofJoinMaps);
+        // Close per-slot prices cursors (but NOT the factories - they're owned by the factory class)
         if (ownerPricesCursor != null) {
             ownerPricesCursor.close();
             ownerPricesCursor = null;
@@ -253,11 +261,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
                 perWorkerPricesCursors.setQuick(i, null);
             }
         }
-        // Release factories to free memory - cursor won't be reopened after close
-        for (int i = 0, n = pricesFactories.size(); i < n; i++) {
-            Misc.free(pricesFactories.getQuick(i));
-        }
-        pricesFactories.clear();
+        // Note: pricesFactories is shared with the factory class and will be freed in factory._close()
     }
 
     @Override
@@ -291,12 +295,19 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     /**
      * Get the ASOF join map for the given slot.
      * Each worker has its own map to avoid contention.
+     * Reopens the map if it was closed by clear().
      */
     public Map getAsofJoinMap(int slotId) {
+        Map map;
         if (slotId == -1) {
-            return ownerAsofJoinMap;
+            map = ownerAsofJoinMap;
+        } else {
+            map = perWorkerAsofJoinMaps.getQuick(slotId);
         }
-        return perWorkerAsofJoinMaps.getQuick(slotId);
+        if (map != null && !map.isOpen()) {
+            map.reopen();
+        }
+        return map;
     }
 
     public CairoConfiguration getConfiguration() {
@@ -319,12 +330,19 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
     /**
      * Get the aggregation map for the given slot.
+     * Reopens the map if it was closed by clear().
      */
     public Map getMap(int slotId) {
+        Map map;
         if (slotId == -1) {
-            return ownerMap;
+            map = ownerMap;
+        } else {
+            map = perWorkerMaps.getQuick(slotId);
         }
-        return perWorkerMaps.getQuick(slotId);
+        if (!map.isOpen()) {
+            map.reopen();
+        }
+        return map;
     }
 
     public RecordSink getMasterKeyCopier() {
@@ -426,7 +444,17 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
      * Must be called once before dispatching tasks.
      */
     public void materializeSequenceCursor(RecordCursor sequenceCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-        sequenceRecordArray.clear();
+        // Recreate sequence record array if it was freed by clear()
+        if (sequenceRecordArray == null) {
+            sequenceRecordArray = new RecordArray(
+                    sequenceMetadata,
+                    sequenceRecordSink,
+                    configuration.getSqlHashJoinValuePageSize(),
+                    configuration.getSqlHashJoinValueMaxPages()
+            );
+        } else {
+            sequenceRecordArray.clear();
+        }
         sequenceRecordOffsets.clear();
 
         Record sequenceRecord = sequenceCursor.getRecord();
