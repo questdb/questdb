@@ -108,6 +108,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             Misc.free(path);
             Misc.free(metadata);
             Misc.free(tableNameRegistryStore);
+            Misc.freeObjList(scoreboards);
         } finally {
             lock.unlock();
         }
