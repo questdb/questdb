@@ -565,8 +565,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return;
         }
 
-        if (throwable instanceof CairoException) {
-            CairoException cairoException = (CairoException) throwable;
+        if (throwable instanceof CairoException cairoException) {
             if (cairoException.isOutOfMemory()) {
                 if (txnTracker != null) {
                     txnTracker.getMemPressureControl().onOutOfMemory();

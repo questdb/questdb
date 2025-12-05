@@ -311,41 +311,48 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47\n", "select min(ts), max(ts), count(*) from rg");
+            assertSql("""
+                    min\tmax\tcount
+                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47
+                    """, "select min(ts), max(ts), count(*) from rg");
 
             Utf8StringSink sink = new Utf8StringSink();
 
             insertRowsWithRangeReplace(tableToken, sink, "2022-02-24T14:45", "2022-02-24T12:45", "2022-02-24T23", true);
             drainWalQueue();
 
-            assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t6\n", "select min(ts), max(ts), count(*) from rg");
+            assertSql("""
+                    min\tmax\tcount
+                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t6
+                    """, "select min(ts), max(ts), count(*) from rg");
 
-            assertSql("id\tts\ty\ts\tv\tm\n" +
-                            "1\t2022-02-24T12:30:00.000000Z\t0\t1\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\ta\n" +
-                            "100\t2022-02-24T14:45:00.000000Z\t1000\thello\tw\tw\n" +
-                            "44\t2022-02-24T23:15:00.000000Z\t22\t44\t\uDAB1\uDC25J\uD969\uDF86gǢ\uDA97\uDEDC\t\n" +
-                            "45\t2022-02-24T23:30:00.000000Z\t22\t45\tHEZqUhE\ta\n" +
-                            "46\t2022-02-24T23:45:00.000000Z\t23\t46\tL^bE);P\tc\n" +
-                            "47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb\n",
+            assertSql("""
+                            id\tts\ty\ts\tv\tm
+                            1\t2022-02-24T12:30:00.000000Z\t0\t1\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\ta
+                            100\t2022-02-24T14:45:00.000000Z\t1000\thello\tw\tw
+                            44\t2022-02-24T23:15:00.000000Z\t22\t44\t\uDAB1\uDC25J\uD969\uDF86gǢ\uDA97\uDEDC\t
+                            45\t2022-02-24T23:30:00.000000Z\t22\t45\tHEZqUhE\ta
+                            46\t2022-02-24T23:45:00.000000Z\t23\t46\tL^bE);P\tc
+                            47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb
+                            """,
                     "select * from rg"
             );
 
 
             // Check _txn file makes sense, min, max timestamps, row counts etc.
             Assert.assertEquals(
-                    "{txn: 2, attachedPartitions: [\n" +
-                            "{ts: '2022-02-24T00:00:00.000Z', rowCount: 5},\n" +
-                            "{ts: '2022-02-25T00:00:00.000Z', rowCount: 1}\n" +
-                            "], transientRowCount: 1, fixedRowCount: 5, " +
-                            "minTimestamp: '2022-02-24T12:30:00.000Z', " +
-                            "maxTimestamp: '2022-02-25T00:00:00.000Z', " +
-                            "dataVersion: 0, structureVersion: 0, " +
-                            "columnVersion: 0, truncateVersion: 0, seqTxn: 2, " +
-                            "symbolColumnCount: 1, lagRowCount: 0, " +
-                            "lagMinTimestamp: '294247-01-10T04:00:54.775Z', " +
-                            "lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}",
+                    """
+                            {txn: 2, attachedPartitions: [
+                            {ts: '2022-02-24T00:00:00.000Z', rowCount: 5},
+                            {ts: '2022-02-25T00:00:00.000Z', rowCount: 1}
+                            ], transientRowCount: 1, fixedRowCount: 5, \
+                            minTimestamp: '2022-02-24T12:30:00.000Z', \
+                            maxTimestamp: '2022-02-25T00:00:00.000Z', \
+                            dataVersion: 0, structureVersion: 0, \
+                            columnVersion: 0, truncateVersion: 0, seqTxn: 2, \
+                            symbolColumnCount: 1, lagRowCount: 0, \
+                            lagMinTimestamp: '294247-01-10T04:00:54.775Z', \
+                            lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}""",
                     readTxnToString(tableToken, true, true)
             );
         });
@@ -363,40 +370,47 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47\n", "select min(ts), max(ts), count(*) from rg");
+            assertSql("""
+                    min\tmax\tcount
+                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47
+                    """, "select min(ts), max(ts), count(*) from rg");
 
             Utf8StringSink sink = new Utf8StringSink();
 
             insertRowsWithRangeReplace(tableToken, sink, "2022-02-24T14:30", "2022-02-24", "2022-02-24T23", true);
             drainWalQueue();
 
-            assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T14:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t5\n", "select min(ts), max(ts), count(*) from rg");
+            assertSql("""
+                    min\tmax\tcount
+                    2022-02-24T14:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t5
+                    """, "select min(ts), max(ts), count(*) from rg");
 
-            assertSql("id\tts\ty\ts\tv\tm\n" +
-                            "100\t2022-02-24T14:30:00.000000Z\t1000\thello\tw\tw\n" +
-                            "44\t2022-02-24T23:15:00.000000Z\t22\t44\t\uDAB1\uDC25J\uD969\uDF86gǢ\uDA97\uDEDC\t\n" +
-                            "45\t2022-02-24T23:30:00.000000Z\t22\t45\tHEZqUhE\ta\n" +
-                            "46\t2022-02-24T23:45:00.000000Z\t23\t46\tL^bE);P\tc\n" +
-                            "47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb\n",
+            assertSql("""
+                            id\tts\ty\ts\tv\tm
+                            100\t2022-02-24T14:30:00.000000Z\t1000\thello\tw\tw
+                            44\t2022-02-24T23:15:00.000000Z\t22\t44\t\uDAB1\uDC25J\uD969\uDF86gǢ\uDA97\uDEDC\t
+                            45\t2022-02-24T23:30:00.000000Z\t22\t45\tHEZqUhE\ta
+                            46\t2022-02-24T23:45:00.000000Z\t23\t46\tL^bE);P\tc
+                            47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb
+                            """,
                     "select * from rg"
             );
 
 
             // Check _txn file makes sense, min, max timestamps, row counts etc.
             Assert.assertEquals(
-                    "{txn: 2, attachedPartitions: [\n" +
-                            "{ts: '2022-02-24T00:00:00.000Z', rowCount: 4},\n" +
-                            "{ts: '2022-02-25T00:00:00.000Z', rowCount: 1}\n" +
-                            "], transientRowCount: 1, fixedRowCount: 4, " +
-                            "minTimestamp: '2022-02-24T14:30:00.000Z', " +
-                            "maxTimestamp: '2022-02-25T00:00:00.000Z', " +
-                            "dataVersion: 0, structureVersion: 0, " +
-                            "columnVersion: 0, truncateVersion: 0, seqTxn: 2, " +
-                            "symbolColumnCount: 1, lagRowCount: 0, " +
-                            "lagMinTimestamp: '294247-01-10T04:00:54.775Z', " +
-                            "lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}",
+                    """
+                            {txn: 2, attachedPartitions: [
+                            {ts: '2022-02-24T00:00:00.000Z', rowCount: 4},
+                            {ts: '2022-02-25T00:00:00.000Z', rowCount: 1}
+                            ], transientRowCount: 1, fixedRowCount: 4, \
+                            minTimestamp: '2022-02-24T14:30:00.000Z', \
+                            maxTimestamp: '2022-02-25T00:00:00.000Z', \
+                            dataVersion: 0, structureVersion: 0, \
+                            columnVersion: 0, truncateVersion: 0, seqTxn: 2, \
+                            symbolColumnCount: 1, lagRowCount: 0, \
+                            lagMinTimestamp: '294247-01-10T04:00:54.775Z', \
+                            lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}""",
                     readTxnToString(tableToken, true, true)
             );
         });
@@ -414,37 +428,44 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47\n", "select min(ts), max(ts), count(*) from rg");
+            assertSql("""
+                    min\tmax\tcount
+                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t47
+                    """, "select min(ts), max(ts), count(*) from rg");
 
             Utf8StringSink sink = new Utf8StringSink();
 
             insertRowsWithRangeReplace(tableToken, sink, "2022-02-24T14:45", "2022-02-24T12:45", "2022-02-24T23:59:59.999999", true);
             drainWalQueue();
 
-            assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t3\n", "select min(ts), max(ts), count(*) from rg");
+            assertSql("""
+                    min\tmax\tcount
+                    2022-02-24T12:30:00.000000Z\t2022-02-25T00:00:00.000000Z\t3
+                    """, "select min(ts), max(ts), count(*) from rg");
 
-            assertSql("id\tts\ty\ts\tv\tm\n" +
-                            "1\t2022-02-24T12:30:00.000000Z\t0\t1\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\ta\n" +
-                            "100\t2022-02-24T14:45:00.000000Z\t1000\thello\tw\tw\n" +
-                            "47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb\n",
+            assertSql("""
+                            id\tts\ty\ts\tv\tm
+                            1\t2022-02-24T12:30:00.000000Z\t0\t1\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\ta
+                            100\t2022-02-24T14:45:00.000000Z\t1000\thello\tw\tw
+                            47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb
+                            """,
                     "select * from rg"
             );
 
             // Check _txn file makes sense, min, max timestamps, row counts etc.
             Assert.assertEquals(
-                    "{txn: 2, attachedPartitions: [\n" +
-                            "{ts: '2022-02-24T00:00:00.000Z', rowCount: 2},\n" +
-                            "{ts: '2022-02-25T00:00:00.000Z', rowCount: 1}\n" +
-                            "], transientRowCount: 1, fixedRowCount: 2, " +
-                            "minTimestamp: '2022-02-24T12:30:00.000Z', " +
-                            "maxTimestamp: '2022-02-25T00:00:00.000Z', " +
-                            "dataVersion: 0, structureVersion: 0, " +
-                            "columnVersion: 0, truncateVersion: 0, seqTxn: 2, " +
-                            "symbolColumnCount: 1, lagRowCount: 0, " +
-                            "lagMinTimestamp: '294247-01-10T04:00:54.775Z', " +
-                            "lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}",
+                    """
+                            {txn: 2, attachedPartitions: [
+                            {ts: '2022-02-24T00:00:00.000Z', rowCount: 2},
+                            {ts: '2022-02-25T00:00:00.000Z', rowCount: 1}
+                            ], transientRowCount: 1, fixedRowCount: 2, \
+                            minTimestamp: '2022-02-24T12:30:00.000Z', \
+                            maxTimestamp: '2022-02-25T00:00:00.000Z', \
+                            dataVersion: 0, structureVersion: 0, \
+                            columnVersion: 0, truncateVersion: 0, seqTxn: 2, \
+                            symbolColumnCount: 1, lagRowCount: 0, \
+                            lagMinTimestamp: '294247-01-10T04:00:54.775Z', \
+                            lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}""",
                     readTxnToString(tableToken, true, true)
             );
         });
@@ -505,17 +526,19 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Verify the row content
-            assertSql("id\tts\ty\ts\tv\tm\tc4\tc5\n" +
-                            "999\t2022-02-24T09:00:00.000000Z\t9999\treplaced\treplaced_varchar\treplaced_sym\t42\treplaced_string\n" +
-                            "378\t2022-02-24T10:00:22.000000Z\t189\t378\tNUZ[\tc\tnull\t\n" +
-                            "379\t2022-02-24T10:01:48.000000Z\t189\t379\t@xbR>i@s\ta\tnull\t\n" +
-                            "380\t2022-02-24T10:03:14.000000Z\t190\t380\t;WS\tc\tnull\t\n" +
-                            "381\t2022-02-24T10:04:40.000000Z\t190\t381\tV1IF \t\tnull\t\n" +
-                            "382\t2022-02-24T10:06:06.000000Z\t191\t382\t14wddTh&))\tb\tnull\t\n" +
-                            "383\t2022-02-24T10:07:32.000000Z\t191\t383\t#<Y达\u197F亙ጾ燇Ȉc\ta\tnull\t\n" +
-                            "384\t2022-02-24T10:08:58.000000Z\t192\t384\t\uDB9E\uDD3D\uF29Ec+ɫwՊ毷걭\ta\tnull\t\n" +
-                            "385\t2022-02-24T10:10:24.000000Z\t192\t385\tsoMv* !Em>\ta\tnull\t\n" +
-                            "386\t2022-02-24T10:11:50.000000Z\t193\t386\t@1oq.w%V\tb\tnull\t\n",
+            assertSql("""
+                            id\tts\ty\ts\tv\tm\tc4\tc5
+                            999\t2022-02-24T09:00:00.000000Z\t9999\treplaced\treplaced_varchar\treplaced_sym\t42\treplaced_string
+                            378\t2022-02-24T10:00:22.000000Z\t189\t378\tNUZ[\tc\tnull\t
+                            379\t2022-02-24T10:01:48.000000Z\t189\t379\t@xbR>i@s\ta\tnull\t
+                            380\t2022-02-24T10:03:14.000000Z\t190\t380\t;WS\tc\tnull\t
+                            381\t2022-02-24T10:04:40.000000Z\t190\t381\tV1IF \t\tnull\t
+                            382\t2022-02-24T10:06:06.000000Z\t191\t382\t14wddTh&))\tb\tnull\t
+                            383\t2022-02-24T10:07:32.000000Z\t191\t383\t#<Y达\u197F亙ጾ燇Ȉc\ta\tnull\t
+                            384\t2022-02-24T10:08:58.000000Z\t192\t384\t\uDB9E\uDD3D\uF29Ec+ɫwՊ毷걭\ta\tnull\t
+                            385\t2022-02-24T10:10:24.000000Z\t192\t385\tsoMv* !Em>\ta\tnull\t
+                            386\t2022-02-24T10:11:50.000000Z\t193\t386\t@1oq.w%V\tb\tnull\t
+                            """,
                     "select * from rg limit 10");
         });
     }
