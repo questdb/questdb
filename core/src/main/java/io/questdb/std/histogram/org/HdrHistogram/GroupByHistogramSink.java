@@ -233,33 +233,45 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         long newCapacity = headerSize + (countsArrayLength * 8L);
 
         if (hadPreviousAllocation) {
-            ptr = allocator.realloc(ptr, allocatedSize, newCapacity);
-            allocatedSize = newCapacity;
-
-            int countsDelta = countsArrayLength - oldCountsArrayLength;
-
-            long bytesToZero = countsDelta * 8L;
-            Vect.memset(ptr + headerSize + (oldCountsArrayLength * 8L), bytesToZero, 0);
-
-            if (oldNormalizedZeroIndex != 0) {
-                int newNormalizedZeroIndex = oldNormalizedZeroIndex + countsDelta;
-                int lengthToCopy = oldCountsArrayLength - oldNormalizedZeroIndex;
-
-                long srcAddr = ptr + headerSize + (oldNormalizedZeroIndex * 8L);
-                long dstAddr = ptr + headerSize + (newNormalizedZeroIndex * 8L);
-                long bytesToCopy = lengthToCopy * 8L;
-                Vect.memcpy(dstAddr, srcAddr, bytesToCopy);
-
-                long gapStart = ptr + headerSize + (oldNormalizedZeroIndex * 8L);
-                long gapSize = countsDelta * 8L;
-                Vect.memset(gapStart, gapSize, 0);
-            }
+            reallocateAndExpandCounts(newCapacity, oldNormalizedZeroIndex, oldCountsArrayLength);
         } else {
-            ptr = allocator.malloc(newCapacity);
-            allocatedSize = newCapacity;
-
-            Vect.memset(ptr, newCapacity, 0);
+            allocateNewCounts(newCapacity);
         }
+    }
+
+    private void reallocateAndExpandCounts(long newCapacity, int oldNormalizedZeroIndex, int oldCountsArrayLength) {
+        ptr = allocator.realloc(ptr, allocatedSize, newCapacity);
+        allocatedSize = newCapacity;
+
+        int countsDelta = countsArrayLength - oldCountsArrayLength;
+
+        long bytesToZero = countsDelta * 8L;
+        Vect.memset(ptr + headerSize + (oldCountsArrayLength * 8L), bytesToZero, 0);
+
+        if (oldNormalizedZeroIndex != 0) {
+            shiftCountsArrayForResize(oldNormalizedZeroIndex, oldCountsArrayLength, countsDelta);
+        }
+    }
+
+    private void allocateNewCounts(long newCapacity) {
+        ptr = allocator.malloc(newCapacity);
+        allocatedSize = newCapacity;
+
+        Vect.memset(ptr, newCapacity, 0);
+    }
+
+    private void shiftCountsArrayForResize(int oldNormalizedZeroIndex, int oldCountsArrayLength, int countsDelta) {
+        int newNormalizedZeroIndex = oldNormalizedZeroIndex + countsDelta;
+        int lengthToCopy = oldCountsArrayLength - oldNormalizedZeroIndex;
+
+        long srcAddr = ptr + headerSize + (oldNormalizedZeroIndex * 8L);
+        long dstAddr = ptr + headerSize + (newNormalizedZeroIndex * 8L);
+        long bytesToCopy = lengthToCopy * 8L;
+        Vect.memcpy(dstAddr, srcAddr, bytesToCopy);
+
+        long gapStart = ptr + headerSize + (oldNormalizedZeroIndex * 8L);
+        long gapSize = countsDelta * 8L;
+        Vect.memset(gapStart, gapSize, 0);
     }
 
     @Override
