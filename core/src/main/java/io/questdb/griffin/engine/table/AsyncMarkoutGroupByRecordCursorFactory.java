@@ -50,13 +50,13 @@ import org.jetbrains.annotations.Nullable;
  * Factory for parallel markout query execution.
  * <p>
  * This factory creates the infrastructure for parallelizing:
- * Master -> MarkoutHorizon (CROSS JOIN) -> ASOF JOIN -> GROUP BY
+ * Master -> MarkoutHorizon (CROSS JOIN time_offset_sequence) -> ASOF JOIN slave -> GROUP BY time_offset
  */
 public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final AsyncMarkoutGroupByAtom atom;
     private final AsyncMarkoutGroupByRecordCursor cursor;
     private final RecordCursorFactory masterFactory;   // Base master table
-    private final ObjList<RecordCursorFactory> pricesFactories;   // Per-slot prices factories for ASOF JOIN
+    private final ObjList<RecordCursorFactory> slaveFactories;   // Per-slot slave factories for ASOF JOIN
     private final ObjList<Function> recordFunctions;   // Record functions (includes groupByFunctions)
     private final RecordCursorFactory sequenceFactory;  // Offset sequence
 
@@ -65,7 +65,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             @NotNull CairoEngine engine,
             @NotNull RecordMetadata metadata,
             @NotNull RecordCursorFactory masterFactory,
-            @NotNull ObjList<RecordCursorFactory> pricesFactories,
+            @NotNull ObjList<RecordCursorFactory> slaveFactories,
             @NotNull RecordCursorFactory sequenceFactory,
             int masterTimestampColumnIndex,
             int sequenceColumnIndex,
@@ -76,14 +76,14 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             @NotNull ArrayColumnTypes valueTypes,
             @Nullable ColumnTypes asofJoinKeyTypes,
             @Nullable RecordSink masterKeyCopier,
-            @Nullable RecordSink pricesKeyCopier,
-            int pricesTimestampIndex,
+            @Nullable RecordSink slaveKeyCopier,
+            int slaveTimestampIndex,
             int workerCount
     ) {
         super(metadata);
 
         this.masterFactory = masterFactory;
-        this.pricesFactories = pricesFactories;
+        this.slaveFactories = slaveFactories;
         this.recordFunctions = recordFunctions;
         this.sequenceFactory = sequenceFactory;
 
@@ -122,7 +122,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             this.atom = new AsyncMarkoutGroupByAtom(
                     asm,
                     configuration,
-                    pricesFactories,
+                    slaveFactories,
                     sequenceFactory,
                     sequenceRecordSink,
                     masterRecordSink,
@@ -132,8 +132,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                     valueTypes,
                     asofJoinKeyTypes,
                     masterKeyCopier,
-                    pricesKeyCopier,
-                    pricesTimestampIndex,
+                    slaveKeyCopier,
+                    slaveTimestampIndex,
                     groupByFunctions,
                     perWorkerGroupByFunctions,
                     workerCount
@@ -151,7 +151,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             );
         } catch (Throwable th) {
             Misc.free(masterFactory);
-            Misc.freeObjList(pricesFactories);
+            Misc.freeObjList(slaveFactories);
             Misc.free(sequenceFactory);
             throw th;
         }
@@ -183,8 +183,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         sink.type("Async Markout GroupBy");
         sink.child(masterFactory);
         sink.child(sequenceFactory);
-        if (pricesFactories.size() > 0) {
-            sink.child(pricesFactories.getQuick(0));
+        if (slaveFactories.size() > 0) {
+            sink.child(slaveFactories.getQuick(0));
         }
     }
 
@@ -193,8 +193,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         Misc.free(atom);
         Misc.free(cursor);
         Misc.free(masterFactory);
-        Misc.freeObjList(pricesFactories);
-        Misc.freeObjList(recordFunctions);  // groupByFunctions are included in recordFunctions
+        Misc.freeObjList(slaveFactories);
+        Misc.freeObjList(recordFunctions);
         Misc.free(sequenceFactory);
     }
 }

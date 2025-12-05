@@ -70,7 +70,7 @@ public class MarkoutReducer {
     // Combined record for aggregation - maps baseMetadata columns to source records
     // baseMetadata: [0: sec_offs (LONG), 1: price (DOUBLE)]
     // sequenceRecord: [0: usec_offs, 1: sec_offs]
-    // pricesRecord: [0: price, 1: sym, 2: price_ts]
+    // slaveRecord: [0: price, 1: sym, 2: price_ts]
     private final CombinedRecord combinedRecord = new CombinedRecord();
     private Map asofJoinMap;
     // Per-batch state
@@ -80,16 +80,16 @@ public class MarkoutReducer {
     private GroupByFunctionsUpdater functionUpdater;
     private boolean hasBufferedPrice;  // True if we read a price but didn't store it yet
     private long lastIteratorBlockAddr;
-    private long lastPricesRowId;
-    private long lastPricesTimestamp;
+    private long lastSlaveRowId;
+    private long lastSlaveTimestamp;
     private RecordSink masterKeyCopier;
     private Map partialMap;
     // ASOF JOIN lookup state
-    private RecordCursor pricesCursor;
-    private RecordSink pricesKeyCopier;
-    private Record pricesRecord;
-    private Record pricesRecordB;
-    private int pricesTimestampIndex;
+    private RecordCursor slaveCursor;
+    private RecordSink slaveKeyCopier;
+    private Record slaveRecord;
+    private Record slaveRecordB;
+    private int slaveTimestampIndex;
     private int sequenceColumnIndex;
     // Shared sequence data (read-only)
     private RecordArray sequenceRecordArray;
@@ -132,26 +132,26 @@ public class MarkoutReducer {
 
         // Initialize ASOF lookup state using per-slot resources
         try {
-            this.pricesCursor = atom.getPricesCursor(slotId);
+            this.slaveCursor = atom.getSlaveCursor(slotId);
         } catch (io.questdb.griffin.SqlException e) {
-            throw io.questdb.cairo.CairoException.nonCritical().put("Failed to get prices cursor: ").put(e.getMessage());
+            throw io.questdb.cairo.CairoException.nonCritical().put("Failed to get slave cursor: ").put(e.getMessage());
         }
         this.asofJoinMap = atom.getAsofJoinMap(slotId);
         this.masterKeyCopier = atom.getMasterKeyCopier();
-        this.pricesKeyCopier = atom.getPricesKeyCopier();
-        this.pricesTimestampIndex = atom.getPricesTimestampIndex();
-        if (pricesCursor != null) {
+        this.slaveKeyCopier = atom.getSlaveKeyCopier();
+        this.slaveTimestampIndex = atom.getSlaveTimestampIndex();
+        if (slaveCursor != null) {
             // Reset cursor to start for each batch - workers reuse the same cursor
-            pricesCursor.toTop();
-            this.pricesRecord = pricesCursor.getRecord();
-            this.pricesRecordB = pricesCursor.getRecordB();
+            slaveCursor.toTop();
+            this.slaveRecord = slaveCursor.getRecord();
+            this.slaveRecordB = slaveCursor.getRecordB();
         }
         // Clear ASOF join map for each batch - workers reuse the same map
         if (asofJoinMap != null) {
             asofJoinMap.clear();
         }
-        this.lastPricesTimestamp = Long.MIN_VALUE;
-        this.lastPricesRowId = Numbers.LONG_NULL;
+        this.lastSlaveTimestamp = Long.MIN_VALUE;
+        this.lastSlaveRowId = Numbers.LONG_NULL;
         this.hasBufferedPrice = false;
 
         try {
@@ -279,21 +279,21 @@ public class MarkoutReducer {
     // ==================== Block management ====================
 
     /**
-     * Advance prices cursor forward-only up to the given horizon timestamp.
+     * Advance slave cursor forward-only up to the given horizon timestamp.
      * Stores joinKey -> rowId mappings in the asofJoinMap.
      * <p>
      * This method maintains the cursor position between calls, so it can only
      * be used when horizons are emitted in strictly increasing timestamp order.
      */
-    private void advancePricesCursorTo(long horizonTs) {
+    private void advanceSlaveCursorTo(long horizonTs) {
         // First, check if we have a buffered price that we can now store
         if (hasBufferedPrice) {
-            if (lastPricesTimestamp <= horizonTs) {
+            if (lastSlaveTimestamp <= horizonTs) {
                 // Store the buffered price
                 MapKey joinKey = asofJoinMap.withKey();
-                joinKey.put(pricesRecord, pricesKeyCopier);
+                joinKey.put(slaveRecord, slaveKeyCopier);
                 MapValue joinValue = joinKey.createValue();
-                joinValue.putLong(0, lastPricesRowId);
+                joinValue.putLong(0, lastSlaveRowId);
                 hasBufferedPrice = false;
             } else {
                 // Buffered price is still past the horizon, nothing more to do
@@ -302,18 +302,18 @@ public class MarkoutReducer {
         }
 
         // Advance cursor forward-only
-        while (pricesCursor.hasNext()) {
+        while (slaveCursor.hasNext()) {
             // Note: Column order in factory metadata may differ from table definition
-            // pricesTimestampIndex gives the timestamp column
-            long priceTs = pricesRecord.getTimestamp(pricesTimestampIndex);
-            long rowId = pricesRecord.getRowId();
-            lastPricesTimestamp = priceTs;
-            lastPricesRowId = rowId;
+            // slaveTimestampIndex gives the timestamp column
+            long priceTs = slaveRecord.getTimestamp(slaveTimestampIndex);
+            long rowId = slaveRecord.getRowId();
+            lastSlaveTimestamp = priceTs;
+            lastSlaveRowId = rowId;
 
             if (priceTs <= horizonTs) {
                 // Store joinKey -> rowId mapping
                 MapKey joinKey = asofJoinMap.withKey();
-                joinKey.put(pricesRecord, pricesKeyCopier);
+                joinKey.put(slaveRecord, slaveKeyCopier);
                 MapValue joinValue = joinKey.createValue();
                 joinValue.putLong(0, rowId);
             } else {
@@ -431,11 +431,11 @@ public class MarkoutReducer {
         // Get horizon timestamp
         long horizonTs = iter_nextTimestamp(currentIterAddr);
 
-        // ASOF JOIN lookup: find matching prices record
-        Record matchedPricesRecord = null;
-        if (asofJoinMap != null && pricesCursor != null && masterKeyCopier != null) {
-            // Advance prices cursor forward-only up to horizon timestamp
-            advancePricesCursorTo(horizonTs);
+        // ASOF JOIN lookup: find matching slave record
+        Record matchedSlaveRecord = null;
+        if (asofJoinMap != null && slaveCursor != null && masterKeyCopier != null) {
+            // Advance slave cursor forward-only up to horizon timestamp
+            advanceSlaveCursorTo(horizonTs);
 
             // Look up master's join key
             MapKey lookupKey = asofJoinMap.withKey();
@@ -443,10 +443,10 @@ public class MarkoutReducer {
             MapValue lookupValue = lookupKey.findValue();
 
             if (lookupValue != null) {
-                long pricesRowId = lookupValue.getLong(0);
-                if (pricesRowId != Numbers.LONG_NULL) {
-                    pricesCursor.recordAt(pricesRecordB, pricesRowId);
-                    matchedPricesRecord = pricesRecordB;
+                long slaveRowId = lookupValue.getLong(0);
+                if (slaveRowId != Numbers.LONG_NULL) {
+                    slaveCursor.recordAt(slaveRecordB, slaveRowId);
+                    matchedSlaveRecord = slaveRecordB;
                 }
             }
         }
@@ -459,7 +459,7 @@ public class MarkoutReducer {
         key.putLong(sequenceRecord.getLong(1));
 
         // Use combined record that maps baseMetadata columns to source records
-        combinedRecord.of(sequenceRecord, matchedPricesRecord);
+        combinedRecord.of(sequenceRecord, matchedSlaveRecord);
 
         MapValue value = key.createValue();
         if (value.isNew()) {
@@ -526,10 +526,10 @@ public class MarkoutReducer {
      * <p>
      * This is a simplified implementation for the markout curve query pattern where:
      * - baseMetadata column 0 (sec_offs, LONG) maps to sequenceRecord column 1
-     * - baseMetadata column 1 (price, DOUBLE) maps to pricesRecord column 0
+     * - baseMetadata column 1 (price, DOUBLE) maps to slaveRecord column 0
      */
     private static class CombinedRecord implements Record {
-        private Record pricesRecord;
+        private Record slaveRecord;
         private Record sequenceRecord;
 
         @Override
@@ -564,9 +564,9 @@ public class MarkoutReducer {
 
         @Override
         public double getDouble(int col) {
-            // Column 1 (price) comes from prices record column 0
-            if (col == 1 && pricesRecord != null) {
-                return pricesRecord.getDouble(0);
+            // Column 1 (price) comes from slave record column 0
+            if (col == 1 && slaveRecord != null) {
+                return slaveRecord.getDouble(0);
             }
             return Double.NaN;
         }
@@ -690,9 +690,9 @@ public class MarkoutReducer {
             return -1;
         }
 
-        void of(Record sequenceRecord, Record pricesRecord) {
+        void of(Record sequenceRecord, Record slaveRecord) {
             this.sequenceRecord = sequenceRecord;
-            this.pricesRecord = pricesRecord;
+            this.slaveRecord = slaveRecord;
         }
     }
 }

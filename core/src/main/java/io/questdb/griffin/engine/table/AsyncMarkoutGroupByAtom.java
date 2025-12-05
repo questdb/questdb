@@ -65,13 +65,11 @@ import java.io.Closeable;
  * <p>
  * This class holds:
  * 1. Shared (read-only) sequence record array (offset records from the horizons cursor)
- * 2. Per-worker price cursors for ASOF JOIN lookups
+ * 2. Per-worker slave cursors for ASOF JOIN lookups
  * 3. Per-worker aggregation maps and group by functions
  * 4. Per-worker iterator block memory for the k-way merge algorithm
  */
 public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
-    // ASOF JOIN lookup resources (null if no join key)
-    private final ColumnTypes asofJoinKeyTypes;
     private final CairoConfiguration configuration;
     private final RecordSink masterKeyCopier;
     private final RecordSink masterRecordSink;
@@ -80,6 +78,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     // Master row timestamp column index
     private final int masterTimestampColumnIndex;
     private final GroupByAllocator ownerAllocator;
+    private final Map ownerAsofJoinMap;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final Map ownerMap;
@@ -90,22 +89,21 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     // Per-worker resources
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<Map> perWorkerMaps;
-    private final ObjList<RecordCursor> perWorkerPricesCursors;           // Per-slot cursors (lazily created)
-    // Per-slot prices factories - each worker needs its own factory for independent cursors
-    private final ObjList<RecordCursorFactory> pricesFactories;
-    private final RecordSink pricesKeyCopier;
-    private final int pricesTimestampIndex;
+    private final ObjList<RecordCursor> perWorkerSlaveCursors;           // Per-slot cursors (lazily created)
+    // Per-slot slave factories - each worker needs its own factory for independent cursors
+    private final ObjList<RecordCursorFactory> slaveFactories;
+    private final RecordSink slaveKeyCopier;
+    private final int slaveTimestampIndex;
     private final int sequenceColumnIndex;
     // Shared (read-only) sequence data - materialized offset records
     // Store metadata/sink to recreate RecordArray after clear() frees it
     private final RecordMetadata sequenceMetadata;
-    private final RecordSink sequenceRecordSink;
-    private RecordArray sequenceRecordArray;  // Freed in clear(), recreated lazily
     private final LongList sequenceRecordOffsets = new LongList();
+    private final RecordSink sequenceRecordSink;
     private long firstSequenceTimeOffset;
-    private Map ownerAsofJoinMap;
     // Owner resources (for work stealing)
-    private RecordCursor ownerPricesCursor;
+    private RecordCursor ownerSlaveCursor;
+    private RecordArray sequenceRecordArray;  // Freed in clear(), recreated lazily
     private long sequenceRowCount;
     // Stored execution context for lazy cursor creation
     private SqlExecutionContext storedExecutionContext;
@@ -113,7 +111,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     public AsyncMarkoutGroupByAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
-            @NotNull ObjList<RecordCursorFactory> pricesFactories,
+            @NotNull ObjList<RecordCursorFactory> slaveFactories,
             @NotNull RecordCursorFactory sequenceCursorFactory,
             @NotNull RecordSink sequenceRecordSink,
             @NotNull RecordSink masterRecordSink,
@@ -123,8 +121,8 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             @Transient @NotNull ArrayColumnTypes valueTypes,
             ColumnTypes asofJoinKeyTypes,
             RecordSink masterKeyCopier,
-            RecordSink pricesKeyCopier,
-            int pricesTimestampIndex,
+            RecordSink slaveKeyCopier,
+            int slaveTimestampIndex,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
             @NotNull ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             int workerCount
@@ -133,16 +131,16 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
         try {
             this.configuration = configuration;
-            this.pricesFactories = pricesFactories;
+            this.slaveFactories = slaveFactories;
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.sequenceColumnIndex = sequenceColumnIndex;
             this.masterRecordSink = masterRecordSink;
 
             // Initialize ASOF join lookup resources
-            this.asofJoinKeyTypes = asofJoinKeyTypes;
+            // ASOF JOIN lookup resources (null if no join key)
             this.masterKeyCopier = masterKeyCopier;
-            this.pricesKeyCopier = pricesKeyCopier;
-            this.pricesTimestampIndex = pricesTimestampIndex;
+            this.slaveKeyCopier = slaveKeyCopier;
+            this.slaveTimestampIndex = slaveTimestampIndex;
 
             // Store metadata/sink for recreating sequence record array after clear()
             this.sequenceMetadata = sequenceCursorFactory.getMetadata();
@@ -160,9 +158,9 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
             // Initialize per-worker cursors (will be populated lazily)
-            this.perWorkerPricesCursors = new ObjList<>(slotCount);
+            this.perWorkerSlaveCursors = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerPricesCursors.add(null);
+                perWorkerSlaveCursors.add(null);
             }
 
             // Initialize per-worker ASOF maps (if join key exists)
@@ -249,19 +247,18 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             Misc.free(ownerAsofJoinMap);
         }
         Misc.freeObjListAndKeepObjects(perWorkerAsofJoinMaps);
-        // Close per-slot prices cursors (but NOT the factories - they're owned by the factory class)
-        if (ownerPricesCursor != null) {
-            ownerPricesCursor.close();
-            ownerPricesCursor = null;
+        // Close per-slot slave cursors (but NOT the factories - they're owned by the factory class)
+        if (ownerSlaveCursor != null) {
+            ownerSlaveCursor.close();
+            ownerSlaveCursor = null;
         }
-        for (int i = 0, n = perWorkerPricesCursors.size(); i < n; i++) {
-            RecordCursor cursor = perWorkerPricesCursors.getQuick(i);
+        for (int i = 0, n = perWorkerSlaveCursors.size(); i < n; i++) {
+            RecordCursor cursor = perWorkerSlaveCursors.getQuick(i);
             if (cursor != null) {
                 cursor.close();
-                perWorkerPricesCursors.setQuick(i, null);
+                perWorkerSlaveCursors.setQuick(i, null);
             }
         }
-        // Note: pricesFactories is shared with the factory class and will be freed in factory._close()
     }
 
     @Override
@@ -278,17 +275,17 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         // Free per-slot ASOF maps
         Misc.free(ownerAsofJoinMap);
         Misc.freeObjList(perWorkerAsofJoinMaps);
-        // Free per-slot prices cursors (must close each cursor)
-        for (int i = 0, n = perWorkerPricesCursors.size(); i < n; i++) {
-            Misc.free(perWorkerPricesCursors.getQuick(i));
+        // Free per-slot slave cursors (must close each cursor)
+        for (int i = 0, n = perWorkerSlaveCursors.size(); i < n; i++) {
+            Misc.free(perWorkerSlaveCursors.getQuick(i));
         }
-        perWorkerPricesCursors.clear();
-        Misc.free(ownerPricesCursor);
-        // Close any remaining prices factories (may have been cleared by clear())
-        for (int i = 0, n = pricesFactories.size(); i < n; i++) {
-            Misc.free(pricesFactories.getQuick(i));
+        perWorkerSlaveCursors.clear();
+        Misc.free(ownerSlaveCursor);
+        // Close any remaining slave factories (may have been cleared by clear())
+        for (int i = 0, n = slaveFactories.size(); i < n; i++) {
+            Misc.free(slaveFactories.getQuick(i));
         }
-        pricesFactories.clear();
+        slaveFactories.clear();
         Misc.freeObjList(masterRowBatchPool);
     }
 
@@ -358,33 +355,33 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     }
 
     /**
-     * Get the prices cursor for the given slot.
+     * Get the slave cursor for the given slot.
      * Creates the cursor lazily from the per-slot factory.
      * Workers should reuse the cursor by calling toTop() between batches.
      */
-    public RecordCursor getPricesCursor(int slotId) throws SqlException {
+    public RecordCursor getSlaveCursor(int slotId) throws SqlException {
         if (slotId == -1) {
-            if (ownerPricesCursor == null) {
+            if (ownerSlaveCursor == null) {
                 // Owner uses the last factory in the list (index = slotCount)
-                int ownerFactoryIndex = pricesFactories.size() - 1;
-                ownerPricesCursor = pricesFactories.getQuick(ownerFactoryIndex).getCursor(storedExecutionContext);
+                int ownerFactoryIndex = slaveFactories.size() - 1;
+                ownerSlaveCursor = slaveFactories.getQuick(ownerFactoryIndex).getCursor(storedExecutionContext);
             }
-            return ownerPricesCursor;
+            return ownerSlaveCursor;
         }
-        RecordCursor cursor = perWorkerPricesCursors.getQuick(slotId);
+        RecordCursor cursor = perWorkerSlaveCursors.getQuick(slotId);
         if (cursor == null) {
-            cursor = pricesFactories.getQuick(slotId).getCursor(storedExecutionContext);
-            perWorkerPricesCursors.setQuick(slotId, cursor);
+            cursor = slaveFactories.getQuick(slotId).getCursor(storedExecutionContext);
+            perWorkerSlaveCursors.setQuick(slotId, cursor);
         }
         return cursor;
     }
 
-    public RecordSink getPricesKeyCopier() {
-        return pricesKeyCopier;
+    public RecordSink getSlaveKeyCopier() {
+        return slaveKeyCopier;
     }
 
-    public int getPricesTimestampIndex() {
-        return pricesTimestampIndex;
+    public int getSlaveTimestampIndex() {
+        return slaveTimestampIndex;
     }
 
     public int getSequenceColumnIndex() {
@@ -402,12 +399,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
     public long getSequenceRowCount() {
         return sequenceRowCount;
-    }
-
-    // ASOF join lookup accessors
-
-    public boolean hasAsofJoinKey() {
-        return asofJoinKeyTypes != null;
     }
 
     @Override
@@ -434,9 +425,8 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
      * Store the execution context for lazy cursor creation.
      * Must be called from the main thread before dispatching tasks.
      */
-    public void initPricesCursors(SqlExecutionContext executionContext) throws SqlException {
+    public void initSlaveCursors(SqlExecutionContext executionContext) throws SqlException {
         this.storedExecutionContext = executionContext;
-        // Cursors will be created lazily in getPricesCursor(slotId)
     }
 
     /**
@@ -444,7 +434,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
      * Must be called once before dispatching tasks.
      */
     public void materializeSequenceCursor(RecordCursor sequenceCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-        // Recreate sequence record array if it was freed by clear()
         if (sequenceRecordArray == null) {
             sequenceRecordArray = new RecordArray(
                     sequenceMetadata,
@@ -494,12 +483,11 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         if (!destMap.isOpen()) {
             destMap.reopen();
         }
-        GroupByFunctionsUpdater functionUpdater = ownerFunctionUpdater;
 
         for (int i = 0, n = perWorkerMaps.size(); i < n; i++) {
             Map srcMap = perWorkerMaps.getQuick(i);
             if (srcMap.isOpen() && srcMap.size() > 0) {
-                destMap.merge(srcMap, functionUpdater);
+                destMap.merge(srcMap, ownerFunctionUpdater);
                 srcMap.close();
             }
         }

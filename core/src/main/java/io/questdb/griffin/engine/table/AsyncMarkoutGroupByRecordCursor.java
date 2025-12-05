@@ -344,6 +344,6 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
 
         // Materialize sequence cursor into shared RecordArray
         atom.materializeSequenceCursor(sequenceCursor, circuitBreaker);
-        atom.initPricesCursors(executionContext);
+        atom.initSlaveCursors(executionContext);
     }
 }
