@@ -119,7 +119,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
 
                 // Interval is inclusive of edges, and we have to bump to high bound because it is non-inclusive.
-                long lo = timestampFinder.findTimestamp(intervalLo - 1, 0, hi);
+                long lo = intervalLo > Long.MIN_VALUE ? timestampFinder.findTimestamp(intervalLo - 1, 0, hi) : 0;
                 if (hi > lo) {
                     size += (hi - lo);
 
