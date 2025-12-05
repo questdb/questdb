@@ -70,32 +70,28 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncMarkoutGroupByRecordCursor.class);
-
-    private final MessageBus messageBus;
     private final AsyncMarkoutGroupByAtom atom;
-    private final ObjList<Function> recordFunctions;
+    private final CairoConfiguration configuration;
+    private final RecordMetadata masterMetadata;
+    private final RecordSink masterRecordSink;
+    // MasterRowBatch pool for reuse
+    private final ObjList<MasterRowBatch> masterRowBatchPool = new ObjList<>();
+    private final MessageBus messageBus;
     private final VirtualRecord recordA;
     private final VirtualRecord recordB;
-    private final CairoConfiguration configuration;
-    private final RecordSink masterRecordSink;
-    private final RecordMetadata masterMetadata;
-
+    private final ObjList<Function> recordFunctions;
     // Task coordination
     private final AtomicBooleanCircuitBreaker taskCircuitBreaker;
     private final SOUnboundedCountDownLatch taskDoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger taskStartedCounter = new AtomicInteger();
-
-    // MasterRowBatch pool for reuse
-    private final ObjList<MasterRowBatch> masterRowBatchPool = new ObjList<>();
-    private int nextPoolIndex = 0;
-
     // State
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private RecordCursor masterCursor;
-    private MapRecordCursor mapCursor;
+    private int dispatchedBatchCount;
     private boolean isDataMapBuilt;
     private boolean isOpen;
-    private int dispatchedBatchCount;
+    private MapRecordCursor mapCursor;
+    private RecordCursor masterCursor;
+    private int nextPoolIndex = 0;
 
     public AsyncMarkoutGroupByRecordCursor(
             CairoConfiguration configuration,
@@ -119,16 +115,19 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        buildMapConditionally();
+        mapCursor.calculateSize(circuitBreaker, counter);
+    }
+
+    @Override
     public void close() {
         if (isOpen) {
             isOpen = false;
             mapCursor = Misc.free(mapCursor);
             Misc.free(masterCursor);
             masterCursor = null;
-            // Free master row batches in pool
-            for (int i = 0, n = masterRowBatchPool.size(); i < n; i++) {
-                Misc.free(masterRowBatchPool.getQuick(i));
-            }
+            Misc.freeObjList(masterRowBatchPool);
             masterRowBatchPool.clear();
             atom.clear();
         }
@@ -150,14 +149,19 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
     }
 
     @Override
+    public boolean hasNext() {
+        buildMapConditionally();
+        return mapCursor.hasNext();
+    }
+
+    @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return ((SymbolFunction) recordFunctions.getQuick(columnIndex)).newSymbolTable();
     }
 
     @Override
-    public boolean hasNext() {
-        buildMapConditionally();
-        return mapCursor.hasNext();
+    public long preComputedStateSize() {
+        return isDataMapBuilt ? 1 : 0;
     }
 
     @Override
@@ -183,41 +187,25 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
         }
     }
 
-    @Override
-    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        buildMapConditionally();
-        mapCursor.calculateSize(circuitBreaker, counter);
-    }
+    private void awaitCompletion(int queuedCount, RingQueue<MarkoutReduceTask> queue, MCSequence subSeq) {
+        int iterations = 0;
+        while (!taskDoneLatch.done(queuedCount)) {
+            if (circuitBreaker.checkIfTripped()) {
+                taskCircuitBreaker.cancel();
+            }
 
-    @Override
-    public long preComputedStateSize() {
-        return isDataMapBuilt ? 1 : 0;
-    }
-
-    void of(
-            RecordCursor masterCursor,
-            RecordCursor sequenceCursor,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (!isOpen) {
-            isOpen = true;
-            atom.reopen();
-        }
-        this.masterCursor = masterCursor;
-        this.circuitBreaker = executionContext.getCircuitBreaker();
-        Function.init(recordFunctions, null, executionContext, null);
-        isDataMapBuilt = false;
-        dispatchedBatchCount = 0;
-        nextPoolIndex = 0;
-
-        // Materialize sequence cursor into shared RecordArray
-        atom.materializeSequenceCursor(sequenceCursor, circuitBreaker);
-        atom.initPricesCursors(executionContext);
-    }
-
-    private void buildMapConditionally() {
-        if (!isDataMapBuilt) {
-            buildMap();
+            // Try to steal work
+            long cursor = subSeq.next();
+            if (cursor >= 0) {
+                MarkoutReduceTask task = queue.get(cursor);
+                MarkoutReduceJob.run(-1, task, subSeq, cursor, atom);
+            } else {
+                Os.pause();
+            }
+            iterations++;
+            if (iterations % 100000 == 0) {
+                LOG.info().$("awaitCompletion: still waiting [iterations=").$(iterations).$(", queuedCount=").$(queuedCount).$("]").$();
+            }
         }
     }
 
@@ -278,6 +266,12 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
                 .$(", queuedCount=").$(queuedCount).I$();
     }
 
+    private void buildMapConditionally() {
+        if (!isDataMapBuilt) {
+            buildMap();
+        }
+    }
+
     private int dispatchBatch(
             MasterRowBatch batch,
             RingQueue<MarkoutReduceTask> queue,
@@ -316,28 +310,6 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
         }
     }
 
-    private void awaitCompletion(int queuedCount, RingQueue<MarkoutReduceTask> queue, MCSequence subSeq) {
-        int iterations = 0;
-        while (!taskDoneLatch.done(queuedCount)) {
-            if (circuitBreaker.checkIfTripped()) {
-                taskCircuitBreaker.cancel();
-            }
-
-            // Try to steal work
-            long cursor = subSeq.next();
-            if (cursor >= 0) {
-                MarkoutReduceTask task = queue.get(cursor);
-                MarkoutReduceJob.run(-1, task, subSeq, cursor, atom);
-            } else {
-                Os.pause();
-            }
-            iterations++;
-            if (iterations % 100000 == 0) {
-                LOG.info().$("awaitCompletion: still waiting [iterations=").$(iterations).$(", queuedCount=").$(queuedCount).$("]").$();
-            }
-        }
-    }
-
     private MasterRowBatch getOrCreateMasterRowBatch() {
         if (nextPoolIndex < masterRowBatchPool.size()) {
             MasterRowBatch batch = masterRowBatchPool.getQuick(nextPoolIndex++);
@@ -352,5 +324,26 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
 
     private void throwTimeoutException() {
         throw CairoException.queryTimedOut();
+    }
+
+    void of(
+            RecordCursor masterCursor,
+            RecordCursor sequenceCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (!isOpen) {
+            isOpen = true;
+            atom.reopen();
+        }
+        this.masterCursor = masterCursor;
+        this.circuitBreaker = executionContext.getCircuitBreaker();
+        Function.init(recordFunctions, null, executionContext, null);
+        isDataMapBuilt = false;
+        dispatchedBatchCount = 0;
+        nextPoolIndex = 0;
+
+        // Materialize sequence cursor into shared RecordArray
+        atom.materializeSequenceCursor(sequenceCursor, circuitBreaker);
+        atom.initPricesCursors(executionContext);
     }
 }

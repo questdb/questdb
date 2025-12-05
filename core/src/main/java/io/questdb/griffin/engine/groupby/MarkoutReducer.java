@@ -33,8 +33,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.table.AsyncMarkoutGroupByAtom;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
@@ -42,7 +40,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
@@ -56,7 +53,6 @@ import org.jetbrains.annotations.Nullable;
  * emits horizons in timestamp order, performs ASOF lookups, and aggregates results.
  */
 public class MarkoutReducer {
-    private static final Log LOG = LogFactory.getLog(MarkoutReducer.class);
     // Native memory layout constants
     private static final int BLOCK_HEADER_SIZE = 16;
     private static final int BLOCK_OFFSET_NEXT_BLOCK_ADDR = 0;    // long (8 bytes)
@@ -71,37 +67,34 @@ public class MarkoutReducer {
     private static final int ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START = 36; // int (4 bytes)
     private static final int ITERATOR_SIZE = 40;
     private static final long BLOCK_SIZE = BLOCK_HEADER_SIZE + (ITERATORS_PER_BLOCK * ITERATOR_SIZE);
-
-    // Per-batch state
-    private MasterRowBatch batch;
-    // Iterator block management
-    private long firstIteratorBlockAddr;
-    private GroupByFunctionsUpdater functionUpdater;
-    private long lastIteratorBlockAddr;
-    private Map partialMap;
-    // Shared sequence data (read-only)
-    private RecordArray sequenceRecordArray;
-    private LongList sequenceRecordOffsets;
-    private int sequenceRowCount;
-    private int sequenceColumnIndex;
-
-    // ASOF JOIN lookup state
-    private RecordCursor pricesCursor;
-    private Record pricesRecord;
-    private Record pricesRecordB;
-    private Map asofJoinMap;
-    private RecordSink masterKeyCopier;
-    private RecordSink pricesKeyCopier;
-    private int pricesTimestampIndex;
-    private long lastPricesTimestamp;
-    private long lastPricesRowId;
-    private boolean hasBufferedPrice;  // True if we read a price but didn't store it yet
-
     // Combined record for aggregation - maps baseMetadata columns to source records
     // baseMetadata: [0: sec_offs (LONG), 1: price (DOUBLE)]
     // sequenceRecord: [0: usec_offs, 1: sec_offs]
     // pricesRecord: [0: price, 1: sym, 2: price_ts]
     private final CombinedRecord combinedRecord = new CombinedRecord();
+    private Map asofJoinMap;
+    // Per-batch state
+    private MasterRowBatch batch;
+    // Iterator block management
+    private long firstIteratorBlockAddr;
+    private GroupByFunctionsUpdater functionUpdater;
+    private boolean hasBufferedPrice;  // True if we read a price but didn't store it yet
+    private long lastIteratorBlockAddr;
+    private long lastPricesRowId;
+    private long lastPricesTimestamp;
+    private RecordSink masterKeyCopier;
+    private Map partialMap;
+    // ASOF JOIN lookup state
+    private RecordCursor pricesCursor;
+    private RecordSink pricesKeyCopier;
+    private Record pricesRecord;
+    private Record pricesRecordB;
+    private int pricesTimestampIndex;
+    private int sequenceColumnIndex;
+    // Shared sequence data (read-only)
+    private RecordArray sequenceRecordArray;
+    private LongList sequenceRecordOffsets;
+    private int sequenceRowCount;
 
     // ==================== Block accessor methods ====================
 
@@ -137,15 +130,25 @@ public class MarkoutReducer {
         this.functionUpdater = atom.getFunctionUpdater(slotId);
         this.firstIteratorBlockAddr = 0;
 
-        // Initialize ASOF lookup state
-        this.pricesCursor = atom.getPricesCursor();
-        this.asofJoinMap = atom.getAsofJoinMap();
+        // Initialize ASOF lookup state using per-slot resources
+        try {
+            this.pricesCursor = atom.getPricesCursor(slotId);
+        } catch (io.questdb.griffin.SqlException e) {
+            throw io.questdb.cairo.CairoException.nonCritical().put("Failed to get prices cursor: ").put(e.getMessage());
+        }
+        this.asofJoinMap = atom.getAsofJoinMap(slotId);
         this.masterKeyCopier = atom.getMasterKeyCopier();
         this.pricesKeyCopier = atom.getPricesKeyCopier();
         this.pricesTimestampIndex = atom.getPricesTimestampIndex();
         if (pricesCursor != null) {
+            // Reset cursor to start for each batch - workers reuse the same cursor
+            pricesCursor.toTop();
             this.pricesRecord = pricesCursor.getRecord();
             this.pricesRecordB = pricesCursor.getRecordB();
+        }
+        // Clear ASOF join map for each batch - workers reuse the same map
+        if (asofJoinMap != null) {
+            asofJoinMap.clear();
         }
         this.lastPricesTimestamp = Long.MIN_VALUE;
         this.lastPricesRowId = Numbers.LONG_NULL;
@@ -275,6 +278,52 @@ public class MarkoutReducer {
 
     // ==================== Block management ====================
 
+    /**
+     * Advance prices cursor forward-only up to the given horizon timestamp.
+     * Stores joinKey -> rowId mappings in the asofJoinMap.
+     * <p>
+     * This method maintains the cursor position between calls, so it can only
+     * be used when horizons are emitted in strictly increasing timestamp order.
+     */
+    private void advancePricesCursorTo(long horizonTs) {
+        // First, check if we have a buffered price that we can now store
+        if (hasBufferedPrice) {
+            if (lastPricesTimestamp <= horizonTs) {
+                // Store the buffered price
+                MapKey joinKey = asofJoinMap.withKey();
+                joinKey.put(pricesRecord, pricesKeyCopier);
+                MapValue joinValue = joinKey.createValue();
+                joinValue.putLong(0, lastPricesRowId);
+                hasBufferedPrice = false;
+            } else {
+                // Buffered price is still past the horizon, nothing more to do
+                return;
+            }
+        }
+
+        // Advance cursor forward-only
+        while (pricesCursor.hasNext()) {
+            // Note: Column order in factory metadata may differ from table definition
+            // pricesTimestampIndex gives the timestamp column
+            long priceTs = pricesRecord.getTimestamp(pricesTimestampIndex);
+            long rowId = pricesRecord.getRowId();
+            lastPricesTimestamp = priceTs;
+            lastPricesRowId = rowId;
+
+            if (priceTs <= horizonTs) {
+                // Store joinKey -> rowId mapping
+                MapKey joinKey = asofJoinMap.withKey();
+                joinKey.put(pricesRecord, pricesKeyCopier);
+                MapValue joinValue = joinKey.createValue();
+                joinValue.putLong(0, rowId);
+            } else {
+                // Past the horizon, stop and mark as buffered
+                hasBufferedPrice = true;
+                break;
+            }
+        }
+    }
+
     private long block_alloc() {
         long blockAddr = Unsafe.malloc(BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().setMemory(blockAddr, BLOCK_HEADER_SIZE, (byte) 0);
@@ -284,6 +333,8 @@ public class MarkoutReducer {
     private void block_free(long blockAddr) {
         Unsafe.free(blockAddr, BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
     }
+
+    // ==================== Iterator management ====================
 
     /**
      * Compute and store the next timestamp based on current row number.
@@ -303,8 +354,6 @@ public class MarkoutReducer {
         long masterTimestamp = iter_masterTimestamp(iterAddr);
         iter_setNextTimestamp(iterAddr, masterTimestamp + sequenceOffset);
     }
-
-    // ==================== Iterator management ====================
 
     /**
      * Create a new iterator and add it to the block. Points to itself (circular list of one).
@@ -420,52 +469,6 @@ public class MarkoutReducer {
         }
     }
 
-    /**
-     * Advance prices cursor forward-only up to the given horizon timestamp.
-     * Stores joinKey -> rowId mappings in the asofJoinMap.
-     * <p>
-     * This method maintains the cursor position between calls, so it can only
-     * be used when horizons are emitted in strictly increasing timestamp order.
-     */
-    private void advancePricesCursorTo(long horizonTs) {
-        // First, check if we have a buffered price that we can now store
-        if (hasBufferedPrice) {
-            if (lastPricesTimestamp <= horizonTs) {
-                // Store the buffered price
-                MapKey joinKey = asofJoinMap.withKey();
-                joinKey.put(pricesRecord, pricesKeyCopier);
-                MapValue joinValue = joinKey.createValue();
-                joinValue.putLong(0, lastPricesRowId);
-                hasBufferedPrice = false;
-            } else {
-                // Buffered price is still past the horizon, nothing more to do
-                return;
-            }
-        }
-
-        // Advance cursor forward-only
-        while (pricesCursor.hasNext()) {
-            // Note: Column order in factory metadata may differ from table definition
-            // pricesTimestampIndex gives the timestamp column
-            long priceTs = pricesRecord.getTimestamp(pricesTimestampIndex);
-            long rowId = pricesRecord.getRowId();
-            lastPricesTimestamp = priceTs;
-            lastPricesRowId = rowId;
-
-            if (priceTs <= horizonTs) {
-                // Store joinKey -> rowId mapping
-                MapKey joinKey = asofJoinMap.withKey();
-                joinKey.put(pricesRecord, pricesKeyCopier);
-                MapValue joinValue = joinKey.createValue();
-                joinValue.putLong(0, rowId);
-            } else {
-                // Past the horizon, stop and mark as buffered
-                hasBufferedPrice = true;
-                break;
-            }
-        }
-    }
-
     private void freeAllBlocks() {
         long blockAddr = firstIteratorBlockAddr;
         while (blockAddr != 0) {
@@ -526,12 +529,82 @@ public class MarkoutReducer {
      * - baseMetadata column 1 (price, DOUBLE) maps to pricesRecord column 0
      */
     private static class CombinedRecord implements Record {
-        private Record sequenceRecord;
         private Record pricesRecord;
+        private Record sequenceRecord;
 
-        void of(Record sequenceRecord, Record pricesRecord) {
-            this.sequenceRecord = sequenceRecord;
-            this.pricesRecord = pricesRecord;
+        @Override
+        public @Nullable BinarySequence getBin(int col) {
+            return null;
+        }
+
+        @Override
+        public long getBinLen(int col) {
+            return -1;
+        }
+
+        @Override
+        public boolean getBool(int col) {
+            return false;
+        }
+
+        @Override
+        public byte getByte(int col) {
+            return 0;
+        }
+
+        @Override
+        public char getChar(int col) {
+            return 0;
+        }
+
+        @Override
+        public long getDate(int col) {
+            return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public double getDouble(int col) {
+            // Column 1 (price) comes from prices record column 0
+            if (col == 1 && pricesRecord != null) {
+                return pricesRecord.getDouble(0);
+            }
+            return Double.NaN;
+        }
+
+        @Override
+        public float getFloat(int col) {
+            return Float.NaN;
+        }
+
+        @Override
+        public byte getGeoByte(int col) {
+            return 0;
+        }
+
+        @Override
+        public int getGeoInt(int col) {
+            return 0;
+        }
+
+        @Override
+        public long getGeoLong(int col) {
+            return 0;
+        }
+
+        @Override
+        public short getGeoShort(int col) {
+            return 0;
+        }
+
+        @Override
+        public int getIPv4(int col) {
+            return 0;
+        }
+
+        // Implement other Record methods as needed (returning defaults for unused types)
+        @Override
+        public int getInt(int col) {
+            return 0;
         }
 
         @Override
@@ -544,97 +617,82 @@ public class MarkoutReducer {
         }
 
         @Override
-        public double getDouble(int col) {
-            // Column 1 (price) comes from prices record column 0
-            if (col == 1 && pricesRecord != null) {
-                return pricesRecord.getDouble(0);
-            }
-            return Double.NaN;
+        public void getLong256(int col, CharSink<?> sink) {
         }
 
-        // Implement other Record methods as needed (returning defaults for unused types)
         @Override
-        public int getInt(int col) { return 0; }
+        public @Nullable Long256 getLong256A(int col) {
+            return null;
+        }
 
         @Override
-        public byte getByte(int col) { return 0; }
+        public @Nullable Long256 getLong256B(int col) {
+            return null;
+        }
 
         @Override
-        public short getShort(int col) { return 0; }
+        public long getRowId() {
+            return Numbers.LONG_NULL;
+        }
 
         @Override
-        public char getChar(int col) { return 0; }
+        public short getShort(int col) {
+            return 0;
+        }
 
         @Override
-        public float getFloat(int col) { return Float.NaN; }
+        public @Nullable CharSequence getStrA(int col) {
+            return null;
+        }
 
         @Override
-        public boolean getBool(int col) { return false; }
+        public @Nullable CharSequence getStrB(int col) {
+            return null;
+        }
 
         @Override
-        public long getTimestamp(int col) { return Numbers.LONG_NULL; }
+        public int getStrLen(int col) {
+            return -1;
+        }
 
         @Override
-        public long getDate(int col) { return Numbers.LONG_NULL; }
+        public @Nullable CharSequence getSymA(int col) {
+            return null;
+        }
 
         @Override
-        public @Nullable CharSequence getSymA(int col) { return null; }
+        public @Nullable CharSequence getSymB(int col) {
+            return null;
+        }
 
         @Override
-        public @Nullable CharSequence getSymB(int col) { return null; }
+        public long getTimestamp(int col) {
+            return Numbers.LONG_NULL;
+        }
 
         @Override
-        public @Nullable CharSequence getStrA(int col) { return null; }
+        public long getUpdateRowId() {
+            return Numbers.LONG_NULL;
+        }
 
         @Override
-        public @Nullable CharSequence getStrB(int col) { return null; }
+        public @Nullable Utf8Sequence getVarcharA(int col) {
+            return null;
+        }
 
         @Override
-        public int getStrLen(int col) { return -1; }
+        public @Nullable Utf8Sequence getVarcharB(int col) {
+            return null;
+        }
 
         @Override
-        public long getRowId() { return Numbers.LONG_NULL; }
+        public int getVarcharSize(int col) {
+            return -1;
+        }
 
-        @Override
-        public void getLong256(int col, CharSink<?> sink) { }
-
-        @Override
-        public @Nullable Long256 getLong256A(int col) { return null; }
-
-        @Override
-        public @Nullable Long256 getLong256B(int col) { return null; }
-
-        @Override
-        public @Nullable BinarySequence getBin(int col) { return null; }
-
-        @Override
-        public long getBinLen(int col) { return -1; }
-
-        @Override
-        public byte getGeoByte(int col) { return 0; }
-
-        @Override
-        public short getGeoShort(int col) { return 0; }
-
-        @Override
-        public int getGeoInt(int col) { return 0; }
-
-        @Override
-        public long getGeoLong(int col) { return 0; }
-
-        @Override
-        public @Nullable Utf8Sequence getVarcharA(int col) { return null; }
-
-        @Override
-        public @Nullable Utf8Sequence getVarcharB(int col) { return null; }
-
-        @Override
-        public int getVarcharSize(int col) { return -1; }
-
-        @Override
-        public int getIPv4(int col) { return 0; }
-
-        @Override
-        public long getUpdateRowId() { return Numbers.LONG_NULL; }
+        void of(Record sequenceRecord, Record pricesRecord) {
+            this.sequenceRecord = sequenceRecord;
+            this.pricesRecord = pricesRecord;
+        }
     }
 }

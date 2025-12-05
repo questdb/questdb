@@ -56,7 +56,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
     private final AsyncMarkoutGroupByAtom atom;
     private final AsyncMarkoutGroupByRecordCursor cursor;
     private final RecordCursorFactory masterFactory;   // Base master table
-    private final RecordCursorFactory pricesFactory;   // Prices table for ASOF JOIN
+    private final ObjList<RecordCursorFactory> pricesFactories;   // Per-slot prices factories for ASOF JOIN
+    private final ObjList<Function> recordFunctions;   // Record functions (includes groupByFunctions)
     private final RecordCursorFactory sequenceFactory;  // Offset sequence
 
     public AsyncMarkoutGroupByRecordCursorFactory(
@@ -64,7 +65,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             @NotNull CairoEngine engine,
             @NotNull RecordMetadata metadata,
             @NotNull RecordCursorFactory masterFactory,
-            @NotNull RecordCursorFactory pricesFactory,
+            @NotNull ObjList<RecordCursorFactory> pricesFactories,
             @NotNull RecordCursorFactory sequenceFactory,
             int masterTimestampColumnIndex,
             int sequenceColumnIndex,
@@ -82,7 +83,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         super(metadata);
 
         this.masterFactory = masterFactory;
-        this.pricesFactory = pricesFactory;
+        this.pricesFactories = pricesFactories;
+        this.recordFunctions = recordFunctions;
         this.sequenceFactory = sequenceFactory;
 
         BytecodeAssembler asm = new BytecodeAssembler();
@@ -120,7 +122,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             this.atom = new AsyncMarkoutGroupByAtom(
                     asm,
                     configuration,
-                    pricesFactory,
+                    pricesFactories,
                     sequenceFactory,
                     sequenceRecordSink,
                     masterRecordSink,
@@ -151,7 +153,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             );
         } catch (Throwable th) {
             Misc.free(masterFactory);
-            Misc.free(pricesFactory);
+            Misc.freeObjList(pricesFactories);
             Misc.free(sequenceFactory);
             throw th;
         }
@@ -183,7 +185,9 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         sink.type("Async Markout GroupBy");
         sink.child(masterFactory);
         sink.child(sequenceFactory);
-        sink.child(pricesFactory);
+        if (pricesFactories.size() > 0) {
+            sink.child(pricesFactories.getQuick(0));
+        }
     }
 
     @Override
@@ -191,7 +195,8 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
         Misc.free(atom);
         Misc.free(cursor);
         Misc.free(masterFactory);
-        Misc.free(pricesFactory);
+        Misc.freeObjList(pricesFactories);
+        Misc.freeObjList(recordFunctions);  // groupByFunctions are included in recordFunctions
         Misc.free(sequenceFactory);
     }
 }

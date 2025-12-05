@@ -4119,7 +4119,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         RecordCursorFactory nestedFactory = null;
         RecordCursorFactory masterFactory = null;
-        RecordCursorFactory pricesFactory = null;
+        ObjList<RecordCursorFactory> pricesFactories = null;
         RecordCursorFactory sequenceFactory = null;
 
         try {
@@ -4129,9 +4129,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata baseMetadata = nestedFactory.getMetadata();
 
             // Generate component factories for parallel execution
-            masterFactory = generateQuery(curveInfo.crossMasterModel, executionContext, true);
-            pricesFactory = generateQuery(curveInfo.asofSlaveModel, executionContext, true);
-            sequenceFactory = generateQuery(curveInfo.crossSlaveModel, executionContext, true);
+            // Generate without processing joins to get just the base table factories
+            masterFactory = generateQuery(curveInfo.crossMasterModel, executionContext, false);
+            sequenceFactory = generateQuery(curveInfo.crossSlaveModel, executionContext, false);
+
+            // Create per-slot prices factories - each worker needs its own factory
+            // to create independent cursors for parallel ASOF JOIN processing
+            int workerCount = executionContext.getSharedQueryWorkerCount();
+            int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
+            pricesFactories = new ObjList<>(slotCount + 1);  // +1 for owner
+            for (int i = 0; i <= slotCount; i++) {
+                pricesFactories.add(generateQuery(curveInfo.asofSlaveModel, executionContext, true));
+            }
 
             // Get timestamp index from master
             RecordMetadata masterMetadata = masterFactory.getMetadata();
@@ -4140,7 +4149,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 LOG.debug().$("markout_curve: master has no designated timestamp, falling back to standard GROUP BY").$();
                 Misc.free(nestedFactory);
                 Misc.free(masterFactory);
-                Misc.free(pricesFactory);
+                Misc.freeObjList(pricesFactories);
                 Misc.free(sequenceFactory);
                 return null;
             }
@@ -4152,7 +4161,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 LOG.debug().$("markout_curve: could not find sequence column, falling back to standard GROUP BY").$();
                 Misc.free(nestedFactory);
                 Misc.free(masterFactory);
-                Misc.free(pricesFactory);
+                Misc.freeObjList(pricesFactories);
                 Misc.free(sequenceFactory);
                 return null;
             }
@@ -4201,12 +4210,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 LOG.debug().$("markout_curve: parallelism not supported for GROUP BY functions, falling back").$();
                 Misc.free(nestedFactory);
                 Misc.free(masterFactory);
-                Misc.free(pricesFactory);
+                Misc.freeObjList(pricesFactories);
                 Misc.free(sequenceFactory);
                 return null;
             }
-
-            int workerCount = executionContext.getSharedQueryWorkerCount();
 
             // Compile per-worker GROUP BY functions
             ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
@@ -4229,7 +4236,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
 
             // Process ASOF join key information for the join lookup
-            RecordMetadata pricesMetadata = pricesFactory.getMetadata();
+            // All prices factories have the same metadata, use the first one
+            RecordMetadata pricesMetadata = pricesFactories.getQuick(0).getMetadata();
             int pricesTimestampIndex = pricesMetadata.getTimestampIndex();
             ArrayColumnTypes asofJoinKeyTypes = null;
             RecordSink masterKeyCopier = null;
@@ -4278,7 +4286,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext.getCairoEngine(),
                     outerProjectionMetadata,
                     masterFactory,
-                    pricesFactory,
+                    pricesFactories,
                     sequenceFactory,
                     masterTimestampColumnIndex,
                     sequenceColumnIndex,
@@ -4297,7 +4305,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } catch (Throwable th) {
             Misc.free(nestedFactory);
             Misc.free(masterFactory);
-            Misc.free(pricesFactory);
+            Misc.freeObjList(pricesFactories);
             Misc.free(sequenceFactory);
             throw th;
         }
