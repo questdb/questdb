@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -38,6 +39,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -253,6 +255,58 @@ public class LatestByTest extends AbstractCairoTest {
                     "select ts, s from t " +
                             "where s in ('a', 'b') " +
                             "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByMultipleChangedColSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
+            execute("create table t (ts timestamp, s string, s2 string) timestamp (ts)" +
+                    " partition by month"
+            );
+            execute("insert into t values('2025-01-01', null, null), " +
+                    "('2025-01-02', null, null)," +
+                    " ('2025-01-03', null, null), " +
+                    "('2025-01-04', 'symSA', 'symS2A')");
+            execute("alter table t alter column s type symbol");
+            execute("alter table t alter column s2 type symbol");
+            assertQuery(
+                    "ts\ts2\ts\n" +
+                            "2025-01-03T00:00:00.000000Z\t\t\n" +
+                            "2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA\n",
+                    "select ts, s2, s from t " +
+                            "latest on ts partition by s, s2",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByMultipleColTopSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
+            execute("create table t (ts timestamp) timestamp (ts)" +
+                    " partition by month"
+            );
+            execute("insert into t values('2025-01-01'), " +
+                    "('2025-01-02')," +
+                    " ('2025-01-03'), " +
+                    "('2025-01-04')");
+            execute("alter table t add column s symbol, s2 symbol");
+            execute("insert into t values('2025-01-05', 'symSA', 'symS2A');");
+            assertQuery(
+                    "ts\ts2\ts\n" +
+                            "2025-01-04T00:00:00.000000Z\t\t\n" +
+                            "2025-01-05T00:00:00.000000Z\tsymS2A\tsymSA\n",
+                    "select ts, s2, s from t " +
+                            "latest on ts partition by s, s2",
                     "ts",
                     true,
                     true
