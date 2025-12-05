@@ -152,7 +152,7 @@ QuestDB clients for ingesting data via the InfluxDB Line Protocol:
 - [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
 - [C/C++](https://questdb.com/docs/clients/ingest-c-and-cpp/)
 - [Go](https://questdb.com/docs/clients/ingest-go/)
-- [Java](https://questdb.com/docs/clients/java_ilp/)
+- [Java](https://questdb.com/docs/clients/java-ilp/)
 - [NodeJS](https://questdb.com/docs/clients/ingest-node/)
 - [Rust](https://questdb.com/docs/clients/ingest-rust/)
 
