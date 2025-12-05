@@ -35,7 +35,6 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -53,12 +52,9 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.MasterRowBatch;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
-import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -73,75 +69,40 @@ import java.io.Closeable;
  * 4. Per-worker iterator block memory for the k-way merge algorithm
  */
 public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
-    // Native memory layout for iterator blocks (duplicated from MarkoutHorizonRecordCursor)
-    private static final int BLOCK_HEADER_SIZE = 16;
-    private static final int BLOCK_OFFSET_NEXT_BLOCK_ADDR = 0;    // long (8 bytes)
-    private static final int BLOCK_OFFSET_NEXT_FREE_SLOT = 8;     // int (4 bytes)
-    private static final int BLOCK_OFFSET_USED_SLOT_COUNT = 12;   // int (4 bytes)
-    private static final int ITERATORS_PER_BLOCK = 1024;
-    private static final int ITERATOR_OFFSET_TRADE_INDEX = 0;             // int (4 bytes)
-    private static final int ITERATOR_OFFSET_MASTER_TIMESTAMP = 8;        // long (8 bytes)
-    private static final int ITERATOR_OFFSET_NEXT_ITER_ADDR = 16;         // long (8 bytes)
-    private static final int ITERATOR_OFFSET_NEXT_SEQUENCE_ROW_NUM = 32;  // int (4 bytes)
-    private static final int ITERATOR_OFFSET_NEXT_TIMESTAMP = 24;         // long (8 bytes)
-    private static final int ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START = 36; // int (4 bytes)
-    private static final int ITERATOR_SIZE = 40;
-    private static final long BLOCK_SIZE = BLOCK_HEADER_SIZE + (ITERATORS_PER_BLOCK * ITERATOR_SIZE);
-
+    // ASOF JOIN lookup resources (null if no join key)
+    private final ColumnTypes asofJoinKeyTypes;
     private final CairoConfiguration configuration;
-
+    private final RecordSink masterKeyCopier;
+    private final RecordSink masterRecordSink;
+    // Master row batch pool for reuse
+    private final ObjList<MasterRowBatch> masterRowBatchPool;
+    // Master row timestamp column index
+    private final int masterTimestampColumnIndex;
+    private final GroupByAllocator ownerAllocator;
+    private final GroupByFunctionsUpdater ownerFunctionUpdater;
+    private final ObjList<GroupByFunction> ownerGroupByFunctions;
+    private final Map ownerMap;
+    private final ObjList<GroupByAllocator> perWorkerAllocators;
+    private final ObjList<Map> perWorkerAsofJoinMaps;                     // Per-slot ASOF maps
+    private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
+    private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
+    // Per-worker resources
+    private final PerWorkerLocks perWorkerLocks;
+    private final ObjList<Map> perWorkerMaps;
+    private final ObjList<RecordCursor> perWorkerPricesCursors;           // Per-slot cursors (lazily created)
+    // Per-slot prices factories - each worker needs its own factory for independent cursors
+    private final ObjList<RecordCursorFactory> pricesFactories;
+    private final RecordSink pricesKeyCopier;
+    private final int pricesTimestampIndex;
+    private final int sequenceColumnIndex;
     // Shared (read-only) sequence data - materialized offset records
     private final RecordArray sequenceRecordArray;
     private final LongList sequenceRecordOffsets = new LongList();
-    private final int sequenceColumnIndex;
-    private long sequenceRowCount;
     private long firstSequenceTimeOffset;
-
-    // Master row timestamp column index
-    private final int masterTimestampColumnIndex;
-
-    // Per-slot prices factories - each worker needs its own factory for independent cursors
-    private final ObjList<RecordCursorFactory> pricesFactories;
-
-    // Key and value types for the aggregation map
-    private final ColumnTypes keyTypes;
-    private final ColumnTypes valueTypes;
-
-    // ASOF JOIN lookup resources (null if no join key)
-    private final ColumnTypes asofJoinKeyTypes;
-    private final RecordSink masterKeyCopier;
-    private final RecordSink pricesKeyCopier;
-    private final int pricesTimestampIndex;
-
-    // Per-worker resources
-    private final PerWorkerLocks perWorkerLocks;
-    private final ObjList<RecordCursor> perWorkerPricesCursors;           // Per-slot cursors (lazily created)
-    private final ObjList<Map> perWorkerAsofJoinMaps;                     // Per-slot ASOF maps
-    private final ObjList<Map> perWorkerMaps;
-    private final ObjList<GroupByAllocator> perWorkerAllocators;
-    private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
-    private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
-    private final ObjList<RecordSink> perWorkerMapSinks;
-    // Per-worker iterator block memory addresses
-    private final LongList perWorkerFirstIteratorBlockAddr;
-    private final LongList perWorkerLastIteratorBlockAddr;
-
+    private Map ownerAsofJoinMap;
     // Owner resources (for work stealing)
     private RecordCursor ownerPricesCursor;
-    private Map ownerAsofJoinMap;
-    private final Map ownerMap;
-    private final GroupByAllocator ownerAllocator;
-    private final ObjList<GroupByFunction> ownerGroupByFunctions;
-    private final GroupByFunctionsUpdater ownerFunctionUpdater;
-    private final RecordSink ownerMapSink;
-    // Owner iterator block memory
-    private long ownerFirstIteratorBlockAddr;
-    private long ownerLastIteratorBlockAddr;
-
-    // Master row batch pool for reuse
-    private final ObjList<MasterRowBatch> masterRowBatchPool;
-    private final RecordSink masterRecordSink;
-
+    private long sequenceRowCount;
     // Stored execution context for lazy cursor creation
     private SqlExecutionContext storedExecutionContext;
 
@@ -162,8 +123,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             int pricesTimestampIndex,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
             @NotNull ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
-            @NotNull RecordSink ownerMapSink,
-            @NotNull ObjList<RecordSink> perWorkerMapSinks,
             int workerCount
     ) {
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
@@ -173,8 +132,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             this.pricesFactories = pricesFactories;
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.sequenceColumnIndex = sequenceColumnIndex;
-            this.keyTypes = new ArrayColumnTypes().addAll(keyTypes);
-            this.valueTypes = new ArrayColumnTypes().addAll(valueTypes);
             this.masterRecordSink = masterRecordSink;
 
             // Initialize ASOF join lookup resources
@@ -220,7 +177,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             // Initialize per-worker maps
             this.perWorkerMaps = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerMaps.add(MapFactory.createUnorderedMap(configuration, this.keyTypes, this.valueTypes));
+                perWorkerMaps.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes));
             }
 
             // Initialize per-worker allocators and functions
@@ -243,22 +200,17 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
                 GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), allocator);
             }
 
-            // Initialize owner and per-worker map sinks
-            this.ownerMapSink = ownerMapSink;
-            this.perWorkerMapSinks = perWorkerMapSinks;
-
             // Initialize owner map
-            this.ownerMap = MapFactory.createUnorderedMap(configuration, this.keyTypes, this.valueTypes);
+            this.ownerMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
 
             // Initialize per-worker iterator block addresses
-            this.perWorkerFirstIteratorBlockAddr = new LongList(slotCount);
-            this.perWorkerLastIteratorBlockAddr = new LongList(slotCount);
+            // Per-worker iterator block memory addresses
+            LongList perWorkerFirstIteratorBlockAddr = new LongList(slotCount);
+            LongList perWorkerLastIteratorBlockAddr = new LongList(slotCount);
             for (int i = 0; i < slotCount; i++) {
                 perWorkerFirstIteratorBlockAddr.add(0);
                 perWorkerLastIteratorBlockAddr.add(0);
             }
-            this.ownerFirstIteratorBlockAddr = 0;
-            this.ownerLastIteratorBlockAddr = 0;
 
             // Initialize master row batch pool
             this.masterRowBatchPool = new ObjList<>(slotCount + 1);
@@ -279,10 +231,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         }
         Misc.free(ownerAllocator);
         Misc.freeObjListAndKeepObjects(perWorkerAllocators);
-        freeAllIteratorBlocks(-1);
-        for (int i = 0, n = perWorkerFirstIteratorBlockAddr.size(); i < n; i++) {
-            freeAllIteratorBlocks(i);
-        }
         // Clear per-slot ASOF join maps
         if (ownerAsofJoinMap != null) {
             ownerAsofJoinMap.clear();
@@ -323,10 +271,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
             Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
         }
-        freeAllIteratorBlocks(-1);
-        for (int i = 0, n = perWorkerFirstIteratorBlockAddr.size(); i < n; i++) {
-            freeAllIteratorBlocks(i);
-        }
         // Free per-slot ASOF maps
         Misc.free(ownerAsofJoinMap);
         Misc.freeObjList(perWorkerAsofJoinMaps);
@@ -342,6 +286,110 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         }
         pricesFactories.clear();
         Misc.freeObjList(masterRowBatchPool);
+    }
+
+    /**
+     * Get the ASOF join map for the given slot.
+     * Each worker has its own map to avoid contention.
+     */
+    public Map getAsofJoinMap(int slotId) {
+        if (slotId == -1) {
+            return ownerAsofJoinMap;
+        }
+        return perWorkerAsofJoinMaps.getQuick(slotId);
+    }
+
+    public CairoConfiguration getConfiguration() {
+        return configuration;
+    }
+
+    public long getFirstSequenceTimeOffset() {
+        return firstSequenceTimeOffset;
+    }
+
+    /**
+     * Get the function updater for the given slot.
+     */
+    public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
+        if (slotId == -1) {
+            return ownerFunctionUpdater;
+        }
+        return perWorkerFunctionUpdaters.getQuick(slotId);
+    }
+
+    /**
+     * Get the aggregation map for the given slot.
+     */
+    public Map getMap(int slotId) {
+        if (slotId == -1) {
+            return ownerMap;
+        }
+        return perWorkerMaps.getQuick(slotId);
+    }
+
+    public RecordSink getMasterKeyCopier() {
+        return masterKeyCopier;
+    }
+
+    public RecordSink getMasterRecordSink() {
+        return masterRecordSink;
+    }
+
+    public int getMasterTimestampColumnIndex() {
+        return masterTimestampColumnIndex;
+    }
+
+    /**
+     * Get the prices cursor for the given slot.
+     * Creates the cursor lazily from the per-slot factory.
+     * Workers should reuse the cursor by calling toTop() between batches.
+     */
+    public RecordCursor getPricesCursor(int slotId) throws SqlException {
+        if (slotId == -1) {
+            if (ownerPricesCursor == null) {
+                // Owner uses the last factory in the list (index = slotCount)
+                int ownerFactoryIndex = pricesFactories.size() - 1;
+                ownerPricesCursor = pricesFactories.getQuick(ownerFactoryIndex).getCursor(storedExecutionContext);
+            }
+            return ownerPricesCursor;
+        }
+        RecordCursor cursor = perWorkerPricesCursors.getQuick(slotId);
+        if (cursor == null) {
+            cursor = pricesFactories.getQuick(slotId).getCursor(storedExecutionContext);
+            perWorkerPricesCursors.setQuick(slotId, cursor);
+        }
+        return cursor;
+    }
+
+    public RecordSink getPricesKeyCopier() {
+        return pricesKeyCopier;
+    }
+
+    public int getPricesTimestampIndex() {
+        return pricesTimestampIndex;
+    }
+
+    public int getSequenceColumnIndex() {
+        return sequenceColumnIndex;
+    }
+
+    // Shared sequence data accessors
+    public RecordArray getSequenceRecordArray() {
+        return sequenceRecordArray;
+    }
+
+    public LongList getSequenceRecordOffsets() {
+        return sequenceRecordOffsets;
+    }
+
+    public long getSequenceRowCount() {
+        return sequenceRowCount;
+    }
+
+    // ASOF join lookup accessors
+
+    public boolean hasAsofJoinKey() {
+        return asofJoinKeyTypes != null;
     }
 
     @Override
@@ -364,9 +412,13 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         }
     }
 
-    @Override
-    public void reopen() {
-        // Maps will be opened lazily by worker threads
+    /**
+     * Store the execution context for lazy cursor creation.
+     * Must be called from the main thread before dispatching tasks.
+     */
+    public void initPricesCursors(SqlExecutionContext executionContext) throws SqlException {
+        this.storedExecutionContext = executionContext;
+        // Cursors will be created lazily in getPricesCursor(slotId)
     }
 
     /**
@@ -397,146 +449,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     }
 
     /**
-     * Store the execution context for lazy cursor creation.
-     * Must be called from the main thread before dispatching tasks.
-     */
-    public void initPricesCursors(SqlExecutionContext executionContext) throws SqlException {
-        this.storedExecutionContext = executionContext;
-        // Cursors will be created lazily in getPricesCursor(slotId)
-    }
-
-    /**
-     * Get the prices cursor for the given slot.
-     * Creates the cursor lazily from the per-slot factory.
-     * Workers should reuse the cursor by calling toTop() between batches.
-     */
-    public RecordCursor getPricesCursor(int slotId) throws SqlException {
-        if (slotId == -1) {
-            if (ownerPricesCursor == null) {
-                // Owner uses the last factory in the list (index = slotCount)
-                int ownerFactoryIndex = pricesFactories.size() - 1;
-                ownerPricesCursor = pricesFactories.getQuick(ownerFactoryIndex).getCursor(storedExecutionContext);
-            }
-            return ownerPricesCursor;
-        }
-        RecordCursor cursor = perWorkerPricesCursors.getQuick(slotId);
-        if (cursor == null) {
-            cursor = pricesFactories.getQuick(slotId).getCursor(storedExecutionContext);
-            perWorkerPricesCursors.setQuick(slotId, cursor);
-        }
-        return cursor;
-    }
-
-    /**
-     * Get the prices record metadata.
-     */
-    public RecordMetadata getPricesMetadata() {
-        return pricesFactories.getQuick(0).getMetadata();
-    }
-
-    /**
-     * Get the aggregation map for the given slot.
-     */
-    public Map getMap(int slotId) {
-        if (slotId == -1) {
-            return ownerMap;
-        }
-        return perWorkerMaps.getQuick(slotId);
-    }
-
-    /**
-     * Get the function updater for the given slot.
-     */
-    public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
-        if (slotId == -1) {
-            return ownerFunctionUpdater;
-        }
-        return perWorkerFunctionUpdaters.getQuick(slotId);
-    }
-
-    /**
-     * Get the map sink for the given slot.
-     */
-    public RecordSink getMapSink(int slotId) {
-        if (slotId == -1) {
-            return ownerMapSink;
-        }
-        return perWorkerMapSinks.getQuick(slotId);
-    }
-
-    /**
-     * Get the group by functions for the given slot.
-     */
-    public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
-        if (slotId == -1) {
-            return ownerGroupByFunctions;
-        }
-        return perWorkerGroupByFunctions.getQuick(slotId);
-    }
-
-    // Shared sequence data accessors
-    public RecordArray getSequenceRecordArray() {
-        return sequenceRecordArray;
-    }
-
-    public LongList getSequenceRecordOffsets() {
-        return sequenceRecordOffsets;
-    }
-
-    public int getSequenceColumnIndex() {
-        return sequenceColumnIndex;
-    }
-
-    public long getSequenceRowCount() {
-        return sequenceRowCount;
-    }
-
-    public long getFirstSequenceTimeOffset() {
-        return firstSequenceTimeOffset;
-    }
-
-    public int getMasterTimestampColumnIndex() {
-        return masterTimestampColumnIndex;
-    }
-
-    public CairoConfiguration getConfiguration() {
-        return configuration;
-    }
-
-    public RecordSink getMasterRecordSink() {
-        return masterRecordSink;
-    }
-
-    // ASOF join lookup accessors
-
-    /**
-     * Get the ASOF join map for the given slot.
-     * Each worker has its own map to avoid contention.
-     */
-    public Map getAsofJoinMap(int slotId) {
-        if (slotId == -1) {
-            return ownerAsofJoinMap;
-        }
-        return perWorkerAsofJoinMaps.getQuick(slotId);
-    }
-
-    public RecordSink getMasterKeyCopier() {
-        return masterKeyCopier;
-    }
-
-    public RecordSink getPricesKeyCopier() {
-        return pricesKeyCopier;
-    }
-
-    public int getPricesTimestampIndex() {
-        return pricesTimestampIndex;
-    }
-
-    public boolean hasAsofJoinKey() {
-        return asofJoinKeyTypes != null;
-    }
-
-    /**
      * Acquire a slot for parallel execution.
      */
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -544,13 +456,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             return -1;
         }
         return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
-    }
-
-    /**
-     * Release a slot after parallel execution.
-     */
-    public void release(int slotId) {
-        perWorkerLocks.releaseSlot(slotId);
     }
 
     /**
@@ -574,100 +479,16 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         return destMap;
     }
 
-    // ==================== Iterator Block Management ====================
-    // These methods duplicate the native memory management from MarkoutHorizonRecordCursor
-    // for the per-worker k-way merge algorithm
-
-    public long allocIteratorBlock(int slotId) {
-        long blockAddr = Unsafe.malloc(BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
-        Unsafe.getUnsafe().setMemory(blockAddr, BLOCK_HEADER_SIZE, (byte) 0);
-
-        if (slotId == -1) {
-            if (ownerFirstIteratorBlockAddr == 0) {
-                ownerFirstIteratorBlockAddr = blockAddr;
-            } else {
-                long lastBlock = ownerLastIteratorBlockAddr;
-                Unsafe.getUnsafe().putLong(lastBlock + BLOCK_OFFSET_NEXT_BLOCK_ADDR, blockAddr);
-            }
-            ownerLastIteratorBlockAddr = blockAddr;
-        } else {
-            long firstBlock = perWorkerFirstIteratorBlockAddr.getQuick(slotId);
-            if (firstBlock == 0) {
-                perWorkerFirstIteratorBlockAddr.setQuick(slotId, blockAddr);
-            } else {
-                long lastBlock = perWorkerLastIteratorBlockAddr.getQuick(slotId);
-                Unsafe.getUnsafe().putLong(lastBlock + BLOCK_OFFSET_NEXT_BLOCK_ADDR, blockAddr);
-            }
-            perWorkerLastIteratorBlockAddr.setQuick(slotId, blockAddr);
-        }
-
-        return blockAddr;
+    /**
+     * Release a slot after parallel execution.
+     */
+    public void release(int slotId) {
+        perWorkerLocks.releaseSlot(slotId);
     }
 
-    public void freeAllIteratorBlocks(int slotId) {
-        long blockAddr;
-        if (slotId == -1) {
-            blockAddr = ownerFirstIteratorBlockAddr;
-            ownerFirstIteratorBlockAddr = 0;
-            ownerLastIteratorBlockAddr = 0;
-        } else {
-            blockAddr = perWorkerFirstIteratorBlockAddr.getQuick(slotId);
-            perWorkerFirstIteratorBlockAddr.setQuick(slotId, 0);
-            perWorkerLastIteratorBlockAddr.setQuick(slotId, 0);
-        }
-
-        while (blockAddr != 0) {
-            long nextBlockAddr = Unsafe.getUnsafe().getLong(blockAddr + BLOCK_OFFSET_NEXT_BLOCK_ADDR);
-            Unsafe.free(blockAddr, BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
-            blockAddr = nextBlockAddr;
-        }
-    }
-
-    public long getLastIteratorBlockAddr(int slotId) {
-        if (slotId == -1) {
-            return ownerLastIteratorBlockAddr;
-        }
-        return perWorkerLastIteratorBlockAddr.getQuick(slotId);
-    }
-
-    public long getFirstIteratorBlockAddr(int slotId) {
-        if (slotId == -1) {
-            return ownerFirstIteratorBlockAddr;
-        }
-        return perWorkerFirstIteratorBlockAddr.getQuick(slotId);
-    }
-
-    public void setLastIteratorBlockAddr(int slotId, long addr) {
-        if (slotId == -1) {
-            ownerLastIteratorBlockAddr = addr;
-        } else {
-            perWorkerLastIteratorBlockAddr.setQuick(slotId, addr);
-        }
-    }
-
-    public void setFirstIteratorBlockAddr(int slotId, long addr) {
-        if (slotId == -1) {
-            ownerFirstIteratorBlockAddr = addr;
-        } else {
-            perWorkerFirstIteratorBlockAddr.setQuick(slotId, addr);
-        }
-    }
-
-    // Static helper constants for iterator layout
-    public static int getBlockHeaderSize() {
-        return BLOCK_HEADER_SIZE;
-    }
-
-    public static int getIteratorsPerBlock() {
-        return ITERATORS_PER_BLOCK;
-    }
-
-    public static int getIteratorSize() {
-        return ITERATOR_SIZE;
-    }
-
-    public static long getBlockSize() {
-        return BLOCK_SIZE;
+    @Override
+    public void reopen() {
+        // Maps will be opened lazily by worker threads
     }
 
     @Override

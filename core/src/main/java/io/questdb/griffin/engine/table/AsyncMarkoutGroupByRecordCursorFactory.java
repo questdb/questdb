@@ -136,8 +136,6 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                     pricesTimestampIndex,
                     groupByFunctions,
                     perWorkerGroupByFunctions,
-                    ownerMapSink,
-                    perWorkerMapSinks,
                     workerCount
             );
 
