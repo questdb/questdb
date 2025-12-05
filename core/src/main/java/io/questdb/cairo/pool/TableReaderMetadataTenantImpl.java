@@ -33,6 +33,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -75,6 +76,9 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
 
     @Override
     public void close() {
+        if (Chars.equals(getTableName(), "sys.acl_external_groups")) {
+            System.out.println("ok");
+        }
         if (pool != null && getEntry() != null) {
             if (pool.returnToPool(this)) {
                 return;
