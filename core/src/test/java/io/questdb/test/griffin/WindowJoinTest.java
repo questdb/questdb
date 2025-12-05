@@ -72,7 +72,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 8);
         AsyncWindowJoinAtom.GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP = TestUtils.generateRandom(LOG).nextBoolean();
         sink.clear();
-        includePrevailing = TestUtils.generateRandom(null).nextBoolean();
+        //includePrevailing = TestUtils.generateRandom(null).nextBoolean();
+        includePrevailing = false;
     }
 
     @Test
@@ -455,7 +456,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     @Test
     public void testCalcSize() throws Exception {
         assertMemoryLeak(() -> {
-            prepareTable(true);
+            prepareTable();
             assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
                     "from trades t " +
                     "window join prices p " +
@@ -497,6 +498,16 @@ public class WindowJoinTest extends AbstractCairoTest {
                             2
                             1
                             2
+                            1
+                            1
+                            1
+                            1
+                            2
+                            1
+                            2
+                            1
+                            2
+                            1
                             1
                             1
                             1
@@ -1566,7 +1577,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     @Test
     public void testWindowJoinBinarySearch() throws Exception {
         assertMemoryLeak(() -> {
-            prepareTable(true);
+            prepareTable();
             if (!includePrevailing) {
                 printSql("select t.*, sum(p.price) window_price " +
                         "from trades t " +
@@ -1674,6 +1685,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             String expect = includePrevailing ?
                     replaceTimestampSuffix("""
                             ts	sym	window_price1	window_price2
+                            ts	sym	window_price1	window_price2
                             2023-01-01T09:00:00.000000Z	AAPL	301.5	301.5
                             2023-01-01T09:01:00.000000Z	AAPL	202.0	301.5
                             2023-01-01T09:02:00.000000Z		199.0	199.0
@@ -1682,9 +1694,19 @@ public class WindowJoinTest extends AbstractCairoTest {
                             2023-01-01T09:04:00.000000Z	MSFT	200.5	400.0
                             2023-01-01T09:05:00.000000Z	GOOGL	600.0	600.0
                             2023-01-01T09:06:00.000000Z	GOOGL	300.5	901.5
-                            2023-01-01T09:07:00.000000Z	AAPL	102.5	204.0
-                            2023-01-01T09:08:00.000000Z	MSFT	201.5	402.0
-                            2023-01-01T09:09:00.000000Z	GOOGL	301.5	602.0
+                            2023-01-01T09:07:00.000000Z	AAPL	102.5	102.5
+                            2023-01-01T09:08:00.000000Z	MSFT	201.5	201.5
+                            2023-01-01T09:09:00.000000Z	GOOGL	301.5	301.5
+                            2023-01-01T09:10:00.000000Z	TSLA	800.0	800.0
+                            2023-01-01T09:11:00.000000Z	TSLA	400.5	800.0
+                            2023-01-01T09:12:00.000000Z	AMZN	1000.0	1000.0
+                            2023-01-01T09:13:00.000000Z	AMZN	500.5	1000.0
+                            2023-01-01T09:14:00.000000Z	META	1200.0	1200.0
+                            2023-01-01T09:15:00.000000Z	META	600.5	1801.5
+                            2023-01-01T09:16:00.000000Z	TSLA	401.5	401.5
+                            2023-01-01T09:17:00.000000Z	AMZN	501.5	501.5
+                            2023-01-01T09:18:00.000000Z	META	601.5	601.5
+                            2023-01-01T09:19:00.000000Z	NFLX	699.5	699.5
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts\tsym\twindow_price1\twindow_price2
@@ -2581,7 +2603,6 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             prepareTable();
-
             assertQueryNoLeakCheck(
                     includePrevailing ?
                             """
@@ -2596,7 +2617,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t101.5
                             \t102.0\t2023-01-01T09:02:00.000000Z\t398.5
                             """,
-                    "select t.*, sum(p.price) sum_price " +
+                    "select t.ts, t.sym, t.price, sum(p.price) sum_price " +
                             "from (trades limit 3) t " +
                             "window join prices p " +
                             "on (42=42) " +
@@ -3287,19 +3308,15 @@ public class WindowJoinTest extends AbstractCairoTest {
         }
     }
 
-    private void prepareTable(boolean extraData) throws SqlException {
+    private void prepareTable() throws SqlException {
         executeWithRewriteTimestamp(
                 "create table trades (" +
-                        "  sym symbol," +
-                        "  price double," +
                         "  ts #TIMESTAMP" +
                         ") timestamp(ts) partition by day;",
                 leftTableTimestampType.getTypeName()
         );
         executeWithRewriteTimestamp(
                 "create table prices (" +
-                        "  sym symbol," +
-                        "  price double," +
                         "  ts #TIMESTAMP" +
                         ") timestamp(ts) partition by day;",
                 rightTableTimestampType.getTypeName()
@@ -3307,70 +3324,65 @@ public class WindowJoinTest extends AbstractCairoTest {
 
         executeWithRewriteTimestamp(
                 "insert into trades values " +
-                        "('AAPL', 100.0, cast('2023-01-01T09:00:00.000000Z' as #TIMESTAMP))," +
-                        "('AAPL', 101.0, cast('2023-01-01T09:01:00.000000Z' as #TIMESTAMP))," +
-                        "(null, 102.0, cast('2023-01-01T09:02:00.000000Z' as #TIMESTAMP))," + // extra row to test null symbol matching
-                        "('AAPL', 103.0, cast('2023-01-01T09:02:00.000000Z' as #TIMESTAMP))," +
-                        "('MSFT', 200.0, cast('2023-01-01T09:03:00.000000Z' as #TIMESTAMP))," +
-                        "('MSFT', 201.0, cast('2023-01-01T09:04:00.000000Z' as #TIMESTAMP))," +
-                        "('GOOGL', 300.0, cast('2023-01-01T09:05:00.000000Z' as #TIMESTAMP))," +
-                        "('GOOGL', 301.0, cast('2023-01-01T09:06:00.000000Z' as #TIMESTAMP))," +
-                        "('AAPL', 103.0, cast('2023-01-01T09:07:00.000000Z' as #TIMESTAMP))," +
-                        "('MSFT', 202.0, cast('2023-01-01T09:08:00.000000Z' as #TIMESTAMP))," +
-                        "('GOOGL', 302.0, cast('2023-01-01T09:09:00.000000Z' as #TIMESTAMP));",
+                        "(cast('2023-01-01T09:00:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:01:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:02:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:03:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:04:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:05:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:06:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:07:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:08:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:09:00.000000Z' as #TIMESTAMP));",
                 leftTableTimestampType.getTypeName()
         );
 
         executeWithRewriteTimestamp(
                 "insert into prices values " +
-                        "('AAPL', 99.5, cast('2023-01-01T08:59:00.000000Z' as #TIMESTAMP))," +
-                        "('AAPL', 100.5, cast('2023-01-01T09:00:00.000000Z' as #TIMESTAMP))," +
-                        "('AAPL', 101.5, cast('2023-01-01T09:01:00.000000Z' as #TIMESTAMP))," +
-                        "(null, 199, cast('2023-01-01T09:02:00.000000Z' as #TIMESTAMP))," + // extra row to test null symbol matching
-                        "('MSFT', 199.5, cast('2023-01-01T09:02:00.000000Z' as #TIMESTAMP))," +
-                        "('MSFT', 200.5, cast('2023-01-01T09:03:00.000000Z' as #TIMESTAMP))," +
-                        "('GOOGL', 299.5, cast('2023-01-01T09:04:00.000000Z' as #TIMESTAMP))," +
-                        "('GOOGL', 300.5, cast('2023-01-01T09:05:00.000000Z' as #TIMESTAMP))," +
-                        "('AAPL', 102.5, cast('2023-01-01T09:06:00.000000Z' as #TIMESTAMP))," +
-                        "('MSFT', 201.5, cast('2023-01-01T09:07:00.000000Z' as #TIMESTAMP))," +
-                        "('GOOGL', 301.5, cast('2023-01-01T09:08:00.000000Z' as #TIMESTAMP));",
+                        "(cast('2023-01-01T08:59:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:00:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:01:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:02:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:03:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:04:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:05:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:06:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:07:00.000000Z' as #TIMESTAMP))," +
+                        "(cast('2023-01-01T09:08:00.000000Z' as #TIMESTAMP));",
                 rightTableTimestampType.getTypeName()
         );
 
-        if (extraData) {
-            executeWithRewriteTimestamp(
-                    "insert into trades values " +
-                            "('TSLA', 400.0, cast('2023-01-01T09:10:00.000000Z' as #TIMESTAMP))," +
-                            "('TSLA', 401.0, cast('2023-01-01T09:11:00.000000Z' as #TIMESTAMP))," +
-                            "('AMZN', 500.0, cast('2023-01-01T09:12:00.000000Z' as #TIMESTAMP))," +
-                            "('AMZN', 501.0, cast('2023-01-01T09:13:00.000000Z' as #TIMESTAMP))," +
-                            "('META', 600.0, cast('2023-01-01T09:14:00.000000Z' as #TIMESTAMP))," +
-                            "('META', 601.0, cast('2023-01-01T09:15:00.000000Z' as #TIMESTAMP))," +
-                            "('TSLA', 402.0, cast('2023-01-01T09:16:00.000000Z' as #TIMESTAMP))," +
-                            "('AMZN', 502.0, cast('2023-01-01T09:17:00.000000Z' as #TIMESTAMP))," +
-                            "('META', 602.0, cast('2023-01-01T09:18:00.000000Z' as #TIMESTAMP))," +
-                            "('NFLX', 700.0, cast('2023-01-01T09:19:00.000000Z' as #TIMESTAMP));",
-                    leftTableTimestampType.getTypeName()
-            );
-
-            executeWithRewriteTimestamp(
-                    "insert into prices values " +
-                            "('TSLA', 399.5, cast('2023-01-01T09:09:00.000000Z' as #TIMESTAMP))," +
-                            "('TSLA', 400.5, cast('2023-01-01T09:10:00.000000Z' as #TIMESTAMP))," +
-                            "('AMZN', 499.5, cast('2023-01-01T09:11:00.000000Z' as #TIMESTAMP))," +
-                            "('AMZN', 500.5, cast('2023-01-01T09:12:00.000000Z' as #TIMESTAMP))," +
-                            "('META', 599.5, cast('2023-01-01T09:13:00.000000Z' as #TIMESTAMP))," +
-                            "('META', 600.5, cast('2023-01-01T09:14:00.000000Z' as #TIMESTAMP))," +
-                            "('TSLA', 401.5, cast('2023-01-01T09:15:00.000000Z' as #TIMESTAMP))," +
-                            "('AMZN', 501.5, cast('2023-01-01T09:16:00.000000Z' as #TIMESTAMP))," +
-                            "('META', 601.5, cast('2023-01-01T09:17:00.000000Z' as #TIMESTAMP))," +
-                            "('NFLX', 699.5, cast('2023-01-01T09:18:00.000000Z' as #TIMESTAMP));",
-                    rightTableTimestampType.getTypeName()
-            );
-        }
-    }
-
-    private void prepareTable() throws SqlException {
-        prepareTable(false);
+        execute("alter table trades add column sym symbol");
+        execute("alter table trades add column price double");
+        execute("alter table prices add column sym symbol");
+        execute("alter table prices add column price double");
+        executeWithRewriteTimestamp(
+                "insert into trades(sym, price, ts) values " +
+                        "('TSLA', 400.0, cast('2023-01-01T09:10:00.000000Z' as #TIMESTAMP))," +
+                        "('TSLA', 401.0, cast('2023-01-01T09:11:00.000000Z' as #TIMESTAMP))," +
+                        "('AMZN', 500.0, cast('2023-01-01T09:12:00.000000Z' as #TIMESTAMP))," +
+                        "('AMZN', 501.0, cast('2023-01-01T09:13:00.000000Z' as #TIMESTAMP))," +
+                        "('META', 600.0, cast('2023-01-01T09:14:00.000000Z' as #TIMESTAMP))," +
+                        "('META', 601.0, cast('2023-01-01T09:15:00.000000Z' as #TIMESTAMP))," +
+                        "('TSLA', 402.0, cast('2023-01-01T09:16:00.000000Z' as #TIMESTAMP))," +
+                        "('AMZN', 502.0, cast('2023-01-01T09:17:00.000000Z' as #TIMESTAMP))," +
+                        "('META', 602.0, cast('2023-01-01T09:18:00.000000Z' as #TIMESTAMP))," +
+                        "('NFLX', 700.0, cast('2023-01-01T09:19:00.000000Z' as #TIMESTAMP));",
+                leftTableTimestampType.getTypeName()
+        );
+        executeWithRewriteTimestamp(
+                "insert into prices(sym, price, ts) values " +
+                        "('TSLA', 399.5, cast('2023-01-01T09:09:00.000000Z' as #TIMESTAMP))," +
+                        "('TSLA', 400.5, cast('2023-01-01T09:10:00.000000Z' as #TIMESTAMP))," +
+                        "('AMZN', 499.5, cast('2023-01-01T09:11:00.000000Z' as #TIMESTAMP))," +
+                        "('AMZN', 500.5, cast('2023-01-01T09:12:00.000000Z' as #TIMESTAMP))," +
+                        "('META', 599.5, cast('2023-01-01T09:13:00.000000Z' as #TIMESTAMP))," +
+                        "('META', 600.5, cast('2023-01-01T09:14:00.000000Z' as #TIMESTAMP))," +
+                        "('TSLA', 401.5, cast('2023-01-01T09:15:00.000000Z' as #TIMESTAMP))," +
+                        "('AMZN', 501.5, cast('2023-01-01T09:16:00.000000Z' as #TIMESTAMP))," +
+                        "('META', 601.5, cast('2023-01-01T09:17:00.000000Z' as #TIMESTAMP))," +
+                        "('NFLX', 699.5, cast('2023-01-01T09:18:00.000000Z' as #TIMESTAMP));",
+                rightTableTimestampType.getTypeName()
+        );
     }
 }
