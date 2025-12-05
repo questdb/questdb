@@ -86,8 +86,8 @@ jobs:
       name: $(poolName)
     timeoutInMinutes: 60
     variables:
-      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
-      RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
+      SOURCE_CODE_CHANGED: "true"
+      RUST_SOURCE_CODE_CHANGED: "true"
       COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
       CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
       DIFF_COVER_THRESHOLD_PCT: 50
