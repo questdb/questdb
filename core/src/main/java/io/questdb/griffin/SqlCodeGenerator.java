@@ -334,8 +334,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -3493,8 +3493,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 final WindowJoinContext context = slaveModel.getWindowJoinContext();
-                                // already validated by SqlOptimiser
-                                assert !context.isIncludePrevailing();
                                 final TimestampDriver timestampDriver = getTimestampDriver(masterMetadata.getTimestampType());
                                 long hi = context.getHi();
                                 if (context.getHiExprTimeUnit() != 0) {
@@ -3795,6 +3793,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         parent,
                                                         joinMetadata
                                                 ),
+                                                context.isIncludePrevailing(),
                                                 leftSymbolIndex,
                                                 rightSymbolIndex,
                                                 lo,
@@ -3834,6 +3833,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 columnIndex,
                                                 master,
                                                 slave,
+                                                context.isIncludePrevailing(),
                                                 joinFilter,
                                                 compileWorkerFilterConditionally(
                                                         executionContext,
@@ -3879,6 +3879,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 master,
                                                 slave,
                                                 columnIndex,
+                                                context.isIncludePrevailing(),
                                                 lo,
                                                 hi,
                                                 groupByFunctions,
@@ -3896,6 +3897,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 joinMetadata,
                                                 master,
                                                 slave,
+                                                context.isIncludePrevailing(),
                                                 columnIndex,
                                                 lo,
                                                 hi,
@@ -6827,12 +6829,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 WindowJoinContext windowJoinContext = model.getWindowJoinContext();
                 TimestampDriver driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
                 long hi = windowJoinContext.getHi();
-                long lo = windowJoinContext.getLo();
                 if (windowJoinContext.getHiExprTimeUnit() != 0) {
                     hi = driver.from(hi, windowJoinContext.getHiExprTimeUnit());
                 }
-                if (windowJoinContext.getLoExprTimeUnit() != 0) {
-                    lo = driver.from(lo, windowJoinContext.getLoExprTimeUnit());
+                long lo;
+                if (windowJoinContext.isIncludePrevailing()) {
+                    lo = Numbers.LONG_NULL;
+                } else {
+                    lo = windowJoinContext.getLo();
+                    if (windowJoinContext.getLoExprTimeUnit() != 0) {
+                        lo = driver.from(lo, windowJoinContext.getLoExprTimeUnit());
+                    }
                 }
                 intrinsicModel.mergeIntervalModel((RuntimeIntervalModel) pushedIntervalModel, lo, hi);
             }
