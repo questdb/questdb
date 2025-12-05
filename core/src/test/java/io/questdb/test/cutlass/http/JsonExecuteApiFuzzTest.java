@@ -82,7 +82,7 @@ public class JsonExecuteApiFuzzTest extends AbstractCairoTest {
                                     {new Utf8StringSink().put("xyz"), "{\"query\":\"xyz\",\"error\":\"utf8 error in column list\"}", badUtf8Params},
                                     // empty query
                                     {"", "{\"error\":\"empty query\",\"query\":\"\",\"position\":\"0\"}"},
-                                    {"backup table xyz", "{\"query\":\"backup table xyz\",\"error\":\"backup is disabled, server.conf property 'cairo.sql.backup.root' is not set\",\"position\":0}"},
+                                    {"backup database", "{\"query\":\"backup database\",\"error\":\"incremental backup is supported in QuestDB enterprise version only, please use SNAPSHOT backup\",\"position\":0}"},
                                     {"insert into growing values (0, 0, '2000')", "{\"dml\":\"OK\"}"},
                                     // non-empty query text with an effectively empty query
                                     {"--", "{\"error\":\"empty query\",\"query\":\"--\",\"position\":\"0\"}"},

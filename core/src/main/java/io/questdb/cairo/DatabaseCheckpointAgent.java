@@ -32,36 +32,29 @@ import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
-import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FindVisitor;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -69,11 +62,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
-
-import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
-import static io.questdb.cairo.TableUtils.openSmallFile;
-import static io.questdb.cairo.wal.WalUtils.*;
-import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietCloseable {
 
@@ -90,16 +78,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final LongList scoreboardTxns = new LongList();
     private final ObjList<TxnScoreboard> scoreboards = new ObjList<>();
     private final AtomicLong startedAtTimestamp = new AtomicLong(Numbers.LONG_NULL); // Numbers.LONG_NULL means no ongoing checkpoint
-    private final SymbolMapUtil symbolMapUtil = new SymbolMapUtil();
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
-    private final Utf8StringSink utf8Sink = new Utf8StringSink();
-    private ColumnVersionReader columnVersionReader = null;
-    private Path partitionCleanPath; // To be used exclusively as parameter for `removePartitionDirsNotAttached`.
-    private DateFormat partitionDirFmt;
-    private int pathTableLen;
-    private TableReaderMetadata tableMetadata = null;
-    private TxWriter txWriter = null;
-    private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
     DatabaseCheckpointAgent(CairoEngine engine) {
@@ -129,6 +108,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             Misc.free(path);
             Misc.free(metadata);
             Misc.free(tableNameRegistryStore);
+            Misc.freeObjList(scoreboards);
         } finally {
             lock.unlock();
         }
@@ -143,28 +123,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         return startedAtTimestamp.get();
     }
 
-    private static void copyOrError(Path srcPath, Path dstPath, FilesFacade ff, AtomicInteger counter, String fileName) {
-        srcPath.concat(fileName);
-        dstPath.concat(fileName);
-        if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-            throw CairoException.critical(ff.errno())
-                    .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not copy ")
-                    .put(fileName)
-                    .put(" file [src=")
-                    .put(srcPath)
-                    .put(", dst=")
-                    .put(dstPath)
-                    .put(']');
-        } else {
-            counter.incrementAndGet();
-            LOG.info()
-                    .$("recovered ").$(fileName).$(" file [src=").$(srcPath)
-                    .$(", dst=").$(dstPath)
-                    .I$();
-        }
-    }
-
-    private void checkpointCreate(SqlExecutionContext executionContext, CharSequence checkpointRoot) throws SqlException {
+    private void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, CharSequence checkpointRoot, boolean isIncrementalBackup) throws SqlException {
         try {
             final long startedAt = microClock.getTicks();
             if (!startedAtTimestamp.compareAndSet(Numbers.LONG_NULL, startedAt)) {
@@ -191,9 +150,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 if (walPurgeJobRunLock != null) {
                     final long timeout = configuration.getCircuitBreakerConfiguration().getQueryTimeout();
                     while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
-                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     }
                 }
+
+                TableToken tableToken = null;
 
                 try {
                     // Prepare table name registry for copying.
@@ -215,7 +176,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
                         // Copy metadata files for all tables.
                         for (int t = 0, n = ordered.size(); t < n; t++) {
-                            TableToken tableToken = ordered.get(t);
+                            tableToken = ordered.get(t);
                             if (engine.isTableDropped(tableToken)) {
                                 LOG.info().$("skipping, table is dropped [table=").$(tableToken).I$();
                                 continue;
@@ -280,7 +241,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         reader = engine.getReaderWithRepair(tableToken);
                                     } catch (EntryLockedException e) {
                                         LOG.info().$("waiting for locked table [table=").$(tableToken).I$();
-                                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                                         continue;
                                     } catch (CairoException e) {
                                         if (engine.isTableDropped(tableToken)) {
@@ -290,7 +251,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         throw e;
                                     } catch (TableReferenceOutOfDateException e) {
                                         LOG.info().$("retrying, table reference is out of date [table=").$(tableToken).I$();
-                                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                                         continue;
                                     }
 
@@ -356,11 +317,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         mem.close();
 
                         // Flush dirty pages and filesystem metadata to disk
-                        if (ff.sync() != 0) {
+                        if (!isIncrementalBackup && ff.sync() != 0) {
                             throw CairoException.critical(ff.errno()).put("Could not sync");
                         }
 
-                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                         LOG.info().$("checkpoint created").$();
                     }
                 } catch (Throwable e) {
@@ -368,7 +329,21 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     if (walPurgeJobRunLock != null) {
                         walPurgeJobRunLock.unlock();
                     }
-                    LOG.error().$("checkpoint error [e=").$(e).I$();
+                    var log = LOG.error().$("cannot create checkpoint [e=").$(e);
+                    if (tableToken != null) {
+                        log.$(", table=").$(tableToken);
+                    }
+                    log.I$();
+                    if (e instanceof CairoException && tableToken != null) {
+                        CairoException ex = (CairoException) e;
+                        // Copy exception message in case the exception instance is re-used
+                        StringSink ss = Misc.getThreadLocalSink();
+                        ss.put(ex.getFlyweightMessage());
+
+                        throw CairoException.critical(ex.errno).put("error creating checkpoint [table=")
+                                .put(tableToken).put(", error=").put(ss)
+                                .put(']');
+                    }
                     throw e;
                 } finally {
                     tableNameRegistryStore.close();
@@ -380,81 +355,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             }
         } finally {
             lock.unlock();
-        }
-    }
-
-    private void rebuildSymbolFiles(Path tablePath, AtomicInteger recoveredSymbolFiles, int pathTableLen) {
-        tablePath.trimTo(pathTableLen);
-        for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
-            final int columnType = tableMetadata.getColumnType(i);
-            if (ColumnType.isSymbol(columnType)) {
-                final int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
-                final String columnName = tableMetadata.getColumnName(i);
-                LOG.info().$("rebuilding symbol files [table=").$(tablePath)
-                        .$(", column=").$safe(columnName)
-                        .$(", count=").$(cleanSymbolCount)
-                        .I$();
-
-                final int writerIndex = tableMetadata.getWriterIndex(i);
-                symbolMapUtil.rebuildSymbolFiles(
-                        configuration,
-                        tablePath,
-                        columnName,
-                        columnVersionReader.getSymbolTableNameTxn(writerIndex),
-                        cleanSymbolCount,
-                        -1
-                );
-                recoveredSymbolFiles.incrementAndGet();
-            }
-        }
-    }
-
-    private void rebuildTableFiles(Path tablePath, AtomicInteger recoveredSymbolFiles) {
-        pathTableLen = tablePath.size();
-        try {
-            if (tableMetadata == null) {
-                tableMetadata = new TableReaderMetadata(configuration);
-            }
-            tableMetadata.loadMetadata(tablePath.concat(TableUtils.META_FILE_NAME).$());
-
-            if (txWriter == null) {
-                txWriter = new TxWriter(configuration.getFilesFacade(), configuration);
-            }
-            txWriter.ofRW(tablePath.trimTo(pathTableLen).concat(TXN_FILE_NAME).$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
-            txWriter.unsafeLoadAll();
-
-            if (columnVersionReader == null) {
-                columnVersionReader = new ColumnVersionReader();
-            }
-            tablePath.trimTo(pathTableLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-            columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
-            columnVersionReader.readUnsafe();
-
-            // Symbols are not append-only data structures, they can be corrupt
-            // when symbol files are copied while written to. We need to rebuild them.
-            rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
-
-            if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
-                LOG.info().$("resetting WAL lag [table=").$(tablePath)
-                        .$(", walLagRowCount=").$(txWriter.getLagRowCount())
-                        .I$();
-                // WAL Lag values is not strictly append-only data structures, it can be overwritten
-                // while the snapshot was copied. Resetting it will re-apply data from copied WAL files
-                txWriter.resetLagAppliedRows();
-            }
-
-            if (PartitionBy.isPartitioned(tableMetadata.getPartitionBy())) {
-                // Remove non-attached partitions
-                LOG.debug().$("purging non attached partitions [path=").$(tablePath.$()).I$();
-                partitionCleanPath = tablePath; // parameter for `removePartitionDirsNotAttached`
-                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(
-                        tableMetadata.getTimestampType(),
-                        tableMetadata.getPartitionBy()
-                );
-                ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
-            }
-        } finally {
-            tablePath.trimTo(pathTableLen);
         }
     }
 
@@ -476,54 +376,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         scoreboards.clear();
     }
 
-    private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
-        // Do not remove detached partitions, they are probably about to be attached
-        // Do not remove wal and sequencer directories either
-        int checkedType = ff.typeDirOrSoftLinkDirNoDots(partitionCleanPath, pathTableLen, pUtf8NameZ, type, utf8Sink);
-        if (checkedType != Files.DT_UNKNOWN &&
-                !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
-                !CairoKeywords.isWal(pUtf8NameZ) &&
-                !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
-                !CairoKeywords.isSeq(pUtf8NameZ) &&
-                !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
-        ) {
-            try {
-                long txn;
-                int txnSep = Utf8s.indexOfAscii(utf8Sink, '.');
-                if (txnSep < 0) {
-                    txnSep = utf8Sink.size();
-                    txn = -1;
-                } else {
-                    txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
-                }
-                long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
-                if (txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp) == txn) {
-                    return;
-                }
-                if (!ff.unlinkOrRemove(partitionCleanPath, LOG)) {
-                    LOG.info()
-                            .$("failed to purge unused partition version [path=").$(partitionCleanPath)
-                            .$(", errno=").$(ff.errno())
-                            .I$();
-                } else {
-                    LOG.info().$("purged unused partition version [path=").$(partitionCleanPath).I$();
-                }
-                partitionCleanPath.trimTo(pathTableLen).$();
-            } catch (NumericException ignore) {
-                // not a date?
-                // ignore exception and leave the directory
-                partitionCleanPath.trimTo(pathTableLen);
-                partitionCleanPath.concat(pUtf8NameZ).$();
-                LOG.error().$("invalid partition directory inside table folder: ").$(partitionCleanPath).$();
-            } finally {
-                partitionCleanPath.trimTo(pathTableLen);
-            }
-        }
-    }
-
-    void checkpointCreate(SqlExecutionContext executionContext, boolean isLegacy) throws SqlException {
+    void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isLegacy, boolean incrementalBackup) throws SqlException {
         // Windows doesn't support sync() system call.
-        if (Os.isWindows()) {
+        if (!incrementalBackup && Os.isWindows()) {
             if (isLegacy) {
                 throw SqlException.position(0).put("Snapshot is not supported on Windows");
             }
@@ -545,7 +400,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 ff.rmdir(path);
             }
         }
-        checkpointCreate(executionContext, checkpointRoot);
+        checkpointCreate(circuitBreaker, checkpointRoot, incrementalBackup);
     }
 
     void checkpointRelease() throws SqlException {
@@ -594,7 +449,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         try (
                 Path srcPath = new Path();
                 Path dstPath = new Path();
-                MemoryCMARW memFile = Vm.getCMARWInstance()
+                MemoryCMARW memFile = Vm.getCMARWInstance();
+                TableSnapshotRestore recoveryAgent = new TableSnapshotRestore(configuration)
         ) {
             // use current checkpoint root if it exists and don't
             // bother checking that legacy path is there or not
@@ -685,26 +541,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             // First delete all table name registry files in dst.
             srcPath.trimTo(checkpointRootLen).$();
             final int snapshotDbLen = srcPath.size();
-            for (; ; ) {
-                dstPath.trimTo(rootLen).$();
-                int version = TableNameRegistryStore.findLastTablesFileVersion(ff, dstPath, nameSink);
-                dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version);
-                LOG.info().$("backup removing table name registry file [dst=").$(dstPath).I$();
-                if (!ff.removeQuiet(dstPath.$())) {
-                    throw CairoException.critical(ff.errno())
-                            .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not remove registry file [file=").put(dstPath).put(']');
-                }
-                if (version == 0) {
-                    break;
-                }
-            }
-            // Now copy the file name registry.
-            srcPath.trimTo(snapshotDbLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii(".0");
-            dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0");
-            if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-                throw CairoException.critical(ff.errno())
-                        .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Could not copy registry file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
-            }
+
+            recoveryAgent.restoreTableRegistry(srcPath, dstPath, snapshotDbLen, rootLen, nameSink);
 
             AtomicInteger recoveredMetaFiles = new AtomicInteger();
             AtomicInteger recoveredTxnFiles = new AtomicInteger();
@@ -716,61 +554,16 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     srcPath.$(), (pUtf8NameZ, type) -> {
                         if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
                             dstPath.trimTo(rootLen).concat(pUtf8NameZ);
-                            int srcPathLen = srcPath.size();
-                            int dstPathLen = dstPath.size();
 
-                            copyOrError(srcPath, dstPath, ff, recoveredMetaFiles, TableUtils.META_FILE_NAME);
-                            copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredTxnFiles, TableUtils.TXN_FILE_NAME);
-                            copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredCVFiles, TableUtils.COLUMN_VERSION_FILE_NAME);
-                            // Reset _todo_ file otherwise TableWriter will start restoring metadata on open.
-                            TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
-                            rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
-
-                            // Go inside SEQ_DIR
-                            srcPath.trimTo(srcPathLen).concat(WalUtils.SEQ_DIR);
-                            srcPathLen = srcPath.size();
-                            srcPath.concat(TableUtils.META_FILE_NAME);
-
-                            dstPath.trimTo(dstPathLen).concat(WalUtils.SEQ_DIR);
-                            dstPathLen = dstPath.size();
-                            dstPath.concat(TableUtils.META_FILE_NAME);
-
-                            if (ff.exists(srcPath.$())) {
-                                if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-                                    throw CairoException.critical(ff.errno())
-                                            .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not copy meta file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
-                                } else {
-                                    srcPath.trimTo(srcPathLen);
-                                    openSmallFile(ff, srcPath, srcPathLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-                                    long newMaxTxn = memFile.getLong(0L); // snapshot/db/tableName/txn_seq/_txn
-
-                                    memFile.smallFile(ff, dstPath.$(), MemoryTag.MMAP_SEQUENCER_METADATA);
-                                    dstPath.trimTo(dstPathLen);
-                                    openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
-
-                                    if (newMaxTxn >= 0) {
-                                        dstPath.trimTo(dstPathLen);
-                                        openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-                                        // get oldMaxTxn from dbRoot/tableName/txn_seq/_txnlog
-                                        long oldMaxTxn = memFile.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
-                                        if (newMaxTxn < oldMaxTxn) {
-                                            // update header of dbRoot/tableName/txn_seq/_txnlog with new values
-                                            memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
-                                            LOG.info()
-                                                    .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
-                                                    .$(", oldMaxTxn=").$(oldMaxTxn)
-                                                    .$(", newMaxTxn=").$(newMaxTxn)
-                                                    .I$();
-                                        }
-                                    }
-
-                                    recoveredWalFiles.incrementAndGet();
-                                    LOG.info()
-                                            .$("recovered ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)
-                                            .$(", dst=").$(dstPath)
-                                            .I$();
-                                }
-                            }
+                            recoveryAgent.restoreTableFiles(
+                                    srcPath,
+                                    dstPath,
+                                    recoveredMetaFiles,
+                                    recoveredTxnFiles,
+                                    recoveredCVFiles,
+                                    recoveredWalFiles,
+                                    symbolFilesCount
+                            );
                         }
                     }
             );
@@ -796,10 +589,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 throw CairoException.critical(ff.errno())
                         .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');
             }
-        } finally {
-            tableMetadata = Misc.free(tableMetadata);
-            columnVersionReader = Misc.free(columnVersionReader);
-            txWriter = Misc.free(txWriter);
         }
     }
 }

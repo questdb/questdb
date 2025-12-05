@@ -57,6 +57,26 @@ public class SymbolMapUtil {
             int symbolCount,
             int symbolCapacity
     ) {
+        rebuildSymbolFiles(
+                configuration,
+                path,
+                name,
+                columnNameTxn,
+                symbolCount,
+                symbolCapacity,
+                0
+        );
+    }
+
+    public void rebuildSymbolFiles(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            int symbolCount,
+            int symbolCapacity,
+            int indexBlockCapacity
+    ) {
         final int plen = path.size();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
@@ -89,7 +109,8 @@ public class SymbolMapUtil {
             if (this.indexWriter == null) {
                 this.indexWriter = new BitmapIndexWriter(configuration);
             }
-            this.indexWriter.of(path.trimTo(plen), name, columnNameTxn);
+            int indexBlockCap = Math.max(TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE, indexBlockCapacity);
+            this.indexWriter.of(path.trimTo(plen), name, columnNameTxn, indexBlockCap);
 
             // clean the files, except .c file
             truncate(symbolCapacity);
