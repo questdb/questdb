@@ -87,10 +87,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     private final CairoConfiguration config;
     private final CairoEngine engine;
+    private final BlockFileWriter matViewStateWriter;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
-    private final BlockFileWriter mvStateWriter;
     private final OperationExecutor operationExecutor;
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
@@ -115,14 +115,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         metrics = engine.getMetrics().walMetrics();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Micros.DAY_MICROS;
         config = engine.getConfiguration();
-        mvStateWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
+        matViewStateWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
     }
 
     @Override
     public void close() {
         Misc.free(operationExecutor);
         Misc.free(walEventReader);
-        Misc.free(mvStateWriter);
+        Misc.free(matViewStateWriter);
     }
 
     private static void cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
@@ -355,6 +355,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                             mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                                             mvRefreshTask.invalidationReason = matViewInvalidationReason;
                                         }
+                                        if (metadataChangeOp.shouldCompileDependentViews()) {
+                                            engine.enqueueCompileView(tableToken);
+                                        }
                                     } catch (Throwable th) {
                                         // Don't mark transaction as applied if exception occurred
                                         writer.setSeqTxn(seqTxn - 1);
@@ -491,8 +494,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return;
         }
 
-        if (throwable instanceof CairoException) {
-            CairoException cairoException = (CairoException) throwable;
+        if (throwable instanceof CairoException cairoException) {
             if (cairoException.isOutOfMemory()) {
                 if (txnTracker != null) {
                     txnTracker.getMemPressureControl().onOutOfMemory();
@@ -763,7 +765,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             @Nullable LongList refreshIntervals,
             long refreshIntervalsBaseTxn
     ) {
-        try (BlockFileWriter stateWriter = mvStateWriter) {
+        try (BlockFileWriter stateWriter = matViewStateWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
             MatViewState.append(
                     lastRefreshTimestamp,

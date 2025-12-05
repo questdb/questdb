@@ -211,11 +211,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isTimestampRequired();
 
-    boolean isValidationOnly();
-
     default boolean isUninterruptible() {
         return false;
     }
+
+    boolean isValidationOnly();
 
     boolean isWalApplication();
 
@@ -229,7 +229,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void pushTimestampRequiredFlag(boolean flag);
 
-    void resetFlags();
+    void reset();
 
     void setAllowNonDeterministicFunction(boolean value);
 
