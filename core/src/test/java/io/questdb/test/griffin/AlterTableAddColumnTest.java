@@ -987,6 +987,47 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderBySymbolAfterAddColumn() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    execute(
+                            "create table x (ts timestamp) timestamp (ts)" +
+                                    " partition by month" +
+                                    (isWal ? " wal" : "") +
+                                    ";"
+                    );
+                    execute("insert into x values('2025-01-01'), " +
+                            "('2025-01-02')," +
+                            " ('2025-01-03'), " +
+                            "('2025-01-04')");
+                    drainWalQueue();
+                    execute("alter table x add column sym symbol");
+                    drainWalQueue();
+                    execute("insert into x values('2025-01-05', 'A'), " +
+                            "('2025-01-06', 'B')," +
+                            " ('2025-01-07', 'B'), " +
+                            "('2025-02-01', 'A')");
+                    drainWalQueue();
+                    assertQuery(
+                            "sym\tts\n" +
+                                    "\t2025-01-01T00:00:00.000000Z\n" +
+                                    "\t2025-01-02T00:00:00.000000Z\n" +
+                                    "\t2025-01-03T00:00:00.000000Z\n" +
+                                    "\t2025-01-04T00:00:00.000000Z\n" +
+                                    "A\t2025-01-05T00:00:00.000000Z\n" +
+                                    "A\t2025-02-01T00:00:00.000000Z\n" +
+                                    "B\t2025-01-06T00:00:00.000000Z\n" +
+                                    "B\t2025-01-07T00:00:00.000000Z\n",
+                            "select sym, ts from x order by  sym",
+                            null,
+                            true,
+                            true
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testQueryVarcharAboveColumnTop() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select x id, from long_sequence(3))");
