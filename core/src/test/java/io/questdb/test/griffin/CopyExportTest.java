@@ -1309,7 +1309,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyWithNowParameter() throws Exception {
+    public void testCopyWithNowFunc() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosTimestampDriver.floor("2023-01-01T10:00:01.000Z"));
             execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");

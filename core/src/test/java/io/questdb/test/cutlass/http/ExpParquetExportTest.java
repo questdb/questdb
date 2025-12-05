@@ -466,7 +466,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testExportWithNowParameter() throws Exception {
+    public void testExportWithNowFunc() throws Exception {
         getExportTester().withMicrosecondClock(() -> 3000000L)
                 .run((engine, sqlExecutionContext) -> {
                     sqlExecutionContext.setNowAndFixClock(1000000L, ColumnType.TIMESTAMP_MICRO);

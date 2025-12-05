@@ -60,6 +60,8 @@ public class CopyExportRequestTask implements Mutable {
         this.parquetVersion = -1;
         this.rowGroupSize = -1;
         this.statisticsEnabled = true;
+        this.now = 0;
+        this.nowTimestampType = 0;
         this.createOp = Misc.free(createOp);
         result = null;
     }
