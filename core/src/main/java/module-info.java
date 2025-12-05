@@ -30,6 +30,7 @@ open module io.questdb {
     requires java.desktop;
     requires java.sql;
 
+
     uses io.questdb.griffin.FunctionFactory;
     exports io.questdb;
     exports io.questdb.cairo;

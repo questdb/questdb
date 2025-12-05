@@ -113,6 +113,11 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         return false;
     }
 
+    @Override
+    public ObjList<T> copy() {
+        return new ObjList<>(this);
+    }
+
     /**
      * {@inheritDoc}
      */
@@ -314,11 +319,6 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     @Override
     public int size() {
         return pos;
-    }
-
-    @Override
-    public ObjList<T> copy() {
-        return new ObjList<>(this);
     }
 
     public void sort(Comparator<T> cmp) {
