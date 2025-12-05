@@ -1041,6 +1041,14 @@ public class WalWriter implements TableWriterAPI {
                 this.lastMatViewRefreshBaseTxn = lastRefreshBaseTxn;
                 this.lastMatViewRefreshTimestamp = lastRefreshTimestamp;
                 this.lastMatViewPeriodHi = lastPeriodHi;
+                if (rowsToCommit == 0) {
+                    // Sometimes symbols are added but rows are cancelled.
+                    // This can only theoretically happen for replace range commits
+                    // but at the moment it can only happen in fuzz tests because
+                    // in regular usage nothing uses row.cancel() when writing to WAL.
+                    // In this exotic case we do not need to write symbol maps for empty txns.
+                    resetSymbolMaps();
+                }
 
                 lastSegmentTxn = events.appendData(
                         txnType,
