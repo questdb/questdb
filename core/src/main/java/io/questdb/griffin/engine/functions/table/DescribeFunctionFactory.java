@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,6 +45,8 @@ public class DescribeFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         CursorFunction cursorFunction = (CursorFunction) args.getQuick(0);
-        return new CursorFunction(new DescribeRecordCursorFactory(cursorFunction.getMetadata()));
+        RecordMetadata metadata = cursorFunction.getMetadata();
+        cursorFunction.close();
+        return new CursorFunction(new DescribeRecordCursorFactory(metadata));
     }
 }

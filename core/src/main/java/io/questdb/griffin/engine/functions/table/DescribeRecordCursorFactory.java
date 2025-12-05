@@ -77,7 +77,6 @@ public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
-            pos = -1;
         }
 
         @Override
@@ -189,7 +188,7 @@ public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("ordinal_position", ColumnType.INT));
         metadata.add(new TableColumnMetadata("column_name", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("data_type", ColumnType.SYMBOL));
+        metadata.add(new TableColumnMetadata("data_type", ColumnType.SYMBOL, null, true, true, ColumnType.NULL));
         METADATA = metadata;
     }
 }

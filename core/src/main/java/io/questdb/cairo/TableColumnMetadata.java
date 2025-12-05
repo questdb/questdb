@@ -66,6 +66,22 @@ public class TableColumnMetadata implements Plannable {
         assert !ColumnType.isSymbol(columnType);
     }
 
+    public TableColumnMetadata(String columnName, int columnType, @Nullable RecordMetadata metadata, boolean symbolTableStatic, boolean symbolCacheFlag, int symbolCapacity) {
+        this(
+                columnName,
+                columnType,
+                false,
+                0,
+                symbolTableStatic,
+                metadata,
+                -1,
+                false,
+                0,
+                symbolCacheFlag,
+                symbolCapacity
+        );
+    }
+
     public TableColumnMetadata(
             String columnName,
             int columnType,
