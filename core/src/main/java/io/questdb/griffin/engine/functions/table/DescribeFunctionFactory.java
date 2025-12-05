@@ -22,28 +22,28 @@
 // *
 // ******************************************************************************/
 
-//package io.questdb.griffin.engine.functions.table;
-//
-//import io.questdb.cairo.CairoConfiguration;
-//import io.questdb.cairo.sql.Function;
-//import io.questdb.griffin.FunctionFactory;
-//import io.questdb.griffin.SqlException;
-//import io.questdb.griffin.SqlExecutionContext;
-//import io.questdb.griffin.engine.functions.CursorFunction;
-//import io.questdb.std.IntList;
-//import io.questdb.std.ObjList;
-//
-//
-//public class DescribeFunctionFactory implements FunctionFactory {
-//
-//    @Override
-//    public String getSignature() {
-//        return "describe(C)";
-//    }
-//
-//    @Override
-//    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-//        CursorFunction cursorFunction = (CursorFunction) args.getQuick(0);
-//        return new CursorFunction(new DescribeRecordCursorFactory(cursorFunction.getMetadata()));
-//    }
-//}
+package io.questdb.griffin.engine.functions.table;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+
+
+public class DescribeFunctionFactory implements FunctionFactory {
+
+    @Override
+    public String getSignature() {
+        return "describe(C)";
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        CursorFunction cursorFunction = (CursorFunction) args.getQuick(0);
+        return new CursorFunction(new DescribeRecordCursorFactory(cursorFunction.getMetadata()));
+    }
+}

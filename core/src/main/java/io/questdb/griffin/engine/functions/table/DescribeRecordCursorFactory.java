@@ -21,171 +21,177 @@
 /// *  limitations under the License.
 /// *
 /// ******************************************************************************/
-//
-//package io.questdb.griffin.engine.functions.table;
-//
-//import io.questdb.cairo.AbstractRecordCursorFactory;
-//import io.questdb.cairo.CairoColumn;
-//import io.questdb.cairo.CairoEngine;
-//import io.questdb.cairo.CairoTable;
-//import io.questdb.cairo.ColumnType;
-//import io.questdb.cairo.GenericRecordMetadata;
-//import io.questdb.cairo.MetadataCacheReader;
-//import io.questdb.cairo.TableColumnMetadata;
-//import io.questdb.cairo.TableUtils;
-//import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
-//import io.questdb.cairo.sql.Record;
-//import io.questdb.cairo.sql.RecordCursor;
-//import io.questdb.cairo.sql.RecordMetadata;
-//import io.questdb.griffin.PlanSink;
-//import io.questdb.griffin.SqlExecutionContext;
-//import io.questdb.griffin.engine.functions.catalogue.Constants;
-//import io.questdb.griffin.engine.functions.catalogue.InformationSchemaColumnsFunctionFactory;
-//import io.questdb.griffin.engine.functions.catalogue.InformationSchemaQuestDBColumnsFunctionFactory;
-//import io.questdb.std.CharSequenceObjHashMap;
-//
-//import javax.management.Descriptor;
-//import java.util.function.IntFunction;
-//
-//public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory{
-//    static RecordMetadata METADATA = InformationSchemaColumnsFunctionFactory.METADATA;
-//    public static final String SIGNATURE = "describe()";
-//    DescribeRecordCursor cursor = new DescribeRecordCursor();
-//    final RecordMetadata childMetadata;
-//
-//    DescribeRecordCursorFactory(RecordMetadata childMetadata, CharSequence tableName) {
-//            super(METADATA);
-//            this.childMetadata = childMetadata;
-//        }
-//
-//        @Override
-//        public RecordCursor getCursor(SqlExecutionContext executionContext) {
-//            cursor.toTop();
-//            return cursor;
-//        }
-//
-//        @Override
-//        public boolean recordCursorSupportsRandomAccess() {
-//            return false;
-//        }
-//
-//        @Override
-//        public void toPlan(PlanSink sink) {
-//            sink.type(SIGNATURE);
-//        }
-//
-//        private static class DescribeRecordCursor implements NoRandomAccessRecordCursor {
-//            int pos;
-//            ColumnsRecord record;
-//
-//            public DescribeRecordCursor() {};
-//
-//            @Override
-//            public void close() {
-//                pos = -1;
-//            }
-//
-//            @Override
-//            public io.questdb.cairo.sql.Record getRecord() {
-//                return record;
-//            }
-//
-//            @Override
-//            public boolean hasNext() {
-//                do {
-//                    if (table == null && !nextTable()) {
-//                        return false;
-//                    }
-//                    // we have a table
-//                    if (columnIdx < table.getColumnCount() - 1) {
-//                        columnIdx++;
-//                        CairoColumn column = table.getColumnQuiet(columnIdx);
-//                        record.of(table.getTableName(), columnIdx, column.getName(), typeToName.apply(column.getType()));
-//                        return true;
-//                    } else {
-//                        columnIdx = -1;
-//                        table = null;
-//                    }
-//                } while (true);
-//
-//                record.of(ta)
-//            }
-//
-//            @Override
-//            public long preComputedStateSize() {
-//                return pos;
-//            }
-//
-//            @Override
-//            public long size() {
-//                childMetadata.getColumnCount();
-//            }
-//
-//            @Override
-//            public void toTop() {
-//                pos = -1;
-//            }
-//
-//            private static class ColumnsRecord implements Record {
-//                private CharSequence columnName;
-//                private CharSequence dataType;
-//                private int ordinalPosition;
-//                private CharSequence tableName;
-//
-//                @Override
-//                public int getInt(int col) {
-//                    return ordinalPosition;
-//                }
-//
-//                @Override
-//                public CharSequence getStrA(int col) {
-//                    switch (col) {
-//                        case 0:
-//                            // table_catalog
-//                            return Constants.DB_NAME;
-//                        case 1:
-//                            // table_schema
-//                            return Constants.PUBLIC_SCHEMA;
-//                        case 2:
-//                            return tableName;
-//                        case 3:
-//                            return columnName;
-//                        case 5:
-//                            // column_default
-//                            return null;
-//                        case 6:
-//                            // is_nullable
-//                            return "yes";
-//                        case 7:
-//                            return dataType;
-//                    }
-//                    return null;
-//                }
-//
-//                @Override
-//                public CharSequence getStrB(int col) {
-//                    return getStrA(col);
-//                }
-//
-//                @Override
-//                public int getStrLen(int col) {
-//                    return TableUtils.lengthOf(getStrA(col));
-//                }
-//
-//                private void of(CharSequence tableName, int ordinalPosition, CharSequence columnName, CharSequence dataType) {
-//                    this.tableName = tableName;
-//                    this.ordinalPosition = ordinalPosition;
-//                    this.columnName = columnName;
-//                    this.dataType = dataType;
-//                }
-//            }
-//        }
-//
-//    static {
-//            GenericRecordMetadata metadata = new GenericRecordMetadata();
-//            metadata.add(new TableColumnMetadata("name", ColumnType.VARCHAR));
-//            metadata.add(new TableColumnMetadata("type", ColumnType.VARCHAR));
-//    }
-//}
-//
-//
+
+package io.questdb.griffin.engine.functions.table;
+
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
+import org.jetbrains.annotations.NotNull;
+
+public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
+    public static final String SIGNATURE = "describe()";
+    static RecordMetadata METADATA;
+    final RecordMetadata childMetadata;
+    DescribeRecordCursor cursor = new DescribeRecordCursor();
+
+    DescribeRecordCursorFactory(@NotNull RecordMetadata childMetadata) {
+        super(METADATA);
+        this.childMetadata = childMetadata;
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        cursor.of(childMetadata);
+        cursor.toTop();
+        return cursor;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type(SIGNATURE);
+    }
+
+    private static class DescribeRecordCursor implements NoRandomAccessRecordCursor {
+        RecordMetadata childMetadata;
+        int pos;
+        DescribeRecord record = new DescribeRecord();
+
+        public DescribeRecordCursor() {
+        }
+
+        @Override
+        public void close() {
+            pos = -1;
+        }
+
+        @Override
+        public io.questdb.cairo.sql.Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            if (columnIndex == 1) {
+                return SqlUtil.ColumnTypeSymbolTable.INSTANCE;
+            } else {
+                throw new UnsupportedOperationException();
+            }
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (childMetadata.hasColumn(++pos)) {
+                record.of(pos, childMetadata.getColumnName(pos), childMetadata.getColumnType(pos));
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return new SqlUtil.ColumnTypeSymbolTable();
+        }
+
+        public void of(@NotNull RecordMetadata childMetadata) {
+            this.childMetadata = childMetadata;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return pos;
+        }
+
+        @Override
+        public long size() {
+            return childMetadata.getColumnCount();
+        }
+
+        @Override
+        public void toTop() {
+            pos = -1;
+        }
+
+        private static class DescribeRecord implements Record {
+            private CharSequence name;
+            private int position;
+            private int type;
+
+            @Override
+            public int getInt(int col) {
+                return switch (col) {
+                    case 2 -> type;
+                    case 0 -> position;
+                    default -> throw new UnsupportedOperationException();
+                };
+            }
+
+            @Override
+            public long getRowId() {
+                return position;
+            }
+
+            @Override
+            public CharSequence getStrA(int col) {
+                if (col == 1) {
+                    return name;
+                }
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+                return getStrA(col);
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                return TableUtils.lengthOf(getStrA(col));
+            }
+
+            @Override
+            public CharSequence getSymA(int col) {
+                if (col == 2) {
+                    return SqlUtil.ColumnTypeSymbolTable.INSTANCE.valueOf(type);
+                }
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CharSequence getSymB(int col) {
+                return getSymA(col);
+            }
+
+            private void of(int position, CharSequence name, int type) {
+                this.position = position;
+                this.name = name;
+                this.type = type;
+            }
+        }
+    }
+
+    static {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("ordinal_position", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("column_name", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("data_type", ColumnType.SYMBOL));
+        METADATA = metadata;
+
+}
+
+
