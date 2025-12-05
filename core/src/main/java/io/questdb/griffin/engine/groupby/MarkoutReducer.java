@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordArray;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
@@ -32,6 +33,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.AsyncMarkoutGroupByAtom;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -78,23 +80,23 @@ public class MarkoutReducer {
     // Iterator block management
     private long firstIteratorBlockAddr;
     private GroupByFunctionsUpdater functionUpdater;
-    private boolean hasBufferedPrice;  // True if we read a price but didn't store it yet
+    private boolean hasBufferedValue;  // True if we read a price but didn't store it yet
     private long lastIteratorBlockAddr;
     private long lastSlaveRowId;
     private long lastSlaveTimestamp;
     private RecordSink masterKeyCopier;
     private Map partialMap;
+    private int sequenceColumnIndex;
+    // Shared sequence data (read-only)
+    private RecordArray sequenceRecordArray;
+    private LongList sequenceRecordOffsets;
+    private int sequenceRowCount;
     // ASOF JOIN lookup state
     private RecordCursor slaveCursor;
     private RecordSink slaveKeyCopier;
     private Record slaveRecord;
     private Record slaveRecordB;
     private int slaveTimestampIndex;
-    private int sequenceColumnIndex;
-    // Shared sequence data (read-only)
-    private RecordArray sequenceRecordArray;
-    private LongList sequenceRecordOffsets;
-    private int sequenceRowCount;
 
     // ==================== Block accessor methods ====================
 
@@ -133,8 +135,8 @@ public class MarkoutReducer {
         // Initialize ASOF lookup state using per-slot resources
         try {
             this.slaveCursor = atom.getSlaveCursor(slotId);
-        } catch (io.questdb.griffin.SqlException e) {
-            throw io.questdb.cairo.CairoException.nonCritical().put("Failed to get slave cursor: ").put(e.getMessage());
+        } catch (SqlException e) {
+            throw CairoException.nonCritical().put("Failed to get slave cursor: ").put(e.getMessage());
         }
         this.asofJoinMap = atom.getAsofJoinMap(slotId);
         this.masterKeyCopier = atom.getMasterKeyCopier();
@@ -152,15 +154,14 @@ public class MarkoutReducer {
         }
         this.lastSlaveTimestamp = Long.MIN_VALUE;
         this.lastSlaveRowId = Numbers.LONG_NULL;
-        this.hasBufferedPrice = false;
+        this.hasBufferedValue = false;
 
         try {
             int nextMasterRowIndex = 0;
             Record firstMasterRow = batch.getRowAt(nextMasterRowIndex++);
             long firstMasterTs = firstMasterRow.getTimestamp(masterTimestampColumnIndex);
 
-            lastIteratorBlockAddr = block_alloc();
-            firstIteratorBlockAddr = lastIteratorBlockAddr;
+            firstIteratorBlockAddr = lastIteratorBlockAddr = block_alloc();
 
             long iter = createIterator(0, firstMasterTs);
             long prevIter = iter;
@@ -196,11 +197,21 @@ public class MarkoutReducer {
         }
     }
 
+    private static long block_alloc() {
+        long blockAddr = Unsafe.malloc(BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.getUnsafe().setMemory(blockAddr, BLOCK_HEADER_SIZE, (byte) 0);
+        return blockAddr;
+    }
+
     private static int block_decUsedSlotCount(long blockAddr) {
         int count = Unsafe.getUnsafe().getInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT);
         count--;
         Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_USED_SLOT_COUNT, count);
         return count;
+    }
+
+    private static void block_free(long blockAddr) {
+        Unsafe.free(blockAddr, BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
     }
 
     private static void block_incUsedSlotCount(long blockAddr) {
@@ -219,8 +230,6 @@ public class MarkoutReducer {
     private static void block_setNextBlockAddr(long blockAddr, long nextAddr) {
         Unsafe.getUnsafe().putLong(blockAddr + BLOCK_OFFSET_NEXT_BLOCK_ADDR, nextAddr);
     }
-
-    // ==================== Iterator accessor methods ====================
 
     private static void block_setNextFreeSlot(long blockAddr, int slot) {
         Unsafe.getUnsafe().putInt(blockAddr + BLOCK_OFFSET_NEXT_FREE_SLOT, slot);
@@ -270,33 +279,29 @@ public class MarkoutReducer {
         Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START, value);
     }
 
-    // ==================== Main algorithm ====================
-
     private static void iter_setTradeIndex(long iterAddr, int value) {
         Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_MASTER_ROW_INDEX, value);
     }
-
-    // ==================== Block management ====================
 
     /**
      * Advance slave cursor forward-only up to the given horizon timestamp.
      * Stores joinKey -> rowId mappings in the asofJoinMap.
      * <p>
      * This method maintains the cursor position between calls, so it can only
-     * be used when horizons are emitted in strictly increasing timestamp order.
+     * be used when rows are emitted in strictly increasing timestamp order.
      */
     private void advanceSlaveCursorTo(long horizonTs) {
-        // First, check if we have a buffered price that we can now store
-        if (hasBufferedPrice) {
+        // First, check if we have a buffered row that we can now store
+        if (hasBufferedValue) {
             if (lastSlaveTimestamp <= horizonTs) {
-                // Store the buffered price
+                // Store the buffered row
                 MapKey joinKey = asofJoinMap.withKey();
                 joinKey.put(slaveRecord, slaveKeyCopier);
                 MapValue joinValue = joinKey.createValue();
                 joinValue.putLong(0, lastSlaveRowId);
-                hasBufferedPrice = false;
+                hasBufferedValue = false;
             } else {
-                // Buffered price is still past the horizon, nothing more to do
+                // Buffered row is still past the horizon, nothing more to do
                 return;
             }
         }
@@ -304,7 +309,6 @@ public class MarkoutReducer {
         // Advance cursor forward-only
         while (slaveCursor.hasNext()) {
             // Note: Column order in factory metadata may differ from table definition
-            // slaveTimestampIndex gives the timestamp column
             long priceTs = slaveRecord.getTimestamp(slaveTimestampIndex);
             long rowId = slaveRecord.getRowId();
             lastSlaveTimestamp = priceTs;
@@ -318,23 +322,11 @@ public class MarkoutReducer {
                 joinValue.putLong(0, rowId);
             } else {
                 // Past the horizon, stop and mark as buffered
-                hasBufferedPrice = true;
+                hasBufferedValue = true;
                 break;
             }
         }
     }
-
-    private long block_alloc() {
-        long blockAddr = Unsafe.malloc(BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
-        Unsafe.getUnsafe().setMemory(blockAddr, BLOCK_HEADER_SIZE, (byte) 0);
-        return blockAddr;
-    }
-
-    private void block_free(long blockAddr) {
-        Unsafe.free(blockAddr, BLOCK_SIZE, MemoryTag.NATIVE_DEFAULT);
-    }
-
-    // ==================== Iterator management ====================
 
     /**
      * Compute and store the next timestamp based on current row number.
@@ -529,8 +521,8 @@ public class MarkoutReducer {
      * - baseMetadata column 1 (price, DOUBLE) maps to slaveRecord column 0
      */
     private static class CombinedRecord implements Record {
-        private Record slaveRecord;
         private Record sequenceRecord;
+        private Record slaveRecord;
 
         @Override
         public @Nullable BinarySequence getBin(int col) {

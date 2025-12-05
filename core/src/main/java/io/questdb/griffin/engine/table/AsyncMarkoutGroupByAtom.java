@@ -73,9 +73,7 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final CairoConfiguration configuration;
     private final RecordSink masterKeyCopier;
     private final RecordSink masterRecordSink;
-    // Master row batch pool for reuse
     private final ObjList<MasterRowBatch> masterRowBatchPool;
-    // Master row timestamp column index
     private final int masterTimestampColumnIndex;
     private final GroupByAllocator ownerAllocator;
     private final Map ownerAsofJoinMap;
@@ -83,27 +81,24 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final Map ownerMap;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
-    private final ObjList<Map> perWorkerAsofJoinMaps;                     // Per-slot ASOF maps
+    private final ObjList<Map> perWorkerAsofJoinMaps;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
-    // Per-worker resources
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<Map> perWorkerMaps;
-    private final ObjList<RecordCursor> perWorkerSlaveCursors;           // Per-slot cursors (lazily created)
-    // Per-slot slave factories - each worker needs its own factory for independent cursors
-    private final ObjList<RecordCursorFactory> slaveFactories;
-    private final RecordSink slaveKeyCopier;
-    private final int slaveTimestampIndex;
+    private final ObjList<RecordCursor> perWorkerSlaveCursors;
     private final int sequenceColumnIndex;
-    // Shared (read-only) sequence data - materialized offset records
-    // Store metadata/sink to recreate RecordArray after clear() frees it
     private final RecordMetadata sequenceMetadata;
     private final LongList sequenceRecordOffsets = new LongList();
     private final RecordSink sequenceRecordSink;
+    // Per-worker slave factories - each worker needs its own factory for independent cursors
+    private final ObjList<RecordCursorFactory> slaveFactories;
+    private final RecordSink slaveKeyCopier;
+    private final int slaveTimestampIndex;
     private long firstSequenceTimeOffset;
     // Owner resources (for work stealing)
     private RecordCursor ownerSlaveCursor;
-    private RecordArray sequenceRecordArray;  // Freed in clear(), recreated lazily
+    private RecordArray sequenceRecordArray;
     private long sequenceRowCount;
     // Stored execution context for lazy cursor creation
     private SqlExecutionContext storedExecutionContext;
@@ -354,6 +349,23 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         return masterTimestampColumnIndex;
     }
 
+    public int getSequenceColumnIndex() {
+        return sequenceColumnIndex;
+    }
+
+    // Shared sequence data accessors
+    public RecordArray getSequenceRecordArray() {
+        return sequenceRecordArray;
+    }
+
+    public LongList getSequenceRecordOffsets() {
+        return sequenceRecordOffsets;
+    }
+
+    public long getSequenceRowCount() {
+        return sequenceRowCount;
+    }
+
     /**
      * Get the slave cursor for the given slot.
      * Creates the cursor lazily from the per-slot factory.
@@ -382,23 +394,6 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
     public int getSlaveTimestampIndex() {
         return slaveTimestampIndex;
-    }
-
-    public int getSequenceColumnIndex() {
-        return sequenceColumnIndex;
-    }
-
-    // Shared sequence data accessors
-    public RecordArray getSequenceRecordArray() {
-        return sequenceRecordArray;
-    }
-
-    public LongList getSequenceRecordOffsets() {
-        return sequenceRecordOffsets;
-    }
-
-    public long getSequenceRowCount() {
-        return sequenceRowCount;
     }
 
     @Override
