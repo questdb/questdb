@@ -27,21 +27,28 @@ package io.questdb.griffin.engine.functions.regex;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.eq.EqVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.str.StartsWithVarcharFunctionFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.SwarUtils;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static io.questdb.griffin.engine.functions.regex.AbstractLikeStrFunctionFactory.countChar;
@@ -66,6 +73,12 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             if (likeSeq != null && (len = likeSeq.length()) > 0) {
                 if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
                     final int anyCount = countChar(likeSeq, '%');
+
+                    if (anyCount == 0) {
+                        final Utf8String target = new Utf8String(isCaseInsensitive() ? likeSeq.toString().toLowerCase() : likeSeq.toString());
+                        return new ConstEqualsVarcharFunction(value, target, isCaseInsensitive());
+                    }
+
                     if (anyCount == 1) {
                         if (len == 1) {
                             // LIKE '%' case
@@ -136,6 +149,11 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                 );
             }
             return BooleanConstant.FALSE;
+        }
+
+        if (pattern.isRuntimeConstant()) {
+            return new BindLikeVarcharFunction(value, pattern, isCaseInsensitive())
+                    ;
         }
 
         if (pattern.isRuntimeConstant()) {
@@ -398,6 +416,150 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             sink.val(" like ");
             sink.val(startsWith);
             sink.val('%');
+        }
+    }
+
+    private static class BindLikeVarcharFunction extends BooleanFunction implements BinaryFunction {
+        private final boolean caseInsensitive;
+        private final Function pattern;
+        private final Function value;
+        private String lastPattern = null;
+        private Matcher matcher;
+        private boolean useEquality = false;
+        private String exactPattern = null;
+
+        public BindLikeVarcharFunction(Function value, Function pattern, boolean caseInsensitive) {
+            this.value = value;
+            this.pattern = pattern;
+            this.caseInsensitive = caseInsensitive;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            if (useEquality) {
+                Utf8Sequence us = value.getVarcharA(rec);
+                if (us == null) {
+                    return false;
+                }
+                if (caseInsensitive) {
+                    return us.toString().toLowerCase().equals(exactPattern);
+                } else {
+                    return us.toString().equals(exactPattern);
+                }
+            }
+
+            if (matcher == null) {
+                Utf8Sequence us = value.getVarcharA(rec);
+                return us != null && matcher.reset(us.toString()).matches();
+            }
+
+            return false;
+        }
+
+        @Override
+        public Function getLeft() {
+            return value;
+        }
+
+        @Override
+        public Function getRight() {
+            return pattern;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            final CharSequence patternValue = pattern.getStrA(null);
+            if (patternValue != null && patternValue.length() > 0) {
+                if (countChar(patternValue, '_') == 0 && countChar(patternValue, '\\') == 0 && countChar(patternValue, '%') == 0) {
+                    this.useEquality = true;
+                    this.matcher = null;
+                    this.exactPattern = caseInsensitive ? patternValue.toString().toLowerCase() : patternValue.toString();
+                    this.lastPattern = exactPattern;
+                    return;
+                }
+
+                String p = escapeSpecialChars(patternValue, lastPattern);
+                if (p != null) {
+                    int flags = Pattern.DOTALL;
+                    if (caseInsensitive) {
+                        flags |= Pattern.CASE_INSENSITIVE;
+                        p = p.toLowerCase();
+                    }
+                    matcher = Pattern.compile(p, flags).matcher("");
+                    lastPattern = p;
+                }
+            } else {
+                lastPattern = null;
+                matcher = null;
+            }
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            if (useEquality) {
+                sink.val(" = ");
+                sink.val(exactPattern);
+                if (caseInsensitive) {
+                    sink.val(" [case-insensitive] ");
+                } else {
+                    sink.val(" [case-sensitive] ");
+                }
+            }
+
+            sink.val(" ~ ");
+            sink.val(pattern);
+            if (!caseInsensitive) {
+                sink.val(" [case-sensitive] ");
+            }
+        }
+    }
+
+    private static class ConstEqualsVarcharFunction extends BooleanFunction implements UnaryFunction {
+        private final Utf8String pattern;
+        private final Function value;
+        private final boolean caseInsensitive;
+
+        public ConstEqualsVarcharFunction(Function value, Utf8String pattern, boolean caseInsensitive) {
+            this.value = value;
+            this.pattern = pattern;
+            this.caseInsensitive = caseInsensitive;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            Utf8Sequence us = value.getVarcharA(rec);
+            if (us == null) {
+                return false;
+            }
+            if (caseInsensitive) {
+                return us.toString().toLowerCase().equals(pattern.toString());
+            } else {
+                return us.toString().equals(pattern.toString());
+            }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" = ");
+            sink.val(pattern);
+            if (caseInsensitive) {
+                sink.val(" [case-insensitive] ");
+            } else {
+                sink.val(" [case-sensitive] ");
+            }
         }
     }
 }

@@ -552,6 +552,40 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testBindEqualsOptimisation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x as (" +
+                            " select cast('ABC' as symbol) as name from long_sequence(1) " +
+                            "union " +
+                            " select cast('DEF' as symbol) as name from long_sequence(1)" +
+                            ")"
+            );
+
+            bindVariableService.setStr(0, "ABC");
+            assertSql(
+                    "name\n" +
+                            "ABC\n",
+                    "select * from x where name like $1"
+            );
+        });
+    }
+
+    @Test
+    public void testToPlanContainsEqualsNoCaseFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast('ABC' as symbol) as name from long_sequence(1))");
+
+            bindVariableService.setStr("str", "ABC");
+            assertLike(
+                    "name\n" +
+                            "ABC\n",
+                    "select * from x where name like :str"
+            );
+        });
+    }
+
     private void assertLike(String expected, String query) throws Exception {
         assertQueryNoLeakCheck(expected, query, null, true, false);
         assertQueryNoLeakCheck(expected, query.replace("like", "ilike"), null, true, false);
