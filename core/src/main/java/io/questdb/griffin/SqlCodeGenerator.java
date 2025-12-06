@@ -5451,7 +5451,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // Replace with symbol null constant
                         functions.setQuick(functions.size() - 1, SymbolConstant.NULL);
                     }
-                } else if (columnType == TIMESTAMP && function.getType() == STRING) {
+                } else if (columnType == TIMESTAMP && (function.getType() == STRING || function.getType() == VARCHAR)) {
                     m = new TableColumnMetadata(
                             Chars.toString(column.getAlias()),
                             function.getType(),
