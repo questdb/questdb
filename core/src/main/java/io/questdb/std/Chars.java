@@ -390,6 +390,25 @@ public final class Chars {
         return true;
     }
 
+    // Left side has to be lower-case.
+    public static boolean equalsLowerCaseAscii(@NotNull CharSequence lLC, @NotNull CharSequence r, int rLo, int rHi) {
+        if (lLC == r) {
+            return true;
+        }
+
+        int ll = lLC.length();
+        if (ll != rHi - rLo) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (lLC.charAt(i) != toLowerCaseAscii(r.charAt(i + rLo))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean equalsLowerCaseAscii(@NotNull CharSequence l, int lLo, int lHi, @NotNull CharSequence r, int rLo, int rHi) {
         if (l == r) {
             return true;

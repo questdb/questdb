@@ -132,6 +132,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getAsyncMunmapEnabled() {
+        return false;
+    }
+
+    @Override
     public @NotNull String getAttachPartitionSuffix() {
         return TableUtils.ATTACHABLE_DIR_MARKER;
     }
@@ -766,6 +771,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getRmdirMaxDepth() {
+        return 5;
+    }
+
+    @Override
     public int getRndFunctionMemoryMaxPages() {
         return 128;
     }
@@ -783,11 +793,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
-    }
-
-    @Override
-    public int getScoreboardFormat() {
-        return 2;
     }
 
     @Override
@@ -1015,6 +1020,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlPageFrameMinRows() {
         return 1_000;
+    }
+
+    @Override
+    public int getSqlParallelFilterDispatchLimit() {
+        return Integer.MAX_VALUE;
     }
 
     @Override

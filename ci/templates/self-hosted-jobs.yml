@@ -52,7 +52,7 @@ jobs:
       clean: all
     displayName: "on linux-x86-graal"
     pool:
-      name: "hetzner-docker-graal"
+      name: "hetzner-docker"
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     variables:

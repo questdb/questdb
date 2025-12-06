@@ -27,7 +27,7 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>examples</artifactId>
-    <version>9.2.1-SNAPSHOT</version>
+    <version>9.2.3-SNAPSHOT</version>
     <name>Examples for QuestDB</name>
 
     <dependencies>

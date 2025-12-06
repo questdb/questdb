@@ -144,6 +144,7 @@ import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
+import io.questdb.griffin.engine.functions.table.GlobFilesFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
@@ -1122,7 +1123,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di limit 10",
                 """
-                        Limit lo: 10 skip-over-rows: 0 limit: 10
+                        Limit lo: 10 skip-over-rows: 0 limit: 0
                             Async Group By workers: 1
                               keys: [ts]
                               filter: null
@@ -1156,7 +1157,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where y = 5 limit 10",
                 """
-                        Limit lo: 10 skip-over-rows: 0 limit: 10
+                        Limit lo: 10 skip-over-rows: 0 limit: 0
                             Async JIT Group By workers: 1
                               keys: [ts]
                               filter: y=5
@@ -1190,7 +1191,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where abs(y) = 5 limit 10",
                 """
-                        Limit lo: 10 skip-over-rows: 0 limit: 10
+                        Limit lo: 10 skip-over-rows: 0 limit: 0
                             Async Group By workers: 1
                               keys: [ts]
                               filter: abs(y)=5
@@ -1224,7 +1225,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where abs(y) = 5 limit 10, 20",
                 """
-                        Limit lo: 10 hi: 20 skip-over-rows: 10 limit: 10
+                        Limit lo: 10 hi: 20 skip-over-rows: 0 limit: 0
                             Async Group By workers: 1
                               keys: [ts]
                               filter: abs(y)=5
@@ -1277,7 +1278,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di limit 10",
                 """
-                        Limit lo: 10 skip-over-rows: 0 limit: 10
+                        Limit lo: 10 skip-over-rows: 0 limit: 0
                             GroupBy vectorized: true workers: 1
                               keys: [x]
                               values: [count(*)]
@@ -1311,7 +1312,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di where y = 5 limit 10",
                 """
-                        Limit lo: 10 skip-over-rows: 0 limit: 10
+                        Limit lo: 10 skip-over-rows: 0 limit: 0
                             Async JIT Group By workers: 1
                               keys: [x]
                               filter: y=5
@@ -1345,7 +1346,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di where abs(y) = 5 limit 10",
                 """
-                        Limit lo: 10 skip-over-rows: 0 limit: 10
+                        Limit lo: 10 skip-over-rows: 0 limit: 0
                             Async Group By workers: 1
                               keys: [x]
                               filter: abs(y)=5
@@ -1379,7 +1380,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di where abs(y) = 5 limit 10, 20",
                 """
-                        Limit lo: 10 hi: 20 skip-over-rows: 10 limit: 10
+                        Limit lo: 10 hi: 20 skip-over-rows: 0 limit: 0
                             Async Group By workers: 1
                               keys: [x]
                               filter: abs(y)=5
@@ -3017,6 +3018,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof WalTransactionsFunctionFactory && sigArgType == ColumnType.STRING) {
                                     // Skip it, it requires a WAL table to exist
                                     break FUNCTIONS;
+                                } else if (factory instanceof GlobFilesFunctionFactory) {
+                                    args.add(new StrConstant("/tmp/*"));
                                 } else {
                                     args.add(getConst(constFuncs, sigArgType, p, no));
                                 }
@@ -4134,7 +4137,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di group by x limit 10",
                 """
-                        Limit lo: 10 skip-over-rows: 0 limit: 10
+                        Limit lo: 10 skip-over-rows: 0 limit: 0
                             GroupBy vectorized: true workers: 1
                               keys: [x]
                               values: [count(*)]
@@ -4168,7 +4171,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where y = 5 group by x limit 10",
                 """
-                        Limit lo: 10 skip-over-rows: 0 limit: 10
+                        Limit lo: 10 skip-over-rows: 0 limit: 0
                             Async JIT Group By workers: 1
                               keys: [x]
                               values: [count(*)]
@@ -4204,7 +4207,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where abs(y) = 5 group by x limit 10",
                 """
-                        Limit lo: 10 skip-over-rows: 0 limit: 10
+                        Limit lo: 10 skip-over-rows: 0 limit: 0
                             Async Group By workers: 1
                               keys: [x]
                               values: [count(*)]
@@ -4240,7 +4243,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where abs(y) = 5 group by x limit 10, 20",
                 """
-                        Limit lo: 10 hi: 20 skip-over-rows: 10 limit: 10
+                        Limit lo: 10 hi: 20 skip-over-rows: 0 limit: 0
                             Async Group By workers: 1
                               keys: [x]
                               values: [count(*)]
@@ -4633,7 +4636,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     sql,
                     """
-                            Limit lo: 10 skip-over-rows: 0 limit: 10
+                            Limit lo: 10 skip-over-rows: 0 limit: 1
                                 Sort
                                   keys: [bits desc]
                                     VirtualRecord
@@ -4675,7 +4678,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     sql,
                     """
-                            Limit lo: 10 skip-over-rows: 0 limit: 10
+                            Limit lo: 10 skip-over-rows: 0 limit: 1
                                 LatestBy
                                     Sample By
                                       fill: none
@@ -7664,7 +7667,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             VirtualRecord
                               functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]
                                 GroupBy vectorized: true workers: 1
-                                  values: [sum(resolutIONWidth),count(resolutIONWidth),count(*)]
+                                  values: [sum(ResolutionWidth),count(ResolutionWidth),count(*)]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: hits
@@ -9811,7 +9814,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
                 """
-                        Limit lo: 1 skip-over-rows: 0 limit: 1
+                        Limit lo: 1 skip-over-rows: 0 limit: 0
                             DeferredSingleSymbolFilterPageFrame
                                 Index backward scan on: s deferred: true
                                   filter: s='S1'
@@ -9826,7 +9829,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
                 """
-                        Limit lo: 1 skip-over-rows: 0 limit: 1
+                        Limit lo: 1 skip-over-rows: 0 limit: 0
                             DeferredSingleSymbolFilterPageFrame
                                 Index backward scan on: s deferred: true
                                   filter: s='S1'
@@ -9841,7 +9844,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
                 """
-                        Limit lo: 1 skip-over-rows: 0 limit: 1
+                        Limit lo: 1 skip-over-rows: 0 limit: 0
                             DeferredSingleSymbolFilterPageFrame
                                 Index backward scan on: s deferred: true
                                   filter: s='S1'
@@ -9856,7 +9859,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
                 """
-                        Limit lo: 1 skip-over-rows: 0 limit: 1
+                        Limit lo: 1 skip-over-rows: 0 limit: 0
                             DeferredSingleSymbolFilterPageFrame
                                 Index backward scan on: s deferred: true
                                   filter: s='S1'
@@ -9925,7 +9928,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1",
-                "Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
+                "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                         "    FilterOnValues symbolOrder: desc\n" +
                         "        Cursor-order scan\n" + //actual order is S2, S1
                         "            Index forward scan on: s deferred: true\n" +
@@ -10033,7 +10036,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( s symbol index) ;",
                 "select * from a where s = 'S1' order by s asc limit 10",
                 """
-                        Limit lo: 10 skip-over-rows: 0 limit: 10
+                        Limit lo: 10 skip-over-rows: 0 limit: 0
                             DeferredSingleSymbolFilterPageFrame
                                 Index forward scan on: s deferred: true
                                   filter: s='S1'
@@ -10207,7 +10210,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s in ('S1', 'S2') limit 1",
                 """
-                        Limit lo: 1 skip-over-rows: 0 limit: 1
+                        Limit lo: 1 skip-over-rows: 0 limit: 0
                             FilterOnValues
                                 Table-order scan
                                     Index forward scan on: s deferred: true
@@ -10385,7 +10388,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit lo: 5 skip-over-rows: 0 limit: 5
+                            Limit lo: 5 skip-over-rows: 0 limit: 3
                                 FilterOnExcludedValues
                                   symbolFilter: s1 not in ['S1','S2']
                                     Table-order scan
@@ -12947,10 +12950,31 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               keys: [sum desc]
                                 GroupBy vectorized: false
                                   values: [sum(avg),sum(sum),first(first_value)]
-                                    CachedWindow
-                                      orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
+                                    Window
+                                      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
                             sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
-                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
+                            first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: cpu_ts
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "select sum(avg), sum(sum), count(first_value) from ( " +
+                            "select ts, hostname, usage_system, " +
+                            "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " +
+                            "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " +
+                            "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " +
+                            "from (select * from cpu_ts order by ts desc) " +
+                            ") order by 1 desc",
+                    """
+                            Sort
+                              keys: [sum desc]
+                                GroupBy vectorized: false
+                                  values: [sum(avg),sum(sum),count(first_value)]
+                                    CachedWindow
+                                      orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: cpu_ts
@@ -13741,7 +13765,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlanNoLeakCheck(
                 query,
                 """
-                        Limit lo: 5 skip-over-rows: 0 limit: 5
+                        Limit lo: 5 skip-over-rows: 0 limit: 3
                             FilterOnValues symbolOrder: desc
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
@@ -13765,7 +13789,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlanNoLeakCheck(
                 query,
                 """
-                        Limit lo: 5 skip-over-rows: 0 limit: 5
+                        Limit lo: 5 skip-over-rows: 0 limit: 3
                             FilterOnValues symbolOrder: asc
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
@@ -13800,7 +13824,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlanNoLeakCheck(
                 query,
                 """
-                        Limit lo: 5 skip-over-rows: 0 limit: 5
+                        Limit lo: 5 skip-over-rows: 0 limit: 3
                             FilterOnValues symbolOrder: desc
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
@@ -13825,7 +13849,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlanNoLeakCheck(
                 query,
                 """
-                        Limit lo: 5 skip-over-rows: 0 limit: 5
+                        Limit lo: 5 skip-over-rows: 0 limit: 3
                             FilterOnValues symbolOrder: asc
                                 Cursor-order scan
                                     Index forward scan on: s deferred: true
@@ -13858,7 +13882,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlanNoLeakCheck(
                 queryAsc,
                 """
-                        Limit lo: 5 skip-over-rows: 0 limit: 5
+                        Limit lo: 5 skip-over-rows: 0 limit: 4
                             FilterOnValues
                                 Table-order scan
                                     Index forward scan on: s deferred: true

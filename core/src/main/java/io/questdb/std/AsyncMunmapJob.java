@@ -22,47 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.filewatch;
+package io.questdb.std;
 
-public final class LinuxAccessorFacadeImpl implements LinuxAccessorFacade {
-    public static final LinuxAccessorFacadeImpl INSTANCE = new LinuxAccessorFacadeImpl();
+import io.questdb.mp.Job;
+import org.jetbrains.annotations.NotNull;
 
-    private LinuxAccessorFacadeImpl() {
+public final class AsyncMunmapJob implements Job {
 
+    private final MmapCache cache;
+
+    public AsyncMunmapJob() {
+        this.cache = Files.getMmapCache();
     }
 
     @Override
-    public int inotifyAddWatch(long fd, long pathPtr, int flags) {
-        return LinuxAccessor.inotifyAddWatch(fd, pathPtr, flags);
-    }
-
-    @Override
-    public int inotifyInit() {
-        return LinuxAccessor.inotifyInit();
-    }
-
-    @Override
-    public short inotifyRmWatch(long fd, int wd) {
-        return LinuxAccessor.inotifyRmWatch(fd, wd);
-    }
-
-    @Override
-    public long pipe() {
-        return LinuxAccessor.pipe();
-    }
-
-    @Override
-    public int readEvent(long fd, long buf, int bufSize) {
-        return LinuxAccessor.readEvent(fd, buf, bufSize);
-    }
-
-    @Override
-    public int readPipe(long fd) {
-        return LinuxAccessor.readPipe(fd);
-    }
-
-    @Override
-    public int writePipe(long fd) {
-        return LinuxAccessor.writePipe(fd);
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+        return cache.asyncMunmap();
     }
 }

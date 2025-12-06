@@ -6,7 +6,6 @@
 cairo.sql.copy.root=/home/pim/Downloads
 cairo.sql.backup.root=/home/pim/.questdb/dbbak
 shared.worker.count=1
-shared.worker.affinity=1
 pgwire.enabled=false
 replication.enabled=true
 replication.udp.bind.to=127.0.0.1:9010
@@ -651,7 +650,6 @@ rm /tmp/bigcpu2.bak
 cairo.sql.copy.root=/home/pim/Downloads
 cairo.sql.backup.root=/home/pim/.questdb/dbbak
 shared.worker.count=1
-#shared.worker.affinity=1
 pgwire.enabled=false
 replication.enabled=true
 replication.udp.bind.to=127.0.0.1:9010

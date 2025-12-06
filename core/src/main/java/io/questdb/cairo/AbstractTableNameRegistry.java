@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 
@@ -87,7 +88,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public TableToken getTokenByDirName(CharSequence dirName) {
+    public @Nullable TableToken getTokenByDirName(CharSequence dirName) {
         ReverseTableMapItem entry = dirNameToTableTokenMap.get(dirName);
         return entry == null ? null : entry.getToken();
     }

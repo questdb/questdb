@@ -45,6 +45,11 @@ public class AtomicLongGaugeImpl extends AbstractLongGauge implements AtomicLong
     }
 
     @Override
+    public long decrementAndGet() {
+        return counter.decrementAndGet();
+    }
+
+    @Override
     public long getValue() {
         return counter.get();
     }

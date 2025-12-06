@@ -22,20 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.filewatch;
+package io.questdb.griffin.engine.functions.groupby;
 
-public interface LinuxAccessorFacade {
-    int inotifyAddWatch(long fd, long pathPtr, int flags);
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
-    int inotifyInit();
+public class WeightedAvgDoubleGroupByFunctionFactory implements FunctionFactory {
 
-    short inotifyRmWatch(long fd, int wd);
+    @Override
+    public String getSignature() {
+        return "weighted_avg(DD)";
+    }
 
-    long pipe();
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
 
-    int readEvent(long fd, long buf, int bufSize);
-
-    int readPipe(long fd);
-
-    int writePipe(long fd);
+    @Override
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new WeightedAvgDoubleGroupByFunction(args.getQuick(0), args.getQuick(1));
+    }
 }

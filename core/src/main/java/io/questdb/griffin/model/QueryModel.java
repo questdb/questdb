@@ -177,6 +177,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
     private boolean isUpdateModel;
+    private boolean isCteModel;
     private ExpressionNode joinCriteria;
     private int joinKeywordPosition;
     private int joinType = JOIN_INNER;
@@ -463,6 +464,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         // TODO: replace booleans with an enum-like type: UPDATE/MAT_VIEW/INSERT_AS_SELECT/SELECT
         //  default is SELECT
         isUpdateModel = false;
+        isCteModel = false;
         modelType = ExecutionModel.QUERY;
         updateSetColumns.clear();
         updateTableColumnTypes.clear();
@@ -1133,6 +1135,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return isUpdateModel;
     }
 
+    public boolean isCteModel() {
+        return isCteModel;
+    }
+
     /**
      * The goal of this method is to dismiss the baseModel as
      * the layer between this and the baseModel is referencing. We do that by copying ASTs from
@@ -1344,6 +1350,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setIsUpdate(boolean isUpdate) {
         this.isUpdateModel = isUpdate;
+    }
+
+    public void setIsCteModel(boolean isCteModel) {
+        this.isCteModel = isCteModel;
     }
 
     public void setJoinCriteria(ExpressionNode joinCriteria) {
