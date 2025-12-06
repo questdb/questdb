@@ -78,6 +78,11 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setModel(ExecutionModel model) {
         this.model = model;
+
+        final QueryModel queryModel = model.getQueryModel();
+        if (queryModel != null) {
+            queryModel.setExplainQuery(true);
+        }
     }
 
     @Override

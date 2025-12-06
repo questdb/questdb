@@ -1803,14 +1803,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
             assertSql("""
-                    QUERY PLAN
-                    Update table: a
-                        VirtualRecord
-                          functions: [1,10.1]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                    """, "explain update a set l = 1, d=10.1;"
+                            QUERY PLAN
+                            Update table: a
+                                VirtualRecord
+                                  functions: [1,10.1]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                            """,
+                    "explain update a set l = 1, d=10.1;"
             );
         });
     }
@@ -1821,21 +1822,48 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( l1 long, d1 double)");
             execute("create table b ( l2 long, d2 double)");
             assertSql("""
-                    QUERY PLAN
-                    Update table: a
-                        VirtualRecord
-                          functions: [1,d1]
-                            SelectedRecord
-                                Hash Join Light
-                                  condition: l2=l1
+                            QUERY PLAN
+                            Update table: a
+                                VirtualRecord
+                                  functions: [1,d1]
+                                    SelectedRecord
+                                        Hash Join Light
+                                          condition: l2=l1
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                            """,
+                    "explain update a set l1 = 1, d1=d2 from b where l1=l2;"
+            );
+        });
+    }
+
+    @Test
+    public void testExplainUpdate3() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table reference_prices (
+                      symbol symbol index,
+                      referencePrice double,
+                      ts timestamp
+                    ) timestamp(ts) partition by day wal
+                    """);
+
+            assertSql("""
+                            QUERY PLAN
+                            Update table: reference_prices
+                                VirtualRecord
+                                  functions: [0]
                                     PageFrame
                                         Row forward scan
-                                        Frame forward scan on: a
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                    """, "explain update a set l1 = 1, d1=d2 from b where l1=l2;"
+                                        Interval forward scan on: reference_prices
+                                          intervals: [("2025-09-20T00:00:00.000000Z","2025-09-20T23:59:59.999999Z")]
+                            """,
+                    "EXPLAIN UPDATE reference_prices SET referencePrice = 0 WHERE ts IN '2025-09-20'"
             );
         });
     }
@@ -10159,7 +10187,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     s
                     w
                     b
-                    
+
                     """/*null*/, query, null, true, false);
 
             query = "select * from a where s != null order by s desc";
