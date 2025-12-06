@@ -10187,7 +10187,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     s
                     w
                     b
-                                        
+                    
                     """/*null*/, query, null, true, false);
 
             query = "select * from a where s != null order by s desc";
