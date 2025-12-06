@@ -159,6 +159,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
     private static final int MATCH_EXACT_MATCH = 3;
     private static final int MATCH_FUZZY_MATCH = 1;
+    private static final int MAX_CANDIDATES_IN_HINT = 5;
     // order of values matters here, partial match must have greater value than fuzzy match
     private static final int MATCH_NO_MATCH = 0;
     private static final int MATCH_PARTIAL_MATCH = 2;
@@ -447,7 +448,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         ex.setPosition(argPositions.getQuick(i));
     }
 
-    private static SqlException invalidArgument(
+    private  SqlException invalidArgument(
             ExpressionNode node,
             @Nullable ObjList<Function> args,
             @Transient IntList argPositions,
@@ -457,9 +458,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (descriptor != null) {
             if (args != null) {
                 if (args.size() != descriptor.getSigArgCount()) {
-                    ex.put("wrong number of arguments for function `").put(node.token)
-                            .put("`; expected: ").put(descriptor.getSigArgCount())
-                            .put(", provided: ").put(args.size());
+                    ex.put("wrong number of arguments for function `").put(node.token) ;
+                           appendFunctionCandidatesHint(ex, node, args);
                 } else if (args.size() == 2) {
                     // Binary operator; we have overloads we could not use because argument types
                     // do not match somewhere. Throw type-specific exception, pointing out expression,
@@ -467,6 +467,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     // This is typically works for boolean operators, such as "and" and "or" when
                     // their arguments are not boolean.
                     ex.put("expression type mismatch,");
+                     appendFunctionCandidatesHint(ex, node, args);
                     for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
                         final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
                         final int expectedType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
@@ -494,7 +495,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         }
                     }
                 } else {
+
                     ex.put("argument type mismatch for function `").put(node.token).put('`');
+                    appendFunctionCandidatesHint(ex, node, args);
+
                     for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
                         final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
                         final int expectedType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
@@ -546,8 +550,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     putArgType(args, i, ex);
                 }
                 ex.put(')');
+                  appendFunctionCandidatesHint(ex, node, args);
             } else {
                 ex.put("function `").put(node.token).put("` requires arguments");
+                 appendFunctionCandidatesHint(ex, node, null);
             }
             Misc.freeObjList(args);
             return ex;
@@ -575,6 +581,153 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         Misc.freeObjList(args);
         return ex;
     }
+
+    
+
+    private void appendFunctionCandidatesHint(
+        SqlException ex,
+        ExpressionNode node,
+        @Nullable ObjList<Function> args
+    ) {
+          final ObjList<FunctionFactoryDescriptor> overloads = functionFactoryCache.getOverloadList(node.token);
+
+        if (overloads == null || overloads.size() == 0) {
+         return; // truly unknown function, nothing to show
+       }
+
+       ex.put(". Hint: function `").put(node.token).put("` exists, but no overload matches the provided arguments.");
+        
+       
+       if (args == null || args.size() == 0) {
+        // We don’t know actual types, just say it has overloads.
+        ex.put(" Available overloads include ");
+        int count = Math.min(MAX_CANDIDATES_IN_HINT, overloads.size());
+        for (int i = 0; i < count; i++) {
+            if (i > 0) {
+                ex.put(", ");
+            }
+            printDescriptorSignature(ex, node.token, overloads.getQuick(i));
+        }
+        if (overloads.size() > MAX_CANDIDATES_IN_HINT) {
+            ex.put(" and ").put(overloads.size() - MAX_CANDIDATES_IN_HINT).put(" more.");
+        }
+        return;
+       }
+
+         ex.put(" Candidate overloads (showing up to ").put(MAX_CANDIDATES_IN_HINT).put("): ");
+
+         // Prefer same-arity overloads first
+        final int providedCount = args.size();
+        int printed = 0;
+
+        // pass 1: same parameter count
+        printed = appendCandidatesForArity(ex, node, overloads, args, providedCount, printed);
+        // pass 2: different parameter count (only if we haven’t printed enough)
+        if (printed < MAX_CANDIDATES_IN_HINT) {
+        appendCandidatesForArity(ex, node, overloads, args, -1, printed);
+        }
+
+       if (overloads.size() > printed) {
+        ex.put(" (").put(overloads.size() - printed).put(" more overload(s) omitted)");
+       }
+    }
+
+    private int appendCandidatesForArity(
+        SqlException ex,
+        ExpressionNode node,
+        ObjList<FunctionFactoryDescriptor> overloads,
+        ObjList<Function> args,
+        int arityFilter, // -1 = any arity
+        int alreadyPrinted
+      ) {
+    int printed = alreadyPrinted;
+    final int providedCount = args.size();
+
+    for (int i = 0, n = overloads.size(); i < n && printed < MAX_CANDIDATES_IN_HINT; i++) {
+        FunctionFactoryDescriptor d = overloads.getQuick(i);
+        int expectedCount = d.getSigArgCount();
+
+        if (arityFilter >= 0 && expectedCount != arityFilter) {
+            continue;
+        }
+
+        if (printed > 0 || alreadyPrinted > 0) {
+            ex.put("; ");
+        }
+
+        ex.put(node.token).put('(');
+        for (int j = 0; j < expectedCount; j++) {
+            if (j > 0) {
+                ex.put(", ");
+            }
+            int typeWithFlags = d.getArgTypeWithFlags(j);
+            ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toTypeTag(typeWithFlags)));
+            if (FunctionFactoryDescriptor.isArray(typeWithFlags)) {
+                ex.put("[]");
+            }
+        }
+        ex.put(") — ");
+
+        if (expectedCount != providedCount) {
+            ex.put("wrong parameter count (expected ")
+              .put(expectedCount)
+              .put(", got ")
+              .put(providedCount)
+              .put(')');
+        } else {
+            // Same arity: explain first mismatching argument
+            for (int j = 0; j < expectedCount; j++) {
+                int typeWithFlags = d.getArgTypeWithFlags(j);
+                int expectedType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
+                int actualType = args.getQuick(j).getType();
+                boolean expectedConst = FunctionFactoryDescriptor.isConstant(typeWithFlags);
+                boolean actualConst = args.getQuick(j).isConstant();
+
+                if (expectedType != actualType || (expectedConst && !actualConst)) {
+                    ex.put("unsupported type at argument #").put(j + 1)
+                      .put(" (expected ")
+                      .put(ColumnType.nameOf(expectedType));
+                    if (FunctionFactoryDescriptor.isArray(typeWithFlags)) {
+                        ex.put("[]");
+                    }
+                    if (expectedConst) {
+                        ex.put(" constant");
+                    }
+                    ex.put(", actual ")
+                      .put(ColumnType.nameOf(actualType));
+                    if (args.getQuick(j).isConstant()) {
+                        ex.put(" constant");
+                    }
+                    ex.put(')');
+                    break;
+                }
+            }
+        }
+
+        printed++;
+    }
+
+    return printed;
+}
+
+   private static void printDescriptorSignature(SqlException ex, CharSequence name, FunctionFactoryDescriptor d) {
+    ex.put(name).put('(');
+    for (int i = 0, n = d.getSigArgCount(); i < n; i++) {
+        if (i > 0) {
+            ex.put(", ");
+        }
+        int typeWithFlags = d.getArgTypeWithFlags(i);
+        ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toTypeTag(typeWithFlags)));
+        if (FunctionFactoryDescriptor.isArray(typeWithFlags)) {
+            ex.put("[]");
+        }
+        if (FunctionFactoryDescriptor.isConstant(typeWithFlags)) {
+            ex.put(" constant");
+        }
+    }
+    ex.put(')');
+    }
+
 
     private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
         SqlException ex = SqlException.position(node.position);
