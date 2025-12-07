@@ -481,18 +481,23 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     @Override
     public CharSequence getSymA(int columnIndex) {
         final long address = pageAddresses.getQuick(columnIndex);
-        int key = NullMemoryCMR.INSTANCE.getInt(0);
+        int key;
         if (address != 0) {
             key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+            return getSymbolTable(columnIndex).valueOf(key);
         }
-        return getSymbolTable(columnIndex).valueOf(key);
+        return null;
     }
 
     @Override
     public CharSequence getSymB(int columnIndex) {
         final long address = pageAddresses.getQuick(columnIndex);
-        final int key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
-        return getSymbolTable(columnIndex).valueBOf(key);
+        int key;
+        if (address != 0) {
+            key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+            return getSymbolTable(columnIndex).valueBOf(key);
+        }
+        return null;
     }
 
     @Override
