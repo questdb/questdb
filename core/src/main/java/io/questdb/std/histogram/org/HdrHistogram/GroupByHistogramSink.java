@@ -216,13 +216,13 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         long newCapacity = headerSize + (countsArrayLength * 8L);
 
         if (hadPreviousAllocation) {
-            reallocateAndExpandCounts(newCapacity, oldNormalizedZeroIndex, oldCountsArrayLength);
+            reallocate(newCapacity, oldNormalizedZeroIndex, oldCountsArrayLength);
         } else {
-            allocateNewCounts(newCapacity);
+            allocate(newCapacity);
         }
     }
 
-    private void reallocateAndExpandCounts(long newCapacity, int oldNormalizedZeroIndex, int oldCountsArrayLength) {
+    private void reallocate(long newCapacity, int oldNormalizedZeroIndex, int oldCountsArrayLength) {
         ptr = allocator.realloc(ptr, allocatedSize, newCapacity);
         allocatedSize = newCapacity;
 
@@ -232,18 +232,18 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         Vect.memset(ptr + headerSize + (oldCountsArrayLength * 8L), bytesToZero, 0);
 
         if (oldNormalizedZeroIndex != 0) {
-            shiftCountsArrayForResize(oldNormalizedZeroIndex, oldCountsArrayLength, countsDelta);
+            shiftCounts(oldNormalizedZeroIndex, oldCountsArrayLength, countsDelta);
         }
     }
 
-    private void allocateNewCounts(long newCapacity) {
+    private void allocate(long newCapacity) {
         ptr = allocator.malloc(newCapacity);
         allocatedSize = newCapacity;
 
         Vect.memset(ptr, newCapacity, 0);
     }
 
-    private void shiftCountsArrayForResize(int oldNormalizedZeroIndex, int oldCountsArrayLength, int countsDelta) {
+    private void shiftCounts(int oldNormalizedZeroIndex, int oldCountsArrayLength, int countsDelta) {
         int newNormalizedZeroIndex = oldNormalizedZeroIndex + countsDelta;
         int lengthToCopy = oldCountsArrayLength - oldNormalizedZeroIndex;
 
