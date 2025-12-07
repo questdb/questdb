@@ -63,11 +63,13 @@ public class CreateMatViewTest extends AbstractCairoTest {
     private static final String TABLE1 = "table1";
     private static final String TABLE2 = "table2";
     private static final String TABLE3 = "table3";
+    private static final String VIEW1 = "view1";
 
     @Before
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
     }
 
     @Test
@@ -216,7 +218,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String sql = "with t as (select ts, avg(v) as avgv from " + TABLE2 + ") select ts, avgv from t sample by 30s";
             assertExceptionNoLeakCheck(
                     "create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day",
-                    108,
+                    40,
                     "base table is not referenced in materialized view query"
             );
             assertNull(getMatViewDefinition("test"));
@@ -231,6 +233,63 @@ public class CreateMatViewTest extends AbstractCairoTest {
     @Test
     public void testCreateMatViewBaseTableSelfUnionWithNanos() throws Exception {
         testCreateMatViewBaseTableSelfUnion("timestamp_ns");
+    }
+
+    @Test
+    public void testCreateMatViewBasedOnView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            execute("create view " + VIEW1 + " as select ts, avg(v) as v from " + TABLE1 + " sample by 1m");
+            final String sql = "select ts, max(v) from " + VIEW1 + " sample by 1h";
+            assertExceptionNoLeakCheck(
+                    "create materialized view test with base " + VIEW1 + " as (" + sql + ") partition by day",
+                    40,
+                    "base table should be a physical table, cannot be a view: view1"
+            );
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewBasedOnViewReferencesMultipleTables() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+
+            execute("create view " + VIEW1 + " as select t1.ts, avg(t1.v) as v from " + TABLE1 + " as t1 join " + TABLE2 + " as t2 on v sample by 1m");
+
+            // view references multiple physical tables, and no base table selected
+            // error expected
+            assertExceptionNoLeakCheck(
+                    "create materialized view test as (select ts, min(v) from " + VIEW1 + " sample by 1h) partition by day",
+                    34,
+                    "query references multiple tables (views are expanded to their underlying physical tables), use 'WITH BASE' to explicitly select the base table"
+            );
+            assertNull(getMatViewDefinition("test"));
+
+            // view references multiple physical tables, and the view selected as base table
+            // error expected, base table has to be a physical table
+            assertExceptionNoLeakCheck(
+                    "create materialized view test with base " + VIEW1 + " as (select ts, min(v) from " + VIEW1 + " sample by 1h) partition by day",
+                    40,
+                    "base table should be a physical table, cannot be a view: view1"
+            );
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewBasedOnViewReferencesSingleTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            execute("create view " + VIEW1 + " as select ts, avg(v) as v from " + TABLE1 + " sample by 1m");
+
+            // view references a single physical table which becomes the base table for the mat view
+            // no error expected
+            execute("create materialized view test as (select ts, min(v) from " + VIEW1 + " sample by 1h) partition by day");
+            assertNotNull(getMatViewDefinition("test"));
+        });
     }
 
     @Test
@@ -578,7 +637,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     "create materialized view test as (select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 " +
                             "join " + TABLE2 + " as t2 on v sample by 30s) partition by day",
                     34,
-                    "more than one table used in query, base table has to be set using 'WITH BASE'"
+                    "query references multiple tables (views are expanded to their underlying physical tables), use 'WITH BASE' to explicitly select the base table"
             );
             assertNull(getMatViewDefinition("test"));
 
@@ -586,7 +645,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     "create materialized view test as (select ts, avg(v) from " + TABLE3 + " sample by 30s " +
                             "union select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
                     34,
-                    "more than one table used in query, base table has to be set using 'WITH BASE'"
+                    "query references multiple tables (views are expanded to their underlying physical tables), use 'WITH BASE' to explicitly select the base table"
             );
             assertNull(getMatViewDefinition("test"));
 
@@ -595,7 +654,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             "union select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 join " + TABLE2 +
                             " as t2 on v sample by 30s) partition by day",
                     34,
-                    "more than one table used in query, base table has to be set using 'WITH BASE'"
+                    "query references multiple tables (views are expanded to their underlying physical tables), use 'WITH BASE' to explicitly select the base table"
             );
             assertNull(getMatViewDefinition("test"));
         });

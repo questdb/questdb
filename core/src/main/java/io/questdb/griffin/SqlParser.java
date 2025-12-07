@@ -1254,7 +1254,7 @@ public class SqlParser {
                     throw SqlException.$(startOfQuery, "missing base table, materialized views have to be based on a table");
                 }
                 if (tableNames.size() > 1) {
-                    throw SqlException.$(startOfQuery, "more than one table used in query, base table has to be set using 'WITH BASE'");
+                    throw SqlException.$(startOfQuery, "query references multiple tables (views are expanded to their underlying physical tables), use 'WITH BASE' to explicitly select the base table");
                 }
                 baseTableName = Chars.toString(tableNames.getAny());
                 baseTableNamePos = tableNamePositions.getQuick(0);
@@ -1266,7 +1266,11 @@ public class SqlParser {
 
             // Basic validation - check all nested models that read from the base table for window functions, unions, FROM-TO, or FILL.
             if (!tableNames.contains(baseTableNameStr)) {
-                throw SqlException.position(queryModel.getModelPosition())
+                if (engine.getTableTokenIfExists(baseTableNameStr).isView()) {
+                    throw SqlException.position(baseTableNamePos)
+                            .put("base table should be a physical table, cannot be a view: ").put(baseTableName);
+                }
+                throw SqlException.position(baseTableNamePos)
                         .put("base table is not referenced in materialized view query: ").put(baseTableName);
             }
             validateMatViewQuery(queryModel, baseTableNameStr);
