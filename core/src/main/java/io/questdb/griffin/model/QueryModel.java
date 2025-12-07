@@ -647,6 +647,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && orderByAdviceMnemonic == that.orderByAdviceMnemonic
                 && tableId == that.tableId
                 && isUpdateModel == that.isUpdateModel
+                && isCteModel == that.isCteModel
                 && modelType == that.modelType
                 && artificialStar == that.artificialStar
                 && skipped == that.skipped
@@ -1083,7 +1084,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 isSelectTranslation, selectModelType, nestedModelIsSubQuery,
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
-                isUpdateModel, modelType, updateTableModel, explainQuery,
+                isUpdateModel, isCteModel, modelType, updateTableModel, explainQuery,
                 updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls
         );
     }
