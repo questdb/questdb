@@ -4,7 +4,7 @@ ARG tag_name
 ARG GRAAL_JDK_VERSION=17.0.9
 ARG TARGETARCH
 
-ENV GOSU_VERSION=1.19
+ENV GOSU_VERSION=1.19-go1.24.11
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 1) Base tools + Maven
@@ -68,13 +68,11 @@ RUN tar xvfz questdb-*-rt-*.tar.gz
 RUN rm questdb-*-rt-*.tar.gz
 
 RUN dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
-    wget -O gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch" && \
-    wget -O gosu.asc "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch.asc" && \
-    export GNUPGHOME="$(mktemp -d)" && \
-    gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4 && \
-    gpg --batch --verify gosu.asc gosu && \
-    gpgconf --kill all && \
-    rm -rf "$GNUPGHOME" gosu.asc && \
+    wget -O "gosu-$dpkgArch" "https://github.com/questdb/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch" && \
+    wget -O SHA256SUMS "https://github.com/questdb/gosu/releases/download/$GOSU_VERSION/SHA256SUMS" && \
+    grep "gosu-$dpkgArch\$" SHA256SUMS | sha256sum -c - && \
+    rm SHA256SUMS && \
+    mv "gosu-$dpkgArch" gosu && \
     chmod +x gosu && \
     ./gosu --version && \
     ./gosu nobody true
