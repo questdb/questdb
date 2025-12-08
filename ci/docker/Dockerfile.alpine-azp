@@ -1,13 +1,24 @@
-FROM node:24-alpine
+FROM alpine:3.23
 
-RUN apk add --no-cache --virtual .pipeline-deps readline linux-pam \
-  && apk add bash sudo shadow \
-  && apk del .pipeline-deps
+# Install all build dependencies including OpenJDK 17
+# Using --no-scripts to avoid QEMU emulation issues during cross-platform build
+RUN apk add --no-cache --no-scripts \
+    bash \
+    curl \
+    git \
+    zip \
+    build-base \
+    maven \
+    python3 \
+    sudo \
+    shadow \
+    openjdk17
 
-# Create user with UID 1001 for Azure Pipelines agent
-RUN addgroup -g 1001 agent && adduser -u 1001 -G agent -s /bin/bash -D agent \
-  && echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+# Set Java environment
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
-LABEL "com.azure.dev.pipelines.agent.handler.node.path"="/usr/local/bin/node"
+# Verify installation
+RUN java -version && mvn --version
 
-CMD [ "node" ]
+CMD [ "/bin/bash" ]

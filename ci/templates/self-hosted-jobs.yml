@@ -89,8 +89,8 @@ jobs:
       javadoc_step: ""
       javadoc_profile: ""
       jdk: "1.17"
-      JAVA_HOME_17_X64: "/opt/graalvm"
-      JAVA_HOME: "/opt/graalvm"
+      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-openjdk"
+      JAVA_HOME: "/usr/lib/jvm/java-17-openjdk"
       os: Linux
       poolName: "musl-x64"
     steps:
@@ -114,8 +114,8 @@ jobs:
       javadoc_step: ""
       javadoc_profile: ""
       jdk: "1.17"
-      JAVA_HOME_17_X64: "/opt/graalvm"
-      JAVA_HOME: "/opt/graalvm"
+      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-openjdk"
+      JAVA_HOME: "/usr/lib/jvm/java-17-openjdk"
       os: Linux
       poolName: "musl-arm64"
     steps:
