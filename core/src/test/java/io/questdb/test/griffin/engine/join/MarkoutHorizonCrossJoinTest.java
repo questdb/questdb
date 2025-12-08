@@ -34,10 +34,6 @@ import org.junit.Test;
 
 public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
 
-    // Used to easily switch to "ts" while making changes in SqlCodeGenerator
-    // Safe to remove when code is stabilized
-    private static final String EXPECTED_TS = null;
-
     @Test
     public void testAggregation() throws Exception {
         assertMemoryLeak(() -> {
@@ -93,7 +89,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             2	5.333333333333333
                             """,
                     sql,
-                    EXPECTED_TS,
+                    null,
                     true,
                     true
             );
@@ -132,7 +128,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:00:01.000000Z
                             """,
                     sql,
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -193,7 +189,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "id\tts\n",
                     sql,
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -216,7 +212,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "id\tts\n",
                     sql,
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -604,7 +600,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:00:11.000000Z
                             """,
                     sql,
-                    EXPECTED_TS,
+                    null,
                     false,
                     false
             );
@@ -648,7 +644,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:00:02.200000Z
                             """,
                     sql,
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -697,7 +693,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:00:06.000000Z
                             """,
                     sql,
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -740,7 +736,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:02:02.000000Z
                             """,
                     sql,
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -788,7 +784,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs
                             """,
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -853,9 +849,9 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     """;
 
             // Execute multiple times to test any cursor reuse
-            assertQueryNoLeakCheck(expected, sql, null, EXPECTED_TS, false, true);
-            assertQueryNoLeakCheck(expected, sql, null, EXPECTED_TS, false, true);
-            assertQueryNoLeakCheck(expected, sql, null, EXPECTED_TS, false, true);
+            assertQueryNoLeakCheck(expected, sql, null, null, false, true);
+            assertQueryNoLeakCheck(expected, sql, null, null, false, true);
+            assertQueryNoLeakCheck(expected, sql, null, null, false, true);
         });
     }
 
@@ -912,7 +908,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             """,
                     sql,
                     null,
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -954,7 +950,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             1\t1970-01-01T00:00:00.000000Z
                             """,
                     "SELECT /*+ markout_horizon(orders offsets) */ id, ts FROM (" + sql + ") LIMIT 1",
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -965,7 +961,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             1\t1970-01-01T00:20:00.000000Z
                             """,
                     "SELECT /*+ markout_horizon(orders offsets) */ id, ts FROM (" + sql + ") LIMIT -1",
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -995,7 +991,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             1\t1970-01-01T00:00:02.000000Z
                             """,
                     query,
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -1030,7 +1026,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -1067,7 +1063,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -1102,7 +1098,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             SELECT /*+ markout_horizon(orders offsets) */ id, customer, amount, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
@@ -1138,7 +1134,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs
                             """,
-                    EXPECTED_TS,
+                    null,
                     false,
                     true
             );
