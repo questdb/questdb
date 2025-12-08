@@ -14,7 +14,9 @@ steps:
         eq(variables['os'], 'Linux'),
         ne(variables['poolName'], 'hetzner-docker'),
         ne(variables['poolName'], 'hetzner-docker-arm'),
-        ne(variables['poolName'], 'hetzner-docker-zfs')
+        ne(variables['poolName'], 'hetzner-docker-zfs'),
+        ne(variables['poolName'], 'musl-x64'),
+        ne(variables['poolName'], 'musl-arm64')
       )
   - bash: |
       sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
