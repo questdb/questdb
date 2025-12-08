@@ -29,6 +29,7 @@ import io.questdb.cairo.RecordArray;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -114,6 +115,17 @@ public class MasterRowBatch implements Mutable, QuietCloseable {
 
     public boolean isFull() {
         return recordOffsets.size() >= BATCH_SIZE;
+    }
+
+    /**
+     * Set the symbol table resolver for reading symbol columns as strings.
+     * This must be called before reading records if any symbol columns need to be
+     * resolved to their string values.
+     *
+     * @param resolver the symbol table source for resolving symbol int values to strings
+     */
+    public void setSymbolTableResolver(SymbolTableSource resolver) {
+        recordArray.setSymbolTableResolver(resolver);
     }
 
     public int size() {

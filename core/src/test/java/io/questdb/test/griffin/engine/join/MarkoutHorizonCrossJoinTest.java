@@ -498,8 +498,10 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
             // Insert 1000 price points - one every 100ms for sym 'AX'
             // Price increases linearly: price = 1.0 + (x / 1000.0)
             execute("""
-                    INSERT INTO prices
-                    SELECT (x * 100_000)::TIMESTAMP, 'AX', 1.0 + (x / 1000.0)
+                    INSERT INTO prices SELECT
+                        (x * 100_000)::TIMESTAMP,
+                        rnd_symbol('AX', 'BX', 'CX', 'DX', 'EX', 'FX', 'GX', 'HX', 'IX', 'JX', 'KX', 'LX', 'MX', 'NX'),
+                        1.0 + (x / 1000.0)
                     FROM long_sequence(1000)
                     """);
 
@@ -514,8 +516,9 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
             // Insert 200 orders - one every 500ms for sym 'AX'
             // This creates 200 master rows which triggers multiple batches (BATCH_SIZE=10)
             execute("""
-                    INSERT INTO orders
-                    SELECT (x * 500_000)::TIMESTAMP, 'AX'
+                    INSERT INTO orders SELECT
+                        (x * 500_000)::TIMESTAMP,
+                        rnd_symbol('AX', 'BX', 'CX', 'DX', 'EX', 'FX', 'GX', 'HX', 'IX', 'JX', 'KX', 'LX', 'MX', 'NX')
                     FROM long_sequence(200)
                     """);
 

@@ -279,6 +279,9 @@ public class AsyncMarkoutGroupByRecordCursor implements RecordCursor {
             MCSequence subSeq,
             int currentQueuedCount
     ) {
+        // Set symbol table resolver so getSymA() can convert symbol ints to strings
+        batch.setSymbolTableResolver(masterCursor);
+
         while (true) {
             long cursor = pubSeq.next();
             if (cursor >= 0) {

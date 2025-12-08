@@ -4304,6 +4304,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ArrayColumnTypes asofJoinKeyTypes = null;
             RecordSink masterKeyCopier = null;
             RecordSink slaveKeyCopier = null;
+            BitSet asofWriteSymbolAsString = null;
 
             JoinContext asofJoinContext = curveInfo.asofJoinContext;
             if (asofJoinContext != null && !asofJoinContext.isEmpty()) {
@@ -4313,28 +4314,58 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 lookupColumnIndexesUsingVanillaNames(listColumnFilterA, asofJoinContext.aNames, slaveMetadata);
                 lookupColumnIndexes(listColumnFilterB, asofJoinContext.bNodes, masterMetadata);
 
-                // Build ASOF join key types
+                // Build ASOF join key types and configure symbol/string handling
+                // Create fresh BitSets - don't reuse the ones from GROUP BY setup
                 asofJoinKeyTypes = new ArrayColumnTypes();
+                asofWriteSymbolAsString = new BitSet();
+                BitSet asofWriteStringAsVarcharA = new BitSet();
+                BitSet asofWriteStringAsVarcharB = new BitSet();
+
                 for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
                     final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
-                    asofJoinKeyTypes.add(slaveMetadata.getColumnType(columnIndexA));
+                    final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
+                    final int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
+                    final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
+
+                    // For SYMBOL columns from different tables, write as STRING for comparison
+                    if (ColumnType.isVarchar(columnTypeA) || ColumnType.isVarchar(columnTypeB)) {
+                        asofJoinKeyTypes.add(ColumnType.VARCHAR);
+                        if (ColumnType.isVarchar(columnTypeA)) {
+                            asofWriteStringAsVarcharB.set(columnIndexB);
+                        } else {
+                            asofWriteStringAsVarcharA.set(columnIndexA);
+                        }
+                        asofWriteSymbolAsString.set(columnIndexA);
+                        asofWriteSymbolAsString.set(columnIndexB);
+                    } else if (columnTypeB == ColumnType.SYMBOL || columnTypeA == ColumnType.SYMBOL) {
+                        // Different tables have different symbol tables, so write as STRING
+                        asofJoinKeyTypes.add(ColumnType.STRING);
+                        asofWriteSymbolAsString.set(columnIndexA);
+                        asofWriteSymbolAsString.set(columnIndexB);
+                    } else if (ColumnType.isString(columnTypeA) || ColumnType.isString(columnTypeB)) {
+                        asofJoinKeyTypes.add(columnTypeB);
+                        asofWriteSymbolAsString.set(columnIndexA);
+                        asofWriteSymbolAsString.set(columnIndexB);
+                    } else {
+                        asofJoinKeyTypes.add(columnTypeA);
+                    }
                 }
 
-                // Create key copiers
+                // Create key copiers with proper symbol/varchar handling
                 masterKeyCopier = RecordSinkFactory.getInstance(
                         asm,
                         masterMetadata,
                         listColumnFilterB,
-                        writeSymbolAsString,
-                        writeStringAsVarcharB,
+                        asofWriteSymbolAsString,
+                        asofWriteStringAsVarcharB,
                         writeTimestampAsNanosB
                 );
                 slaveKeyCopier = RecordSinkFactory.getInstance(
                         asm,
                         slaveMetadata,
                         listColumnFilterA,
-                        writeSymbolAsString,
-                        writeStringAsVarcharA,
+                        asofWriteSymbolAsString,
+                        asofWriteStringAsVarcharA,
                         writeTimestampAsNanosA
                 );
             }

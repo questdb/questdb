@@ -106,6 +106,7 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             );
 
             // Create RecordSink for materializing master records
+            // Symbols are stored as ints - symbol table resolver will be set up for reading
             masterColumnFilter.of(masterFactory.getMetadata().getColumnCount());
             RecordSink masterRecordSink = RecordSinkFactory.getInstance(
                     asm,
