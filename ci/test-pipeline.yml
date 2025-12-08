@@ -19,10 +19,10 @@ variables:
   MAVEN_VERSION_OPTION: "Default"
 
 stages:
-  # - stage: CheckChanges
-  #   displayName: "Check Changes"
-  #   jobs:
-  #     - template: templates/check-changes-job.yml
+  - stage: CheckChanges
+    displayName: "Check Changes"
+    jobs:
+      - template: templates/check-changes-job.yml
 
   # - stage: TriggerEnterpriseCI
   #   displayName: "Trigger Enterprise CI"
