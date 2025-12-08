@@ -45,6 +45,29 @@ steps:
     displayName: "Install JDK and Maven"
     condition: |
       eq(variables['System.JobName'], 'linux_x64_graal')
+  - bash: |
+      apk add --no-cache bash curl wget git zip unzip build-base linux-headers python3 maven
+      # Detect architecture for GraalVM download
+      ARCH=$(uname -m)
+      if [ "$ARCH" = "x86_64" ]; then
+        GRAALVM_ARCH="x64"
+      elif [ "$ARCH" = "aarch64" ]; then
+        GRAALVM_ARCH="aarch64"
+      fi
+      GRAALVM_VERSION="17.0.9"
+      curl -sL "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${GRAALVM_VERSION}/graalvm-community-jdk-${GRAALVM_VERSION}_linux-${GRAALVM_ARCH}_bin.tar.gz" | \
+        tar -xzf - -C /opt
+      mv /opt/graalvm-* /opt/graalvm
+      JAVA_PATH="/opt/graalvm"
+      echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+      echo "JAVA_HOME will be set to: $JAVA_PATH"
+    displayName: "Install GraalVM and dependencies (Alpine/musl)"
+    condition: |
+      or(
+        eq(variables['poolName'], 'musl-x64'),
+        eq(variables['poolName'], 'musl-arm64')
+      )
   - task: Cache@2
     displayName: "Cache non-default Maven"
     continueOnError: true
@@ -57,7 +80,9 @@ steps:
         ne(variables['MAVEN_VERSION_OPTION'], 'Default'),
         ne(variables['poolName'], 'hetzner-docker'),
         ne(variables['poolName'], 'hetzner-docker-arm'),
-        ne(variables['poolName'], 'hetzner-docker-zfs')
+        ne(variables['poolName'], 'hetzner-docker-zfs'),
+        ne(variables['poolName'], 'musl-x64'),
+        ne(variables['poolName'], 'musl-arm64')
       )
   - task: Cache@2
     displayName: "Cache .m2/repository"
@@ -69,7 +94,9 @@ steps:
       and(
         ne(variables['poolName'], 'hetzner-docker'),
         ne(variables['poolName'], 'hetzner-docker-arm'),
-        ne(variables['poolName'], 'hetzner-docker-zfs')
+        ne(variables['poolName'], 'hetzner-docker-zfs'),
+        ne(variables['poolName'], 'musl-x64'),
+        ne(variables['poolName'], 'musl-arm64')
       )
   - task: Cache@2
     displayName: "Cache .cargo/registry"
@@ -85,7 +112,9 @@ steps:
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
         ne(variables['poolName'], 'hetzner-docker'),
         ne(variables['poolName'], 'hetzner-docker-arm'),
-        ne(variables['poolName'], 'hetzner-docker-zfs')
+        ne(variables['poolName'], 'hetzner-docker-zfs'),
+        ne(variables['poolName'], 'musl-x64'),
+        ne(variables['poolName'], 'musl-arm64')
       )
   - pwsh: New-Item -Path "$HOME/.m2/repository" -ItemType Directory -Force
     displayName: "Ensure .m2/repository exists (PowerShell)"
