@@ -65,7 +65,7 @@ public class RecordToRowCopierUtils {
 
         // Use loop-based implementation for wide tables
         if (columnCount > columnCountThreshold) {
-            return new LoopBasedRecordToRowCopier(from, to, toColumnFilter);
+            return new NaiveRecordToRowCopier(from, to, toColumnFilter);
         }
 
         // Continue with bytecode generation for normal-sized tables

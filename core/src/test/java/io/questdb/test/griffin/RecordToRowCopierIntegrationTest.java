@@ -24,13 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.griffin.SqlException;
+import io.questdb.PropertyKey;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -40,42 +37,69 @@ import org.junit.Test;
  */
 public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
+    @Override
+    public void setUp() {
+        super.setUp();
+        node1.setProperty(PropertyKey.CAIRO_SQL_COPIER_COLUMN_THRESHOLD, 50);
+    }
+
     @Test
-    public void testInsertAsSelectWithManyRows() throws Exception {
+    public void testBatchInsertWithManyColumns() throws Exception {
         assertMemoryLeak(() -> {
-            // Create source table with 50 columns
-            StringBuilder createSql = new StringBuilder("create table src (ts timestamp");
-            for (int i = 0; i < 50; i++) {
-                createSql.append(", col").append(i).append(" int");
-            }
-            createSql.append(") timestamp(ts) partition by DAY");
-            execute(createSql.toString());
+            buildCreateTableSql(sink, "src", 200);
+            execute(sink);
 
-            createSql = new StringBuilder("create table dst (ts timestamp");
-            for (int i = 0; i < 50; i++) {
-                createSql.append(", col").append(i).append(" int");
-            }
-            createSql.append(") timestamp(ts) partition by DAY");
-            execute(createSql.toString());
+            buildCreateTableSql(sink, "dst", 200);
+            execute(sink);
 
-            // Insert test data with multiple rows
-            StringBuilder insertSql = new StringBuilder("insert into src values ");
-            for (int row = 0; row < 10; row++) {
-                if (row > 0) insertSql.append(", ");
-                insertSql.append("(").append(row * 1000000L);
-                for (int col = 0; col < 50; col++) {
-                    insertSql.append(", ").append(row * 100 + col);
+            // Insert 1000 rows
+            for (int row = 0; row < 1000; row++) {
+                sink.clear();
+                sink.put("insert into src values (").put(row * 1000L);
+                for (int col = 0; col < 200; col++) {
+                    sink.put(", ").put((row + col) % 1000);
                 }
-                insertSql.append(")");
+                sink.put(")");
+                execute(sink);
             }
-            execute(insertSql.toString());
 
-            // Copy data
+            // Batch copy
             execute("insert into dst select * from src");
 
-            // Verify
-            assertSql("count\n10\n", "select count(*) from dst");
+            assertSql("count\n1000\n", "select count(*) from dst");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
+        });
+    }
+
+    @Test
+    public void testExtremelyWideTableInsert() throws Exception {
+        // Override the threshold to ensure loop-based copier is used even with fewer columns
+        node1.setProperty(PropertyKey.CAIRO_SQL_COPIER_COLUMN_THRESHOLD, 50);
+
+        assertMemoryLeak(() -> {
+            // Test with 100 columns to stress the loop-based implementation
+            // (using fewer columns to avoid file descriptor limits on some systems)
+            buildCreateTableSqlWithTypes(sink, "src_extreme", 100, "c", i -> "int");
+            execute(sink);
+
+            buildCreateTableSqlWithTypes(sink, "dst_extreme", 100, "c", i -> "int");
+            execute(sink);
+
+            // Insert a single row with all values
+            sink.clear();
+            sink.put("insert into src_extreme values (0");
+            for (int i = 0; i < 100; i++) {
+                sink.put(", ").put(i);
+            }
+            sink.put(")");
+            execute(sink);
+
+            // Copy it
+            execute("insert into dst_extreme select * from src_extreme");
+
+            // Verify
+            assertSql("count\n1\n", "select count(*) from dst_extreme");
+            assertSql("c0\tc50\tc99\n0\t50\t99\n", "select c0, c50, c99 from dst_extreme");
         });
     }
 
@@ -117,16 +141,45 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertAsSelectWithTypeConversions() throws Exception {
+    public void testInsertAsSelectWithManyRows() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts timestamp, b byte, s short, i int) timestamp(ts) partition by DAY");
-            execute("create table dst (ts timestamp, b long, s long, i long) timestamp(ts) partition by DAY");
+            // Create source table with 50 columns
+            buildCreateTableSql(sink, "src", 50);
+            execute(sink);
 
-            execute("insert into src values (0, 1, 2, 3), (1000000, 10, 20, 30), (2000000, 100, 200, 300)");
+            buildCreateTableSql(sink, "dst", 50);
+            execute(sink);
+
+            // Insert test data with multiple rows
+            buildBatchInsertValuesSql(sink, "src", 50, 10);
+            execute(sink);
+
+            // Copy data
             execute("insert into dst select * from src");
 
-            assertSql("count\n3\n", "select count(*) from dst");
-            assertSql("b\ts\ti\n1\t2\t3\n10\t20\t30\n100\t200\t300\n", "select b, s, i from dst order by ts");
+            // Verify
+            assertSql("count\n10\n", "select count(*) from dst");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
+        });
+    }
+
+    @Test
+    public void testInsertAsSelectWithPartitionedTables() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src (ts timestamp, val int) timestamp(ts) partition by MONTH");
+            execute("create table dst (ts timestamp, val int) timestamp(ts) partition by MONTH");
+
+            // Insert data across multiple months
+            execute("insert into src values " +
+                    "('2024-01-15', 1), " +
+                    "('2024-02-15', 2), " +
+                    "('2024-03-15', 3), " +
+                    "('2024-04-15', 4)");
+
+            execute("insert into dst select * from src");
+
+            assertSql("count\n4\n", "select count(*) from dst");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
 
@@ -153,44 +206,38 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAsSelectWithTypeConversions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src (ts timestamp, b byte, s short, i int) timestamp(ts) partition by DAY");
+            execute("create table dst (ts timestamp, b long, s long, i long) timestamp(ts) partition by DAY");
+
+            execute("insert into src values (0, 1, 2, 3), (1000000, 10, 20, 30), (2000000, 100, 200, 300)");
+            execute("insert into dst select * from src");
+
+            assertSql("count\n3\n", "select count(*) from dst");
+            assertSql("b\ts\ti\n1\t2\t3\n10\t20\t30\n100\t200\t300\n", "select b, s, i from dst order by ts");
+        });
+    }
+
+    @Test
     public void testInsertAsSelectWithUnionExcept() throws Exception {
         assertMemoryLeak(() -> {
             // Create tables with many columns to trigger loop-based copier
-            StringBuilder createSql = new StringBuilder("create table t1 (ts timestamp");
-            for (int i = 0; i < 100; i++) {
-                createSql.append(", col").append(i).append(" int");
-            }
-            createSql.append(") timestamp(ts) partition by DAY");
-            execute(createSql.toString());
+            buildCreateTableSql(sink, "t1", 100);
+            execute(sink);
 
-            createSql = new StringBuilder("create table t2 (ts timestamp");
-            for (int i = 0; i < 100; i++) {
-                createSql.append(", col").append(i).append(" int");
-            }
-            createSql.append(") timestamp(ts) partition by DAY");
-            execute(createSql.toString());
+            buildCreateTableSql(sink, "t2", 100);
+            execute(sink);
 
-            createSql = new StringBuilder("create table result (ts timestamp");
-            for (int i = 0; i < 100; i++) {
-                createSql.append(", col").append(i).append(" int");
-            }
-            createSql.append(") timestamp(ts) partition by DAY");
-            execute(createSql.toString());
+            buildCreateTableSql(sink, "result", 100);
+            execute(sink);
 
             // Insert data
-            StringBuilder insertSql = new StringBuilder("insert into t1 values (0");
-            for (int i = 0; i < 100; i++) {
-                insertSql.append(", ").append(i);
-            }
-            insertSql.append(")");
-            execute(insertSql.toString());
+            buildInsertValuesSql(sink, "t1", 0, 100, 0);
+            execute(sink);
 
-            insertSql = new StringBuilder("insert into t2 values (1000000");
-            for (int i = 0; i < 100; i++) {
-                insertSql.append(", ").append(i + 100);
-            }
-            insertSql.append(")");
-            execute(insertSql.toString());
+            buildInsertValuesSql(sink, "t2", 1000000, 100, 100);
+            execute(sink);
 
             // Test UNION
             execute("insert into result select * from t1 union select * from t2");
@@ -199,51 +246,34 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertAsSelectWithPartitionedTables() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table src (ts timestamp, val int) timestamp(ts) partition by MONTH");
-            execute("create table dst (ts timestamp, val int) timestamp(ts) partition by MONTH");
-
-            // Insert data across multiple months
-            execute("insert into src values " +
-                    "('2024-01-15', 1), " +
-                    "('2024-02-15', 2), " +
-                    "('2024-03-15', 3), " +
-                    "('2024-04-15', 4)");
-
-            execute("insert into dst select * from src");
-
-            assertSql("count\n4\n", "select count(*) from dst");
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
-        });
-    }
-
-    @Test
     public void testInsertAsSelectWithWhere() throws Exception {
         assertMemoryLeak(() -> {
-            StringBuilder createSql = new StringBuilder("create table src (ts timestamp, id int");
+            // Create table with 'id' column + 50 regular columns
+            sink.clear();
+            sink.put("create table src (ts timestamp, id int");
             for (int i = 0; i < 50; i++) {
-                createSql.append(", col").append(i).append(" int");
+                sink.put(", col").put(i).put(" int");
             }
-            createSql.append(") timestamp(ts) partition by DAY");
-            execute(createSql.toString());
+            sink.put(") timestamp(ts) partition by DAY");
+            execute(sink);
 
-            createSql = new StringBuilder("create table dst (ts timestamp, id int");
+            sink.clear();
+            sink.put("create table dst (ts timestamp, id int");
             for (int i = 0; i < 50; i++) {
-                createSql.append(", col").append(i).append(" int");
+                sink.put(", col").put(i).put(" int");
             }
-            createSql.append(") timestamp(ts) partition by DAY");
-            execute(createSql.toString());
+            sink.put(") timestamp(ts) partition by DAY");
+            execute(sink);
 
             // Insert 10 rows
             for (int row = 0; row < 10; row++) {
-                StringBuilder insertSql = new StringBuilder("insert into src values (")
-                        .append(row * 1000000L).append(", ").append(row);
+                sink.clear();
+                sink.put("insert into src values (").put(row * 1000000L).put(", ").put(row);
                 for (int col = 0; col < 50; col++) {
-                    insertSql.append(", ").append(row * 100 + col);
+                    sink.put(", ").put(row * 100 + col);
                 }
-                insertSql.append(")");
-                execute(insertSql.toString());
+                sink.put(")");
+                execute(sink);
             }
 
             // Insert only rows where id > 5
@@ -254,74 +284,100 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testExtremelyWideTableInsert() throws Exception {
-        assertMemoryLeak(() -> {
-            // Test with 5000 columns to really stress the loop-based implementation
-            StringBuilder createSql = new StringBuilder("create table src_extreme (ts timestamp");
-            for (int i = 0; i < 5000; i++) {
-                createSql.append(", c").append(i).append(" int");
+    /**
+     * Builds an INSERT VALUES SQL statement with multiple rows.
+     *
+     * @param sink        the StringSink to write the SQL to
+     * @param tableName   the name of the table
+     * @param columnCount number of columns
+     * @param rowCount    number of rows to insert
+     */
+    private static void buildBatchInsertValuesSql(
+            StringSink sink,
+            String tableName,
+            int columnCount,
+            int rowCount
+    ) {
+        sink.clear();
+        sink.put("insert into ").put(tableName).put(" values ");
+        for (int row = 0; row < rowCount; row++) {
+            if (row > 0) {
+                sink.put(", ");
             }
-            createSql.append(") timestamp(ts) partition by DAY");
-            execute(createSql.toString());
-
-            createSql = new StringBuilder("create table dst_extreme (ts timestamp");
-            for (int i = 0; i < 5000; i++) {
-                createSql.append(", c").append(i).append(" int");
+            sink.put('(').put(row * 1000000L);
+            for (int col = 0; col < columnCount; col++) {
+                sink.put(", ").put(row * 100 + col);
             }
-            createSql.append(") timestamp(ts) partition by DAY");
-            execute(createSql.toString());
-
-            // Insert a single row with all values
-            StringBuilder insertSql = new StringBuilder("insert into src_extreme values (0");
-            for (int i = 0; i < 5000; i++) {
-                insertSql.append(", ").append(i);
-            }
-            insertSql.append(")");
-            execute(insertSql.toString());
-
-            // Copy it
-            execute("insert into dst_extreme select * from src_extreme");
-
-            // Verify
-            assertSql("count\n1\n", "select count(*) from dst_extreme");
-            assertSql("c0\tc2500\tc4999\n0\t2500\t4999\n", "select c0, c2500, c4999 from dst_extreme");
-        });
+            sink.put(')');
+        }
     }
 
-    @Test
-    public void testBatchInsertWithManyColumns() throws Exception {
-        assertMemoryLeak(() -> {
-            StringBuilder createSql = new StringBuilder("create table src (ts timestamp");
-            for (int i = 0; i < 200; i++) {
-                createSql.append(", col").append(i).append(" int");
-            }
-            createSql.append(") timestamp(ts) partition by DAY");
-            execute(createSql.toString());
+    /**
+     * Builds a CREATE TABLE SQL statement with the specified columns.
+     *
+     * @param sink        the StringSink to write the SQL to
+     * @param tableName   the name of the table
+     * @param columnCount number of integer columns to create
+     */
+    private static void buildCreateTableSql(StringSink sink, String tableName, int columnCount) {
+        sink.clear();
+        sink.put("create table ").put(tableName).put(" (ts timestamp");
+        for (int i = 0; i < columnCount; i++) {
+            sink.put(", col").put(i).put(" int");
+        }
+        sink.put(") timestamp(ts) partition by DAY");
+    }
 
-            createSql = new StringBuilder("create table dst (ts timestamp");
-            for (int i = 0; i < 200; i++) {
-                createSql.append(", col").append(i).append(" int");
-            }
-            createSql.append(") timestamp(ts) partition by DAY");
-            execute(createSql.toString());
+    /**
+     * Builds a CREATE TABLE SQL statement with custom column definitions.
+     *
+     * @param sink         the StringSink to write the SQL to
+     * @param tableName    the name of the table
+     * @param columnCount  number of columns to create
+     * @param columnPrefix prefix for column names (e.g., "col", "c")
+     * @param typeProvider function that returns the type for each column index
+     */
+    private static void buildCreateTableSqlWithTypes(
+            StringSink sink,
+            String tableName,
+            int columnCount,
+            String columnPrefix,
+            ColumnTypeProvider typeProvider
+    ) {
+        sink.clear();
+        sink.put("create table ").put(tableName).put(" (ts timestamp");
+        for (int i = 0; i < columnCount; i++) {
+            sink.put(", ").put(columnPrefix).put(i).put(" ").put(typeProvider.getType(i));
+        }
+        sink.put(") timestamp(ts) partition by DAY");
+    }
 
-            // Insert 1000 rows
-            for (int row = 0; row < 1000; row++) {
-                StringBuilder insertSql = new StringBuilder("insert into src values (")
-                        .append(row * 1000L);
-                for (int col = 0; col < 200; col++) {
-                    insertSql.append(", ").append((row + col) % 1000);
-                }
-                insertSql.append(")");
-                execute(insertSql.toString());
-            }
+    /**
+     * Builds an INSERT VALUES SQL statement with a single row.
+     *
+     * @param sink        the StringSink to write the SQL to
+     * @param tableName   the name of the table
+     * @param timestamp   the timestamp value
+     * @param columnCount number of columns
+     * @param valueOffset offset to add to each column value
+     */
+    private static void buildInsertValuesSql(
+            StringSink sink,
+            String tableName,
+            long timestamp,
+            int columnCount,
+            int valueOffset
+    ) {
+        sink.clear();
+        sink.put("insert into ").put(tableName).put(" values (").put(timestamp);
+        for (int i = 0; i < columnCount; i++) {
+            sink.put(", ").put(valueOffset + i);
+        }
+        sink.put(")");
+    }
 
-            // Batch copy
-            execute("insert into dst select * from src");
-
-            assertSql("count\n1000\n", "select count(*) from dst");
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
-        });
+    @FunctionalInterface
+    private interface ColumnTypeProvider {
+        String getType(int columnIndex);
     }
 }

@@ -24,13 +24,11 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class LoopBasedRecordToRowCopierTest extends AbstractCairoTest {
+public class NaiveRecordToRowCopierTest extends AbstractCairoTest {
 
     @Test
     public void testBasicInsertWithManyColumns() throws Exception {
@@ -68,29 +66,24 @@ public class LoopBasedRecordToRowCopierTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTypeConversionsWithManyColumns() throws Exception {
+    public void testCompareBothImplementations() throws Exception {
         assertMemoryLeak(() -> {
+            // Create test tables
             execute("create table src (ts timestamp, b byte, s short, i int, l long, f float, d double, str string, sym symbol) timestamp(ts) partition by DAY");
-            execute("create table dst (ts timestamp, b byte, s short, i int, l long, f float, d double, str string, sym symbol) timestamp(ts) partition by DAY");
+            execute("create table dst_result (ts timestamp, b byte, s short, i int, l long, f float, d double, str string, sym symbol) timestamp(ts) partition by DAY");
 
-            execute("insert into src values (0, 1, 2, 3, 4, 5.5, 6.6, 'hello', 'world')");
-            execute("insert into dst select * from src");
+            // Insert test data
+            execute("insert into src values " +
+                    "(0, 1, 2, 3, 4, 5.5, 6.6, 'test', 'symbol'), " +
+                    "(1000000, 10, 20, 30, 40, 50.5, 60.6, 'hello', 'world'), " +
+                    "(2000000, null, null, null, null, null, null, null, null)");
 
-            assertSql("ts\tb\ts\ti\tl\tf\td\tstr\tsym\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t2\t3\t4\t5.5\t6.6\thello\tworld\n", "dst");
-        });
-    }
+            // Copy (using default threshold - will use loop-based for 9 columns)
+            execute("insert into dst_result select * from src");
 
-    @Test
-    public void testNullHandling() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table src (ts timestamp, i int, s string, sym symbol) timestamp(ts) partition by DAY");
-            execute("create table dst (ts timestamp, i int, s string, sym symbol) timestamp(ts) partition by DAY");
-
-            execute("insert into src values (0, null, null, null)");
-            execute("insert into dst select * from src");
-
-            assertSql("ts\ti\ts\tsym\n1970-01-01T00:00:00.000000Z\tnull\t\t\n", "dst");
+            // Verify results are correct
+            assertSql("count\n3\n", "select count(*) from dst_result");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst_result", LOG);
         });
     }
 
@@ -109,6 +102,19 @@ public class LoopBasedRecordToRowCopierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullHandling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src (ts timestamp, i int, s string, sym symbol) timestamp(ts) partition by DAY");
+            execute("create table dst (ts timestamp, i int, s string, sym symbol) timestamp(ts) partition by DAY");
+
+            execute("insert into src values (0, null, null, null)");
+            execute("insert into dst select * from src");
+
+            assertSql("ts\ti\ts\tsym\n1970-01-01T00:00:00.000000Z\tnull\t\t\n", "dst");
+        });
+    }
+
+    @Test
     public void testStringToSymbolConversion() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table src (ts timestamp, str string) timestamp(ts) partition by DAY");
@@ -118,6 +124,20 @@ public class LoopBasedRecordToRowCopierTest extends AbstractCairoTest {
             execute("insert into dst select * from src");
 
             assertSql("ts\tsym\n1970-01-01T00:00:00.000000Z\ttest_symbol\n", "dst");
+        });
+    }
+
+    @Test
+    public void testTypeConversionsWithManyColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src (ts timestamp, b byte, s short, i int, l long, f float, d double, str string, sym symbol) timestamp(ts) partition by DAY");
+            execute("create table dst (ts timestamp, b byte, s short, i int, l long, f float, d double, str string, sym symbol) timestamp(ts) partition by DAY");
+
+            execute("insert into src values (0, 1, 2, 3, 4, 5.5, 6.6, 'hello', 'world')");
+            execute("insert into dst select * from src");
+
+            assertSql("ts\tb\ts\ti\tl\tf\td\tstr\tsym\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t2\t3\t4\t5.5\t6.6\thello\tworld\n", "dst");
         });
     }
 
@@ -166,28 +186,6 @@ public class LoopBasedRecordToRowCopierTest extends AbstractCairoTest {
             // Verify
             assertSql("count\n1\n", "select count(*) from wide_dst");
             assertSql("col0\tcol1000\tcol1999\n0\t1000\t1999\n", "select col0, col1000, col1999 from wide_dst");
-        });
-    }
-
-    @Test
-    public void testCompareBothImplementations() throws Exception {
-        assertMemoryLeak(() -> {
-            // Create test tables
-            execute("create table src (ts timestamp, b byte, s short, i int, l long, f float, d double, str string, sym symbol) timestamp(ts) partition by DAY");
-            execute("create table dst_result (ts timestamp, b byte, s short, i int, l long, f float, d double, str string, sym symbol) timestamp(ts) partition by DAY");
-
-            // Insert test data
-            execute("insert into src values " +
-                "(0, 1, 2, 3, 4, 5.5, 6.6, 'test', 'symbol'), " +
-                "(1000000, 10, 20, 30, 40, 50.5, 60.6, 'hello', 'world'), " +
-                "(2000000, null, null, null, null, null, null, null, null)");
-
-            // Copy (using default threshold - will use loop-based for 9 columns)
-            execute("insert into dst_result select * from src");
-
-            // Verify results are correct
-            assertSql("count\n3\n", "select count(*) from dst_result");
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst_result", LOG);
         });
     }
 }
