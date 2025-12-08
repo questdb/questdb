@@ -534,9 +534,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             } catch (Throwable th) {
                 // We could have been applying multiple txns, and we failed somewhere in the middle. The writer will
                 // be returned to the pool and dirty writes will be rolled back. We have to update the sequencer
-                // on the state of the writer and revert any dirty txns that might have advanced. We do that
-                // by equalizing writerTxn and dirtyWriterTxn.
-                engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getSeqTxn(), writer.getAppliedSeqTxn());
+                // on the state of the writer and revert any dirty txns that might have advanced.
+                engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getSeqTxn(), writer.getSeqTxn());
                 throw th;
             } finally {
                 Misc.free(structuralChangeCursor);
@@ -642,7 +641,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 final long latency = microClock.getTicks() - start;
                 long totalPhysicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
                 long lastCommittedSeqTxn = writer.getAppliedSeqTxn();
-
                 lastCommittedRows = 0;
                 for (long s = seqTxn; s <= lastCommittedSeqTxn; s++) {
                     long walRowCount = txnDetails.getSegmentRowHi(s) - txnDetails.getSegmentRowLo(s);
