@@ -51,14 +51,24 @@ public class RecordToRowCopierUtils {
     private RecordToRowCopierUtils() {
     }
 
-    // Creates data type converter.
-    // INT and LONG NaN values are cast to their representation rather than Double or Float NaN.
+    // Creates data type converter with column count threshold.
+    // If the number of columns exceeds the threshold, uses a loop-based implementation
+    // instead of bytecode generation to avoid JVM 64KB method size limits.
     public static RecordToRowCopier generateCopier(
             BytecodeAssembler asm,
             ColumnTypes from,
             RecordMetadata to,
-            ColumnFilter toColumnFilter
+            ColumnFilter toColumnFilter,
+            int columnCountThreshold
     ) {
+        int columnCount = toColumnFilter.getColumnCount();
+
+        // Use loop-based implementation for wide tables
+        if (columnCount > columnCountThreshold) {
+            return new LoopBasedRecordToRowCopier(from, to, toColumnFilter);
+        }
+
+        // Continue with bytecode generation for normal-sized tables
         int timestampIndex = to.getTimestampIndex();
         asm.init(RecordToRowCopier.class);
         asm.setupPool();

@@ -508,7 +508,8 @@ public class AbstractO3Test extends AbstractTest {
                         new BytecodeAssembler(),
                         metadata,
                         writer.getMetadata(),
-                        toColumnFilter
+                        toColumnFilter,
+                        sqlExecutionContext.getCairoEngine().getConfiguration().getCopierColumnCountThreshold()
                 );
             }
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

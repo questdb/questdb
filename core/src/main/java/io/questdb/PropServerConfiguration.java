@@ -449,6 +449,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
     private final int sqlOrderByRadixSortThreshold;
+    private final int copierColumnCountThreshold;
     private final boolean sqlOrderBySortEnabled;
     private final int sqlPageFrameMaxRows;
     private final int sqlPageFrameMinRows;
@@ -1859,6 +1860,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 3), 3);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
+            this.copierColumnCountThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_COPIER_COLUMN_THRESHOLD, 1000);
             this.writerAsyncCommandBusyWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
             this.writerAsyncCommandMaxWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
             this.writerTickRowsCountMod = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_TICK_ROWS_COUNT, 1024)) - 1;
@@ -3870,6 +3872,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlOrderByRadixSortThreshold() {
             return sqlOrderByRadixSortThreshold;
+        }
+
+        @Override
+        public int getCopierColumnCountThreshold() {
+            return copierColumnCountThreshold;
         }
 
         @Override

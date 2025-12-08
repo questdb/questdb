@@ -580,6 +580,15 @@ public interface CairoConfiguration {
 
     int getSqlOrderByRadixSortThreshold();
 
+    /**
+     * Column count threshold for switching from bytecode to loop-based RecordToRowCopier.
+     * When the number of columns exceeds this threshold, a loop-based implementation is used
+     * to avoid JVM bytecode size limitations (64KB per method).
+     *
+     * @return maximum column count for bytecode generation (default: 1000)
+     */
+    int getCopierColumnCountThreshold();
+
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
