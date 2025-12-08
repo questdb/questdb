@@ -46,7 +46,7 @@ steps:
     condition: |
       eq(variables['System.JobName'], 'linux_x64_graal')
   - bash: |
-      apk add --no-cache bash curl wget git zip unzip build-base linux-headers python3 maven
+      apk add --no-cache bash curl git zip build-base maven
       # Detect architecture for GraalVM download
       ARCH=$(uname -m)
       if [ "$ARCH" = "x86_64" ]; then
