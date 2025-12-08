@@ -74,9 +74,6 @@ public class MarkoutReducer {
     private Map asofJoinMap;
     // Per-batch state
     private MasterRowBatch batch;
-    // Column mappings for CombinedRecord (obtained from atom)
-    private int[] columnIndices;
-    private int[] columnSources;
     // Iterator block management
     private long firstIteratorBlockAddr;
     private GroupByFunctionsUpdater functionUpdater;
@@ -145,10 +142,8 @@ public class MarkoutReducer {
         this.slaveTimestampIndex = atom.getSlaveTimestampIndex();
         // Get column mappings and GROUP BY key copier
         this.groupByKeyCopier = atom.getGroupByKeyCopier();
-        this.columnSources = atom.getColumnSources();
-        this.columnIndices = atom.getColumnIndices();
         // Initialize CombinedRecord with column mappings
-        combinedRecord.init(columnSources, columnIndices);
+        combinedRecord.init(atom.getColumnSources(), atom.getColumnIndices());
         if (slaveCursor != null) {
             // Reset cursor to start for each batch - workers reuse the same cursor
             slaveCursor.toTop();
@@ -167,7 +162,7 @@ public class MarkoutReducer {
             firstIteratorBlockAddr = lastIteratorBlockAddr = block_alloc();
             long iter = createIterator(0, batch.getRowAt(0).getTimestamp(masterTimestampColumnIndex));
             long prevIter = iter;
-            int nextMasterRowIndex = 0;
+            int nextMasterRowIndex = 1;
 
             while (true) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -192,7 +187,8 @@ public class MarkoutReducer {
                         // it's the last one in the circular list, and it's exhausted.
                         // Discard it and re-initialize everything to the new, and now only, iterator.
                         discardIterator(iter);
-                        prevIter = iter = nextIter = createIterator(0, nextMasterTs);
+                        prevIter = iter = nextIter = createIterator(nextMasterRowIndex, nextMasterTs);
+                        nextMasterRowIndex++;
                     }
                 }
                 if (isEmpty(iter)) {
