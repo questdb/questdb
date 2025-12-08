@@ -75,6 +75,7 @@ public class HTTPSerialParquetExporter {
         RecordCursorFactory factory = null;
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
         CreateTableOperation createOp = null;
+        sqlExecutionContext.setNowAndFixClock(task.getNow(), task.getNowTimestampType());
 
         try {
             createOp = task.getCreateOp();

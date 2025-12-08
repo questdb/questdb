@@ -632,6 +632,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     serialParquetExporter.process();
                     return;
                 }
+                int nowTimestampType = sqlExecutionContext.getNowTimestampType();
+                long now = sqlExecutionContext.getNow(nowTimestampType);
                 state.task.of(
                         entry,
                         state.getParquetTempTableCreate(),
@@ -644,6 +646,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.getExportModel().isStatisticsEnabled(),
                         state.getExportModel().getParquetVersion(),
                         state.getExportModel().isRawArrayEncoding(),
+                        nowTimestampType,
+                        now,
                         state.descending,
                         state.pageFrameCursor,
                         state.metadata,

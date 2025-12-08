@@ -95,6 +95,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
             throw CairoException.nonCritical().put("parquet export is disabled ['cairo.sql.copy.export.root' is not set]");
         }
 
+        sqlExecutionContext.setNowAndFixClock(task.getNow(), task.getNowTimestampType());
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
         TableToken tableToken = null;
         int tempBaseDirLen = 0;

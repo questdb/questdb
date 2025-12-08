@@ -60,6 +60,8 @@ public class CopyExportRequestTask implements Mutable {
     private RecordCursorFactory factory;
     private CharSequence fileName;
     private @Nullable RecordMetadata metadata;
+    private long now;
+    private int nowTimestampType;
     private @Nullable PageFrameCursor pageFrameCursor;
     private int parquetVersion;
     private boolean rawArrayEncoding;
@@ -80,6 +82,8 @@ public class CopyExportRequestTask implements Mutable {
         this.parquetVersion = -1;
         this.rowGroupSize = -1;
         this.statisticsEnabled = true;
+        this.now = 0;
+        this.nowTimestampType = 0;
         this.createOp = Misc.free(createOp);
         this.rfc = Misc.free(rfc);
         pageFrameCursor = null;
@@ -127,6 +131,14 @@ public class CopyExportRequestTask implements Mutable {
 
     public @Nullable RecordMetadata getMetadata() {
         return metadata;
+    }
+
+    public long getNow() {
+        return now;
+    }
+
+    public int getNowTimestampType() {
+        return nowTimestampType;
     }
 
     public @Nullable PageFrameCursor getPageFrameCursor() {
@@ -181,6 +193,8 @@ public class CopyExportRequestTask implements Mutable {
             boolean statisticsEnabled,
             int parquetVersion,
             boolean rawArrayEncoding,
+            int nowTimestampType,
+            long now,
             boolean descending,
             PageFrameCursor pageFrameCursor, // for streaming export
             RecordMetadata metadata,
@@ -201,6 +215,8 @@ public class CopyExportRequestTask implements Mutable {
         this.pageFrameCursor = pageFrameCursor;
         this.metadata = metadata;
         this.writeCallback = writeCallback;
+        this.now = now;
+        this.nowTimestampType = nowTimestampType;
     }
 
     public void setUpStreamPartitionParquetExporter() {

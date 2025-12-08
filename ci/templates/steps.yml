@@ -44,7 +44,7 @@ steps:
       echo "JAVA_HOME will be set to: $JAVA_PATH"
     displayName: "Install JDK and Maven"
     condition: |
-      eq(variables['poolName'], 'hetzner-docker-graal')
+      eq(variables['System.JobName'], 'linux_x64_graal')
   - task: Cache@2
     displayName: "Cache non-default Maven"
     continueOnError: true
