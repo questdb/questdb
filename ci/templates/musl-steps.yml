@@ -1,0 +1,143 @@
+steps:
+  - checkout: self
+    fetchDepth: 1
+    lfs: false
+    submodules: false
+
+  - bash: |
+      set -eux
+      # Pull the Alpine image with GraalVM pre-installed
+      docker pull raphaeldalmon/alpine-azp:latest
+
+      # Create a unique container name based on build ID
+      CONTAINER_NAME="musl-build-$(Build.BuildId)-$(System.JobAttempt)"
+      echo "##vso[task.setvariable variable=CONTAINER_NAME]$CONTAINER_NAME"
+
+      # Start the container with the source mounted
+      docker run -d \
+        --name "$CONTAINER_NAME" \
+        -v "$(Build.SourcesDirectory):/workspace:rw" \
+        -v "$HOME/.m2/repository:/root/.m2/repository:rw" \
+        -w /workspace \
+        -e MAVEN_OPTS="-Dmaven.repo.local=/root/.m2/repository -Xmx3g -XX:+UseParallelGC" \
+        raphaeldalmon/alpine-azp:latest \
+        tail -f /dev/null
+
+      # Wait for container to be ready
+      sleep 2
+      docker exec "$CONTAINER_NAME" echo "Container started successfully"
+    displayName: "Start Alpine/musl container"
+
+  - bash: |
+      set -eux
+      docker exec $(CONTAINER_NAME) sh -c '
+        apk add --no-cache bash curl git zip build-base maven
+
+        # Detect architecture for GraalVM download
+        ARCH=$(uname -m)
+        if [ "$ARCH" = "x86_64" ]; then
+          GRAALVM_ARCH="x64"
+        elif [ "$ARCH" = "aarch64" ]; then
+          GRAALVM_ARCH="aarch64"
+        fi
+
+        GRAALVM_VERSION="17.0.9"
+        curl -sL "https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${GRAALVM_VERSION}/graalvm-community-jdk-${GRAALVM_VERSION}_linux-${GRAALVM_ARCH}_bin.tar.gz" | \
+          tar -xzf - -C /opt
+        mv /opt/graalvm-* /opt/graalvm
+
+        # Set up environment
+        export JAVA_HOME=/opt/graalvm
+        export PATH=$JAVA_HOME/bin:$PATH
+
+        # Verify installation
+        java -version
+        mvn --version
+      '
+    displayName: "Install GraalVM and dependencies in container"
+
+  - bash: |
+      set -eux
+      docker exec $(CONTAINER_NAME) sh -c '
+        export JAVA_HOME=/opt/graalvm
+        export PATH=$JAVA_HOME/bin:$PATH
+
+        python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml || true
+      '
+    displayName: "Ensure Rust is installed"
+    continueOnError: true
+
+  - bash: |
+      set -eux
+      docker exec $(CONTAINER_NAME) sh -c '
+        export JAVA_HOME=/opt/graalvm
+        export PATH=$JAVA_HOME/bin:$PATH
+        export MAVEN_OPTS="-Dmaven.repo.local=/root/.m2/repository -Xmx3g -XX:+UseParallelGC"
+
+        mvn compile -DskipTests -P build-web-console -P qdbr-release \
+          -Dmaven.repo.local=/root/.m2/repository \
+          -Dmaven.resolver.transport=wagon \
+          -Dmaven.wagon.httpconnectionManager.ttlSeconds=30
+      '
+    displayName: "Compile with Maven"
+    condition: |
+      and(
+        succeeded(),
+        or(
+          eq(variables['testset'], 'none'),
+          eq(variables['SOURCE_CODE_CHANGED'], 'false')
+        )
+      )
+
+  - bash: |
+      set -eux
+      docker exec $(CONTAINER_NAME) sh -c '
+        export JAVA_HOME=/opt/graalvm
+        export PATH=$JAVA_HOME/bin:$PATH
+        export MAVEN_OPTS="-Xlog:gc -Dfile.encoding=UTF-8 -Dmaven.repo.local=/root/.m2/repository -Xmx3g -XX:+UseParallelGC"
+
+        mvn clean test \
+          --batch-mode --quiet \
+          -Dtest.include=$(includeTests) \
+          -Dtest.exclude=$(excludeTests) \
+          -Dout=/workspace/ci/qlog.conf \
+          -DfailIfNoTests=false \
+          -Dsurefire.failIfNoSpecifiedTests=false \
+          -P build-web-console \
+          -Dmaven.repo.local=/root/.m2/repository \
+          -Dmaven.resolver.transport=wagon \
+          -Dmaven.wagon.httpconnectionManager.ttlSeconds=30
+      '
+    displayName: "Run tests"
+    timeoutInMinutes: 55
+    condition: |
+      and(
+        succeeded(),
+        eq(variables['testset'], 'all'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+      )
+
+  - bash: |
+      set -eux
+      # Copy crash logs if they exist
+      docker exec $(CONTAINER_NAME) sh -c 'find /workspace/core/ -type f -name "hs_*.log" 2>/dev/null' | while read f; do
+        docker cp "$(CONTAINER_NAME):$f" "$(ARCHIVED_CRASH_LOG)" 2>/dev/null || true
+      done
+    displayName: "Tests failed -- copy crash dump"
+    condition: failed()
+
+  - task: PublishBuildArtifacts@1
+    displayName: "Tests failed -- Upload crash logs"
+    condition: failed()
+    inputs:
+      pathToPublish: $(ARCHIVED_CRASH_LOG)
+      artifactName: CrashDump
+    continueOnError: true
+
+  - bash: |
+      set -eux
+      # Stop and remove the container
+      docker stop $(CONTAINER_NAME) || true
+      docker rm $(CONTAINER_NAME) || true
+    displayName: "Cleanup container"
+    condition: always()

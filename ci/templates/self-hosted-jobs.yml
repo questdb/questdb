@@ -77,7 +77,6 @@ jobs:
     displayName: "on linux-x64-musl"
     pool:
       name: "hetzner-docker"
-    container: raphaeldalmon/alpine-azp:latest
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     variables:
@@ -95,7 +94,7 @@ jobs:
       os: Linux
       poolName: "musl-x64"
     steps:
-      - template: steps.yml
+      - template: musl-steps.yml
 
   - job: linux_arm64_musl
     workspace:
@@ -103,7 +102,6 @@ jobs:
     displayName: "on linux-arm64-musl"
     pool:
       name: "hetzner-docker-arm"
-    container: raphaeldalmon/alpine-azp:latest
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     variables:
@@ -121,4 +119,4 @@ jobs:
       os: Linux
       poolName: "musl-arm64"
     steps:
-      - template: steps.yml
+      - template: musl-steps.yml
