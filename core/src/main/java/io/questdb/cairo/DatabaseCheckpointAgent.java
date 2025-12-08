@@ -79,7 +79,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final ObjList<TxnScoreboard> scoreboards = new ObjList<>();
     private final AtomicLong startedAtTimestamp = new AtomicLong(Numbers.LONG_NULL); // Numbers.LONG_NULL means no ongoing checkpoint
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
-    private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
+    private SimpleWaitingLock walPurgeJobRunLock = null;
+    private volatile boolean ownsWalPurgeJobRunLock = false;
 
     DatabaseCheckpointAgent(CairoEngine engine) {
         this.engine = engine;
@@ -146,12 +147,15 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
                 }
 
-                // Suspend the WalPurgeJob
-                if (walPurgeJobRunLock != null) {
+                // Suspend the WalPurgeJob if it's not an incremental backup
+                // Incremental backups do not copy WAL files, only partitions, so it is ok to purge WALs
+                // during incremental backup
+                if (walPurgeJobRunLock != null && !isIncrementalBackup) {
                     final long timeout = configuration.getCircuitBreakerConfiguration().getQueryTimeout();
                     while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
                         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     }
+                    ownsWalPurgeJobRunLock = true;
                 }
 
                 TableToken tableToken = null;
@@ -292,14 +296,20 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // Add entry to table name registry copy.
                                         tableNameRegistryStore.logAddTable(tableToken);
 
+                                        // Fetch sequencer metadata and the last committed sequencer txn.
+                                        // The metadata will be dumped to the checkpoint, and lastTxn is stored
+                                        // separately to know which sequencer txn the metadata corresponds to.
                                         metadata.clear();
                                         long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
                                         path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
                                         metadata.switchTo(path, path.size(), true); // dump sequencer metadata to checkpoint's  "db/tableName/txn_seq/_meta"
                                         metadata.close(true, Vm.TRUNCATE_TO_POINTER);
 
-                                        mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                                        mem.putLong(lastTxn); // write lastTxn to checkpoint's "db/tableName/txn_seq/_txn"
+                                        mem.smallFile(ff, path.concat(TableUtils.CHECKPOINT_SEQ_TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                        // write lastTxn to the end of checkpoint's "db/tableName/txn_seq/_txn"
+                                        // This is not main table _txn file but an additional one 8 bytes file that stores
+                                        // the sequencer txn of the snapshot sequencer metadata
+                                        mem.putLong(lastTxn);
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
                                     }
 
@@ -326,8 +336,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     }
                 } catch (Throwable e) {
                     // Resume the WalPurgeJob
-                    if (walPurgeJobRunLock != null) {
+                    if (walPurgeJobRunLock != null && ownsWalPurgeJobRunLock && walPurgeJobRunLock.isLocked()) {
                         walPurgeJobRunLock.unlock();
+                        ownsWalPurgeJobRunLock = false;
                     }
                     var log = LOG.error().$("cannot create checkpoint [e=").$(e);
                     if (tableToken != null) {
@@ -419,9 +430,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             ff.rmdir(path); // it's fine to ignore errors here
 
             // Resume the WalPurgeJob
-            if (walPurgeJobRunLock != null) {
+            if (walPurgeJobRunLock != null && ownsWalPurgeJobRunLock && walPurgeJobRunLock.isLocked()) {
                 try {
                     walPurgeJobRunLock.unlock();
+                    ownsWalPurgeJobRunLock = false;
                 } catch (IllegalStateException ignore) {
                     // not an error here
                     // checkpointRelease() can be called several time in a row.
@@ -558,6 +570,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             recoveryAgent.restoreTableFiles(
                                     srcPath,
                                     dstPath,
+                                    false,
                                     recoveredMetaFiles,
                                     recoveredTxnFiles,
                                     recoveredCVFiles,

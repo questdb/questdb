@@ -155,6 +155,7 @@ public final class TableUtils {
      * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
      */
     public static final String TXN_FILE_NAME = "_txn";
+    public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     // transaction file structure
     // @formatter:off

@@ -89,17 +89,20 @@ public class TableSnapshotRestore implements QuietCloseable {
      * Recovers all table files from source (checkpoint/backup) to destination.
      * Combines metadata file copying
      *
-     * @param srcPath            source path (will be modified)
-     * @param dstPath            destination path (will be modified)
-     * @param recoveredMetaFiles counter for recovered meta files
-     * @param recoveredTxnFiles  counter for recovered txn files
-     * @param recoveredCVFiles   counter for recovered CV files
-     * @param recoveredWalFiles  counter for recovered WAL files
-     * @param symbolFilesCount   counter for recovered symbol files
+     * @param srcPath                     source path (will be modified)
+     * @param dstPath                     destination path (will be modified)
+     * @param truncateAllUnappliedWalTxns flag to indicate whether to fully truncate unapplied WAL
+     *                                    transactions from sequencer log
+     * @param recoveredMetaFiles          counter for recovered meta files
+     * @param recoveredTxnFiles           counter for recovered txn files
+     * @param recoveredCVFiles            counter for recovered CV files
+     * @param recoveredWalFiles           counter for recovered WAL files
+     * @param symbolFilesCount            counter for recovered symbol files
      */
     public void restoreTableFiles(
             Path srcPath,
             Path dstPath,
+            boolean truncateAllUnappliedWalTxns,
             AtomicInteger recoveredMetaFiles,
             AtomicInteger recoveredTxnFiles,
             AtomicInteger recoveredCVFiles,
@@ -116,12 +119,12 @@ public class TableSnapshotRestore implements QuietCloseable {
         TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
 
         // Rebuild symbol files and other table-specific processing
-        rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
+        long seqTxn = rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
 
         // Handle WAL-specific processing
         srcPath.trimTo(srcPathLen);
         dstPath.trimTo(dstPathLen);
-        processWalSequencerMetadata(srcPath, dstPath, srcPathLen, dstPathLen, recoveredWalFiles, memFile);
+        processWalSequencerMetadata(srcPath, dstPath, srcPathLen, dstPathLen, recoveredWalFiles, memFile, seqTxn, truncateAllUnappliedWalTxns);
     }
 
     /**
@@ -248,7 +251,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             int srcPathLen,
             int dstPathLen,
             AtomicInteger recoveredWalFiles,
-            MemoryCMARW memFile
+            MemoryCMARW memFile,
+            long seqTxn,
+            boolean truncateAllUnappliedWalTxns
     ) {
         // Go inside SEQ_DIR
         srcPath.trimTo(srcPathLen).concat(WalUtils.SEQ_DIR);
@@ -264,9 +269,14 @@ public class TableSnapshotRestore implements QuietCloseable {
                 throw CairoException.critical(ff.errno())
                         .put("Recovery failed. Could not copy meta file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
             } else {
-                srcPath.trimTo(srcSeqLen);
-                openSmallFile(ff, srcPath, srcSeqLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-                long newMaxTxn = memFile.getLong(0L);
+                final long newMaxTxn;
+                if (!truncateAllUnappliedWalTxns) {
+                    srcPath.trimTo(srcSeqLen);
+                    openSmallFile(ff, srcPath, srcSeqLen, memFile, TableUtils.CHECKPOINT_SEQ_TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                    newMaxTxn = memFile.getLong(0L);
+                } else {
+                    newMaxTxn = seqTxn;
+                }
 
                 memFile.smallFile(ff, dstPath.$(), MemoryTag.MMAP_SEQUENCER_METADATA);
                 dstPath.trimTo(dstSeqLen);
@@ -340,7 +350,7 @@ public class TableSnapshotRestore implements QuietCloseable {
      * @param tablePath            path to the table directory
      * @param recoveredSymbolFiles counter for recovered symbol files
      */
-    private void rebuildTableFiles(
+    private long rebuildTableFiles(
             Path tablePath,
             AtomicInteger recoveredSymbolFiles
     ) {
@@ -387,6 +397,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 );
                 ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
             }
+            return txWriter.getSeqTxn();
         } finally {
             tablePath.trimTo(pathTableLen);
         }
