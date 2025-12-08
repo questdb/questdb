@@ -72,8 +72,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 8);
         AsyncWindowJoinAtom.GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP = TestUtils.generateRandom(LOG).nextBoolean();
         sink.clear();
-        //includePrevailing = TestUtils.generateRandom(null).nextBoolean();
-        includePrevailing = false;
+        includePrevailing = TestUtils.generateRandom(null).nextBoolean();
     }
 
     @Test
@@ -81,7 +80,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price + 1) window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price + 1) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -92,13 +91,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1 + 1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -124,7 +123,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, sum(p.price + 1) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price + 1) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -136,7 +135,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price + 1) window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price + 1) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
@@ -146,12 +145,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1 + 1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price
                                             from trades t 
                                             left join prices p 
                                             on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts
@@ -175,7 +174,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, sum(p.price + 1) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price + 1) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
@@ -186,22 +185,22 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             if (!includePrevailing) {
-                printSql("select t.*, count()  " +
+                printSql("select t.sym, t.price, t.ts, count(p.ts)  " +
                         "from trades t " +
                         "left join prices p " +
                         "on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
                         "order by t.ts, t.sym;", sink);
             } else {
                 printSql("""
-                                select sym,price,ts, count() from
+                                select sym,price,ts, count(pts) from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1, ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts
@@ -226,7 +225,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, count() " +
+                    "select t.sym, t.price, t.ts, count() " +
                             "from trades t " +
                             "window join prices p " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
@@ -274,7 +273,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     """
                             s\tts\tavg_y
-                            sym0\t2023-01-01T09:00:00.000000Z\t1.0
+                            sym0\t2023-01-01T09:00:00.000000Z\t1.5
                             """,
                     """
                             Sort
@@ -313,7 +312,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             prepareTable();
             // window around current row
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -324,13 +323,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -355,7 +354,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -368,7 +367,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             // window in the past
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) as window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                         "from trades t " +
                         "window join prices p " +
                         "on (t.sym = p.sym) " +
@@ -379,13 +378,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', -1, t.ts)
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -397,7 +396,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQuery(
                     sink.toString(),
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -410,7 +409,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             // window in the future
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -421,13 +420,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', 1, t.ts) AND p.ts <= dateadd('m', 2, t.ts)
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', 1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -440,7 +439,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             assertQuery(
                     sink,
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -457,25 +456,25 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testCalcSize() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
-            assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
+            assertSkipToAndCalculateSize("select t.sym, t.price, t.ts, sum(t.price) as window_price " +
                     "from trades t " +
                     "window join prices p " +
                     "on (t.sym = p.sym) " +
                     " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                     "order by t.ts, t.sym", 20);
-            assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
+            assertSkipToAndCalculateSize("select t.sym, t.price, t.ts, sum(t.price) as window_price " +
                     "from trades t " +
                     "window join prices p " +
                     " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                     "order by t.ts, t.sym", 20);
-            assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
+            assertSkipToAndCalculateSize("select t.sym, t.price, t.ts, sum(t.price) as window_price " +
                     "from trades t " +
                     "window join prices p " +
                     "on t.sym = p.sym " +
                     " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                     " where t.price < 450 " +
                     "order by t.ts, t.sym", 3);
-            assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
+            assertSkipToAndCalculateSize("select t.sym, t.price, t.ts, sum(t.price) as window_price " +
                     "from trades t " +
                     "window join prices p " +
                     " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
@@ -540,7 +539,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             if (!includePrevailing) {
-                printSql("select t.*, avg(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on (t.sym = p.sym)" +
@@ -551,13 +550,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, avg(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) AND p.price < 300 
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and p.price < 300) LATEST ON ts1 PARTITION BY ts, sym
@@ -583,7 +582,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, avg(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) and p.price < 300 " +
@@ -595,7 +594,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             if (!includePrevailing) {
-                printSql("select t.*, avg(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on (t.sym = p.sym)" +
@@ -606,13 +605,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, avg(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) 
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -637,7 +636,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, avg(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -649,7 +648,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             if (!includePrevailing) {
-                printSql("select t.*, avg(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on (t.sym = p.sym)" +
@@ -660,13 +659,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, avg(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (p.price < 200 or p.price > 300 )  
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and (p.price < 200 or p.price > 300)) LATEST ON ts1 PARTITION BY ts, sym
@@ -692,7 +691,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, avg(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (p.price < 200 or p.price > 300 ) AND (t.sym = p.sym) " +
@@ -704,7 +703,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             if (!includePrevailing) {
-                printSql("select t.*, avg(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on (t.sym = p.sym)" +
@@ -715,13 +714,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, avg(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (p.price < 200 and p.price > 300 )  
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and (p.price < 200 and p.price > 300)) LATEST ON ts1 PARTITION BY ts, sym
@@ -747,7 +746,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, avg(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on p.price < 200 and p.price > 300 AND (t.sym = p.sym) " +
@@ -760,7 +759,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             // with join filter and master filter
             if (!includePrevailing) {
-                printSql("select t.*, avg(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on t.ts > 1000 and p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA'" +
@@ -771,13 +770,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, avg(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) and (t.ts > 1000 and p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA' )  
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and (t.ts > 1000 and p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA')) LATEST ON ts1 PARTITION BY ts, sym
@@ -807,7 +806,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     "            Interval forward scan on: prices\n" +
                                             "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.001001Z" : "1969-12-31T23:58:00.001001000Z")
                                             : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.000001Z" : "1969-12-31T23:58:00.000001001Z")) + "\",\"MAX\")]\n"),
-                    "select t.*, avg(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on p.ts > 1000 AND (t.sym = p.sym) and p.price < 300 and p.sym != 'AAAAAA'" +
@@ -827,7 +826,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             if (!includePrevailing) {
-                printSql("select t.*, avg(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
                         "from (select * from trades where price < 300) t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -838,13 +837,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, avg(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price
                                             from (select * from trades where price < 300) t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) AND p.price < 300 
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from (select * from trades where price < 300) t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and p.price < 300) LATEST ON ts1 PARTITION BY ts, sym
@@ -870,7 +869,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, avg(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -894,13 +893,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,ts, count(), max(pts) from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from (select * from trades where price < 300) t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', 2, t.ts) AND p.price < 300 
                                         union 
-                                            select sym,price,ts,price1, ts1 pts   from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1, ts1 pts   from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from (select * from trades where price < 300) t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -2, t.ts) and p.price < 300) LATEST ON ts1 PARTITION BY ts, sym
@@ -1011,7 +1010,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                                 Row forward scan
                                                 Frame forward scan on: prices
                                     """,
-                    "select t.*, first(p.bid) as first, avg(p.bid) as avg " +
+                    "select t.sym, t.price, t.ts, first(p.bid) as first, avg(p.bid) as avg " +
                             "from (trades where price > 5 limit 5, 9) t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -1030,7 +1029,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
                         "from (select * from trades where ts <= '2023-01-01T09:04:00.000000Z') t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -1042,13 +1041,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price
                                             from t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -1075,7 +1074,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Interval forward scan on: prices\n" +
                             "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n",
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -1104,7 +1103,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Interval forward scan on: prices\n" +
                             "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n",
-                    "declare @x := '2023-01-01T09:04:00.000000Z' select t.*, sum(p.price) as window_price " +
+                    "declare @x := '2023-01-01T09:04:00.000000Z' select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym)  " +
@@ -1117,7 +1116,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
                         "from (select * from trades where ts > '2023-01-01T09:04:00.000000Z') t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -1129,13 +1128,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price
+                                            select t.sym, t.price, t.ts, p.price
                                             from t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -1165,7 +1164,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     : "            Interval forward scan on: prices\n" +
                                     "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:03:00.000001Z" : "2023-01-01T09:03:00.000001000Z")
                                     : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:03:00.000000Z" : "2023-01-01T09:03:00.000000001Z")) + "\",\"MAX\")]\n"),
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym)  " +
@@ -1254,7 +1253,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             Assume.assumeTrue(leftTableTimestampType.getTimestampType() == rightTableTimestampType.getTimestampType());
             prepareTable();
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price), max(p.ts), avg(p.price), min(p.ts) " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price), max(p.ts), avg(p.price), min(p.ts) " +
                         "from trades t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -1265,13 +1264,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1),max(pts), avg(price1), min(pts) from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -1296,7 +1295,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, sum(p.price), max(p.ts), avg(p.price), min(p.ts) " +
+                    "select t.sym, t.price, t.ts, sum(p.price), max(p.ts), avg(p.price), min(p.ts) " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -1308,22 +1307,22 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             if (!includePrevailing) {
-                printSql("select t.*, max(p.ts), sum(p.price), avg(p.price), min(p.ts) " +
+                printSql("select t.sym, t.price, t.ts, max(p.ts), sum(p.price), avg(p.price), count(p.price), min(p.ts) " +
                         "from trades t " +
                         "left join prices p " +
                         " on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
                         "order by t.ts, t.sym;", sink);
             } else {
                 printSql("""
-                                select sym,price,ts, max(pts), sum(price1), avg(price1), min(pts) from
+                                select sym,price,ts, max(pts), sum(price1), avg(price1), count(price1), min(pts) from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -1348,7 +1347,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, max(p.ts), sum(p.price), avg(p.price), min(p.ts) " +
+                    "select t.sym, t.price, t.ts, max(p.ts), sum(p.price), avg(p.price), count(p.price), min(p.ts) " +
                             "from trades t " +
                             "window join prices p " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
@@ -1358,7 +1357,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     false
             );
 
-            printSql("select t.*, max(p.ts), sum(p.price + 100), avg(p.price + 100), min(p.ts), avg(p.price + 101) " +
+            printSql("select t.sym, t.price, t.ts, max(p.ts), sum(p.price + 100), avg(p.price + 100), min(p.ts), avg(p.price + 101) " +
                     "from trades t " +
                     "left join prices p " +
                     " on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
@@ -1377,7 +1376,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, max(p.ts), sum(p.price + 100), avg(p.price + 100), min(p.ts), avg(p.price + 101) " +
+                    "select t.sym, t.price, t.ts, max(p.ts), sum(p.price + 100), avg(p.price + 100), min(p.ts), avg(p.price + 101) " +
                             "from trades t " +
                             "window join prices p " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
@@ -1407,13 +1406,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select ts, price, sym, max(cast(concat(price1, '0') as double)) max_price, count(pts) cnt from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('s', -1, t.ts) AND p.ts <= dateadd('s', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('s', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -1465,13 +1464,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select ts, price, sym, max(cast(concat(price1, '2') as double)) max_price, count(pts) cnt from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('s', -1, t.ts) AND p.ts <= dateadd('s', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('s', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -1518,7 +1517,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             if (!includePrevailing) {
-                printSql("select t.*, avg(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -1529,13 +1528,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, avg(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -1560,7 +1559,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, avg(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -1578,7 +1577,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on p.ts >= dateadd('m', -15, t.ts) AND p.ts <= dateadd('m', -14, t.ts) " +
@@ -1588,12 +1587,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on p.ts >= dateadd('m', -15, t.ts) AND p.ts <= dateadd('m', -14, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on p.ts <= dateadd('m', -15, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -1615,7 +1614,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: prices\n",
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             " range between 15 minute preceding and 14 minute preceding " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
@@ -1626,7 +1625,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on t.sym = p.sym and p.ts >= dateadd('m', -5, t.ts) AND p.ts <= dateadd('m', -4, t.ts) " +
@@ -1636,13 +1635,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -5, t.ts) AND p.ts <= dateadd('m', -4, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -5, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -1665,7 +1664,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: prices\n",
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p on t.sym = p.sym" +
                             " range between 5 minute preceding and 4 minute preceding " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
@@ -1684,27 +1683,26 @@ public class WindowJoinTest extends AbstractCairoTest {
             String expect = includePrevailing ?
                     replaceTimestampSuffix("""
                             ts	sym	window_price1	window_price2
-                            2023-01-01T09:00:00.000000Z	AAPL	301.5	301.5
-                            2023-01-01T09:01:00.000000Z	AAPL	202.0	301.5
-                            2023-01-01T09:02:00.000000Z		199.0	199.0
-                            2023-01-01T09:02:00.000000Z	AAPL	101.5	202.0
-                            2023-01-01T09:03:00.000000Z	MSFT	400.0	400.0
-                            2023-01-01T09:04:00.000000Z	MSFT	200.5	400.0
-                            2023-01-01T09:05:00.000000Z	GOOGL	600.0	600.0
-                            2023-01-01T09:06:00.000000Z	GOOGL	300.5	901.5
-                            2023-01-01T09:07:00.000000Z	AAPL	102.5	102.5
-                            2023-01-01T09:08:00.000000Z	MSFT	201.5	201.5
-                            2023-01-01T09:09:00.000000Z	GOOGL	301.5	301.5
+                            2023-01-01T09:00:00.000000Z		null	null
+                            2023-01-01T09:01:00.000000Z		null	null
+                            2023-01-01T09:02:00.000000Z		null	null
+                            2023-01-01T09:03:00.000000Z		null	null
+                            2023-01-01T09:04:00.000000Z		null	null
+                            2023-01-01T09:05:00.000000Z		null	null
+                            2023-01-01T09:06:00.000000Z		null	null
+                            2023-01-01T09:07:00.000000Z		null	null
+                            2023-01-01T09:08:00.000000Z		null	null
+                            2023-01-01T09:09:00.000000Z		null	null
                             2023-01-01T09:10:00.000000Z	TSLA	800.0	800.0
                             2023-01-01T09:11:00.000000Z	TSLA	400.5	800.0
-                            2023-01-01T09:12:00.000000Z	AMZN	1000.0	1000.0
-                            2023-01-01T09:13:00.000000Z	AMZN	500.5	1000.0
-                            2023-01-01T09:14:00.000000Z	META	1200.0	1200.0
-                            2023-01-01T09:15:00.000000Z	META	600.5	1801.5
-                            2023-01-01T09:16:00.000000Z	TSLA	401.5	401.5
-                            2023-01-01T09:17:00.000000Z	AMZN	501.5	501.5
-                            2023-01-01T09:18:00.000000Z	META	601.5	601.5
-                            2023-01-01T09:19:00.000000Z	NFLX	699.5	699.5
+                            2023-01-01T09:12:00.000000Z	AMZN	1000.0	1501.5
+                            2023-01-01T09:13:00.000000Z	AMZN	500.5	1501.5
+                            2023-01-01T09:14:00.000000Z	META	1200.0	1801.5
+                            2023-01-01T09:15:00.000000Z	META	600.5	2403.0
+                            2023-01-01T09:16:00.000000Z	TSLA	401.5	802.0
+                            2023-01-01T09:17:00.000000Z	AMZN	501.5	1002.0
+                            2023-01-01T09:18:00.000000Z	META	601.5	1202.0
+                            2023-01-01T09:19:00.000000Z	NFLX	699.5	1399.0
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts	sym	window_price1	window_price2
@@ -1769,17 +1767,26 @@ public class WindowJoinTest extends AbstractCairoTest {
             expect = includePrevailing ?
                     replaceTimestampSuffix("""
                             ts	sym	window_price2
-                            2023-01-01T09:00:00.000000Z	AAPL	301.5
-                            2023-01-01T09:01:00.000000Z	AAPL	301.5
-                            2023-01-01T09:02:00.000000Z		199.0
-                            2023-01-01T09:02:00.000000Z	AAPL	202.0
-                            2023-01-01T09:03:00.000000Z	MSFT	400.0
-                            2023-01-01T09:04:00.000000Z	MSFT	400.0
-                            2023-01-01T09:05:00.000000Z	GOOGL	600.0
-                            2023-01-01T09:06:00.000000Z	GOOGL	901.5
-                            2023-01-01T09:07:00.000000Z	AAPL	204.0
-                            2023-01-01T09:08:00.000000Z	MSFT	402.0
-                            2023-01-01T09:09:00.000000Z	GOOGL	602.0
+                            2023-01-01T09:00:00.000000Z		null
+                            2023-01-01T09:01:00.000000Z		null
+                            2023-01-01T09:02:00.000000Z		null
+                            2023-01-01T09:03:00.000000Z		null
+                            2023-01-01T09:04:00.000000Z		null
+                            2023-01-01T09:05:00.000000Z		null
+                            2023-01-01T09:06:00.000000Z		null
+                            2023-01-01T09:07:00.000000Z		null
+                            2023-01-01T09:08:00.000000Z		null
+                            2023-01-01T09:09:00.000000Z		null
+                            2023-01-01T09:10:00.000000Z	TSLA	800.0
+                            2023-01-01T09:11:00.000000Z	TSLA	800.0
+                            2023-01-01T09:12:00.000000Z	AMZN	1501.5
+                            2023-01-01T09:13:00.000000Z	AMZN	1501.5
+                            2023-01-01T09:14:00.000000Z	META	1801.5
+                            2023-01-01T09:15:00.000000Z	META	2403.0
+                            2023-01-01T09:16:00.000000Z	TSLA	802.0
+                            2023-01-01T09:17:00.000000Z	AMZN	1002.0
+                            2023-01-01T09:18:00.000000Z	META	1202.0
+                            2023-01-01T09:19:00.000000Z	NFLX	1399.0
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts	sym	window_price2
@@ -1896,17 +1903,26 @@ public class WindowJoinTest extends AbstractCairoTest {
             expect = includePrevailing ?
                     replaceTimestampSuffix("""
                             ts	sym	window_price1	window_price2
-                            2023-01-01T09:00:00.000000Z	AAPL	null	301.5
-                            2023-01-01T09:01:00.000000Z	AAPL	null	301.5
-                            2023-01-01T09:02:00.000000Z		null	199.0
-                            2023-01-01T09:02:00.000000Z	AAPL	null	202.0
-                            2023-01-01T09:03:00.000000Z	MSFT	null	400.0
-                            2023-01-01T09:04:00.000000Z	MSFT	null	400.0
-                            2023-01-01T09:05:00.000000Z	GOOGL	null	600.0
-                            2023-01-01T09:06:00.000000Z	GOOGL	null	901.5
-                            2023-01-01T09:07:00.000000Z	AAPL	null	204.0
-                            2023-01-01T09:08:00.000000Z	MSFT	null	402.0
-                            2023-01-01T09:09:00.000000Z	GOOGL	null	602.0
+                            2023-01-01T09:00:00.000000Z		null	null
+                            2023-01-01T09:01:00.000000Z		null	null
+                            2023-01-01T09:02:00.000000Z		null	null
+                            2023-01-01T09:03:00.000000Z		null	null
+                            2023-01-01T09:04:00.000000Z		null	null
+                            2023-01-01T09:05:00.000000Z		null	null
+                            2023-01-01T09:06:00.000000Z		null	null
+                            2023-01-01T09:07:00.000000Z		null	null
+                            2023-01-01T09:08:00.000000Z		null	null
+                            2023-01-01T09:09:00.000000Z		null	null
+                            2023-01-01T09:10:00.000000Z	TSLA	null	800.0
+                            2023-01-01T09:11:00.000000Z	TSLA	null	800.0
+                            2023-01-01T09:12:00.000000Z	AMZN	null	1000.0
+                            2023-01-01T09:13:00.000000Z	AMZN	null	1000.0
+                            2023-01-01T09:14:00.000000Z	META	null	1200.0
+                            2023-01-01T09:15:00.000000Z	META	null	1801.5
+                            2023-01-01T09:16:00.000000Z	TSLA	null	802.0
+                            2023-01-01T09:17:00.000000Z	AMZN	null	1002.0
+                            2023-01-01T09:18:00.000000Z	META	null	1202.0
+                            2023-01-01T09:19:00.000000Z	NFLX	null	699.5
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts	sym	window_price1	window_price2
@@ -1962,7 +1978,31 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             // count is resolved to the first slave
-            expect = replaceTimestampSuffix("""
+            expect = includePrevailing ?
+                    replaceTimestampSuffix("""
+                            ts	sym	window_price1	window_price2	cnt
+                            2023-01-01T09:00:00.000000Z		null	null	3
+                            2023-01-01T09:01:00.000000Z		null	null	3
+                            2023-01-01T09:02:00.000000Z		null	null	3
+                            2023-01-01T09:03:00.000000Z		null	null	3
+                            2023-01-01T09:04:00.000000Z		null	null	3
+                            2023-01-01T09:05:00.000000Z		null	null	3
+                            2023-01-01T09:06:00.000000Z		null	null	3
+                            2023-01-01T09:07:00.000000Z		null	null	3
+                            2023-01-01T09:08:00.000000Z		null	null	2
+                            2023-01-01T09:09:00.000000Z		null	null	1
+                            2023-01-01T09:10:00.000000Z	TSLA	399.5	400.5	2
+                            2023-01-01T09:11:00.000000Z	TSLA	400.5	400.5	1
+                            2023-01-01T09:12:00.000000Z	AMZN	499.5	501.5	2
+                            2023-01-01T09:13:00.000000Z	AMZN	500.5	501.5	1
+                            2023-01-01T09:14:00.000000Z	META	599.5	601.5	2
+                            2023-01-01T09:15:00.000000Z	META	600.5	601.5	1
+                            2023-01-01T09:16:00.000000Z	TSLA	401.5	401.5	1
+                            2023-01-01T09:17:00.000000Z	AMZN	501.5	501.5	1
+                            2023-01-01T09:18:00.000000Z	META	601.5	601.5	1
+                            2023-01-01T09:19:00.000000Z	NFLX	699.5	699.5	1
+                            """, leftTableTimestampType.getTypeName())
+                    : replaceTimestampSuffix("""
                     ts	sym	window_price1	window_price2	cnt
                     2023-01-01T09:00:00.000000Z		null	null	3
                     2023-01-01T09:01:00.000000Z		null	null	3
@@ -2060,12 +2100,12 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             assertExceptionNoLeakCheck(
-                    "select t.*, sum(p.price) sum_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) sum_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on t.price-p.price " +
                             " range between 1 second preceding and 1 second following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    80,
+                    97,
                     "boolean expression expected"
             );
         });
@@ -2080,12 +2120,12 @@ public class WindowJoinTest extends AbstractCairoTest {
             prepareTable();
 
             assertExceptionNoLeakCheck(
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
                             " range between 2 minute preceding and 4 minute preceding;",
-                    133,
+                    150,
                     "WINDOW join hi value cannot be less than lo value"
             );
         });
@@ -2100,12 +2140,12 @@ public class WindowJoinTest extends AbstractCairoTest {
             prepareTable();
 
             assertExceptionNoLeakCheck(
-                    "select t.*, p.price " +
+                    "select t.sym, t.price, t.ts, p.price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
                             " range between 1 second preceding and 1 second following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    12,
+                    29,
                     "WINDOW join cannot reference right table non-aggregate column: p.price"
             );
         });
@@ -2116,14 +2156,14 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             assertExceptionNoLeakCheck(
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "where p.price > 10 " +
                             "order by t.ts, t.sym;",
-                    178,
+                    195,
                     "Invalid column: p.price"
             );
         });
@@ -2138,13 +2178,13 @@ public class WindowJoinTest extends AbstractCairoTest {
             prepareTable();
 
             assertExceptionNoLeakCheck(
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from (trades limit 5) t " +
                             "window join (select * from prices where ts in '2023-01-01T09:03:00.000000Z' or ts = '2023-01-01T09:07:00.000000Z' or ts = '2023-01-01T09:08:00.000000Z') p " +
                             "on (t.sym = p.sym) " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "order by t.ts, t.sym;",
-                    65,
+                    82,
                     "right side of window join must be a table, not sub-query"
             );
         });
@@ -2159,32 +2199,32 @@ public class WindowJoinTest extends AbstractCairoTest {
             prepareTable();
 
             assertExceptionNoLeakCheck(
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on t.sym = p.sym " +
                             " range between unbounded preceding and 1 day following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    118,
+                    135,
                     "unbounded preceding/following is not supported in WINDOW joins"
             );
 
             assertExceptionNoLeakCheck(
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on t.sym = p.sym " +
                             " range between 1 second preceding and unbounded following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    141,
+                    158,
                     "unbounded preceding/following is not supported in WINDOW joins"
             );
 
             assertExceptionNoLeakCheck(
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on t.sym = p.sym " +
                             " range between unbounded preceding and unbounded following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
-                    118,
+                    135,
                     "unbounded preceding/following is not supported in WINDOW joins"
             );
         });
@@ -2195,7 +2235,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', -1, t.ts) " +
@@ -2205,12 +2245,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on p.ts >= dateadd('m', -2, t.ts) AND p.ts <= dateadd('m', -1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on p.ts <= dateadd('m', -2, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -2233,7 +2273,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: prices\n",
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             " range between 2 minute preceding and 1 minute preceding " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
@@ -2244,7 +2284,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on p.ts >= dateadd('m', -3, t.ts) AND p.ts <= dateadd('m', -2, t.ts) " +
@@ -2254,12 +2294,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on p.ts >= dateadd('m', -3, t.ts) AND p.ts <= dateadd('m', -2, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on p.ts <= dateadd('m', -3, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -2281,7 +2321,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: prices\n",
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             " range between 3 minute preceding and 2 minute preceding " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
@@ -2292,7 +2332,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) window_price, count() as cnt " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price) window_price, count() as cnt " +
                         "from (select * from trades where price < 300) t " +
                         "left join prices p " +
                         "on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
@@ -2303,12 +2343,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1) window_price,count() as cnt from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from t 
                                             left join prices p 
                                             on p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from t 
                                             join prices p 
                                             on p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -2331,7 +2371,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: prices\n",
-                    "select t.*, sum(p.price) as window_price, count() as cnt " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price, count() as cnt " +
                             "from trades t " +
                             "window join prices p " +
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
@@ -2360,13 +2400,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sum(price1) + 2 window_price, price + 1, sym, ts from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) 
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -2416,13 +2456,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sum(price1) + 2 window_price, price + 1, sym, ts from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on (t.sym != p.sym and p.price > 100) 
                                             and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym != p.sym and p.price > 100) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -2601,17 +2641,17 @@ public class WindowJoinTest extends AbstractCairoTest {
                     includePrevailing ?
                             """
                                     sym	price	ts	sum_price
-                                    AAPL	100.0	2023-01-01T09:00:00.000000Z	200.0
-                                    AAPL	101.0	2023-01-01T09:01:00.000000Z	202.0
-                                    	102.0	2023-01-01T09:02:00.000000Z	199.0
+                                    TSLA	400.0	2023-01-01T09:10:00.000000Z	800.0
+                                    TSLA	401.0	2023-01-01T09:11:00.000000Z	400.5
+                                    AMZN	500.0	2023-01-01T09:12:00.000000Z	1000.0
                                     """
                             : """
-                            ts	sym	price	sum_price
-                            2023-01-01T09:10:00.000000Z	TSLA	400.0	400.5
-                            2023-01-01T09:11:00.000000Z	TSLA	401.0	null
-                            2023-01-01T09:12:00.000000Z	AMZN	500.0	500.5
+                            sym	price	ts	sum_price
+                            TSLA	400.0	2023-01-01T09:10:00.000000Z	400.5
+                            TSLA	401.0	2023-01-01T09:11:00.000000Z	null
+                            AMZN	500.0	2023-01-01T09:12:00.000000Z	500.5
                             """,
-                    "select t.*, sum(p.price) sum_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) sum_price " +
                             "from (trades limit 10, 13) t " +
                             "window join prices p " +
                             "on (t.sym=p.sym) " +
@@ -2650,9 +2690,19 @@ public class WindowJoinTest extends AbstractCairoTest {
                     includePrevailing ?
                             """
                                     sym	price	ts	sum_price
-                                    AAPL	100.0	2023-01-01T09:00:00.000000Z	200.0
-                                    AAPL	101.0	2023-01-01T09:01:00.000000Z	202.0
-                                    	102.0	2023-01-01T09:02:00.000000Z	500.0
+                                    	null	2023-01-01T09:00:00.000000Z	null
+                                    	null	2023-01-01T09:01:00.000000Z	null
+                                    	null	2023-01-01T09:02:00.000000Z	null
+                                    	null	2023-01-01T09:03:00.000000Z	null
+                                    	null	2023-01-01T09:04:00.000000Z	null
+                                    	null	2023-01-01T09:05:00.000000Z	null
+                                    	null	2023-01-01T09:06:00.000000Z	null
+                                    	null	2023-01-01T09:07:00.000000Z	null
+                                    	null	2023-01-01T09:08:00.000000Z	null
+                                    	null	2023-01-01T09:09:00.000000Z	null
+                                    TSLA	400.0	2023-01-01T09:10:00.000000Z	800.0
+                                    TSLA	401.0	2023-01-01T09:11:00.000000Z	900.0
+                                    AMZN	500.0	2023-01-01T09:12:00.000000Z	1000.0
                                     """
                             : """
                             sym	price	ts	sum_price
@@ -2687,7 +2737,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
                         "from (trades limit 5) t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -2699,12 +2749,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from t 
                                             left join prices p 
                                             on t.sym = p.sym and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from t 
                                             join prices p 
                                             on t.sym = p.sym and p.ts <= dateadd('m', 1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -2730,7 +2780,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from (trades limit 5) t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -2749,7 +2799,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             prepareTable();
             // fast factory
             if (!includePrevailing) {
-                printSql("select t.*, max(concat(p.price, '000')) f " +
+                printSql("select t.sym, t.price, t.ts, max(concat(p.price, '000')) f " +
                         "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -2761,12 +2811,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, max(concat(price1, '000')) f from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from t 
                                             left join prices p 
                                             on t.sym = p.sym and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from t 
                                             join prices p 
                                             on t.sym = p.sym and p.ts <= dateadd('m', 1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -2796,7 +2846,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     "            Interval forward scan on: prices\n" +
                                             "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000001Z" : "2023-01-01T08:59:00.000001000Z")
                                             : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000000Z" : "2023-01-01T08:59:00.000000001Z")) + "\",\"MAX\")]\n"),
-                    "select t.*, max(concat(p.price, '000')) f " +
+                    "select t.sym, t.price, t.ts, max(concat(p.price, '000')) f " +
                             "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -2809,7 +2859,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             // fast factory, vectorized
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) window_price, count(p.ts) as cnt " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price) window_price, count(p.ts) as cnt " +
                         "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -2821,12 +2871,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1) window_price, count(pts) as cnt from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from t 
                                             left join prices p 
                                             on t.sym = p.sym and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from t 
                                             join prices p 
                                             on t.sym = p.sym and p.ts <= dateadd('m', 1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -2856,7 +2906,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     "            Interval forward scan on: prices\n" +
                                             "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000001Z" : "2023-01-01T08:59:00.000001000Z")
                                             : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000000Z" : "2023-01-01T08:59:00.000000001Z")) + "\",\"MAX\")]\n"),
-                    "select t.*, sum(p.price) as window_price, count() as cnt " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price, count() as cnt " +
                             "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -2887,7 +2937,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     "            Interval forward scan on: prices\n" +
                                             "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000001Z" : "2023-01-01T08:59:00.000001000Z")
                                             : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T08:59:00.000000Z" : "2023-01-01T08:59:00.000000001Z")) + "\",\"MAX\")]\n"),
-                    "select t.*, sum(p.price) as window_price, count as cnt " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price, count as cnt " +
                             "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
                             "window join prices p " +
                             "on (concat(t.sym, '_0') = concat(p.sym, '_0')) " +
@@ -2919,11 +2969,17 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    """
-                            sym	price	sum_price
-                            TSLA	400.0	400.5
-                            TSLA	401.0	null
-                            """,
+                    includePrevailing ?
+                            """
+                                    sym	price	sum_price
+                                    TSLA	400.0	800.0
+                                    TSLA	401.0	400.5
+                                    """ :
+                            """
+                                    sym	price	sum_price
+                                    TSLA	400.0	400.5
+                                    TSLA	401.0	null
+                                    """,
                     "select t.sym, t.price, sum(p.price) sum_price " +
                             "from (trades limit 12) t " +
                             "window join prices p " +
@@ -2967,7 +3023,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on (0 = 1) " +
@@ -2978,12 +3034,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on (0 = 1) and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (0 = 1) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -3003,7 +3059,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                         Row forward scan
                                         Frame forward scan on: trades
                             """,
-                    "select t.*, sum(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (0 = 1) " +
@@ -3026,12 +3082,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sum(price1), price t_price, avg(price1), sym, ts from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on (0 = 1) and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (0 = 1) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -3070,7 +3126,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             if (!includePrevailing) {
-                printSql("select t.*, avg(p.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -3081,12 +3137,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, avg(price1) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -3110,7 +3166,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, avg(p.price) as window_price " +
+                    "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
@@ -3128,7 +3184,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             if (!includePrevailing) {
-                printSql("select t.*, sum(t.price) window_price " +
+                printSql("select t.sym, t.price, t.ts, sum(t.price) window_price " +
                         "from trades t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -3139,12 +3195,12 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 select sym,price,ts, sum(price) window_price from
                                 (
                                         select * from (
-                                            select t.*, p.price, p.ts pts
+                                            select t.sym, t.price, t.ts, p.price, p.ts pts
                                             from trades t 
                                             left join prices p 
                                             on (t.sym = p.sym) and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts)
                                         union 
-                                            select sym,price,ts,price1,ts1  from (select t.*, p.price price1, p.ts as ts1
+                                            select sym,price,ts,price1,ts1  from (select t.sym, t.price, t.ts, p.price price1, p.ts as ts1
                                             from trades t 
                                             join prices p 
                                             on (t.sym = p.sym) and p.ts <= dateadd('m', -1, t.ts)) LATEST ON ts1 PARTITION BY ts, sym
@@ -3169,7 +3225,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: prices\n",
-                    "select t.*, sum(t.price) as window_price " +
+                    "select t.sym, t.price, t.ts, sum(t.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
                             "on (t.sym = p.sym) " +
