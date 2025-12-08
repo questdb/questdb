@@ -625,14 +625,14 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     public void testOnParquetPartition() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
-                    engine.execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
-                    engine.execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1)");
+                    engine.execute("create table test_table (ts TIMESTAMP, x int, sym symbol) timestamp(ts) partition by day wal;");
+                    engine.execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0, 'symA'), ('2020-01-02T00:00:00.000000Z', 1, 'symB')");
                     drainWalQueue(engine);
                     engine.execute("alter table test_table convert partition to parquet where ts < '2020-01-02T00:00:00.000000Z'");
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 1001, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 1498, params, "test_table");
                 });
     }
 
