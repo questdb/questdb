@@ -4,6 +4,10 @@ RUN apk add --no-cache --virtual .pipeline-deps readline linux-pam \
   && apk add bash sudo shadow \
   && apk del .pipeline-deps
 
+# Create user with UID 1001 for Azure Pipelines agent
+RUN addgroup -g 1001 agent && adduser -u 1001 -G agent -s /bin/bash -D agent \
+  && echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
 LABEL "com.azure.dev.pipelines.agent.handler.node.path"="/usr/local/bin/node"
 
 CMD [ "node" ]
