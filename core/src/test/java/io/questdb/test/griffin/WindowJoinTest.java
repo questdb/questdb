@@ -940,6 +940,107 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFrameNoIntersection() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table trades (" +
+                            "  sym symbol," +
+                            "  price double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table prices (" +
+                            "  sym symbol," +
+                            "  bid double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into trades values " +
+                            "('sym0', 1.0, '2023-01-01T08:59:56.000000Z')," +
+                            "('sym0', 2.0, '2023-01-01T08:59:57.000000Z')," +
+                            "('sym0', 3.0, '2023-01-03T08:59:58.000000Z')," +
+                            "('sym0', 4.0, '2023-01-03T08:59:59.000000Z')," +
+                            "('sym0', 5.0, '2023-01-05T09:00:00.000000Z')," +
+                            "('sym0', 6.0, '2023-01-05T09:00:01.000000Z')," +
+                            "('sym0', 7.0, '2023-01-07T09:00:02.000000Z')," +
+                            "('sym0', 8.0, '2023-01-07T09:00:03.000000Z')," +
+                            "('sym0', 9.0, '2023-01-09T09:00:04.000000Z');"
+            );
+
+            execute(
+                    "insert into prices values " +
+                            "('sym0', 1.0, '2023-01-02T08:59:56.000000Z')," +
+                            "('sym0', 2.0, '2023-01-02T08:59:57.000000Z')," +
+                            "('sym0', 3.0, '2023-01-02T08:59:58.000000Z')," +
+                            "('sym0', 4.0, '2023-01-04T08:59:59.000000Z')," +
+                            "('sym0', 5.0, '2023-01-04T09:00:00.000000Z')," +
+                            "('sym0', 6.0, '2023-01-04T09:00:01.000000Z')," +
+                            "('sym0', 7.0, '2023-01-06T09:00:02.000000Z')," +
+                            "('sym0', 8.0, '2023-01-06T09:00:03.000000Z')," +
+                            "('sym0', 9.0, '2023-01-08T09:00:04.000000Z');"
+            );
+
+            assertQueryAndPlan(
+                    includePrevailing ? """
+                            sym	price	ts	first	avg
+                            sym0	1.0	2023-01-01T08:59:56.000000Z	null	null
+                            sym0	2.0	2023-01-01T08:59:57.000000Z	null	null
+                            sym0	3.0	2023-01-03T08:59:58.000000Z	3.0	3.0
+                            sym0	4.0	2023-01-03T08:59:59.000000Z	3.0	3.0
+                            sym0	5.0	2023-01-05T09:00:00.000000Z	6.0	6.0
+                            sym0	6.0	2023-01-05T09:00:01.000000Z	6.0	6.0
+                            sym0	7.0	2023-01-07T09:00:02.000000Z	8.0	8.0
+                            sym0	8.0	2023-01-07T09:00:03.000000Z	8.0	8.0
+                            sym0	9.0	2023-01-09T09:00:04.000000Z	9.0	9.0
+                            """
+                            : """
+                            sym	price	ts	first	avg
+                            sym0	1.0	2023-01-01T08:59:56.000000Z	null	null
+                            sym0	2.0	2023-01-01T08:59:57.000000Z	null	null
+                            sym0	3.0	2023-01-03T08:59:58.000000Z	null	null
+                            sym0	4.0	2023-01-03T08:59:59.000000Z	null	null
+                            sym0	5.0	2023-01-05T09:00:00.000000Z	null	null
+                            sym0	6.0	2023-01-05T09:00:01.000000Z	null	null
+                            sym0	7.0	2023-01-07T09:00:02.000000Z	null	null
+                            sym0	8.0	2023-01-07T09:00:03.000000Z	null	null
+                            sym0	9.0	2023-01-09T09:00:04.000000Z	null	null
+                            """,
+                    """
+                            Sort
+                              keys: [ts, sym]
+                                Async Window Fast Join workers: 1
+                                  vectorized: true
+                                  symbol: sym=sym
+                            """ +
+                            "      window lo: 60000000 preceding" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
+                            """
+                                          window hi: 60000000 following
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: prices
+                                    """,
+                    "select t.sym, t.price, t.ts, first(p.bid) as first, avg(p.bid) as avg " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testMasterFilterLimit() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
