@@ -3068,13 +3068,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         truncate(true);
     }
 
-    public boolean trySkipWalTransactions(long seqTxn, long skipTxnCount) {
+    public boolean trySkipWalTransactions(long seqTxnLo, long skipTxnCount) {
         assert skipTxnCount > 0;
         if (txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0) {
             // Apply symbol changes for symbol columns to keep the
             // symbol indexes same as if the transactions were applied.
             int addedSymbols = 0;
-            for (long txn = seqTxn, n = seqTxn + skipTxnCount; txn < n; txn++) {
+            for (long seqTxn = seqTxnLo, n = seqTxnLo + skipTxnCount; seqTxn < n; seqTxn++) {
 
                 long segLo = walTxnDetails.getSegmentRowLo(seqTxn);
                 long segHi = walTxnDetails.getSegmentRowHi(seqTxn);
@@ -3082,7 +3082,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Some very rare commits can be empty, where the rows are cancelled
                 // even with symbol changes, skip them
                 if (segHi > segLo) {
-                    SymbolMapDiffCursor symbolMapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(txn);
+                    SymbolMapDiffCursor symbolMapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
                     if (symbolMapDiffCursor != null) {
                         SymbolMapDiff symbolMapDiff;
 
@@ -3097,7 +3097,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             if (!ColumnType.isSymbol(columnType)) {
                                 throw CairoException.critical(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
-                                        .put(", seqTxn=").put(txn).put(']')
+                                        .put(", seqTxn=").put(seqTxn).put(']')
                                         .put(", wal=").put(walTxnDetails.getWalId(seqTxn))
                                         .put(", segment=").put(walTxnDetails.getSegmentId(seqTxn))
                                         .put(']');
@@ -3117,15 +3117,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     }
                 }
-
-                LOG.info().$("skipping replaced WAL transactions [table=").$(tableToken)
-                        .$(", range=[").$(seqTxn)
-                        .$(", ").$(seqTxn + skipTxnCount).$(')')
-                        .$(", addedSymbols=").$(addedSymbols)
-                        .I$();
             }
 
-            commitSeqTxn(seqTxn + skipTxnCount - 1);
+            LOG.info().$("skipping replaced WAL transactions [table=").$(tableToken)
+                    .$(", range=[").$(seqTxnLo)
+                    .$(", ").$(seqTxnLo + skipTxnCount).$(')')
+                    .$(", addedSymbols=").$(addedSymbols)
+                    .I$();
+
+            commitSeqTxn(seqTxnLo + skipTxnCount - 1);
             return true;
         }
         return false;
