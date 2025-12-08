@@ -484,10 +484,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         int key;
         if (address != 0) {
             key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
-        } else {
-            key = NullMemoryCMR.INSTANCE.getInt(0);
+            return getSymbolTable(columnIndex).valueOf(key);
         }
-        return getSymbolTable(columnIndex).valueOf(key);
+        return null;
     }
 
     @Override
@@ -496,10 +495,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         int key;
         if (address != 0) {
             key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
-        } else {
-            key = NullMemoryCMR.INSTANCE.getInt(0);
+            return getSymbolTable(columnIndex).valueBOf(key);
         }
-        return getSymbolTable(columnIndex).valueBOf(key);
+        return null;
     }
 
     @Override
