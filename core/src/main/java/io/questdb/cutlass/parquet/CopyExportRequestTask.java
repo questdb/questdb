@@ -372,7 +372,7 @@ public class CopyExportRequestTask implements Mutable {
                     columnNames.ptr(),
                     columnNames.size(),
                     columnMetadata.getAddress(),
-                    metadata.getTimestampIndex(),
+                    descending ? -1 : metadata.getTimestampIndex(),
                     descending,
                     ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                     statisticsEnabled,
