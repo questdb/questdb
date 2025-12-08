@@ -78,6 +78,9 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
             @Nullable RecordSink masterKeyCopier,
             @Nullable RecordSink slaveKeyCopier,
             int slaveTimestampIndex,
+            @NotNull RecordSink groupByKeyCopier,
+            @NotNull int[] columnSources,
+            @NotNull int[] columnIndices,
             int workerCount
     ) {
         super(metadata);
@@ -134,6 +137,9 @@ public class AsyncMarkoutGroupByRecordCursorFactory extends AbstractRecordCursor
                     masterKeyCopier,
                     slaveKeyCopier,
                     slaveTimestampIndex,
+                    groupByKeyCopier,
+                    columnSources,
+                    columnIndices,
                     groupByFunctions,
                     perWorkerGroupByFunctions,
                     workerCount

@@ -4235,9 +4235,71 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
             ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
 
-            // Process ASOF join key information for the join lookup
+            // Get slave metadata (needed for column mapping and ASOF join processing)
             // All slave factories have the same metadata, use the first one
             RecordMetadata slaveMetadata = slaveFactories.getQuick(0).getMetadata();
+
+            // Build column mappings from baseMetadata to source records (master, sequence, slave)
+            // These mappings are needed by CombinedRecord in MarkoutReducer to route column accesses
+            final int baseColumnCount = baseMetadata.getColumnCount();
+            final int[] columnSources = new int[baseColumnCount];
+            final int[] columnIndices = new int[baseColumnCount];
+
+            // Get table aliases from the query models
+            CharSequence masterAlias = curveInfo.crossMasterModel.getAlias() != null ?
+                    curveInfo.crossMasterModel.getAlias().token : null;
+            CharSequence sequenceAlias = curveInfo.crossSlaveModel.getAlias() != null ?
+                    curveInfo.crossSlaveModel.getAlias().token : null;
+            CharSequence slaveAlias = curveInfo.asofSlaveModel.getAlias() != null ?
+                    curveInfo.asofSlaveModel.getAlias().token : null;
+
+            for (int i = 0; i < baseColumnCount; i++) {
+                CharSequence fullName = baseMetadata.getColumnName(i);
+
+                // Parse "tableAlias.columnName" format
+                int dotIndex = Chars.indexOf(fullName, '.');
+                if (dotIndex > 0) {
+                    CharSequence tableAlias = fullName.subSequence(0, dotIndex);
+                    CharSequence columnName = fullName.subSequence(dotIndex + 1, fullName.length());
+
+                    if (masterAlias != null && Chars.equalsIgnoreCase(tableAlias, masterAlias)) {
+                        columnSources[i] = 0; // SOURCE_MASTER
+                        columnIndices[i] = masterMetadata.getColumnIndexQuiet(columnName);
+                    } else if (sequenceAlias != null && Chars.equalsIgnoreCase(tableAlias, sequenceAlias)) {
+                        columnSources[i] = 1; // SOURCE_SEQUENCE
+                        columnIndices[i] = sequenceMetadata.getColumnIndexQuiet(columnName);
+                    } else if (slaveAlias != null && Chars.equalsIgnoreCase(tableAlias, slaveAlias)) {
+                        columnSources[i] = 2; // SOURCE_SLAVE
+                        columnIndices[i] = slaveMetadata.getColumnIndexQuiet(columnName);
+                    }
+                } else {
+                    // No alias prefix - try matching by name in priority order
+                    int idx = sequenceMetadata.getColumnIndexQuiet(fullName);
+                    if (idx >= 0) {
+                        columnSources[i] = 1; // SOURCE_SEQUENCE
+                        columnIndices[i] = idx;
+                    } else {
+                        idx = slaveMetadata.getColumnIndexQuiet(fullName);
+                        if (idx >= 0) {
+                            columnSources[i] = 2; // SOURCE_SLAVE
+                            columnIndices[i] = idx;
+                        } else {
+                            idx = masterMetadata.getColumnIndexQuiet(fullName);
+                            if (idx >= 0) {
+                                columnSources[i] = 0; // SOURCE_MASTER
+                                columnIndices[i] = idx;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Create keyCopier for GROUP BY key population from the CombinedRecord
+            // Note: listColumnFilterA contains the GROUP BY key column indices (from assembleGroupByFunctions)
+            // We need to save it before it gets overwritten by ASOF join key processing
+            RecordSink groupByKeyCopier = RecordSinkFactory.getInstance(asm, baseMetadata, listColumnFilterA);
+
+            // Process ASOF join key information for the join lookup
             int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
             ArrayColumnTypes asofJoinKeyTypes = null;
             RecordSink masterKeyCopier = null;
@@ -4299,6 +4361,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterKeyCopier,
                     slaveKeyCopier,
                     slaveTimestampIndex,
+                    groupByKeyCopier,
+                    columnSources,
+                    columnIndices,
                     workerCount
             );
 

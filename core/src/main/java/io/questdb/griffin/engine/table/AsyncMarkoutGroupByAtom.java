@@ -70,7 +70,10 @@ import java.io.Closeable;
  * 4. Per-worker iterator block memory for the k-way merge algorithm
  */
 public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+    private final int[] columnIndices;
+    private final int[] columnSources;
     private final CairoConfiguration configuration;
+    private final RecordSink groupByKeyCopier;
     private final RecordSink masterKeyCopier;
     private final RecordSink masterRecordSink;
     private final ObjList<MasterRowBatch> masterRowBatchPool;
@@ -118,6 +121,9 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             RecordSink masterKeyCopier,
             RecordSink slaveKeyCopier,
             int slaveTimestampIndex,
+            @NotNull RecordSink groupByKeyCopier,
+            @NotNull int[] columnSources,
+            @NotNull int[] columnIndices,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
             @NotNull ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             int workerCount
@@ -136,6 +142,11 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
             this.masterKeyCopier = masterKeyCopier;
             this.slaveKeyCopier = slaveKeyCopier;
             this.slaveTimestampIndex = slaveTimestampIndex;
+
+            // Store GROUP BY key copier and column mappings for CombinedRecord
+            this.groupByKeyCopier = groupByKeyCopier;
+            this.columnSources = columnSources;
+            this.columnIndices = columnIndices;
 
             // Store metadata/sink for recreating sequence record array after clear()
             this.sequenceMetadata = sequenceCursorFactory.getMetadata();
@@ -308,6 +319,28 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
     public long getFirstSequenceTimeOffset() {
         return firstSequenceTimeOffset;
+    }
+
+    /**
+     * Get the GROUP BY key copier for populating map keys from CombinedRecord.
+     */
+    public RecordSink getGroupByKeyCopier() {
+        return groupByKeyCopier;
+    }
+
+    /**
+     * Get the column indices mapping (baseMetadata column index -> source record column index).
+     */
+    public int[] getColumnIndices() {
+        return columnIndices;
+    }
+
+    /**
+     * Get the column sources mapping (baseMetadata column index -> source identifier).
+     * Values: 0=SOURCE_MASTER, 1=SOURCE_SEQUENCE, 2=SOURCE_SLAVE
+     */
+    public int[] getColumnSources() {
+        return columnSources;
     }
 
     /**

@@ -70,11 +70,12 @@ public class MarkoutReducer {
     private static final int ITERATOR_SIZE = 40;
     private static final long BLOCK_SIZE = BLOCK_HEADER_SIZE + (ITERATORS_PER_BLOCK * ITERATOR_SIZE);
     // Combined record for aggregation - maps baseMetadata columns to source records
-    // baseMetadata: [0: sec_offs (LONG), 1: price (DOUBLE)]
-    // sequenceRecord: [0: usec_offs, 1: sec_offs]
-    // slaveRecord: [0: price, 1: sym, 2: price_ts]
     private final CombinedRecord combinedRecord = new CombinedRecord();
     private Map asofJoinMap;
+    // Column mappings for CombinedRecord (obtained from atom)
+    private int[] columnIndices;
+    private int[] columnSources;
+    private RecordSink groupByKeyCopier;
     // Per-batch state
     private MasterRowBatch batch;
     // Iterator block management
@@ -142,6 +143,12 @@ public class MarkoutReducer {
         this.masterKeyCopier = atom.getMasterKeyCopier();
         this.slaveKeyCopier = atom.getSlaveKeyCopier();
         this.slaveTimestampIndex = atom.getSlaveTimestampIndex();
+        // Get column mappings and GROUP BY key copier
+        this.groupByKeyCopier = atom.getGroupByKeyCopier();
+        this.columnSources = atom.getColumnSources();
+        this.columnIndices = atom.getColumnIndices();
+        // Initialize CombinedRecord with column mappings
+        combinedRecord.init(columnSources, columnIndices);
         if (slaveCursor != null) {
             // Reset cursor to start for each batch - workers reuse the same cursor
             slaveCursor.toTop();
@@ -443,16 +450,14 @@ public class MarkoutReducer {
             }
         }
 
-        // Create map key for GROUP BY aggregation
-        // The GROUP BY key column (sec_offs) is column 1 in the compiled sequence record
-        // Column 0 is usec_offs (the timestamp offset for horizon computation)
-        // TODO: Make this configurable based on actual GROUP BY columns
+        // Set up combined record with all three source records
+        combinedRecord.of(masterRecord, sequenceRecord, matchedSlaveRecord);
+
+        // Create map key for GROUP BY aggregation using configured RecordSink
         MapKey key = partialMap.withKey();
-        key.putLong(sequenceRecord.getLong(1));
+        key.put(combinedRecord, groupByKeyCopier);
 
-        // Use combined record that maps baseMetadata columns to source records
-        combinedRecord.of(sequenceRecord, matchedSlaveRecord);
-
+        // Aggregate using the combined record
         MapValue value = key.createValue();
         if (value.isNew()) {
             functionUpdater.updateNew(value, combinedRecord, 0);
@@ -515,176 +520,230 @@ public class MarkoutReducer {
 
     /**
      * Combined record that maps baseMetadata column indices to source records.
-     * <p>
-     * This is a simplified implementation for the markout curve query pattern where:
-     * - baseMetadata column 0 (sec_offs, LONG) maps to sequenceRecord column 1
-     * - baseMetadata column 1 (price, DOUBLE) maps to slaveRecord column 0
+     * Uses configurable column mappings to route accesses to the appropriate source record.
      */
     private static class CombinedRecord implements Record {
+        private static final int SOURCE_MASTER = 0;
+        private static final int SOURCE_SEQUENCE = 1;
+        private static final int SOURCE_SLAVE = 2;
+
+        // Column mappings (set once per reduce() call via init())
+        private int[] columnIndices;
+        private int[] columnSources;
+
+        // Source records (updated per row via of())
+        private Record masterRecord;
         private Record sequenceRecord;
         private Record slaveRecord;
 
         @Override
         public @Nullable BinarySequence getBin(int col) {
-            return null;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getBin(columnIndices[col]) : null;
         }
 
         @Override
         public long getBinLen(int col) {
-            return -1;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getBinLen(columnIndices[col]) : -1;
         }
 
         @Override
         public boolean getBool(int col) {
-            return false;
+            Record src = getSourceRecord(col);
+            return src != null && src.getBool(columnIndices[col]);
         }
 
         @Override
         public byte getByte(int col) {
-            return 0;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getByte(columnIndices[col]) : 0;
         }
 
         @Override
         public char getChar(int col) {
-            return 0;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getChar(columnIndices[col]) : 0;
         }
 
         @Override
         public long getDate(int col) {
-            return Numbers.LONG_NULL;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getDate(columnIndices[col]) : Numbers.LONG_NULL;
         }
 
         @Override
         public double getDouble(int col) {
-            // Column 1 (price) comes from slave record column 0
-            if (col == 1 && slaveRecord != null) {
-                return slaveRecord.getDouble(0);
-            }
-            return Double.NaN;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getDouble(columnIndices[col]) : Double.NaN;
         }
 
         @Override
         public float getFloat(int col) {
-            return Float.NaN;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getFloat(columnIndices[col]) : Float.NaN;
         }
 
         @Override
         public byte getGeoByte(int col) {
-            return 0;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getGeoByte(columnIndices[col]) : 0;
         }
 
         @Override
         public int getGeoInt(int col) {
-            return 0;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getGeoInt(columnIndices[col]) : 0;
         }
 
         @Override
         public long getGeoLong(int col) {
-            return 0;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getGeoLong(columnIndices[col]) : 0;
         }
 
         @Override
         public short getGeoShort(int col) {
-            return 0;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getGeoShort(columnIndices[col]) : 0;
         }
 
         @Override
         public int getIPv4(int col) {
-            return 0;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getIPv4(columnIndices[col]) : 0;
         }
 
-        // Implement other Record methods as needed (returning defaults for unused types)
         @Override
         public int getInt(int col) {
-            return 0;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getInt(columnIndices[col]) : Numbers.INT_NULL;
         }
 
         @Override
         public long getLong(int col) {
-            // Column 0 (sec_offs) comes from sequence record column 1
-            if (col == 0 && sequenceRecord != null) {
-                return sequenceRecord.getLong(1);
-            }
-            return 0;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getLong(columnIndices[col]) : Numbers.LONG_NULL;
         }
 
         @Override
         public void getLong256(int col, CharSink<?> sink) {
+            Record src = getSourceRecord(col);
+            if (src != null) {
+                src.getLong256(columnIndices[col], sink);
+            }
         }
 
         @Override
         public @Nullable Long256 getLong256A(int col) {
-            return null;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getLong256A(columnIndices[col]) : null;
         }
 
         @Override
         public @Nullable Long256 getLong256B(int col) {
-            return null;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getLong256B(columnIndices[col]) : null;
         }
 
         @Override
         public long getRowId() {
-            return Numbers.LONG_NULL;
+            return masterRecord != null ? masterRecord.getRowId() : Numbers.LONG_NULL;
         }
 
         @Override
         public short getShort(int col) {
-            return 0;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getShort(columnIndices[col]) : 0;
         }
 
         @Override
         public @Nullable CharSequence getStrA(int col) {
-            return null;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getStrA(columnIndices[col]) : null;
         }
 
         @Override
         public @Nullable CharSequence getStrB(int col) {
-            return null;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getStrB(columnIndices[col]) : null;
         }
 
         @Override
         public int getStrLen(int col) {
-            return -1;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getStrLen(columnIndices[col]) : -1;
         }
 
         @Override
         public @Nullable CharSequence getSymA(int col) {
-            return null;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getSymA(columnIndices[col]) : null;
         }
 
         @Override
         public @Nullable CharSequence getSymB(int col) {
-            return null;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getSymB(columnIndices[col]) : null;
         }
 
         @Override
         public long getTimestamp(int col) {
-            return Numbers.LONG_NULL;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getTimestamp(columnIndices[col]) : Numbers.LONG_NULL;
         }
 
         @Override
         public long getUpdateRowId() {
-            return Numbers.LONG_NULL;
+            return masterRecord != null ? masterRecord.getUpdateRowId() : Numbers.LONG_NULL;
         }
 
         @Override
         public @Nullable Utf8Sequence getVarcharA(int col) {
-            return null;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getVarcharA(columnIndices[col]) : null;
         }
 
         @Override
         public @Nullable Utf8Sequence getVarcharB(int col) {
-            return null;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getVarcharB(columnIndices[col]) : null;
         }
 
         @Override
         public int getVarcharSize(int col) {
-            return -1;
+            Record src = getSourceRecord(col);
+            return src != null ? src.getVarcharSize(columnIndices[col]) : -1;
         }
 
-        void of(Record sequenceRecord, Record slaveRecord) {
+        /**
+         * Initialize the column mappings. Called once per reduce() call.
+         */
+        void init(int[] columnSources, int[] columnIndices) {
+            this.columnSources = columnSources;
+            this.columnIndices = columnIndices;
+        }
+
+        /**
+         * Set the source records for this row. Called once per emitAndAggregate() call.
+         */
+        void of(Record masterRecord, Record sequenceRecord, Record slaveRecord) {
+            this.masterRecord = masterRecord;
             this.sequenceRecord = sequenceRecord;
             this.slaveRecord = slaveRecord;
+        }
+
+        private Record getSourceRecord(int col) {
+            switch (columnSources[col]) {
+                case SOURCE_MASTER:
+                    return masterRecord;
+                case SOURCE_SEQUENCE:
+                    return sequenceRecord;
+                case SOURCE_SLAVE:
+                    return slaveRecord;
+                default:
+                    return null;
+            }
         }
     }
 }
