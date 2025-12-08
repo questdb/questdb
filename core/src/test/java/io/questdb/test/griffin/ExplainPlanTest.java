@@ -5979,7 +5979,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     VirtualRecord
                       functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]
                         GroupBy vectorized: true workers: 1
-                          values: [sum(resolutIONWidth),count(resolutIONWidth),count(*)]
+                          values: [sum(ResolutionWidth),count(ResolutionWidth),count(*)]
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: hits

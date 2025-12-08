@@ -6696,7 +6696,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnSizeShifts.add(Numbers.msb(typeSize));
 
                     queryMeta.add(new TableColumnMetadata(
-                            Chars.toString(column.getName()),
+                            metadata.getColumnName(columnIndex),
                             type,
                             metadata.isColumnIndexed(columnIndex),
                             metadata.getIndexValueBlockCapacity(columnIndex),
