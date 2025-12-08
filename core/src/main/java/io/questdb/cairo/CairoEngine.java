@@ -513,6 +513,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
+    @TestOnly
+    // this is used in replication test
+    public void clearWalWriterPool() {
+        walWriterPool.releaseAll();
+    }
+
     @Override
     public void close() {
         Misc.free(sqlCompilerPool);
@@ -718,7 +724,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 DefaultLifecycleManager.INSTANCE,
                 backupDirName,
                 getDdlListener(tableToken),
-                checkpointAgent,
                 this
         );
     }
