@@ -462,25 +462,25 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "window join prices p " +
                     "on (t.sym = p.sym) " +
                     " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                    "order by t.ts, t.sym", 21);
+                    "order by t.ts, t.sym", 20);
             assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
                     "from trades t " +
                     "window join prices p " +
                     " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                    "order by t.ts, t.sym", 21);
+                    "order by t.ts, t.sym", 20);
             assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
                     "from trades t " +
                     "window join prices p " +
                     "on t.sym = p.sym " +
                     " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                    " where t.price < 400 " +
-                    "order by t.ts, t.sym", 11);
+                    " where t.price < 450 " +
+                    "order by t.ts, t.sym", 3);
             assertSkipToAndCalculateSize("select t.*, sum(t.price) as window_price " +
                     "from trades t " +
                     "window join prices p " +
                     " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
-                    " where t.price < 400 " +
-                    "order by t.ts, t.sym", 11);
+                    " where t.price < 450 " +
+                    "order by t.ts, t.sym", 3);
         });
     }
 
@@ -492,15 +492,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """
                             count
                             3
+                            3
+                            3
+                            3
+                            3
+                            3
+                            3
+                            3
                             2
-                            1
-                            1
-                            2
-                            1
-                            2
-                            1
-                            1
-                            1
                             1
                             2
                             1
@@ -1397,7 +1396,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             prepareTable();
             if (!includePrevailing) {
-                printSql(" SELECT t.ts, t.price price, t.sym, max(cast(concat(p.price, '0') as double)) max_price, count(p.price) cnt " +
+                printSql(" SELECT t.ts, t.price price, t.sym, max(cast(concat(p.price, '0') as double)) max_price, count(p.ts) cnt " +
                         "from trades t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -1405,7 +1404,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "order by t.ts, t.sym;", sink);
             } else {
                 printSql("""
-                                select ts, price, sym, max(cast(concat(price1, '0') as double)) max_price, count(price1) cnt from
+                                select ts, price, sym, max(cast(concat(price1, '0') as double)) max_price, count(pts) cnt from
                                 (
                                         select * from (
                                             select t.*, p.price, p.ts pts
@@ -1453,7 +1452,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
 
             if (!includePrevailing) {
-                printSql(" SELECT t.ts, t.price price, t.sym, max(cast(concat(p.price, '2') as double)) max_price, count(p.price) cnt " +
+                printSql(" SELECT t.ts, t.price price, t.sym, max(cast(concat(p.price, '2') as double)) max_price, count(p.ts) cnt " +
                         "from trades t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -1463,7 +1462,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             } else {
                 printSql("""
                                 with t as (select * from trades where cast(concat(price, '2') as double) > 200)
-                                select ts, price, sym, max(cast(concat(price1, '2') as double)) max_price, count(price1) cnt from
+                                select ts, price, sym, max(cast(concat(price1, '2') as double)) max_price, count(pts) cnt from
                                 (
                                         select * from (
                                             select t.*, p.price, p.ts pts
@@ -1685,7 +1684,6 @@ public class WindowJoinTest extends AbstractCairoTest {
             String expect = includePrevailing ?
                     replaceTimestampSuffix("""
                             ts	sym	window_price1	window_price2
-                            ts	sym	window_price1	window_price2
                             2023-01-01T09:00:00.000000Z	AAPL	301.5	301.5
                             2023-01-01T09:01:00.000000Z	AAPL	202.0	301.5
                             2023-01-01T09:02:00.000000Z		199.0	199.0
@@ -1709,18 +1707,27 @@ public class WindowJoinTest extends AbstractCairoTest {
                             2023-01-01T09:19:00.000000Z	NFLX	699.5	699.5
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
-                    ts\tsym\twindow_price1\twindow_price2
-                    2023-01-01T09:00:00.000000Z\tAAPL\t301.5\t301.5
-                    2023-01-01T09:01:00.000000Z\tAAPL\t202.0\t301.5
-                    2023-01-01T09:02:00.000000Z\t\t199.0\t199.0
-                    2023-01-01T09:02:00.000000Z\tAAPL\t101.5\t202.0
-                    2023-01-01T09:03:00.000000Z\tMSFT\t400.0\t400.0
-                    2023-01-01T09:04:00.000000Z\tMSFT\t200.5\t400.0
-                    2023-01-01T09:05:00.000000Z\tGOOGL\t600.0\t600.0
-                    2023-01-01T09:06:00.000000Z\tGOOGL\t300.5\t901.5
-                    2023-01-01T09:07:00.000000Z\tAAPL\t102.5\t102.5
-                    2023-01-01T09:08:00.000000Z\tMSFT\t201.5\t201.5
-                    2023-01-01T09:09:00.000000Z\tGOOGL\t301.5\t301.5
+                    ts	sym	window_price1	window_price2
+                    2023-01-01T09:00:00.000000Z		null	null
+                    2023-01-01T09:01:00.000000Z		null	null
+                    2023-01-01T09:02:00.000000Z		null	null
+                    2023-01-01T09:03:00.000000Z		null	null
+                    2023-01-01T09:04:00.000000Z		null	null
+                    2023-01-01T09:05:00.000000Z		null	null
+                    2023-01-01T09:06:00.000000Z		null	null
+                    2023-01-01T09:07:00.000000Z		null	null
+                    2023-01-01T09:08:00.000000Z		null	null
+                    2023-01-01T09:09:00.000000Z		null	null
+                    2023-01-01T09:10:00.000000Z	TSLA	800.0	800.0
+                    2023-01-01T09:11:00.000000Z	TSLA	400.5	800.0
+                    2023-01-01T09:12:00.000000Z	AMZN	1000.0	1000.0
+                    2023-01-01T09:13:00.000000Z	AMZN	500.5	1000.0
+                    2023-01-01T09:14:00.000000Z	META	1200.0	1200.0
+                    2023-01-01T09:15:00.000000Z	META	600.5	1801.5
+                    2023-01-01T09:16:00.000000Z	TSLA	401.5	401.5
+                    2023-01-01T09:17:00.000000Z	AMZN	501.5	501.5
+                    2023-01-01T09:18:00.000000Z	META	601.5	601.5
+                    2023-01-01T09:19:00.000000Z	NFLX	699.5	699.5
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
@@ -1776,17 +1783,26 @@ public class WindowJoinTest extends AbstractCairoTest {
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts	sym	window_price2
-                    2023-01-01T09:00:00.000000Z	AAPL	301.5
-                    2023-01-01T09:01:00.000000Z	AAPL	301.5
-                    2023-01-01T09:02:00.000000Z		199.0
-                    2023-01-01T09:02:00.000000Z	AAPL	202.0
-                    2023-01-01T09:03:00.000000Z	MSFT	400.0
-                    2023-01-01T09:04:00.000000Z	MSFT	400.0
-                    2023-01-01T09:05:00.000000Z	GOOGL	600.0
-                    2023-01-01T09:06:00.000000Z	GOOGL	901.5
-                    2023-01-01T09:07:00.000000Z	AAPL	102.5
-                    2023-01-01T09:08:00.000000Z	MSFT	201.5
-                    2023-01-01T09:09:00.000000Z	GOOGL	301.5
+                    2023-01-01T09:00:00.000000Z		null
+                    2023-01-01T09:01:00.000000Z		null
+                    2023-01-01T09:02:00.000000Z		null
+                    2023-01-01T09:03:00.000000Z		null
+                    2023-01-01T09:04:00.000000Z		null
+                    2023-01-01T09:05:00.000000Z		null
+                    2023-01-01T09:06:00.000000Z		null
+                    2023-01-01T09:07:00.000000Z		null
+                    2023-01-01T09:08:00.000000Z		null
+                    2023-01-01T09:09:00.000000Z		null
+                    2023-01-01T09:10:00.000000Z	TSLA	800.0
+                    2023-01-01T09:11:00.000000Z	TSLA	800.0
+                    2023-01-01T09:12:00.000000Z	AMZN	1000.0
+                    2023-01-01T09:13:00.000000Z	AMZN	1000.0
+                    2023-01-01T09:14:00.000000Z	META	1200.0
+                    2023-01-01T09:15:00.000000Z	META	1801.5
+                    2023-01-01T09:16:00.000000Z	TSLA	401.5
+                    2023-01-01T09:17:00.000000Z	AMZN	501.5
+                    2023-01-01T09:18:00.000000Z	META	601.5
+                    2023-01-01T09:19:00.000000Z	NFLX	699.5
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
@@ -1827,17 +1843,26 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             expect = replaceTimestampSuffix("""
                     ts	sym	window_price1	window_price2
-                    2023-01-01T09:00:00.000000Z	AAPL	301.5	null
-                    2023-01-01T09:01:00.000000Z	AAPL	600.5	null
-                    2023-01-01T09:02:00.000000Z		700.5	null
-                    2023-01-01T09:02:00.000000Z	AAPL	700.5	null
-                    2023-01-01T09:03:00.000000Z	MSFT	898.5	null
-                    2023-01-01T09:04:00.000000Z	MSFT	800.5	null
-                    2023-01-01T09:05:00.000000Z	GOOGL	702.5	null
-                    2023-01-01T09:06:00.000000Z	GOOGL	604.5	null
-                    2023-01-01T09:07:00.000000Z	AAPL	605.5	null
-                    2023-01-01T09:08:00.000000Z	MSFT	503.0	null
-                    2023-01-01T09:09:00.000000Z	GOOGL	301.5	null
+                    2023-01-01T09:00:00.000000Z		null	null
+                    2023-01-01T09:01:00.000000Z		null	null
+                    2023-01-01T09:02:00.000000Z		null	null
+                    2023-01-01T09:03:00.000000Z		null	null
+                    2023-01-01T09:04:00.000000Z		null	null
+                    2023-01-01T09:05:00.000000Z		null	null
+                    2023-01-01T09:06:00.000000Z		null	null
+                    2023-01-01T09:07:00.000000Z		null	null
+                    2023-01-01T09:08:00.000000Z		399.5	null
+                    2023-01-01T09:09:00.000000Z		800.0	null
+                    2023-01-01T09:10:00.000000Z	TSLA	1299.5	null
+                    2023-01-01T09:11:00.000000Z	TSLA	1400.5	null
+                    2023-01-01T09:12:00.000000Z	AMZN	1599.5	null
+                    2023-01-01T09:13:00.000000Z	AMZN	1700.5	null
+                    2023-01-01T09:14:00.000000Z	META	1601.5	null
+                    2023-01-01T09:15:00.000000Z	META	1503.5	null
+                    2023-01-01T09:16:00.000000Z	TSLA	1504.5	null
+                    2023-01-01T09:17:00.000000Z	AMZN	1802.5	null
+                    2023-01-01T09:18:00.000000Z	META	1301.0	null
+                    2023-01-01T09:19:00.000000Z	NFLX	699.5	null
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
@@ -1885,17 +1910,26 @@ public class WindowJoinTest extends AbstractCairoTest {
                             """, leftTableTimestampType.getTypeName())
                     : replaceTimestampSuffix("""
                     ts	sym	window_price1	window_price2
-                    2023-01-01T09:00:00.000000Z	AAPL	null	301.5
-                    2023-01-01T09:01:00.000000Z	AAPL	null	301.5
-                    2023-01-01T09:02:00.000000Z		null	199.0
-                    2023-01-01T09:02:00.000000Z	AAPL	null	202.0
-                    2023-01-01T09:03:00.000000Z	MSFT	null	400.0
-                    2023-01-01T09:04:00.000000Z	MSFT	null	400.0
-                    2023-01-01T09:05:00.000000Z	GOOGL	null	600.0
-                    2023-01-01T09:06:00.000000Z	GOOGL	null	901.5
-                    2023-01-01T09:07:00.000000Z	AAPL	null	102.5
-                    2023-01-01T09:08:00.000000Z	MSFT	null	201.5
-                    2023-01-01T09:09:00.000000Z	GOOGL	null	301.5
+                    2023-01-01T09:00:00.000000Z		null	null
+                    2023-01-01T09:01:00.000000Z		null	null
+                    2023-01-01T09:02:00.000000Z		null	null
+                    2023-01-01T09:03:00.000000Z		null	null
+                    2023-01-01T09:04:00.000000Z		null	null
+                    2023-01-01T09:05:00.000000Z		null	null
+                    2023-01-01T09:06:00.000000Z		null	null
+                    2023-01-01T09:07:00.000000Z		null	null
+                    2023-01-01T09:08:00.000000Z		null	null
+                    2023-01-01T09:09:00.000000Z		null	null
+                    2023-01-01T09:10:00.000000Z	TSLA	null	800.0
+                    2023-01-01T09:11:00.000000Z	TSLA	null	800.0
+                    2023-01-01T09:12:00.000000Z	AMZN	null	1000.0
+                    2023-01-01T09:13:00.000000Z	AMZN	null	1000.0
+                    2023-01-01T09:14:00.000000Z	META	null	1200.0
+                    2023-01-01T09:15:00.000000Z	META	null	1801.5
+                    2023-01-01T09:16:00.000000Z	TSLA	null	401.5
+                    2023-01-01T09:17:00.000000Z	AMZN	null	501.5
+                    2023-01-01T09:18:00.000000Z	META	null	601.5
+                    2023-01-01T09:19:00.000000Z	NFLX	null	699.5
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
@@ -1930,17 +1964,26 @@ public class WindowJoinTest extends AbstractCairoTest {
             // count is resolved to the first slave
             expect = replaceTimestampSuffix("""
                     ts	sym	window_price1	window_price2	cnt
-                    2023-01-01T09:00:00.000000Z	AAPL	99.5	101.5	3
-                    2023-01-01T09:01:00.000000Z	AAPL	100.5	101.5	2
-                    2023-01-01T09:02:00.000000Z		199.0	199.0	1
-                    2023-01-01T09:02:00.000000Z	AAPL	101.5	101.5	1
-                    2023-01-01T09:03:00.000000Z	MSFT	199.5	200.5	2
-                    2023-01-01T09:04:00.000000Z	MSFT	200.5	200.5	1
-                    2023-01-01T09:05:00.000000Z	GOOGL	299.5	300.5	2
-                    2023-01-01T09:06:00.000000Z	GOOGL	300.5	301.5	1
-                    2023-01-01T09:07:00.000000Z	AAPL	102.5	102.5	1
-                    2023-01-01T09:08:00.000000Z	MSFT	201.5	201.5	1
-                    2023-01-01T09:09:00.000000Z	GOOGL	301.5	301.5	1
+                    2023-01-01T09:00:00.000000Z		null	null	3
+                    2023-01-01T09:01:00.000000Z		null	null	3
+                    2023-01-01T09:02:00.000000Z		null	null	3
+                    2023-01-01T09:03:00.000000Z		null	null	3
+                    2023-01-01T09:04:00.000000Z		null	null	3
+                    2023-01-01T09:05:00.000000Z		null	null	3
+                    2023-01-01T09:06:00.000000Z		null	null	3
+                    2023-01-01T09:07:00.000000Z		null	null	3
+                    2023-01-01T09:08:00.000000Z		null	null	2
+                    2023-01-01T09:09:00.000000Z		null	null	1
+                    2023-01-01T09:10:00.000000Z	TSLA	399.5	400.5	2
+                    2023-01-01T09:11:00.000000Z	TSLA	400.5	400.5	1
+                    2023-01-01T09:12:00.000000Z	AMZN	499.5	500.5	2
+                    2023-01-01T09:13:00.000000Z	AMZN	500.5	500.5	1
+                    2023-01-01T09:14:00.000000Z	META	599.5	600.5	2
+                    2023-01-01T09:15:00.000000Z	META	600.5	601.5	1
+                    2023-01-01T09:16:00.000000Z	TSLA	401.5	401.5	1
+                    2023-01-01T09:17:00.000000Z	AMZN	501.5	501.5	1
+                    2023-01-01T09:18:00.000000Z	META	601.5	601.5	1
+                    2023-01-01T09:19:00.000000Z	NFLX	699.5	699.5	1
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
@@ -2563,13 +2606,13 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     	102.0	2023-01-01T09:02:00.000000Z	199.0
                                     """
                             : """
-                            sym\tprice\tts\tsum_price
-                            AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t100.5
-                            AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t101.5
-                            \t102.0\t2023-01-01T09:02:00.000000Z\t199.0
+                            ts	sym	price	sum_price
+                            2023-01-01T09:10:00.000000Z	TSLA	400.0	400.5
+                            2023-01-01T09:11:00.000000Z	TSLA	401.0	null
+                            2023-01-01T09:12:00.000000Z	AMZN	500.0	500.5
                             """,
                     "select t.*, sum(p.price) sum_price " +
-                            "from (trades limit 3) t " +
+                            "from (trades limit 10, 13) t " +
                             "window join prices p " +
                             "on (t.sym=p.sym) " +
                             " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
@@ -2583,8 +2626,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """
                             sym	price	ts	sum_price
                             """,
-                    "select t.*, sum(p.price) sum_price " +
-                            "from (trades limit 3) t " +
+                    "select t.sym, t.price, t.ts, sum(p.price) sum_price " +
+                            "from (trades limit 10, 13) t " +
                             "window join prices p " +
                             "on (t.sym=p.sym) " +
                             " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
@@ -2612,13 +2655,23 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     	102.0	2023-01-01T09:02:00.000000Z	500.0
                                     """
                             : """
-                            sym\tprice\tts\tsum_price
-                            AAPL\t100.0\t2023-01-01T09:00:00.000000Z\t100.5
-                            AAPL\t101.0\t2023-01-01T09:01:00.000000Z\t101.5
-                            \t102.0\t2023-01-01T09:02:00.000000Z\t398.5
+                            sym	price	ts	sum_price
+                            	null	2023-01-01T09:00:00.000000Z	null
+                            	null	2023-01-01T09:01:00.000000Z	null
+                            	null	2023-01-01T09:02:00.000000Z	null
+                            	null	2023-01-01T09:03:00.000000Z	null
+                            	null	2023-01-01T09:04:00.000000Z	null
+                            	null	2023-01-01T09:05:00.000000Z	null
+                            	null	2023-01-01T09:06:00.000000Z	null
+                            	null	2023-01-01T09:07:00.000000Z	null
+                            	null	2023-01-01T09:08:00.000000Z	null
+                            	null	2023-01-01T09:09:00.000000Z	399.5
+                            TSLA	400.0	2023-01-01T09:10:00.000000Z	400.5
+                            TSLA	401.0	2023-01-01T09:11:00.000000Z	499.5
+                            AMZN	500.0	2023-01-01T09:12:00.000000Z	500.5
                             """,
-                    "select t.ts, t.sym, t.price, sum(p.price) sum_price " +
-                            "from (trades limit 3) t " +
+                    "select t.sym, t.price, t.ts, sum(p.price) sum_price " +
+                            "from (trades limit 13) t " +
                             "window join prices p " +
                             "on (42=42) " +
                             " range between 1 second preceding and 1 second following" + (includePrevailing ? " include prevailing;" : " exclude prevailing;"),
@@ -2756,7 +2809,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             // fast factory, vectorized
             if (!includePrevailing) {
-                printSql("select t.*, sum(p.price) window_price, count(p.price) as cnt " +
+                printSql("select t.*, sum(p.price) window_price, count(p.ts) as cnt " +
                         "from (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4) t " +
                         "left join prices p " +
                         "on (t.sym = p.sym) " +
@@ -2765,7 +2818,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             } else {
                 printSql("""
                                 with t as (trades where ts > '2023-01-01T09:00:00Z' limit 1, 4)
-                                select sym,price,ts, sum(price1) window_price, count(price1) as cnt from
+                                select sym,price,ts, sum(price1) window_price, count(pts) as cnt from
                                 (
                                         select * from (
                                             select t.*, p.price, p.ts pts
@@ -2867,11 +2920,12 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     """
-                            sym\tprice\tsum_price
-                            \t102.0\t199.0
+                            sym	price	sum_price
+                            TSLA	400.0	400.5
+                            TSLA	401.0	null
                             """,
                     "select t.sym, t.price, sum(p.price) sum_price " +
-                            "from (trades limit 3) t " +
+                            "from (trades limit 12) t " +
                             "window join prices p " +
                             "on (t.sym=p.sym) " +
                             " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
