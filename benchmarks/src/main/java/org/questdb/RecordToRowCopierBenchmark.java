@@ -24,50 +24,172 @@
 
 package org.questdb;
 
-import io.questdb.cairo.*;
-import io.questdb.griffin.SqlException;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.LoopingRecordToRowCopier;
+import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import org.openjdk.jmh.annotations.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Long256;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.TearDown;
+import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Benchmark comparing bytecode-generated vs loop-based RecordToRowCopier implementations.
- * Tests performance across different column counts and type profiles.
+ * Comprehensive benchmark comparing bytecode-generated vs loop-based RecordToRowCopier implementations.
+ * <p>
+ * This benchmark measures:
+ * 1. Compile time - how long it takes to create the copier
+ * 2. Copy execution - time to copy records once copier is created
+ * 3. Throughput - records copied per second
+ * <p>
+ * The benchmark uses mock Record and Row implementations to isolate the copier
+ * performance from I/O overhead.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
 @Warmup(iterations = 3, time = 1)
-@Measurement(iterations = 5, time = 1)
-@Fork(1)
+@Measurement(iterations = 3, time = 1)
+@Fork(value = 2, jvmArgs = {"-Xms2G", "-Xmx2G"})
 public class RecordToRowCopierBenchmark {
 
-    @Param({"10", "100", "500", "1000", "2000"})
+    private static final int BATCH_SIZE = 10000;
+    private static final int RANDOM_SEED = 42;
+
+    // Column types to randomly choose from (simple types that don't need special handling)
+    private static final int[] SIMPLE_TYPES = {
+            ColumnType.INT,
+            ColumnType.LONG,
+            ColumnType.DOUBLE,
+            ColumnType.FLOAT,
+            ColumnType.SHORT,
+            ColumnType.BYTE,
+            ColumnType.BOOLEAN,
+            ColumnType.TIMESTAMP
+    };
+
+    //    @Param({"10", "50", "100", "200", "500", "1000"})
+//    @Param({"450", "451", "452", "453", "454", "455", "456", "457", "458", "459", "500"})
+    @Param({"459"})
     private int columnCount;
 
-    @Param({"1000", "10000"})
-    private int rowCount;
-
-    @Param({"ALL_INT", "MIXED", "WITH_STRINGS"})
-    private String typeProfile;
-
-    private CairoConfiguration configuration;
+    private EntityColumnFilter columnFilter;
+    private SqlExecutionContext context;
+    // Pre-created objects for execution benchmarks
+    private RecordToRowCopier copier;
+    // Engine resources
     private CairoEngine engine;
-    private SqlExecutionContext sqlExecutionContext;
-    private String srcTable;
-    private String dstTable;
+    // For compile benchmark
+    private MockColumnTypes fromTypes;
+    @Param({"BYTECODE", "LOOP"})
+    private String implementation;
+    private MockRecord record;
+    private MockRow row;
+    private String tempDbRoot;
+    private MockRecordMetadata toMetadata;
 
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(RecordToRowCopierBenchmark.class.getSimpleName())
+                // Use fork(0) for IDE execution; remove for accurate results with uber JAR
+                .forks(0)
+                .build();
+        new Runner(opt).run();
+    }
+
+    /**
+     * Measures throughput by copying many records in a batch.
+     */
+    @Benchmark
+    @BenchmarkMode(Mode.Throughput)
+    @OutputTimeUnit(TimeUnit.SECONDS)
+    public void benchmarkBatchCopy(Blackhole bh) {
+        for (int i = 0; i < BATCH_SIZE; i++) {
+            copier.copy(context, record, row);
+        }
+        bh.consume(row);
+    }
+
+    /**
+     * Measures the time to create a copier (compile time).
+     * For bytecode implementation, this includes bytecode generation.
+     * For loop implementation, this is just constructor time.
+     */
+//    @Benchmark
+//    @BenchmarkMode(Mode.AverageTime)
+//    @OutputTimeUnit(TimeUnit.MICROSECONDS)
+//    public RecordToRowCopier benchmarkCompileTime() {
+//        if ("BYTECODE".equals(implementation)) {
+//            return RecordToRowCopierUtils.generateCopier(
+//                    new BytecodeAssembler(), fromTypes, toMetadata, columnFilter, Integer.MAX_VALUE);
+//        } else {
+//            return new LoopingRecordToRowCopier(fromTypes, toMetadata, columnFilter);
+//        }
+//    }
+
+    /**
+     * Measures the time to copy a single record.
+     */
+//    @Benchmark
+//    @BenchmarkMode(Mode.AverageTime)
+//    @OutputTimeUnit(TimeUnit.NANOSECONDS)
+//    public void benchmarkSingleCopy(Blackhole bh) {
+//        copier.copy(context, record, row);
+//        bh.consume(row);
+//    }
     @Setup(Level.Trial)
-    public void setup() throws SqlException {
-        configuration = new DefaultCairoConfiguration("target/benchmark-data");
+    public void setup() throws IOException {
+        // Create temporary directory for engine
+        File tempDir = File.createTempFile("questdb-bench-", "");
+        tempDir.delete();
+        tempDir.mkdir();
+        tempDbRoot = tempDir.getAbsolutePath();
+
+        CairoConfiguration configuration = new DefaultCairoConfiguration(tempDbRoot);
         engine = new CairoEngine(configuration);
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+
+        // Create execution context from engine
+        context = new SqlExecutionContextImpl(engine, 1)
                 .with(
                         configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
                         null,
@@ -76,116 +198,413 @@ public class RecordToRowCopierBenchmark {
                         null
                 );
 
-        // Create unique table names for this configuration
-        srcTable = "src_" + columnCount + "_" + typeProfile;
-        dstTable = "dst_" + columnCount + "_" + typeProfile;
+        Rnd rnd = new Rnd(RANDOM_SEED, RANDOM_SEED);
 
-        // Create source table
-        StringBuilder createSql = new StringBuilder("create table ").append(srcTable).append(" (ts timestamp");
+        // Generate random column types (deterministic with fixed seed)
+        int[] columnTypes = new int[columnCount];
         for (int i = 0; i < columnCount; i++) {
-            createSql.append(", col").append(i).append(" ");
-            switch (typeProfile) {
-                case "ALL_INT":
-                    createSql.append("int");
-                    break;
-                case "MIXED":
-                    // Mix of types
-                    if (i % 5 == 0) createSql.append("long");
-                    else if (i % 5 == 1) createSql.append("double");
-                    else if (i % 5 == 2) createSql.append("string");
-                    else if (i % 5 == 3) createSql.append("symbol");
-                    else createSql.append("int");
-                    break;
-                case "WITH_STRINGS":
-                    // Heavy on strings
-                    if (i % 3 == 0) createSql.append("string");
-                    else if (i % 3 == 1) createSql.append("symbol");
-                    else createSql.append("int");
-                    break;
-            }
+            columnTypes[i] = SIMPLE_TYPES[rnd.nextInt(SIMPLE_TYPES.length)];
         }
-        createSql.append(") timestamp(ts) partition by DAY");
-        execute("drop table if exists " + srcTable);
-        execute(createSql.toString());
 
-        // Create destination table (same structure)
-        createSql = new StringBuilder("create table ").append(dstTable).append(" (ts timestamp");
-        for (int i = 0; i < columnCount; i++) {
-            createSql.append(", col").append(i).append(" ");
-            switch (typeProfile) {
-                case "ALL_INT":
-                    createSql.append("int");
-                    break;
-                case "MIXED":
-                    if (i % 5 == 0) createSql.append("long");
-                    else if (i % 5 == 1) createSql.append("double");
-                    else if (i % 5 == 2) createSql.append("string");
-                    else if (i % 5 == 3) createSql.append("symbol");
-                    else createSql.append("int");
-                    break;
-                case "WITH_STRINGS":
-                    if (i % 3 == 0) createSql.append("string");
-                    else if (i % 3 == 1) createSql.append("symbol");
-                    else createSql.append("int");
-                    break;
-            }
-        }
-        createSql.append(") timestamp(ts) partition by DAY");
-        execute("drop table if exists " + dstTable);
-        execute(createSql.toString());
+        // Create mock metadata
+        fromTypes = new MockColumnTypes(columnTypes);
+        toMetadata = new MockRecordMetadata(columnTypes);
+        columnFilter = new EntityColumnFilter();
+        columnFilter.of(columnCount);
 
-        // Insert test data
-        StringBuilder insertSql = new StringBuilder("insert into ").append(srcTable).append(" select ");
-        insertSql.append("timestamp_sequence(0, 1000000) ts");
-        for (int i = 0; i < columnCount; i++) {
-            insertSql.append(", ");
-            switch (typeProfile) {
-                case "ALL_INT":
-                    insertSql.append("cast(x as int) col").append(i);
-                    break;
-                case "MIXED":
-                    if (i % 5 == 0) insertSql.append("x col").append(i);
-                    else if (i % 5 == 1) insertSql.append("x * 1.5 col").append(i);
-                    else if (i % 5 == 2) insertSql.append("'str' || x col").append(i);
-                    else if (i % 5 == 3) insertSql.append("'sym' || cast(x % 100 as symbol) col").append(i);
-                    else insertSql.append("cast(x as int) col").append(i);
-                    break;
-                case "WITH_STRINGS":
-                    if (i % 3 == 0) insertSql.append("'string' || x col").append(i);
-                    else if (i % 3 == 1) insertSql.append("'sym' || cast(x % 100 as symbol) col").append(i);
-                    else insertSql.append("cast(x as int) col").append(i);
-                    break;
-            }
+        // Create copier based on implementation type
+        if ("BYTECODE".equals(implementation)) {
+            // Force bytecode generation by using high threshold
+            copier = RecordToRowCopierUtils.generateCopier(
+                    new BytecodeAssembler(), fromTypes, toMetadata, columnFilter, Integer.MAX_VALUE);
+        } else {
+            // Use loop implementation directly
+            copier = new LoopingRecordToRowCopier(fromTypes, toMetadata, columnFilter);
         }
-        insertSql.append(" from long_sequence(").append(rowCount).append(")");
-        execute(insertSql.toString());
+
+        // Create mock record and row
+        record = new MockRecord(rnd);
+        row = new MockRow();
     }
 
     @TearDown(Level.Trial)
-    public void tearDown() throws SqlException {
-        execute("drop table if exists " + srcTable);
-        execute("drop table if exists " + dstTable);
-        engine.close();
+    public void tearDown() throws Exception {
+        if (engine != null) {
+            engine.close();
+        }
+
+        // Clean up temporary directory
+        if (tempDbRoot != null) {
+            java.nio.file.Files.walkFileTree(java.nio.file.Paths.get(tempDbRoot), new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                    java.nio.file.Files.delete(dir);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                    java.nio.file.Files.delete(file);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        }
     }
 
-    @Setup(Level.Invocation)
-    public void clearDestination() throws SqlException {
-        execute("truncate table " + dstTable);
+    /**
+     * Mock ColumnTypes implementation for benchmark.
+     */
+    private static class MockColumnTypes implements ColumnTypes {
+        private final int[] types;
+
+        MockColumnTypes(int[] types) {
+            this.types = types;
+        }
+
+        @Override
+        public int getColumnCount() {
+            return types.length;
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+            return types[columnIndex];
+        }
     }
 
-    @Benchmark
-    public void testInsertAsSelect() throws SqlException {
-        execute("insert into " + dstTable + " select * from " + srcTable);
+    /**
+     * Mock Record implementation that returns random values.
+     */
+    private static class MockRecord implements Record {
+        private final Rnd rnd;
+
+        MockRecord(Rnd rnd) {
+            this.rnd = rnd;
+        }
+
+        @Override
+        public boolean getBool(int col) {
+            return rnd.nextBoolean();
+        }
+
+        @Override
+        public byte getByte(int col) {
+            return rnd.nextByte();
+        }
+
+        @Override
+        public char getChar(int col) {
+            return rnd.nextChar();
+        }
+
+        @Override
+        public long getDate(int col) {
+            return rnd.nextLong();
+        }
+
+        @Override
+        public double getDouble(int col) {
+            return rnd.nextDouble();
+        }
+
+        @Override
+        public float getFloat(int col) {
+            return rnd.nextFloat();
+        }
+
+        @Override
+        public int getInt(int col) {
+            return rnd.nextInt();
+        }
+
+        @Override
+        public long getLong(int col) {
+            return rnd.nextLong();
+        }
+
+        @Override
+        public long getRowId() {
+            return 0;
+        }
+
+        @Override
+        public short getShort(int col) {
+            return rnd.nextShort();
+        }
+
+        @Override
+        public CharSequence getStrA(int col) {
+            return null;
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            return null;
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            return 0;
+        }
+
+        @Override
+        public CharSequence getSymA(int col) {
+            return null;
+        }
+
+        @Override
+        public CharSequence getSymB(int col) {
+            return null;
+        }
+
+        @Override
+        public long getTimestamp(int col) {
+            return rnd.nextLong();
+        }
     }
 
-    private void execute(String sql) throws SqlException {
-        engine.execute(sql, sqlExecutionContext);
+    /**
+     * Mock RecordMetadata implementation for benchmark.
+     */
+    private static class MockRecordMetadata implements RecordMetadata {
+        private final int[] types;
+
+        MockRecordMetadata(int[] types) {
+            this.types = types;
+        }
+
+        @Override
+        public int getColumnCount() {
+            return types.length;
+        }
+
+        @Override
+        public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
+            return -1;
+        }
+
+        @Override
+        public io.questdb.cairo.TableColumnMetadata getColumnMetadata(int columnIndex) {
+            return null;
+        }
+
+        @Override
+        public String getColumnName(int columnIndex) {
+            return "col" + columnIndex;
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+            return types[columnIndex];
+        }
+
+        @Override
+        public int getIndexValueBlockCapacity(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public int getTimestampIndex() {
+            return -1; // No timestamp column
+        }
+
+        @Override
+        public int getWriterIndex(int columnIndex) {
+            return columnIndex;
+        }
+
+        @Override
+        public boolean hasColumn(int columnIndex) {
+            return columnIndex >= 0 && columnIndex < types.length;
+        }
+
+        @Override
+        public boolean isColumnIndexed(int columnIndex) {
+            return false;
+        }
+
+        @Override
+        public boolean isDedupKey(int columnIndex) {
+            return false;
+        }
+
+        @Override
+        public boolean isSymbolTableStatic(int columnIndex) {
+            return false;
+        }
     }
 
-    public static void main(String[] args) throws RunnerException {
-        Options opt = new OptionsBuilder()
-                .include(RecordToRowCopierBenchmark.class.getSimpleName())
-                .build();
-        new Runner(opt).run();
+    /**
+     * Mock Row implementation that discards all writes.
+     * This isolates the copier logic from actual I/O.
+     */
+    private static class MockRow implements TableWriter.Row {
+        @Override
+        public void append() {
+        }
+
+        @Override
+        public void cancel() {
+        }
+
+        @Override
+        public void putArray(int columnIndex, @NotNull ArrayView array) {
+        }
+
+        @Override
+        public void putBin(int columnIndex, long address, long len) {
+        }
+
+        @Override
+        public void putBin(int columnIndex, BinarySequence sequence) {
+        }
+
+        @Override
+        public void putBool(int columnIndex, boolean value) {
+        }
+
+        @Override
+        public void putByte(int columnIndex, byte value) {
+        }
+
+        @Override
+        public void putChar(int columnIndex, char value) {
+        }
+
+        @Override
+        public void putDate(int columnIndex, long value) {
+        }
+
+        @Override
+        public void putDecimal(int columnIndex, Decimal256 value) {
+        }
+
+        @Override
+        public void putDecimal128(int columnIndex, long high, long low) {
+        }
+
+        @Override
+        public void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll) {
+        }
+
+        @Override
+        public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
+        }
+
+        @Override
+        public void putDouble(int columnIndex, double value) {
+        }
+
+        @Override
+        public void putFloat(int columnIndex, float value) {
+        }
+
+        @Override
+        public void putGeoHash(int columnIndex, long value) {
+        }
+
+        @Override
+        public void putGeoHashDeg(int columnIndex, double lat, double lon) {
+        }
+
+        @Override
+        public void putGeoStr(int columnIndex, CharSequence value) {
+        }
+
+        @Override
+        public void putGeoVarchar(int columnIndex, Utf8Sequence value) {
+        }
+
+        @Override
+        public void putIPv4(int columnIndex, int value) {
+        }
+
+        @Override
+        public void putInt(int columnIndex, int value) {
+        }
+
+        @Override
+        public void putLong(int columnIndex, long value) {
+        }
+
+        @Override
+        public void putLong128(int columnIndex, long lo, long hi) {
+        }
+
+        @Override
+        public void putLong256(int columnIndex, long l0, long l1, long l2, long l3) {
+        }
+
+        @Override
+        public void putLong256(int columnIndex, Long256 value) {
+        }
+
+        @Override
+        public void putLong256(int columnIndex, CharSequence hexString) {
+        }
+
+        @Override
+        public void putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end) {
+        }
+
+        @Override
+        public void putLong256Utf8(int columnIndex, DirectUtf8Sequence hexString) {
+        }
+
+        @Override
+        public void putShort(int columnIndex, short value) {
+        }
+
+        @Override
+        public void putStr(int columnIndex, CharSequence value) {
+        }
+
+        @Override
+        public void putStr(int columnIndex, char value) {
+        }
+
+        @Override
+        public void putStr(int columnIndex, CharSequence value, int pos, int len) {
+        }
+
+        @Override
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+        }
+
+        @Override
+        public void putSym(int columnIndex, CharSequence value) {
+        }
+
+        @Override
+        public void putSym(int columnIndex, char value) {
+        }
+
+        @Override
+        public void putSymIndex(int columnIndex, int key) {
+        }
+
+        @Override
+        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value) {
+        }
+
+        @Override
+        public void putTimestamp(int columnIndex, long value) {
+        }
+
+        @Override
+        public void putUuid(int columnIndex, CharSequence uuid) {
+        }
+
+        @Override
+        public void putUuidUtf8(int columnIndex, Utf8Sequence uuid) {
+        }
+
+        @Override
+        public void putVarchar(int columnIndex, char value) {
+        }
+
+        @Override
+        public void putVarchar(int columnIndex, Utf8Sequence value) {
+        }
     }
 }

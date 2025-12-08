@@ -65,7 +65,7 @@ public class RecordToRowCopierUtils {
 
         // Use loop-based implementation for wide tables
         if (columnCount > columnCountThreshold) {
-            return new NaiveRecordToRowCopier(from, to, toColumnFilter);
+            return new LoopingRecordToRowCopier(from, to, toColumnFilter);
         }
 
         // Continue with bytecode generation for normal-sized tables
@@ -1310,6 +1310,7 @@ public class RecordToRowCopierUtils {
         // class attribute count
         asm.putShort(0);
 
+        System.out.println("BYTECODE SIZE: " + asm.getSizeBytes());
         return asm.newInstance();
     }
 

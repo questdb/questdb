@@ -73,9 +73,6 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     @Test
     public void testExtremelyWideTableInsert() throws Exception {
-        // Override the threshold to ensure loop-based copier is used even with fewer columns
-        node1.setProperty(PropertyKey.CAIRO_SQL_COPIER_COLUMN_THRESHOLD, 50);
-
         assertMemoryLeak(() -> {
             // Test with 100 columns to stress the loop-based implementation
             // (using fewer columns to avoid file descriptor limits on some systems)

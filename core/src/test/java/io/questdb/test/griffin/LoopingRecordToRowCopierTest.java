@@ -28,7 +28,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class NaiveRecordToRowCopierTest extends AbstractCairoTest {
+public class LoopingRecordToRowCopierTest extends AbstractCairoTest {
 
     @Test
     public void testBasicInsertWithManyColumns() throws Exception {

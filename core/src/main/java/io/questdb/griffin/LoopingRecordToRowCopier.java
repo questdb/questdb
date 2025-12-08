@@ -46,14 +46,14 @@ import io.questdb.std.str.Utf8Sequence;
  * This implementation is used when the number of columns exceeds the configured threshold
  * (default: 1000) to avoid hitting the JVM's 64KB method size limit.
  */
-public class NaiveRecordToRowCopier implements RecordToRowCopier {
+public class LoopingRecordToRowCopier implements RecordToRowCopier {
     private final DoubleArrayParser arrayParser; // null if not needed
     private final ColumnTypes fromTypes;
     private final int timestampIndex;
     private final ColumnFilter toColumnFilter;
     private final RecordMetadata toMetadata;
 
-    public NaiveRecordToRowCopier(
+    public LoopingRecordToRowCopier(
             ColumnTypes fromTypes,
             RecordMetadata toMetadata,
             ColumnFilter toColumnFilter
