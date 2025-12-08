@@ -4256,37 +4256,43 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (dotIndex > 0) {
                     CharSequence tableAlias = fullName.subSequence(0, dotIndex);
                     CharSequence columnName = fullName.subSequence(dotIndex + 1, fullName.length());
-
                     if (masterAlias != null && Chars.equalsIgnoreCase(tableAlias, masterAlias)) {
                         columnSources[i] = 0; // SOURCE_MASTER
                         columnIndices[i] = masterMetadata.getColumnIndexQuiet(columnName);
-                    } else if (sequenceAlias != null && Chars.equalsIgnoreCase(tableAlias, sequenceAlias)) {
+                        continue;
+                    }
+                    if (sequenceAlias != null && Chars.equalsIgnoreCase(tableAlias, sequenceAlias)) {
                         columnSources[i] = 1; // SOURCE_SEQUENCE
                         columnIndices[i] = sequenceMetadata.getColumnIndexQuiet(columnName);
-                    } else if (slaveAlias != null && Chars.equalsIgnoreCase(tableAlias, slaveAlias)) {
+                        continue;
+                    }
+                    if (slaveAlias != null && Chars.equalsIgnoreCase(tableAlias, slaveAlias)) {
                         columnSources[i] = 2; // SOURCE_SLAVE
                         columnIndices[i] = slaveMetadata.getColumnIndexQuiet(columnName);
+                        continue;
                     }
-                } else {
-                    // No alias prefix - try matching by name in priority order
-                    int idx = sequenceMetadata.getColumnIndexQuiet(fullName);
-                    if (idx >= 0) {
-                        columnSources[i] = 1; // SOURCE_SEQUENCE
-                        columnIndices[i] = idx;
-                    } else {
-                        idx = slaveMetadata.getColumnIndexQuiet(fullName);
-                        if (idx >= 0) {
-                            columnSources[i] = 2; // SOURCE_SLAVE
-                            columnIndices[i] = idx;
-                        } else {
-                            idx = masterMetadata.getColumnIndexQuiet(fullName);
-                            if (idx >= 0) {
-                                columnSources[i] = 0; // SOURCE_MASTER
-                                columnIndices[i] = idx;
-                            }
-                        }
-                    }
+                    throw new AssertionError("failed to resolve table.column: " + fullName);
                 }
+                // No alias prefix - try matching by name in priority order
+                int idx = sequenceMetadata.getColumnIndexQuiet(fullName);
+                if (idx >= 0) {
+                    columnSources[i] = 1; // SOURCE_SEQUENCE
+                    columnIndices[i] = idx;
+                    continue;
+                }
+                idx = slaveMetadata.getColumnIndexQuiet(fullName);
+                if (idx >= 0) {
+                    columnSources[i] = 2; // SOURCE_SLAVE
+                    columnIndices[i] = idx;
+                    continue;
+                }
+                idx = masterMetadata.getColumnIndexQuiet(fullName);
+                if (idx >= 0) {
+                    columnSources[i] = 0; // SOURCE_MASTER
+                    columnIndices[i] = idx;
+                    continue;
+                }
+                throw new AssertionError("failed to resolve column" + fullName);
             }
 
             // Create keyCopier for GROUP BY key population from the CombinedRecord
