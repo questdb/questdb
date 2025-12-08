@@ -1,0 +1,7 @@
+FROM node:24-alpine
+
+RUN apk add --no-cache --no-scripts bash sudo shadow
+
+LABEL "com.azure.dev.pipelines.agent.handler.node.path"="/usr/local/bin/node"
+
+CMD [ "node" ]
