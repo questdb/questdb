@@ -37,6 +37,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongLongAscList;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Long256Impl;
@@ -54,15 +56,13 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 public class Unordered4MapTest extends AbstractCairoTest {
+    Decimal128 decimal128 = new Decimal128();
+    Decimal256 decimal256 = new Decimal256();
 
     @Test
     public void testAllValueTypes() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
-
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.BYTE);
-            keyTypes.add(ColumnType.SHORT);
 
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.BYTE);
@@ -78,13 +78,18 @@ public class Unordered4MapTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.getGeoHashTypeWithBits(20));
             valueTypes.add(ColumnType.LONG256);
             valueTypes.add(ColumnType.UUID);
+            valueTypes.add(ColumnType.getDecimalType(2, 0)); // DECIMAL8
+            valueTypes.add(ColumnType.getDecimalType(4, 0)); // DECIMAL16
+            valueTypes.add(ColumnType.getDecimalType(8, 0)); // DECIMAL32
+            valueTypes.add(ColumnType.getDecimalType(16, 0)); // DECIMAL64
+            valueTypes.add(ColumnType.getDecimalType(32, 0)); // DECIMAL128
+            valueTypes.add(ColumnType.getDecimalType(64, 0)); // DECIMAL256
 
-            try (Unordered4Map map = new Unordered4Map(keyTypes, valueTypes, 64, 0.8, 24)) {
-                final int N = 10000;
+            try (Unordered4Map map = new Unordered4Map(ColumnType.IPv4, valueTypes, 64, 0.8, 24)) {
+                final int N = 100;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putByte(rnd.nextByte());
-                    key.putShort(rnd.nextShort());
+                    key.putIPv4(rnd.nextInt());
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -104,6 +109,22 @@ public class Unordered4MapTest extends AbstractCairoTest {
                     long256.fromRnd(rnd);
                     value.putLong256(11, long256);
                     value.putLong128(12, rnd.nextLong(), rnd.nextLong());
+                    value.putByte(13, rnd.nextByte());
+                    value.putShort(14, rnd.nextShort());
+                    value.putInt(15, rnd.nextInt());
+                    value.putLong(16, rnd.nextLong());
+                    decimal128.ofRaw(
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    value.putDecimal128(17, decimal128);
+                    decimal256.ofRaw(
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    value.putDecimal256(18, decimal256);
                 }
 
                 rnd.reset();
@@ -111,8 +132,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
                 // assert that all values are good
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putByte(rnd.nextByte());
-                    key.putShort(rnd.nextShort());
+                    key.putIPv4(rnd.nextInt());
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -133,18 +153,27 @@ public class Unordered4MapTest extends AbstractCairoTest {
                     Assert.assertEquals(long256, value.getLong256A(11));
                     Assert.assertEquals(rnd.nextLong(), value.getLong128Lo(12));
                     Assert.assertEquals(rnd.nextLong(), value.getLong128Hi(12));
+                    Assert.assertEquals(rnd.nextByte(), value.getDecimal8(13));
+                    Assert.assertEquals(rnd.nextShort(), value.getDecimal16(14));
+                    Assert.assertEquals(rnd.nextInt(), value.getDecimal32(15));
+                    Assert.assertEquals(rnd.nextLong(), value.getDecimal64(16));
+                    value.getDecimal128(17, decimal128);
+                    Assert.assertEquals(rnd.nextLong(), decimal128.getHigh());
+                    Assert.assertEquals(rnd.nextLong(), decimal128.getLow());
+                    value.getDecimal256(18, decimal256);
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getHh());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getHl());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getLh());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getLl());
                 }
 
                 try (RecordCursor cursor = map.getCursor()) {
-                    HashMap<String, Long> keyToRowIds = new HashMap<>();
+                    HashMap<Integer, Long> keyToRowIds = new HashMap<>();
                     LongList rowIds = new LongList();
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         // key part, comes after value part in records
-                        int col = 13;
-                        byte b = record.getByte(col++);
-                        short sh = record.getShort(col);
-                        String key = b + "," + sh;
+                        int key = record.getIPv4(19);
                         keyToRowIds.put(key, record.getRowId());
                         rowIds.add(record.getRowId());
                     }
@@ -153,10 +182,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
                     cursor.toTop();
                     int i = 0;
                     while (cursor.hasNext()) {
-                        int col = 13;
-                        byte b = record.getByte(col++);
-                        short sh = record.getShort(col);
-                        String key = b + "," + sh;
+                        int key = record.getIPv4(19);
                         Assert.assertEquals((long) keyToRowIds.get(key), record.getRowId());
                         Assert.assertEquals(rowIds.getQuick(i++), record.getRowId());
                     }
@@ -164,9 +190,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
                     // Validate that recordAt jumps to what we previously inserted.
                     rnd.reset();
                     for (i = 0; i < N; i++) {
-                        byte b = rnd.nextByte();
-                        short sh = rnd.nextShort();
-                        String key = b + "," + sh;
+                        int key = rnd.nextInt();
                         long rowId = keyToRowIds.get(key);
                         cursor.recordAt(record, rowId);
 
@@ -187,7 +211,19 @@ public class Unordered4MapTest extends AbstractCairoTest {
                         long256.fromRnd(rnd);
                         Assert.assertEquals(long256, record.getLong256A(col++));
                         Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
-                        Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));
+                        Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col++));
+                        Assert.assertEquals(rnd.nextByte(), record.getDecimal8(col++));
+                        Assert.assertEquals(rnd.nextShort(), record.getDecimal16(col++));
+                        Assert.assertEquals(rnd.nextInt(), record.getDecimal32(col++));
+                        Assert.assertEquals(rnd.nextLong(), record.getDecimal64(col++));
+                        record.getDecimal128(col++, decimal128);
+                        Assert.assertEquals(rnd.nextLong(), decimal128.getHigh());
+                        Assert.assertEquals(rnd.nextLong(), decimal128.getLow());
+                        record.getDecimal256(col, decimal256);
+                        Assert.assertEquals(rnd.nextLong(), decimal256.getHh());
+                        Assert.assertEquals(rnd.nextLong(), decimal256.getHl());
+                        Assert.assertEquals(rnd.nextLong(), decimal256.getLh());
+                        Assert.assertEquals(rnd.nextLong(), decimal256.getLl());
                     }
                 }
             }
@@ -198,11 +234,10 @@ public class Unordered4MapTest extends AbstractCairoTest {
     public void testFuzz() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
-            SingleColumnType keyTypes = new SingleColumnType(ColumnType.INT);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
 
             HashMap<Integer, Long> oracle = new HashMap<>();
-            try (Unordered4Map map = new Unordered4Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
+            try (Unordered4Map map = new Unordered4Map(ColumnType.INT, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
@@ -242,8 +277,23 @@ public class Unordered4MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutDecimal128Unsupported() throws Exception {
+        assertUnsupported(key -> key.putDecimal128(null));
+    }
+
+    @Test
+    public void testPutDecimal256Unsupported() throws Exception {
+        assertUnsupported(key -> key.putDecimal256(null));
+    }
+
+    @Test
     public void testPutDoubleUnsupported() throws Exception {
         assertUnsupported(key -> key.putDouble(0.0));
+    }
+
+    @Test
+    public void testPutFloatUnsupported() throws Exception {
+        assertUnsupported(key -> key.putFloat(0));
     }
 
     @Test
@@ -288,7 +338,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
 
     @Test
     public void testSingleZeroKey() {
-        try (Unordered4Map map = new Unordered4Map(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
+        try (Unordered4Map map = new Unordered4Map(ColumnType.INT, new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
             MapKey key = map.withKey();
             key.putInt(0);
             MapValue value = key.createValue();
@@ -314,11 +364,10 @@ public class Unordered4MapTest extends AbstractCairoTest {
     public void testTopK() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int heapCapacity = 3;
-            SingleColumnType keyTypes = new SingleColumnType(ColumnType.INT);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
 
             try (
-                    Unordered4Map map = new Unordered4Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE);
+                    Unordered4Map map = new Unordered4Map(ColumnType.SYMBOL, valueTypes, 64, 0.8, Integer.MAX_VALUE);
                     DirectLongLongSortedList list = new DirectLongLongAscList(heapCapacity, MemoryTag.NATIVE_DEFAULT)
             ) {
                 for (int i = 0; i < 100; i++) {
@@ -355,17 +404,21 @@ public class Unordered4MapTest extends AbstractCairoTest {
                 ColumnType.UUID,
                 ColumnType.LONG256,
                 ColumnType.LONG,
+                ColumnType.FLOAT,
                 ColumnType.DOUBLE,
                 ColumnType.TIMESTAMP,
                 ColumnType.DATE,
                 ColumnType.GEOLONG,
+                ColumnType.DECIMAL64,
+                ColumnType.DECIMAL128,
+                ColumnType.DECIMAL256,
         };
         for (short columnType : columnTypes) {
             TestUtils.assertMemoryLeak(() -> {
-                try (Unordered4Map ignore = new Unordered4Map(new SingleColumnType(columnType), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
+                try (Unordered4Map ignore = new Unordered4Map(columnType, new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
                     Assert.fail();
                 } catch (CairoException e) {
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key type"));
                 }
             });
         }
@@ -373,7 +426,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
 
     private static void assertUnsupported(Consumer<? super MapKey> putKeyFn) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Unordered4Map map = new Unordered4Map(new SingleColumnType(ColumnType.BOOLEAN), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
+            try (Unordered4Map map = new Unordered4Map(ColumnType.INT, new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
                 MapKey key = map.withKey();
                 try {
                     putKeyFn.accept(key);

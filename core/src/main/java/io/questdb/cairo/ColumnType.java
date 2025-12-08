@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
@@ -36,10 +37,10 @@ import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
 //
-// | Handling bit  | Extra type information | Type discriminant (tag) |
-// +---------------+------------------------+-------------------------+
-// |    1 bit      |        23 bits         |         8 bits          |
-// +---------------+------------------------+-------------------------+
+// | Handling bit | Extra type information | Timestamp Flag | GeoHash Flag | Extra type information | Type discriminant (tag) |
+// +--------------+------------------------+----------------+--------------+------------------------+-------------------------+
+// |    1 bit     |        13 bits         |     1 bit      |    1 bit     |         8 bits         |         8 bits          |
+// +--------------+------------------------+----------------+--------------+------------------------+-------------------------+
 //
 // Handling bit:
 //   Skip column use case:
@@ -105,15 +106,35 @@ public final class ColumnType {
     public static final short IPv4 = LONG128 + 1;               // = 25
     public static final short VARCHAR = IPv4 + 1;               // = 26
     public static final short ARRAY = VARCHAR + 1;              // = 27
+    // Similarly to GeoHash, Decimal is separated in 2 kinds of type:
+    //  - Stored ones with the number of bits used in the suffix (selected from the precision
+    // through getStorageSize).
+    //  - Unstored one that is used as a surrogate to resolve decimal functions.
+    //
+    // Stored decimal uses the Extra type information to store the precision
+    // and scale, giving this layout:
+    //        31        30~24     23~16       15~8                7~0
+    // +--------------+--------+----------+-----------+-------------------------+
+    // | Handling bit | Scale  | Reserved | Precision | Type discriminant (tag) |
+    // +--------------+--------+----------+-----------+-------------------------+
+    // |    1 bit     | 8 bits |  7 bits  |  8 bits   |         8 bits          |
+    // +--------------+--------+----------+-----------+-------------------------+
+    public static final short DECIMAL8 = ARRAY + 1;     // = 28;
+    public static final short DECIMAL16 = DECIMAL8 + 1;    // = 29;
+    public static final short DECIMAL32 = DECIMAL16 + 1;   // = 30;
+    public static final short DECIMAL64 = DECIMAL32 + 1;   // = 31;
+    public static final short DECIMAL128 = DECIMAL64 + 1;  // = 32;
+    public static final short DECIMAL256 = DECIMAL128 + 1; // = 33;
+    public static final short DECIMAL = DECIMAL256 + 1;    // = 34;
     // PG specific types to work with 3rd party software
     // with canned catalogue queries:
     // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
-    public static final short REGCLASS = ARRAY + 1;          // = 28;
-    public static final short REGPROCEDURE = REGCLASS + 1;      // = 29;
-    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 30;
-    public static final short PARAMETER = ARRAY_STRING + 1;     // = 31;
-    public static final short INTERVAL = PARAMETER + 1;         // = 32
-    public static final short NULL = INTERVAL + 1;              // = 33; ALWAYS the last
+    public static final short REGCLASS = DECIMAL + 1;            // = 35;
+    public static final short REGPROCEDURE = REGCLASS + 1;     // = 36;
+    public static final short ARRAY_STRING = REGPROCEDURE + 1; // = 37;
+    public static final short PARAMETER = ARRAY_STRING + 1;    // = 38;
+    public static final short INTERVAL = PARAMETER + 1;        // = 39;
+    public static final short NULL = INTERVAL + 1;          // = 40; ALWAYS the last
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
@@ -122,6 +143,8 @@ public final class ColumnType {
     public static final int INTERVAL_RAW = INTERVAL;
     public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | 1 << 17;
     public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | 1 << 18;
+    public static final int DECIMAL_DEFAULT_TYPE_TAG = DECIMAL64;
+    public static final int DECIMAL_DEFAULT_TYPE = getDecimalType(18, 3);
     public static final int TIMESTAMP_MICRO = TIMESTAMP;
     public static final int TIMESTAMP_NANO = 1 << 18 | TIMESTAMP;
     public static final int VARCHAR_AUX_SHL = 4;
@@ -261,19 +284,68 @@ public final class ColumnType {
         return encodeArrayType(elemType, 1, checkSupportedElementTypes) | TYPE_FLAG_ARRAY_WEAK_DIMS;
     }
 
+    /**
+     * Extracts the precision from a decimal type.
+     *
+     * @param type is the decimal type to extract the precision from
+     * @return the precision as an int
+     */
+    public static int getDecimalPrecision(int type) {
+        return (type >>> 8) & 0xFF;
+    }
+
+    /**
+     * Extracts the scale from a decimal type.
+     *
+     * @param type is the decimal type to extract the scale from
+     * @return the scale as an int
+     */
+    public static int getDecimalScale(int type) {
+        return (type >>> 18) & 0xFF;
+    }
+
+    /**
+     * Generate a decimal type from a given precision and scale.
+     * It will choose the proper subtype (DECIMAL8, DECIMAL16, etc.) from the precision, depending on the amount
+     * of storage needed to store a number with the given precision.
+     *
+     * @param precision to be encoded in the decimal type
+     * @param scale     to be encoded in the decimal type
+     * @return the generated type as an int
+     */
+    public static int getDecimalType(int precision, int scale) {
+        assert precision > 0 && precision <= Decimals.MAX_PRECISION;
+        assert scale >= 0 && scale <= Decimals.MAX_SCALE;
+        int size = Decimals.getStorageSizePow2(precision);
+        // Construct the type following the layout described earlier.
+        // DECIMAL8-256 needs to be clustered together for this to work.
+        return ((scale & 0xFF) << 18) | ((precision & 0xFF) << 8) | (DECIMAL8 + size);
+    }
+
+    /**
+     * Encode a decimal type from a given tag, precision and scale.
+     *
+     * @param tag       to be encoded in the decimal type
+     * @param precision to be encoded in the decimal type
+     * @param scale     to be encoded in the decimal type
+     * @return the generated type as an int
+     */
+    public static int getDecimalType(int tag, int precision, int scale) {
+        assert precision > 0 && precision <= Decimals.MAX_PRECISION;
+        assert scale >= 0 && scale <= Decimals.MAX_SCALE;
+        // Construct the type following the layout described earlier.
+        // DECIMAL8-256 needs to be clustered together for this to work.
+        return ((scale & 0xFF) << 18) | ((precision & 0xFF) << 8) | tag;
+    }
+
     public static ColumnTypeDriver getDriver(int columnType) {
-        switch (tagOf(columnType)) {
-            case STRING:
-                return StringTypeDriver.INSTANCE;
-            case BINARY:
-                return BinaryTypeDriver.INSTANCE;
-            case VARCHAR:
-                return VarcharTypeDriver.INSTANCE;
-            case ARRAY:
-                return ArrayTypeDriver.INSTANCE;
-            default:
-                throw CairoException.critical(0).put("no driver for type: ").put(columnType);
-        }
+        return switch (tagOf(columnType)) {
+            case STRING -> StringTypeDriver.INSTANCE;
+            case BINARY -> BinaryTypeDriver.INSTANCE;
+            case VARCHAR -> VarcharTypeDriver.INSTANCE;
+            case ARRAY -> ArrayTypeDriver.INSTANCE;
+            default -> throw CairoException.critical(0).put("no driver for type: ").put(columnType);
+        };
     }
 
     public static int getGeoHashBits(int type) {
@@ -301,14 +373,11 @@ public final class ColumnType {
         }
         assert tag == TIMESTAMP;
 
-        switch (timestampType) {
-            case TIMESTAMP_MICRO:
-                return MicrosTimestampDriver.INSTANCE;
-            case TIMESTAMP_NANO:
-                return NanosTimestampDriver.INSTANCE;
-            default:
-                throw new UnsupportedOperationException();
-        }
+        return switch (timestampType) {
+            case TIMESTAMP_MICRO -> MicrosTimestampDriver.INSTANCE;
+            case TIMESTAMP_NANO -> NanosTimestampDriver.INSTANCE;
+            default -> throw new UnsupportedOperationException();
+        };
     }
 
     /**
@@ -331,18 +400,13 @@ public final class ColumnType {
      * for numeric types where the caller should determine the timestamp type
      */
     public static int getTimestampType(int type) {
-        switch (tagOf(type)) {
-            case TIMESTAMP:
-                return type;
-            case VARCHAR:
-            case STRING:
-            case SYMBOL:
-                return TIMESTAMP_NANO;
-            case DATE: // Date
-                return TIMESTAMP_MICRO;
-            default: // Long, Int etc.
-                return UNDEFINED;
-        }
+        return switch (tagOf(type)) {
+            case TIMESTAMP -> type;
+            case VARCHAR, STRING, SYMBOL -> TIMESTAMP_NANO;
+            case DATE -> TIMESTAMP_MICRO;
+            // Long, Int etc.
+            default -> UNDEFINED;
+        };
     }
 
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
@@ -367,10 +431,6 @@ public final class ColumnType {
         return isArray(columnType) && (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0;
     }
 
-    public static boolean isAssignableFrom(int fromType, int toType) {
-        return isToSameOrWider(fromType, toType) || isNarrowingCast(fromType, toType);
-    }
-
     public static boolean isBinary(int columnType) {
         return columnType == BINARY;
     }
@@ -379,22 +439,28 @@ public final class ColumnType {
         return columnType == ColumnType.BOOLEAN;
     }
 
+    /**
+     * Checks if a type conversion can be performed using built-in Function getters without a cast wrapper.
+     * <p>
+     * This method returns true when the Function base class for {@code fromType} already implements
+     * the getter method for {@code toType}, eliminating the need for a cast wrapper function.
+     * </p>
+     * <p>
+     * <b>Important:</b> This method is intentionally conservative. Some Function base classes implement
+     * additional getters beyond standard widening (e.g., BooleanFunction has getInt(), CharFunction has
+     * getByte()), but this method returns false for such conversions. This is to avoid implicit casting
+     * in SQL where it could be surprising for users.
+     *
+     * @param fromType the source column type
+     * @param toType   the target column type
+     * @return true if conversion can use built-in getter without a wrapper, false otherwise
+     * @see #isToSameOrWider(int, int) for safe conversions that may require a cast wrapper
+     * @see #isNarrowingCast(int, int) for lossy conversions requiring explicit cast
+     */
     public static boolean isBuiltInWideningCast(int fromType, int toType) {
-        // This method returns true when a cast is not needed from type to type
-        // because of the way typed functions are implemented.
-        // For example IntFunction has getDouble() method implemented and does not need
-        // additional wrap function to CAST to double.
-        // This is usually case for widening conversions.
-        fromType = tagOf(fromType);
-        toType = tagOf(toType);
-        return (fromType >= BYTE && toType >= BYTE && toType <= DOUBLE && fromType < toType) || fromType == NULL
-                // char can be short and short can be char for symmetry
-                || (fromType == CHAR && toType == SHORT)
-                // Same with bytes and bools
-                || (fromType == BYTE && toType == BOOLEAN)
-                || (fromType == TIMESTAMP && toType == LONG)
-                || (fromType == DATE && toType == LONG)
-                || (fromType == STRING && (toType >= BYTE && toType <= DOUBLE));
+        final short fromTag = tagOf(fromType);
+        final short toTag = tagOf(toType);
+        return isBuiltInWideningCast0(fromTag, toTag);
     }
 
     /**
@@ -413,8 +479,37 @@ public final class ColumnType {
         return typeTag != BINARY && typeTag != INTERVAL && typeTag != ARRAY;
     }
 
+    /**
+     * Checks if a value of {@code fromType} can be converted to {@code toType} through any available conversion,
+     * including both safe (widening) and unsafe (narrowing) conversions.
+     * <p>
+     * <strong>Warning:</strong> When this function returns true it does not imply that you can treat <code>fromType</code>
+     * as if it was the <code>toType</code>. It merely says a conversion is possible, but it might require wrapping the
+     * <code>from</code> function with a casting function. If you fail to add a casting function where required, then
+     * you will get UnsupportedOperationException at runtime!
+     *
+     * @param fromType the source column type
+     * @param toType   the target column type
+     * @return true if any conversion (safe or unsafe) is possible, false otherwise
+     * @see #isBuiltInWideningCast(int, int) for conversions that don't need cast wrappers
+     * @see #isToSameOrWider(int, int) for safe conversions that preserve precision or range
+     * @see #isNarrowingCast(int, int) for explicitly narrowing conversions
+     */
+    public static boolean isConvertibleFrom(int fromType, int toType) {
+        return isToSameOrWider(fromType, toType) || isNarrowingCast(fromType, toType);
+    }
+
     public static boolean isCursor(int columnType) {
         return columnType == CURSOR;
+    }
+
+    public static boolean isDecimal(int type) {
+        final short tag = tagOf(type);
+        return tag >= DECIMAL8 && tag <= DECIMAL;
+    }
+
+    public static boolean isDecimalType(int colType) {
+        return colType >= DECIMAL8 && colType <= DECIMAL256;
     }
 
     public static boolean isDesignatedTimestamp(int columnType) {
@@ -427,30 +522,12 @@ public final class ColumnType {
 
     public static boolean isFixedSize(int columnType) {
         // specified explicitly
-        switch (columnType) {
-            case INT:
-            case LONG:
-            case BOOLEAN:
-            case BYTE:
-            case TIMESTAMP_MICRO:
-            case TIMESTAMP_NANO:
-            case DATE:
-            case DOUBLE:
-            case CHAR:
-            case SHORT:
-            case FLOAT:
-            case LONG128:
-            case LONG256:
-            case GEOBYTE:
-            case GEOSHORT:
-            case GEOINT:
-            case GEOLONG:
-            case UUID:
-            case IPv4:
-                return true;
-            default:
-                return false;
-        }
+        return switch (columnType) {
+            case INT, LONG, BOOLEAN, BYTE, TIMESTAMP_MICRO, TIMESTAMP_NANO, DATE, DOUBLE, CHAR, SHORT, FLOAT, LONG128,
+                 LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, UUID, IPv4, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256 -> true;
+            default -> false;
+        };
     }
 
     public static boolean isGenericType(int columnType) {
@@ -483,6 +560,22 @@ public final class ColumnType {
 
     public static boolean isPersisted(int columnType) {
         return nonPersistedTypes.excludes(columnType);
+    }
+
+    public static boolean isSameOrBuiltInWideningCast(int fromType, int toType) {
+        if (fromType == toType) {
+            return true;
+        }
+        return isBuiltInWideningCast(fromType, toType);
+    }
+
+    public static boolean isSameTagOrBuiltInWideningCast(int fromType, int toType) {
+        short fromTag = tagOf(fromType);
+        short toTag = tagOf(toType);
+        if (fromTag == toTag) {
+            return true;
+        }
+        return isBuiltInWideningCast0(fromTag, toTag);
     }
 
     public static boolean isString(int columnType) {
@@ -522,14 +615,17 @@ public final class ColumnType {
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
-        return (tagOf(fromType) == tagOf(toType) && !isArray(fromType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
+        final short fromTag = tagOf(fromType);
+        final short toTag = tagOf(toType);
+        return (fromTag == toTag && !isArray(fromType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
                 || isBuiltInWideningCast(fromType, toType)
                 || isStringCast(fromType, toType)
                 || isVarcharCast(fromType, toType)
                 || isGeoHashWideningCast(fromType, toType)
                 || isImplicitParsingCast(fromType, toType)
                 || isIPv4Cast(fromType, toType)
-                || isArrayCast(fromType, toType);
+                || isArrayCast(fromType, toType)
+                || (isDecimalType(toTag) && isDecimalType(fromTag));
     }
 
     public static boolean isUndefined(int columnType) {
@@ -644,16 +740,12 @@ public final class ColumnType {
 
     private static int getTimestampTypePriority(int timestampType) {
         assert tagOf(timestampType) == TIMESTAMP || timestampType == UNDEFINED;
-        switch (timestampType) {
-            case TIMESTAMP_MICRO:
-                return 1;
-            case TIMESTAMP_NANO:
-                return 2;
-            case UNDEFINED:
-                return 0;
-        }
+        return switch (timestampType) {
+            case TIMESTAMP_MICRO -> 1;
+            case TIMESTAMP_NANO -> 2;
+            default -> 0;
+        };
 
-        return 0;
     }
 
     private static boolean isArrayCast(int fromType, int toType) {
@@ -661,6 +753,19 @@ public final class ColumnType {
                 && decodeArrayElementType(fromType) == decodeArrayElementType(toType)
                 && !isArrayWithWeakDims(fromType) && !isArrayWithWeakDims(toType)
                 && decodeWeakArrayDimensionality(fromType) == decodeWeakArrayDimensionality(toType);
+    }
+
+    private static boolean isBuiltInWideningCast0(short fromTag, short toTag) {
+        boolean isNumericWidening = (fromTag >= BYTE && toTag >= BYTE && toTag <= DOUBLE && fromTag < toTag)
+                && (fromTag != BYTE || (toTag != CHAR && toTag != DATE && toTag != TIMESTAMP)) // exception #1: cannot widen byte to char/temporal
+                && (fromTag != SHORT || (toTag != DATE && toTag != TIMESTAMP)) // exception #2: cannot widen short to temporal
+                && (fromTag != CHAR || (toTag != DATE && toTag != TIMESTAMP)); // exception #3: cannot widen char to temporal
+
+        return isNumericWidening
+                || fromTag == NULL
+                || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can be converted to SHORT
+                || ((fromTag == TIMESTAMP || fromTag == DATE) && toTag == LONG)  // Temporal to long
+                || ((fromTag == STRING || fromTag == VARCHAR) && (toTag >= BYTE && toTag <= DOUBLE));  // String-ish parsing to numeric
     }
 
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
@@ -691,21 +796,21 @@ public final class ColumnType {
 
     private static boolean isImplicitParsingCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
-        switch (fromType) {
-            case CHAR:
-                return toTag == GEOBYTE && getGeoHashBits(toType) < 6;
-            case STRING:
-            case VARCHAR:
-                return toTag == GEOBYTE || toTag == GEOSHORT || toTag == GEOINT
-                        || toTag == GEOLONG || toTag == TIMESTAMP || toTag == LONG256;
-            case SYMBOL:
-                return toTag == TIMESTAMP;
-            default:
-                return false;
-        }
+        return switch (fromType) {
+            case CHAR -> (toTag == GEOBYTE && getGeoHashBits(toType) < 6) || (toTag == DATE || toTag == TIMESTAMP);
+            case STRING, VARCHAR -> switch (toTag) {
+                case GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256 -> true;
+                default -> false;
+            };
+            case BYTE -> toTag == CHAR || toTag == DATE || toTag == TIMESTAMP;
+            case SHORT -> toTag == DATE || toTag == TIMESTAMP;
+            case SYMBOL -> toTag == TIMESTAMP;
+            default -> false;
+        };
     }
 
     private static boolean isNarrowingCast(int fromType, int toType) {
+        final boolean isTargetDecimal = isDecimal(toType);
         return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG)))
                 || (fromType == FLOAT && ((toType >= BYTE && toType <= LONG) || toType == DATE || isTimestamp(toType)))
                 || (fromType == LONG && toType >= BYTE && toType <= INT)
@@ -714,6 +819,7 @@ public final class ColumnType {
                 || (fromType == INT && toType >= BYTE && toType <= SHORT)
                 || (fromType == SHORT && toType == BYTE)
                 || (fromType == CHAR && toType == BYTE)
+                || (fromType >= BYTE && fromType <= LONG && isTargetDecimal)
                 || isStringyType(fromType) && (
                 toType == BYTE ||
                         toType == SHORT ||
@@ -726,7 +832,8 @@ public final class ColumnType {
                         toType == DOUBLE ||
                         toType == CHAR ||
                         toType == UUID ||
-                        ColumnType.isArray(toType));
+                        ColumnType.isArray(toType) ||
+                        isTargetDecimal);
     }
 
     private static boolean isStringCast(int fromType, int toType) {
@@ -773,40 +880,47 @@ public final class ColumnType {
         /// overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
 
         OVERLOAD_PRIORITY = new short[][]{
-                /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
-                /* 1  BOOLEAN   */, {BOOLEAN}
-                /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR}
-                /* 4  CHAR      */, {CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 5  INT       */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
-                /* 6  LONG      */, {LONG, DOUBLE, TIMESTAMP, DATE}
-                /* 7  DATE      */, {DATE, TIMESTAMP, LONG, DOUBLE}
-                /* 8  TIMESTAMP */, {TIMESTAMP, LONG, DATE, DOUBLE}
-                /* 9  FLOAT     */, {FLOAT, DOUBLE}
-                /* 10 DOUBLE    */, {DOUBLE}
-                /* 11 STRING    */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
-                /* 12 SYMBOL    */, {SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP}
-                /* 13 LONG256   */, {LONG256, LONG}
-                /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 15 GEOSHORT  */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
-                /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
-                /* 18 BINARY    */, {BINARY}
-                /* 19 UUID      */, {UUID, STRING}
-                /* 20 CURSOR    */, {CURSOR}
-                /* 21 unused    */, {}
-                /* 22 unused    */, {}
-                /* 23 unused    */, {}
-                /* 24 LONG128   */, {LONG128}
-                /* 25 IPv4      */, {IPv4, STRING, VARCHAR}
-                /* 26 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
-                /* 27 ARRAY     */, {ARRAY}
-                /* 28 unused    */, {}
-                /* 29 unused    */, {}
-                /* 30 unused    */, {}
-                /* 31 unused    */, {}
-                /* 32 INTERVAL  */, {INTERVAL, STRING}
-                /* 32 NULL      */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
+                /* 0 UNDEFINED   */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+                /* 1  BOOLEAN    */, {BOOLEAN}
+                /* 2  BYTE       */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DECIMAL}
+                /* 3  SHORT      */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, DECIMAL}
+                /* 4  CHAR       */, {CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE}
+                /* 5  INT        */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE, DECIMAL}
+                /* 6  LONG       */, {LONG, DOUBLE, TIMESTAMP, DATE, DECIMAL}
+                /* 7  DATE       */, {DATE, TIMESTAMP, LONG, DOUBLE}
+                /* 8  TIMESTAMP  */, {TIMESTAMP, LONG, DATE, DOUBLE}
+                /* 9  FLOAT      */, {FLOAT, DOUBLE}
+                /* 10 DOUBLE     */, {DOUBLE}
+                /* 11 STRING     */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
+                /* 12 SYMBOL     */, {SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP}
+                /* 13 LONG256    */, {LONG256, LONG}
+                /* 14 GEOBYTE    */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+                /* 15 GEOSHORT   */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+                /* 16 GEOINT     */, {GEOINT, GEOLONG, GEOHASH}
+                /* 17 GEOLONG    */, {GEOLONG, GEOHASH}
+                /* 18 BINARY     */, {BINARY}
+                /* 19 UUID       */, {UUID, STRING}
+                /* 20 CURSOR     */, {CURSOR}
+                /* 21 unused     */, {}
+                /* 22 unused     */, {}
+                /* 23 unused     */, {}
+                /* 24 LONG128    */, {LONG128}
+                /* 25 IPv4       */, {IPv4, STRING, VARCHAR}
+                /* 26 VARCHAR    */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
+                /* 27 ARRAY      */, {ARRAY}
+                /* 28 DECIMAL8   */, {DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
+                /* 29 DECIMAL16  */, {DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
+                /* 30 DECIMAL32  */, {DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
+                /* 31 DECIMAL64  */, {DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
+                /* 32 DECIMAL128 */, {DECIMAL128, DECIMAL256, DECIMAL}
+                /* 33 DECIMAL256 */, {DECIMAL256, DECIMAL}
+                /* 34 DECIMAL    */, {}
+                /* 35 unused     */, {}
+                /* 36 unused     */, {}
+                /* 37 unused     */, {}
+                /* 38 unused     */, {}
+                /* 39 INTERVAL   */, {INTERVAL, STRING}
+                /* 40 NULL       */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
             for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
@@ -859,9 +973,11 @@ public final class ColumnType {
         typeNameMap.put(REGPROCEDURE, "regprocedure");
         typeNameMap.put(ARRAY_STRING, "text[]");
         typeNameMap.put(IPv4, "IPv4");
+        typeNameMap.put(INTERVAL, "INTERVAL");
         typeNameMap.put(INTERVAL_RAW, "INTERVAL");
         typeNameMap.put(INTERVAL_TIMESTAMP_MICRO, "INTERVAL");
         typeNameMap.put(INTERVAL_TIMESTAMP_NANO, "INTERVAL");
+        typeNameMap.put(DECIMAL, "DECIMAL");
         typeNameMap.put(NULL, "NULL");
 
 //        arrayTypeSet.add(BOOLEAN);
@@ -908,8 +1024,10 @@ public final class ColumnType {
         nameTypeMap.put("regprocedure", REGPROCEDURE);
         nameTypeMap.put("text[]", ARRAY_STRING);
         nameTypeMap.put("IPv4", IPv4);
+        nameTypeMap.put("interval", INTERVAL);
         nameTypeMap.put("interval", INTERVAL_TIMESTAMP_MICRO);
         nameTypeMap.put("timestamp_ns", TIMESTAMP_NANO);
+        nameTypeMap.put("decimal", DECIMAL);
 
         StringSink sink = new StringSink();
         for (int b = 1; b <= GEOLONG_MAX_BITS; b++) {
@@ -954,6 +1072,12 @@ public final class ColumnType {
         TYPE_SIZE_POW2[NULL] = -1;
         TYPE_SIZE_POW2[LONG128] = 4;
         TYPE_SIZE_POW2[UUID] = 4;
+        TYPE_SIZE_POW2[DECIMAL8] = 0;
+        TYPE_SIZE_POW2[DECIMAL16] = 1;
+        TYPE_SIZE_POW2[DECIMAL32] = 2;
+        TYPE_SIZE_POW2[DECIMAL64] = 3;
+        TYPE_SIZE_POW2[DECIMAL128] = 4;
+        TYPE_SIZE_POW2[DECIMAL256] = 5;
         TYPE_SIZE_POW2[INTERVAL] = 4;
 
         TYPE_SIZE[UNDEFINED] = -1;
@@ -985,6 +1109,12 @@ public final class ColumnType {
         TYPE_SIZE[UUID] = 2 * Long.BYTES;
         TYPE_SIZE[NULL] = 0;
         TYPE_SIZE[LONG128] = 2 * Long.BYTES;
+        TYPE_SIZE[DECIMAL8] = Byte.BYTES;
+        TYPE_SIZE[DECIMAL16] = Short.BYTES;
+        TYPE_SIZE[DECIMAL32] = Integer.BYTES;
+        TYPE_SIZE[DECIMAL64] = Long.BYTES;
+        TYPE_SIZE[DECIMAL128] = 2 * Long.BYTES;
+        TYPE_SIZE[DECIMAL256] = 4 * Long.BYTES;
         TYPE_SIZE[INTERVAL] = 2 * Long.BYTES;
 
         nonPersistedTypes.add(UNDEFINED);
@@ -1017,6 +1147,18 @@ public final class ColumnType {
         for (int i = 0, n = ARRAY_NDIMS_LIMIT + 1; i < n; i++) {
             ARRAY_DIM_SUFFIX[i] = sink.toString();
             sink.put("[]");
+        }
+
+        // Stored decimals
+        for (int precision = 1; precision <= Decimals.MAX_PRECISION; precision++) {
+            for (int scale = 0; scale <= Decimals.MAX_SCALE; scale++) {
+                int type = getDecimalType(precision, scale);
+                sink.clear();
+                sink.put("DECIMAL(").put(precision).put(',').put(scale).put(")");
+                String name = sink.toString();
+                typeNameMap.put(type, name);
+                nameTypeMap.put(name, type);
+            }
         }
     }
 }

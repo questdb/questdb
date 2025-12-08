@@ -90,6 +90,8 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
@@ -191,7 +193,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Publisher source is identified by a long value
     private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
-    private final DatabaseCheckpointStatus checkpointStatus;
     private final ColumnVersionWriter columnVersionWriter;
     private final MPSequence commandPubSeq;
     private final RingQueue<TableWriterTask> commandQueue;
@@ -350,7 +351,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LifecycleManager lifecycleManager,
             CharSequence root,
             DdlListener ddlListener,
-            DatabaseCheckpointStatus checkpointStatus,
             CairoEngine cairoEngine
     ) {
         this(
@@ -362,7 +362,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 lifecycleManager,
                 root,
                 ddlListener,
-                checkpointStatus,
                 cairoEngine,
                 cairoEngine.getTxnScoreboardPool()
         );
@@ -377,14 +376,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LifecycleManager lifecycleManager,
             CharSequence root,
             DdlListener ddlListener,
-            DatabaseCheckpointStatus checkpointStatus,
             CairoEngine cairoEngine,
             TxnScoreboardPool txnScoreboardPool
     ) {
         LOG.info().$("open '").$(tableToken).$('\'').$();
         this.configuration = configuration;
         this.ddlListener = ddlListener;
-        this.checkpointStatus = checkpointStatus;
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = configuration.getMetrics();
         this.ownMessageBus = ownMessageBus;
@@ -416,7 +413,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.ddlMem = Vm.getCMARWInstance();
             // Read txn file, without accurately specifying partitionBy.
             // We need the latest txn to check if the _meta file needs to be repaired,
-            // then we will read _meta file and initialize patitionBy in txWriter
+            // then we will read _meta file and initialize partitionBy in txWriter
             try {
                 this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$());
                 path.trimTo(pathSize);
@@ -1231,10 +1228,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
-        if (checkpointStatus.partitionsLocked()) {
-            // do not alter scoreboard while checkpoint is in progress
-            return true;
-        }
         return txnScoreboard.hasEarlierTxnLocks(txWriter.getTxn());
     }
 
@@ -3166,6 +3159,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 case ColumnType.GEOLONG:
                     nullers.add(() -> dataMem.putLong(GeoHashes.NULL));
                     break;
+                case ColumnType.DECIMAL8:
+                    nullers.add(() -> dataMem.putByte(Decimals.DECIMAL8_NULL));
+                    break;
+                case ColumnType.DECIMAL16:
+                    nullers.add(() -> dataMem.putShort(Decimals.DECIMAL16_NULL));
+                    break;
+                case ColumnType.DECIMAL32:
+                    nullers.add(() -> dataMem.putInt(Decimals.DECIMAL32_NULL));
+                    break;
+                case ColumnType.DECIMAL64:
+                    nullers.add(() -> dataMem.putLong(Decimals.DECIMAL64_NULL));
+                    break;
+                case ColumnType.DECIMAL128:
+                    nullers.add(() -> dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL));
+                    break;
+                case ColumnType.DECIMAL256:
+                    nullers.add(() -> dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL));
+                    break;
                 default:
                     nullers.add(NOOP);
             }
@@ -3227,7 +3238,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.concat(META_FILE_NAME);
         try (ddlMem) {
             ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
-            metadata.reload(ddlMem);
+            metadata.reload(path, ddlMem);
         } finally {
             path.trimTo(rootLen);
         }
@@ -3670,7 +3681,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 attachMetadata = new TableWriterMetadata(tableToken);
             }
             attachMetaMem.smallFile(ff, detachedPath.$(), MemoryTag.MMAP_TABLE_WRITER);
-            attachMetadata.reload(attachMetaMem);
+            attachMetadata.reload(detachedPath, attachMetaMem);
 
             if (metadata.getTableId() != attachMetadata.getTableId()) {
                 // very same table, attaching foreign partitions is not allowed
@@ -9865,12 +9876,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        if (checkpointStatus.partitionsLocked()) {
-            LOG.info().$("cannot squash partition [table=").$(tableToken)
-                    .$("], checkpoint in progress").$();
-            return;
-        }
-
         assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
 
         long targetPartition = Long.MIN_VALUE;
@@ -10363,7 +10368,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 ddlMem.of(ff, path.$(), ff.getPageSize(), len, MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE, POSIX_MADV_RANDOM);
                 validationMap.clear();
-                validateMeta(ddlMem, validationMap, ColumnType.VERSION);
+                validateMeta(path, ddlMem, validationMap, ColumnType.VERSION);
             } finally {
                 ddlMem.close(false);
                 path.trimTo(pathSize);
@@ -10769,6 +10774,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putDate(int columnIndex, long value);
 
+        void putDecimal(int columnIndex, Decimal256 value);
+
+        void putDecimal128(int columnIndex, long high, long low);
+
+        void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll);
+
+        void putDecimalStr(int columnIndex, CharSequence decimalValue);
+
         void putDouble(int columnIndex, double value);
 
         void putFloat(int columnIndex, float value);
@@ -10884,6 +10897,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putDate(int columnIndex, long value) {
+            // no-op
+        }
+
+        @Override
+        public void putDecimal(int columnIndex, Decimal256 value) {
+            // no-op
+        }
+
+        @Override
+        public void putDecimal128(int columnIndex, long high, long low) {
+            // no-op
+        }
+
+        @Override
+        public void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll) {
+            // no-op
+        }
+
+        @Override
+        public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
             // no-op
         }
 
@@ -11034,6 +11067,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private class RowImpl implements Row {
+        private final Decimal256 decimal256Sink = new Decimal256();
+
         @Override
         public void append() {
             rowAppend(activeNullSetters);
@@ -11087,6 +11122,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         @Override
         public void putDate(int columnIndex, long value) {
             putLong(columnIndex, value);
+        }
+
+        @Override
+        public void putDecimal(int columnIndex, Decimal256 value) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimal(columnIndex, value, type, this);
+        }
+
+        @Override
+        public void putDecimal128(int columnIndex, long high, long low) {
+            getPrimaryColumn(columnIndex).putDecimal128(high, low);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll) {
+            getPrimaryColumn(columnIndex).putDecimal256(hh, hl, lh, ll);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalStr(columnIndex, decimal256Sink, decimalValue, type, this);
         }
 
         @Override

@@ -27,7 +27,7 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>utils</artifactId>
-    <version>9.1.1-SNAPSHOT</version>
+    <version>9.2.3-SNAPSHOT</version>
 
     <name>Command line utils for QuestDB</name>
 
@@ -35,8 +35,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.deploy.skip>true</maven.deploy.skip>
         <maven.javadoc.skip>true</maven.javadoc.skip>
-        <maven.compiler.source>11</maven.compiler.source>
-        <maven.compiler.target>11</maven.compiler.target>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
     </properties>
@@ -61,7 +61,7 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <version>42.7.2</version>
+            <version>42.7.7</version>
         </dependency>
     </dependencies>
 
@@ -133,12 +133,12 @@
 
     <profiles>
         <profile>
-            <id>java11+</id>
+            <id>java17+</id>
             <properties>
                 <questdb.artifactid>questdb</questdb.artifactid>
             </properties>
             <activation>
-                <jdk>(1.8,)</jdk>
+                <jdk>(17,)</jdk>
             </activation>
         </profile>
     </profiles>

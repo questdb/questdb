@@ -38,17 +38,21 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES(1, 123456789, '2021-01-01T00:00:00.000000100Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES(2, 789123456, '2021-01-01T00:00:00.000000200Z'::TIMESTAMP_NS)");
 
-            String beforeExpected = "id\tlong_time\ttime\n" +
-                    "1\t123456789\t2021-01-01T00:00:00.000000100Z\n" +
-                    "2\t789123456\t2021-01-01T00:00:00.000000200Z\n";
+            String beforeExpected = """
+                    id\tlong_time\ttime
+                    1\t123456789\t2021-01-01T00:00:00.000000100Z
+                    2\t789123456\t2021-01-01T00:00:00.000000200Z
+                    """;
             String beforeQuery = "SELECT id, long_time, time FROM tango";
             assertQuery(beforeExpected, beforeQuery, "time", true, true);
 
             execute("ALTER TABLE tango ALTER COLUMN long_time TYPE TIMESTAMP_NS");
 
-            String afterExpected = "id\tlong_time\ttime\n" +
-                    "1\t1970-01-01T00:00:00.123456789Z\t2021-01-01T00:00:00.000000100Z\n" +
-                    "2\t1970-01-01T00:00:00.789123456Z\t2021-01-01T00:00:00.000000200Z\n";
+            String afterExpected = """
+                    id\tlong_time\ttime
+                    1\t1970-01-01T00:00:00.123456789Z\t2021-01-01T00:00:00.000000100Z
+                    2\t1970-01-01T00:00:00.789123456Z\t2021-01-01T00:00:00.000000200Z
+                    """;
             String afterQuery = "SELECT id, long_time, time FROM tango";
             assertQuery(afterExpected, afterQuery, "time", true, true);
         });
@@ -61,17 +65,21 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES(1, '2021-01-01T00:00:00.123456789Z'::TIMESTAMP_NS, '2021-01-01T00:00:00.000000100Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES(2, '2021-01-01T00:00:00.987654321Z'::TIMESTAMP_NS, '2021-01-01T00:00:00.000000200Z'::TIMESTAMP_NS)");
 
-            String beforeExpected = "id\tnano_time\ttime\n" +
-                    "1\t2021-01-01T00:00:00.123456789Z\t2021-01-01T00:00:00.000000100Z\n" +
-                    "2\t2021-01-01T00:00:00.987654321Z\t2021-01-01T00:00:00.000000200Z\n";
+            String beforeExpected = """
+                    id\tnano_time\ttime
+                    1\t2021-01-01T00:00:00.123456789Z\t2021-01-01T00:00:00.000000100Z
+                    2\t2021-01-01T00:00:00.987654321Z\t2021-01-01T00:00:00.000000200Z
+                    """;
             String beforeQuery = "SELECT id, nano_time, time FROM tango ORDER BY time";
             assertQuery(beforeExpected, beforeQuery, "time", true, true);
 
             execute("ALTER TABLE tango ALTER COLUMN nano_time TYPE TIMESTAMP");
 
-            String afterExpected = "id\tnano_time\ttime\n" +
-                    "1\t2021-01-01T00:00:00.123456Z\t2021-01-01T00:00:00.000000100Z\n" +
-                    "2\t2021-01-01T00:00:00.987654Z\t2021-01-01T00:00:00.000000200Z\n";
+            String afterExpected = """
+                    id\tnano_time\ttime
+                    1\t2021-01-01T00:00:00.123456Z\t2021-01-01T00:00:00.000000100Z
+                    2\t2021-01-01T00:00:00.987654Z\t2021-01-01T00:00:00.000000200Z
+                    """;
             String afterQuery = "SELECT id, nano_time, time FROM tango ORDER BY time";
             assertQuery(afterExpected, afterQuery, "time", true, true);
         });
@@ -84,17 +92,21 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES(1, '2021-01-01T00:00:00.123456Z'::TIMESTAMP, '2021-01-01T00:00:00.000000100Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES(2, '2021-01-01T00:00:00.789123Z'::TIMESTAMP, '2021-01-01T00:00:00.000000200Z'::TIMESTAMP_NS)");
 
-            String beforeExpected = "id\tmicro_time\ttime\n" +
-                    "1\t2021-01-01T00:00:00.123456Z\t2021-01-01T00:00:00.000000100Z\n" +
-                    "2\t2021-01-01T00:00:00.789123Z\t2021-01-01T00:00:00.000000200Z\n";
+            String beforeExpected = """
+                    id\tmicro_time\ttime
+                    1\t2021-01-01T00:00:00.123456Z\t2021-01-01T00:00:00.000000100Z
+                    2\t2021-01-01T00:00:00.789123Z\t2021-01-01T00:00:00.000000200Z
+                    """;
             String beforeQuery = "SELECT id, micro_time, time FROM tango ORDER BY time";
             assertQuery(beforeExpected, beforeQuery, "time", true, true);
 
             execute("ALTER TABLE tango ALTER COLUMN micro_time TYPE TIMESTAMP_NS");
 
-            String afterExpected = "id\tmicro_time\ttime\n" +
-                    "1\t2021-01-01T00:00:00.123456000Z\t2021-01-01T00:00:00.000000100Z\n" +
-                    "2\t2021-01-01T00:00:00.789123000Z\t2021-01-01T00:00:00.000000200Z\n";
+            String afterExpected = """
+                    id\tmicro_time\ttime
+                    1\t2021-01-01T00:00:00.123456000Z\t2021-01-01T00:00:00.000000100Z
+                    2\t2021-01-01T00:00:00.789123000Z\t2021-01-01T00:00:00.000000200Z
+                    """;
             String afterQuery = "SELECT id, micro_time, time FROM tango ORDER BY time";
             assertQuery(afterExpected, afterQuery, "time", true, true);
         });
@@ -109,8 +121,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("ALTER TABLE tango ADD COLUMN new_time TIMESTAMP_NS");
             execute("UPDATE tango SET new_time = 200::TIMESTAMP_NS WHERE id = 1");
 
-            String expected = "id\ttime\tnew_time\n" +
-                    "1\t2021-01-01T00:00:00.000000100Z\t1970-01-01T00:00:00.000000200Z\n";
+            String expected = """
+                    id\ttime\tnew_time
+                    1\t2021-01-01T00:00:00.000000100Z\t1970-01-01T00:00:00.000000200Z
+                    """;
             String query = "SELECT id, time, new_time FROM tango";
             assertQuery(expected, query, "time", true, true);
         });
@@ -124,8 +138,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
 
             execute("ALTER TABLE tango DROP COLUMN temp_time");
 
-            String expected = "id\ttime\n" +
-                    "1\t2021-01-01T00:00:00.000000100Z\n";
+            String expected = """
+                    id\ttime
+                    1\t2021-01-01T00:00:00.000000100Z
+                    """;
             String query = "SELECT id, time FROM tango";
             assertQuery(expected, query, "time", true, true);
         });
@@ -137,8 +153,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("CREATE TABLE tango(id INT, time TIMESTAMP_NS) TIMESTAMP(time) PARTITION BY DAY");
             execute("INSERT INTO tango VALUES(1, '2021-01-01T00:00:00.000000100Z'::TIMESTAMP_NS)");
 
-            String expected = "id\ttime\tadd_nanos\tsub_nanos\n" +
-                    "1\t2021-01-01T00:00:00.000000100Z\t2021-01-01T00:00:00.000000200Z\t2021-01-01T00:00:00.000000000Z\n";
+            String expected = """
+                    id\ttime\tadd_nanos\tsub_nanos
+                    1\t2021-01-01T00:00:00.000000100Z\t2021-01-01T00:00:00.000000200Z\t2021-01-01T00:00:00.000000000Z
+                    """;
             String query = "SELECT id, time, time + 100L add_nanos, time - 100L sub_nanos FROM tango";
             assertQuery(expected, query, "time", true, true);
         });
@@ -152,9 +170,11 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES(2, '2021-01-01T00:00:00.000000456Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES(3, '2021-01-01T00:00:00.000000789Z'::TIMESTAMP_NS)");
 
-            String expected = "id\ttime\n" +
-                    "2\t2021-01-01T00:00:00.000000456Z\n" +
-                    "3\t2021-01-01T00:00:00.000000789Z\n";
+            String expected = """
+                    id\ttime
+                    2\t2021-01-01T00:00:00.000000456Z
+                    3\t2021-01-01T00:00:00.000000789Z
+                    """;
             String query = "SELECT id, time FROM tango where time > '2021-01-01T00:00:00.000000123Z'::TIMESTAMP_NS ORDER BY time";
             assertQuery(expected, query, "time", true, false);
         });
@@ -168,9 +188,11 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES(2, '2021-01-01T00:00:00.000000123Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES(3, '2021-01-01T00:00:00.000000456Z'::TIMESTAMP_NS)");
 
-            String expected = "id\ttime\n" +
-                    "1\t2021-01-01T00:00:00.000000123Z\n" +
-                    "2\t2021-01-01T00:00:00.000000123Z\n";
+            String expected = """
+                    id\ttime
+                    1\t2021-01-01T00:00:00.000000123Z
+                    2\t2021-01-01T00:00:00.000000123Z
+                    """;
             String query = "SELECT id, time FROM tango where time = '2021-01-01T00:00:00.000000123Z'::TIMESTAMP_NS ORDER BY id";
             assertQuery(expected, query, null, true, false);
         });
@@ -183,9 +205,11 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES(1, '2021-01-01T00:00:00.000000123Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES(2, '2021-01-01T00:00:00.000000456Z'::TIMESTAMP_NS)");
 
-            String expected = "id\ttime\n" +
-                    "1\t2021-01-01T00:00:00.000000123Z\n" +
-                    "2\t2021-01-01T00:00:00.000000456Z\n";
+            String expected = """
+                    id\ttime
+                    1\t2021-01-01T00:00:00.000000123Z
+                    2\t2021-01-01T00:00:00.000000456Z
+                    """;
             String query = "SELECT id, time FROM tango ORDER BY time";
             assertQuery(expected, query, "time", true, true);
         });
@@ -204,28 +228,32 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO mixed_timestamps VALUES(4, '1970-01-01T10:00:00.250000000Z', null, '1970-01-01T10:00:00.260000Z')");
             execute("INSERT INTO mixed_timestamps VALUES(4, '1970-01-01T10:00:00.250000000Z', '1970-01-01T10:00:00.250001Z', null)");
 
-            String expected = "id\targ_ts\tfrom_ts\tto_ts\tin_range\n" +
-                    "1\t1970-01-01T10:00:00.123456789Z\t1970-01-01T10:00:00.120000Z\t1970-01-01T10:00:00.125000Z\ttrue\n" +
-                    "2\t1970-01-01T10:00:00.150000000Z\t1970-01-01T10:00:00.149999Z\t1970-01-01T10:00:00.150000Z\ttrue\n" +
-                    "3\t1970-01-01T10:00:00.200000000Z\t1970-01-01T10:00:00.180000Z\t1970-01-01T10:00:00.199999Z\tfalse\n" +
-                    "4\t1970-01-01T10:00:00.250000000Z\t1970-01-01T10:00:00.250001Z\t1970-01-01T10:00:00.260000Z\tfalse\n" +
-                    "4\t\t1970-01-01T10:00:00.250001Z\t1970-01-01T10:00:00.260000Z\tfalse\n" +
-                    "4\t1970-01-01T10:00:00.250000000Z\t\t1970-01-01T10:00:00.260000Z\tfalse\n" +
-                    "4\t1970-01-01T10:00:00.250000000Z\t1970-01-01T10:00:00.250001Z\t\tfalse\n";
+            String expected = """
+                    id\targ_ts\tfrom_ts\tto_ts\tin_range
+                    1\t1970-01-01T10:00:00.123456789Z\t1970-01-01T10:00:00.120000Z\t1970-01-01T10:00:00.125000Z\ttrue
+                    2\t1970-01-01T10:00:00.150000000Z\t1970-01-01T10:00:00.149999Z\t1970-01-01T10:00:00.150000Z\ttrue
+                    3\t1970-01-01T10:00:00.200000000Z\t1970-01-01T10:00:00.180000Z\t1970-01-01T10:00:00.199999Z\tfalse
+                    4\t1970-01-01T10:00:00.250000000Z\t1970-01-01T10:00:00.250001Z\t1970-01-01T10:00:00.260000Z\tfalse
+                    4\t\t1970-01-01T10:00:00.250001Z\t1970-01-01T10:00:00.260000Z\tfalse
+                    4\t1970-01-01T10:00:00.250000000Z\t\t1970-01-01T10:00:00.260000Z\tfalse
+                    4\t1970-01-01T10:00:00.250000000Z\t1970-01-01T10:00:00.250001Z\t\tfalse
+                    """;
 
             String query = "SELECT id, arg_ts, from_ts, to_ts, " +
                     "arg_ts between from_ts AND to_ts in_range " +
                     "FROM mixed_timestamps";
             assertQuery(expected, query, null, true, true);
 
-            String expectedReverse = "id\targ_ts\tfrom_ts\tto_ts\tin_range_rev\n" +
-                    "1\t1970-01-01T10:00:00.123456789Z\t1970-01-01T10:00:00.120000Z\t1970-01-01T10:00:00.125000Z\ttrue\n" +
-                    "2\t1970-01-01T10:00:00.150000000Z\t1970-01-01T10:00:00.149999Z\t1970-01-01T10:00:00.150000Z\ttrue\n" +
-                    "3\t1970-01-01T10:00:00.200000000Z\t1970-01-01T10:00:00.180000Z\t1970-01-01T10:00:00.199999Z\tfalse\n" +
-                    "4\t1970-01-01T10:00:00.250000000Z\t1970-01-01T10:00:00.250001Z\t1970-01-01T10:00:00.260000Z\tfalse\n" +
-                    "4\t\t1970-01-01T10:00:00.250001Z\t1970-01-01T10:00:00.260000Z\tfalse\n" +
-                    "4\t1970-01-01T10:00:00.250000000Z\t\t1970-01-01T10:00:00.260000Z\tfalse\n" +
-                    "4\t1970-01-01T10:00:00.250000000Z\t1970-01-01T10:00:00.250001Z\t\tfalse\n";
+            String expectedReverse = """
+                    id\targ_ts\tfrom_ts\tto_ts\tin_range_rev
+                    1\t1970-01-01T10:00:00.123456789Z\t1970-01-01T10:00:00.120000Z\t1970-01-01T10:00:00.125000Z\ttrue
+                    2\t1970-01-01T10:00:00.150000000Z\t1970-01-01T10:00:00.149999Z\t1970-01-01T10:00:00.150000Z\ttrue
+                    3\t1970-01-01T10:00:00.200000000Z\t1970-01-01T10:00:00.180000Z\t1970-01-01T10:00:00.199999Z\tfalse
+                    4\t1970-01-01T10:00:00.250000000Z\t1970-01-01T10:00:00.250001Z\t1970-01-01T10:00:00.260000Z\tfalse
+                    4\t\t1970-01-01T10:00:00.250001Z\t1970-01-01T10:00:00.260000Z\tfalse
+                    4\t1970-01-01T10:00:00.250000000Z\t\t1970-01-01T10:00:00.260000Z\tfalse
+                    4\t1970-01-01T10:00:00.250000000Z\t1970-01-01T10:00:00.250001Z\t\tfalse
+                    """;
 
             String queryReverse = "SELECT id, arg_ts, from_ts, to_ts, " +
                     "arg_ts between to_ts AND from_ts in_range_rev " +
@@ -243,9 +271,11 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO trades VALUES(3, 'MSFT', 250.2, '2021-01-01T09:00:00.000000200Z'::TIMESTAMP_NS)");
             execute("INSERT INTO trades VALUES(4, 'MSFT', 250.8, '2021-01-01T09:00:00.000000400Z'::TIMESTAMP_NS)");
 
-            String expected = "symbol\tavg_price\tmin_time\tmax_time\n" +
-                    "AAPL\t150.3\t2021-01-01T09:00:00.000000100Z\t2021-01-01T09:00:00.000000300Z\n" +
-                    "MSFT\t250.5\t2021-01-01T09:00:00.000000200Z\t2021-01-01T09:00:00.000000400Z\n";
+            String expected = """
+                    symbol\tavg_price\tmin_time\tmax_time
+                    AAPL\t150.3\t2021-01-01T09:00:00.000000100Z\t2021-01-01T09:00:00.000000300Z
+                    MSFT\t250.5\t2021-01-01T09:00:00.000000200Z\t2021-01-01T09:00:00.000000400Z
+                    """;
             String query = "with symbol_stats as (" +
                     "  SELECT symbol, avg(price) avg_price, min(time) min_time, max(time) max_time " +
                     "  FROM trades " +
@@ -265,9 +295,11 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO trades VALUES(3, 'MSFT', 250.2, '2021-01-01T09:00:00.000000200Z'::TIMESTAMP_NS)");
             execute("INSERT INTO trades VALUES(4, 'MSFT', 250.8, '2021-01-01T09:00:00.000000400Z'::TIMESTAMP_NS)");
 
-            String expected = "symbol\tavg_price\ttrade_count\n" +
-                    "AAPL\t150.5\t1\n" +
-                    "MSFT\t250.8\t1\n";
+            String expected = """
+                    symbol\tavg_price\ttrade_count
+                    AAPL\t150.5\t1
+                    MSFT\t250.8\t1
+                    """;
             String query = "with recent_trades as (" +
                     "  SELECT * FROM trades " +
                     "  where time >= '2021-01-01T09:00:00.000000250Z'::TIMESTAMP_NS" +
@@ -287,11 +319,13 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO math_test VALUES(3, '2021-01-01T12:00:00.000000375Z'::TIMESTAMP_NS, 1500)");
             execute("INSERT INTO math_test VALUES(4, '2021-01-01T12:00:00.000000500Z'::TIMESTAMP_NS, 3000)");
 
-            String expected = "id\tnano_ts\tbase_value\tmodulo_result\tcyclic_pattern\ttime_ratio\n" +
-                    "1\t2021-01-01T12:00:00.000000100Z\t1000\t100\t100\t100.0\n" +
-                    "2\t2021-01-01T12:00:00.000000250Z\t2000\t250\t50\t125.0\n" +
-                    "3\t2021-01-01T12:00:00.000000375Z\t1500\t375\t175\t250.0\n" +
-                    "4\t2021-01-01T12:00:00.000000500Z\t3000\t500\t0\t166.66666666666666\n";
+            String expected = """
+                    id\tnano_ts\tbase_value\tmodulo_result\tcyclic_pattern\ttime_ratio
+                    1\t2021-01-01T12:00:00.000000100Z\t1000\t100\t100\t100.0
+                    2\t2021-01-01T12:00:00.000000250Z\t2000\t250\t50\t125.0
+                    3\t2021-01-01T12:00:00.000000375Z\t1500\t375\t175\t250.0
+                    4\t2021-01-01T12:00:00.000000500Z\t3000\t500\t0\t166.66666666666666
+                    """;
             String query = "SELECT id, nano_ts, base_value, " +
                     "nano_ts % 1000 modulo_result, " +
                     "(nano_ts % 500) % 200 cyclic_pattern, " +
@@ -310,15 +344,17 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO prices VALUES('AAPL', 150.15, 1500, '2021-01-01T09:00:00.000000200Z'::TIMESTAMP_NS)");
             execute("INSERT INTO prices VALUES('AAPL', 150.20, 2000, '2021-01-01T09:00:00.000000300Z'::TIMESTAMP_NS)");
 
-            String expected = "symbol\ttime\tprice\tvolume\ttotal_volume\n" +
-                    "AAPL\t2021-01-01T09:00:00.000000100Z\t150.1\t1000\t1000.0\n" +
-                    "AAPL\t2021-01-01T09:00:00.000000200Z\t150.15\t1500\t2500.0\n" +
-                    "AAPL\t2021-01-01T09:00:00.000000300Z\t150.2\t2000\t4500.0\n";
+            String expected = """
+                    symbol\ttime\tprice\tvolume\ttotal_volume
+                    AAPL\t2021-01-01T09:00:00.000000100Z\t150.1\t1000\t1000.0
+                    AAPL\t2021-01-01T09:00:00.000000200Z\t150.15\t1500\t2500.0
+                    AAPL\t2021-01-01T09:00:00.000000300Z\t150.2\t2000\t4500.0
+                    """;
 
             String query = "SELECT symbol, time, price, volume, " +
                     "sum(volume) over (PARTITION BY symbol ORDER BY time rows unbounded preceding) total_volume " +
                     "FROM prices ORDER BY symbol, time";
-            assertQuery(expected, query, null, true, false);
+            assertQuery(expected, query, null, true, true);
         });
     }
 
@@ -328,8 +364,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("CREATE TABLE micro_table(id INT, time TIMESTAMP) TIMESTAMP(time) PARTITION BY DAY");
             execute("INSERT INTO micro_table VALUES(1, '2021-01-01T00:00:00.123456Z'::TIMESTAMP)");
 
-            String expected = "id\ttime\ttime_ns\n" +
-                    "1\t2021-01-01T00:00:00.123456Z\t2021-01-01T00:00:00.123456000Z\n";
+            String expected = """
+                    id\ttime\ttime_ns
+                    1\t2021-01-01T00:00:00.123456Z\t2021-01-01T00:00:00.123456000Z
+                    """;
             String query = "SELECT id, time, cast(time as TIMESTAMP_NS) time_ns FROM micro_table";
             assertQuery(expected, query, "time", true, true);
         });
@@ -341,8 +379,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("CREATE TABLE nano_table(id INT, time TIMESTAMP_NS) TIMESTAMP(time) PARTITION BY DAY");
             execute("INSERT INTO nano_table VALUES(1, '2021-01-01T00:00:00.123456789Z'::TIMESTAMP_NS)");
 
-            String expected = "id\ttime\ttime_micro\n" +
-                    "1\t2021-01-01T00:00:00.123456789Z\t2021-01-01T00:00:00.123456Z\n";
+            String expected = """
+                    id\ttime\ttime_micro
+                    1\t2021-01-01T00:00:00.123456789Z\t2021-01-01T00:00:00.123456Z
+                    """;
             String query = "SELECT id, time, cast(time as TIMESTAMP) time_micro FROM nano_table";
             assertQuery(expected, query, "time", true, true);
         });
@@ -362,10 +402,12 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO nano_trades VALUES(102, '2021-01-01T09:00:00.125000500Z'::TIMESTAMP_NS, 2000)");
             execute("INSERT INTO nano_trades VALUES(103, '2021-01-01T09:00:00.126000200Z'::TIMESTAMP_NS, 1500)");
 
-            String expected = "trade_id\tnano_time\tquantity\tid\tmicro_time\tprice\n" +
-                    "101\t2021-01-01T09:00:00.123456100Z\t1000\t1\t2021-01-01T09:00:00.123456Z\t100.5\n" +
-                    "102\t2021-01-01T09:00:00.125000500Z\t2000\t2\t2021-01-01T09:00:00.125000Z\t101.2\n" +
-                    "103\t2021-01-01T09:00:00.126000200Z\t1500\t2\t2021-01-01T09:00:00.125000Z\t101.2\n";
+            String expected = """
+                    trade_id\tnano_time\tquantity\tid\tmicro_time\tprice
+                    101\t2021-01-01T09:00:00.123456100Z\t1000\t1\t2021-01-01T09:00:00.123456Z\t100.5
+                    102\t2021-01-01T09:00:00.125000500Z\t2000\t2\t2021-01-01T09:00:00.125000Z\t101.2
+                    103\t2021-01-01T09:00:00.126000200Z\t1500\t2\t2021-01-01T09:00:00.125000Z\t101.2
+                    """;
             String query = "SELECT t.trade_id, t.nano_time, t.quantity, e.id, e.micro_time, e.price " +
                     "FROM nano_trades t ASOF JOIN micro_events e " +
                     "ORDER BY t.nano_time";
@@ -383,10 +425,12 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES(4, '2021-01-01T00:00:00.000000456Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES(5, '2021-01-01T00:00:00.000000789Z'::TIMESTAMP_NS)");
 
-            String expected = "time\n" +
-                    "2021-01-01T00:00:00.000000123Z\n" +
-                    "2021-01-01T00:00:00.000000456Z\n" +
-                    "2021-01-01T00:00:00.000000789Z\n";
+            String expected = """
+                    time
+                    2021-01-01T00:00:00.000000123Z
+                    2021-01-01T00:00:00.000000456Z
+                    2021-01-01T00:00:00.000000789Z
+                    """;
             String query = "SELECT distinct time FROM tango ORDER BY time";
             assertQuery(expected, query, "time", true, true);
         });
@@ -401,9 +445,11 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES('B', 30.7, '2021-01-01T00:00:00.000000150Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES('B', 40.1, '2021-01-01T00:00:00.000000250Z'::TIMESTAMP_NS)");
 
-            String expected = "symbol\tsum_value\tmin_time\tmax_time\tcount\n" +
-                    "A\t30.8\t2021-01-01T00:00:00.000000100Z\t2021-01-01T00:00:00.000000200Z\t2\n" +
-                    "B\t70.8\t2021-01-01T00:00:00.000000150Z\t2021-01-01T00:00:00.000000250Z\t2\n";
+            String expected = """
+                    symbol\tsum_value\tmin_time\tmax_time\tcount
+                    A\t30.8\t2021-01-01T00:00:00.000000100Z\t2021-01-01T00:00:00.000000200Z\t2
+                    B\t70.8\t2021-01-01T00:00:00.000000150Z\t2021-01-01T00:00:00.000000250Z\t2
+                    """;
             String query = "SELECT symbol, sum(value) sum_value, min(time) min_time, max(time) max_time, count(*) FROM tango GROUP BY symbol ORDER BY symbol";
             assertQuery(expected, query, null, true, true);
         });
@@ -418,9 +464,11 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES(3, '2021-01-01T00:00:00.000000300Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES(4, '2021-01-01T00:00:00.000000400Z'::TIMESTAMP_NS)");
 
-            String expected = "id\ttime\n" +
-                    "2\t2021-01-01T00:00:00.000000200Z\n" +
-                    "4\t2021-01-01T00:00:00.000000400Z\n";
+            String expected = """
+                    id\ttime
+                    2\t2021-01-01T00:00:00.000000200Z
+                    4\t2021-01-01T00:00:00.000000400Z
+                    """;
             String query = "SELECT id, time FROM tango where time in ('2021-01-01T00:00:00.000000200Z'::TIMESTAMP_NS, '2021-01-01T00:00:00.000000400Z'::TIMESTAMP_NS) ORDER BY time";
             assertQuery(expected, query, "time", true, false);
         });
@@ -436,9 +484,11 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES('C', 4, '2021-01-01T00:00:00.000000400Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES('B', 5, '2021-01-01T00:00:00.000000500Z'::TIMESTAMP_NS)");
 
-            String expected = "symbol\tid\ttime\n" +
-                    "A\t1\t2021-01-01T00:00:00.000000100Z\n" +
-                    "A\t3\t2021-01-01T00:00:00.000000300Z\n";
+            String expected = """
+                    symbol\tid\ttime
+                    A\t1\t2021-01-01T00:00:00.000000100Z
+                    A\t3\t2021-01-01T00:00:00.000000300Z
+                    """;
             String query = "SELECT symbol, id, time FROM tango where symbol = 'A' ORDER BY time";
             assertQuery(expected, query, "time", true, false);
         });
@@ -453,20 +503,24 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO interval_test VALUES(3, '2021-01-02T09:00:00.000000300Z'::TIMESTAMP_NS)");
 
             // Test ConstCheckFunc - comparing interval function to constant interval
-            String expected = "id\tnano_time\tis_constant_interval\n" +
-                    "1\t2021-01-01T09:00:00.000000100Z\ttrue\n" +
-                    "2\t2021-01-01T10:00:00.000000200Z\ttrue\n" +
-                    "3\t2021-01-02T09:00:00.000000300Z\tfalse\n";
+            String expected = """
+                    id\tnano_time\tis_constant_interval
+                    1\t2021-01-01T09:00:00.000000100Z\ttrue
+                    2\t2021-01-01T10:00:00.000000200Z\ttrue
+                    3\t2021-01-02T09:00:00.000000300Z\tfalse
+                    """;
             String query = "SELECT id, nano_time, " +
                     "interval(date_trunc('day', nano_time), dateadd('d', 1, date_trunc('day', nano_time))) = " +
                     "interval('2021-01-01T00:00:00.000000000Z'::TIMESTAMP_NS, '2021-01-02T00:00:00.000000000Z'::TIMESTAMP_NS) as is_constant_interval " +
                     "FROM interval_test ORDER BY nano_time";
             assertQuery(expected, query, "nano_time", true, true);
 
-            String expected2 = "id\tnano_time\tis_not_constant_interval\n" +
-                    "1\t2021-01-01T09:00:00.000000100Z\tfalse\n" +
-                    "2\t2021-01-01T10:00:00.000000200Z\tfalse\n" +
-                    "3\t2021-01-02T09:00:00.000000300Z\ttrue\n";
+            String expected2 = """
+                    id\tnano_time\tis_not_constant_interval
+                    1\t2021-01-01T09:00:00.000000100Z\tfalse
+                    2\t2021-01-01T10:00:00.000000200Z\tfalse
+                    3\t2021-01-02T09:00:00.000000300Z\ttrue
+                    """;
             String query2 = "SELECT id, nano_time, " +
                     "interval(date_trunc('day', nano_time), dateadd('d', 1, date_trunc('day', nano_time))) != " +
                     "interval('2021-01-01T00:00:00.000000000Z'::TIMESTAMP_NS, '2021-01-02T00:00:00.000000000Z'::TIMESTAMP_NS) as is_not_constant_interval " +
@@ -497,8 +551,10 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES(2, '2021-01-01T00:00:00.000000500Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES(3, '2021-01-01T00:00:00.000000300Z'::TIMESTAMP_NS)");
 
-            String expected = "min_time\tmax_time\tcount\n" +
-                    "2021-01-01T00:00:00.000000100Z\t2021-01-01T00:00:00.000000500Z\t3\n";
+            String expected = """
+                    min_time\tmax_time\tcount
+                    2021-01-01T00:00:00.000000100Z\t2021-01-01T00:00:00.000000500Z\t3
+                    """;
             String query = "SELECT min(time) min_time, max(time) max_time, count(*) FROM tango";
             assertQuery(expected, query, null, false, true);
         });
@@ -539,9 +595,11 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES(1, '2021-01-01T00:00:00.000000100Z'::TIMESTAMP_NS, null)");
             execute("INSERT INTO tango VALUES(2, '2021-01-01T00:00:00.000000123Z'::TIMESTAMP_NS, '2021-01-01T00:00:00.000000456Z'::TIMESTAMP_NS)");
 
-            String expected = "id\ttime\tother_time\n" +
-                    "1\t2021-01-01T00:00:00.000000100Z\t\n" +
-                    "2\t2021-01-01T00:00:00.000000123Z\t2021-01-01T00:00:00.000000456Z\n";
+            String expected = """
+                    id\ttime\tother_time
+                    1\t2021-01-01T00:00:00.000000100Z\t
+                    2\t2021-01-01T00:00:00.000000123Z\t2021-01-01T00:00:00.000000456Z
+                    """;
             String query = "SELECT id, time, other_time FROM tango ORDER BY time";
             assertQuery(expected, query, "time", true, true);
         });
@@ -558,20 +616,24 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     ", (2, '2021-01-01T00:00:00.000000200Z'::TIMESTAMP_NS)" +
                     ", (4, '2021-01-01T00:00:00.000000400Z'::TIMESTAMP_NS)");
 
-            String expectedAsc = "id\ttime\n" +
-                    "1\t2021-01-01T00:00:00.000000100Z\n" +
-                    "2\t2021-01-01T00:00:00.000000200Z\n" +
-                    "3\t2021-01-01T00:00:00.000000300Z\n" +
-                    "4\t2021-01-01T00:00:00.000000400Z\n" +
-                    "5\t2021-01-01T00:00:00.000000500Z\n";
+            String expectedAsc = """
+                    id\ttime
+                    1\t2021-01-01T00:00:00.000000100Z
+                    2\t2021-01-01T00:00:00.000000200Z
+                    3\t2021-01-01T00:00:00.000000300Z
+                    4\t2021-01-01T00:00:00.000000400Z
+                    5\t2021-01-01T00:00:00.000000500Z
+                    """;
             assertQuery(expectedAsc, "SELECT id, time FROM tango ORDER BY time", "time", true, true);
 
-            String expectedDesc = "id\ttime\n" +
-                    "5\t2021-01-01T00:00:00.000000500Z\n" +
-                    "4\t2021-01-01T00:00:00.000000400Z\n" +
-                    "3\t2021-01-01T00:00:00.000000300Z\n" +
-                    "2\t2021-01-01T00:00:00.000000200Z\n" +
-                    "1\t2021-01-01T00:00:00.000000100Z\n";
+            String expectedDesc = """
+                    id\ttime
+                    5\t2021-01-01T00:00:00.000000500Z
+                    4\t2021-01-01T00:00:00.000000400Z
+                    3\t2021-01-01T00:00:00.000000300Z
+                    2\t2021-01-01T00:00:00.000000200Z
+                    1\t2021-01-01T00:00:00.000000100Z
+                    """;
             assertQuery(expectedDesc, "SELECT id, time FROM tango ORDER BY time desc",
                     "time###desc", true, true);
         });
@@ -586,11 +648,13 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES(3, '2021-01-02T12:00:00.000000000Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES(4, '2021-01-03T00:00:00.000000000Z'::TIMESTAMP_NS)");
 
-            String expected = "id\ttime\n" +
-                    "1\t2021-01-01T23:59:59.999999999Z\n" +
-                    "2\t2021-01-02T00:00:00.000000001Z\n" +
-                    "3\t2021-01-02T12:00:00.000000000Z\n" +
-                    "4\t2021-01-03T00:00:00.000000000Z\n";
+            String expected = """
+                    id\ttime
+                    1\t2021-01-01T23:59:59.999999999Z
+                    2\t2021-01-02T00:00:00.000000001Z
+                    3\t2021-01-02T12:00:00.000000000Z
+                    4\t2021-01-03T00:00:00.000000000Z
+                    """;
             String query = "SELECT id, time FROM tango ORDER BY time";
             assertQuery(expected, query, "time", true, true);
         });
@@ -605,11 +669,13 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES(3, '2021-01-01T01:30:00.000000000Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES(4, '2021-01-01T02:00:00.000000000Z'::TIMESTAMP_NS)");
 
-            String expected = "id\ttime\n" +
-                    "1\t2021-01-01T00:59:59.999999999Z\n" +
-                    "2\t2021-01-01T01:00:00.000000001Z\n" +
-                    "3\t2021-01-01T01:30:00.000000000Z\n" +
-                    "4\t2021-01-01T02:00:00.000000000Z\n";
+            String expected = """
+                    id\ttime
+                    1\t2021-01-01T00:59:59.999999999Z
+                    2\t2021-01-01T01:00:00.000000001Z
+                    3\t2021-01-01T01:30:00.000000000Z
+                    4\t2021-01-01T02:00:00.000000000Z
+                    """;
             String query = "SELECT id, time FROM tango ORDER BY time";
             assertQuery(expected, query, "time", true, true);
         });
@@ -625,12 +691,14 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES(4, '1970-01-01T00:00:00.000001000Z'::TIMESTAMP_NS)");
             execute("INSERT INTO tango VALUES(5, '1970-01-01T00:00:00.999999999Z'::TIMESTAMP_NS)");
 
-            String expected = "id\ttime\n" +
-                    "1\t1970-01-01T00:00:00.000000000Z\n" +
-                    "2\t1970-01-01T00:00:00.000000001Z\n" +
-                    "3\t1970-01-01T00:00:00.000000999Z\n" +
-                    "4\t1970-01-01T00:00:00.000001000Z\n" +
-                    "5\t1970-01-01T00:00:00.999999999Z\n";
+            String expected = """
+                    id\ttime
+                    1\t1970-01-01T00:00:00.000000000Z
+                    2\t1970-01-01T00:00:00.000000001Z
+                    3\t1970-01-01T00:00:00.000000999Z
+                    4\t1970-01-01T00:00:00.000001000Z
+                    5\t1970-01-01T00:00:00.999999999Z
+                    """;
             String query = "SELECT id, time FROM tango ORDER BY time";
             assertQuery(expected, query, "time", true, true);
         });
@@ -647,10 +715,12 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO high_freq_data VALUES(1, 25.0, '2021-01-01T15:00:00.000000300Z'::TIMESTAMP_NS)");
             execute("INSERT INTO high_freq_data VALUES(1, 25.6, '2021-01-01T15:00:00.000000350Z'::TIMESTAMP_NS)");
 
-            String expected = "nano_ts\tavg_reading\tmax_reading\tmin_reading\tcount\n" +
-                    "2021-01-01T15:00:00.000000100Z\t25.2\t25.3\t25.1\t2\n" +
-                    "2021-01-01T15:00:00.000000200Z\t25.3\t25.4\t25.2\t2\n" +
-                    "2021-01-01T15:00:00.000000300Z\t25.3\t25.6\t25.0\t2\n";
+            String expected = """
+                    nano_ts\tavg_reading\tmax_reading\tmin_reading\tcount
+                    2021-01-01T15:00:00.000000100Z\t25.2\t25.3\t25.1\t2
+                    2021-01-01T15:00:00.000000200Z\t25.3\t25.4\t25.2\t2
+                    2021-01-01T15:00:00.000000300Z\t25.3\t25.6\t25.0\t2
+                    """;
             String query = "SELECT nano_ts, round(avg(reading), 2) avg_reading, max(reading) max_reading, min(reading) min_reading, count(*) " +
                     "FROM high_freq_data sample by 100n fill(none)";
             assertQuery(expected, query, "nano_ts", true, true);
@@ -673,10 +743,12 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setTimestamp("micro_bind", tsLong);
 
-            String expected = "id\tnano_time\tmicro_time\tequals\n" +
-                    "1\t2021-01-01T09:00:00.000100000Z\t2021-01-01T09:00:00.000100Z\ttrue\n" +
-                    "2\t2021-01-01T10:00:00.000200000Z\t2021-01-01T10:00:00.000200Z\tfalse\n" +
-                    "3\t2021-01-02T09:00:00.000300000Z\t2021-01-02T09:00:00.000300Z\tfalse\n";
+            String expected = """
+                    id\tnano_time\tmicro_time\tequals
+                    1\t2021-01-01T09:00:00.000100000Z\t2021-01-01T09:00:00.000100Z\ttrue
+                    2\t2021-01-01T10:00:00.000200000Z\t2021-01-01T10:00:00.000200Z\tfalse
+                    3\t2021-01-02T09:00:00.000300000Z\t2021-01-02T09:00:00.000300Z\tfalse
+                    """;
             String query = "SELECT id, nano_time, micro_time, nano_time = :micro_bind equals FROM mixed_ts";
             assertQuery(expected, query, "nano_time", true, true);
 
@@ -684,10 +756,12 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setTimestamp("micro_bind", tsLong);
 
-            String expected2 = "id\tnano_time\tmicro_time\tequals\n" +
-                    "1\t2021-01-01T09:00:00.000100000Z\t2021-01-01T09:00:00.000100Z\tfalse\n" +
-                    "2\t2021-01-01T10:00:00.000200000Z\t2021-01-01T10:00:00.000200Z\ttrue\n" +
-                    "3\t2021-01-02T09:00:00.000300000Z\t2021-01-02T09:00:00.000300Z\ttrue\n";
+            String expected2 = """
+                    id\tnano_time\tmicro_time\tequals
+                    1\t2021-01-01T09:00:00.000100000Z\t2021-01-01T09:00:00.000100Z\tfalse
+                    2\t2021-01-01T10:00:00.000200000Z\t2021-01-01T10:00:00.000200Z\ttrue
+                    3\t2021-01-02T09:00:00.000300000Z\t2021-01-02T09:00:00.000300Z\ttrue
+                    """;
             String query2 = "SELECT id, nano_time, micro_time, nano_time != :micro_bind equals FROM mixed_ts";
             assertQuery(expected2, query2, "nano_time", true, true);
         });
@@ -703,10 +777,12 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
 
             execute("UPDATE tango SET value = 99.9 WHERE time = '2021-01-01T00:00:00.000000200Z'::TIMESTAMP_NS");
 
-            String expected = "id\ttime\tvalue\n" +
-                    "1\t2021-01-01T00:00:00.000000100Z\t10.5\n" +
-                    "2\t2021-01-01T00:00:00.000000200Z\t99.9\n" +
-                    "3\t2021-01-01T00:00:00.000000300Z\t30.7\n";
+            String expected = """
+                    id\ttime\tvalue
+                    1\t2021-01-01T00:00:00.000000100Z\t10.5
+                    2\t2021-01-01T00:00:00.000000200Z\t99.9
+                    3\t2021-01-01T00:00:00.000000300Z\t30.7
+                    """;
             String query = "SELECT id, time, value FROM tango ORDER BY time";
             assertQuery(expected, query, "time", true, true);
         });
@@ -723,11 +799,13 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
 
             execute("UPDATE tango SET value = value * 2 WHERE time >= '2021-01-01T00:00:00.000000200Z'::TIMESTAMP_NS AND time <= '2021-01-01T00:00:00.000000300Z'::TIMESTAMP_NS");
 
-            String expected = "id\ttime\tvalue\n" +
-                    "1\t2021-01-01T00:00:00.000000100Z\t10.5\n" +
-                    "2\t2021-01-01T00:00:00.000000200Z\t40.6\n" +
-                    "3\t2021-01-01T00:00:00.000000300Z\t61.4\n" +
-                    "4\t2021-01-01T00:00:00.000000400Z\t40.1\n";
+            String expected = """
+                    id\ttime\tvalue
+                    1\t2021-01-01T00:00:00.000000100Z\t10.5
+                    2\t2021-01-01T00:00:00.000000200Z\t40.6
+                    3\t2021-01-01T00:00:00.000000300Z\t61.4
+                    4\t2021-01-01T00:00:00.000000400Z\t40.1
+                    """;
             String query = "SELECT id, time, value FROM tango ORDER BY time";
             assertQuery(expected, query, "time", true, true);
         });
@@ -743,19 +821,21 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO time_series VALUES(4, 18.1, '2021-01-01T09:00:00.000000400Z'::TIMESTAMP_NS)");
             execute("INSERT INTO time_series VALUES(5, 14.7, '2021-01-01T09:00:00.000000500Z'::TIMESTAMP_NS)");
 
-            String expected = "id\tvalue\tnano_time\tfirst_val\tlast_val\tlag_val\tlead_val\n" +
-                    "1\t10.5\t2021-01-01T09:00:00.000000100Z\t10.5\t10.5\tnull\t15.2\n" +
-                    "2\t15.2\t2021-01-01T09:00:00.000000200Z\t10.5\t15.2\t10.5\t12.8\n" +
-                    "3\t12.8\t2021-01-01T09:00:00.000000300Z\t15.2\t12.8\t15.2\t18.1\n" +
-                    "4\t18.1\t2021-01-01T09:00:00.000000400Z\t12.8\t18.1\t12.8\t14.7\n" +
-                    "5\t14.7\t2021-01-01T09:00:00.000000500Z\t18.1\t14.7\t18.1\tnull\n";
+            String expected = """
+                    id\tvalue\tnano_time\tfirst_val\tlast_val\tlag_val\tlead_val
+                    1\t10.5\t2021-01-01T09:00:00.000000100Z\t10.5\t10.5\tnull\t15.2
+                    2\t15.2\t2021-01-01T09:00:00.000000200Z\t10.5\t15.2\t10.5\t12.8
+                    3\t12.8\t2021-01-01T09:00:00.000000300Z\t15.2\t12.8\t15.2\t18.1
+                    4\t18.1\t2021-01-01T09:00:00.000000400Z\t12.8\t18.1\t12.8\t14.7
+                    5\t14.7\t2021-01-01T09:00:00.000000500Z\t18.1\t14.7\t18.1\tnull
+                    """;
             String query = "SELECT id, value, nano_time, " +
                     "first_value(value) over (ORDER BY nano_time rows between 1 preceding and current row) first_val, " +
                     "last_value(value) over (ORDER BY nano_time rows between 1 preceding and current row) last_val, " +
                     "lag(value, 1) over (ORDER BY nano_time) lag_val, " +
                     "lead(value, 1) over (ORDER BY nano_time) lead_val " +
                     "FROM time_series ORDER BY nano_time";
-            assertQuery(expected, query, "nano_time", true, false);
+            assertQuery(expected, query, "nano_time", true, true);
         });
     }
 }

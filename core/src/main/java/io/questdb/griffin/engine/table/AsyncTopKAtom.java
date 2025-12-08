@@ -51,6 +51,8 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
+
 public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
@@ -81,7 +83,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
             @NotNull @Transient RecordMetadata orderByMetadata,
             long lo,
             int workerCount
-    ) {
+    ) throws SqlException {
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
 
         try {
@@ -251,6 +253,11 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         ownerRecordB.of(symbolTableSource);
         for (int i = 0; i < workerCount; i++) {
             perWorkerRecordsB.getQuick(i).of(symbolTableSource);
+        }
+
+        if (bindVarFunctions != null) {
+            Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
+            prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 

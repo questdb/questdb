@@ -52,41 +52,28 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 
-@RunWith(Parameterized.class)
 public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(AlterWalTableLineTcpReceiverTest.class);
 
     private final SCSequence scSequence = new SCSequence();
     private SqlException sqlException;
 
-    public AlterWalTableLineTcpReceiverTest(TestTimestampType timestampType) {
-        this.timestampType = timestampType;
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
-        });
+    public AlterWalTableLineTcpReceiverTest() {
+        this.timestampType = TestUtils.getTimestampType();
     }
 
     @Before

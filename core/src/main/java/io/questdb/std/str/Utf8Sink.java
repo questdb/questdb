@@ -30,9 +30,8 @@ import org.jetbrains.annotations.Nullable;
 
 public interface Utf8Sink extends CharSink<Utf8Sink> {
 
-
     /**
-     * Differs from `escapeJsonStr` by instead escaping double quotes `"` with double
+     * Differs from `escapeJsonStr` by instead escaping double quotes `"` with
      * double quotes `""`. This follows recommendation from RFC 4180.
      * <a href="https://www.ietf.org/rfc/rfc4180.txt">...</a>
      */
@@ -43,16 +42,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
             if (c < 32) {
                 escapeJsonStrChar(c);
             } else if (c < 128) {
-                switch (c) {
-                    case '"':
-                        putAscii("\"\"");
-                        break;
-                    case '\\':
-                        putAscii("\\\\");
-                        break;
-                    default:
-                        putAscii(c);
-                }
+                escapeAscii(c);
             } else {
                 i = Utf8s.encodeUtf16Char(this, cs, hi, i, c);
             }
@@ -70,16 +60,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
             if (c > 0 && c < 32) {
                 escapeJsonStrChar(c);
             } else if (c > 0 && c < 128) {
-                switch (c) {
-                    case '"':
-                        putAscii("\"\"");
-                        break;
-                    case '\\':
-                        putAscii("\\\\");
-                        break;
-                    default:
-                        putAscii(c);
-                }
+                escapeAscii(c);
             } else {
                 put((byte) c);
             }
@@ -345,5 +326,13 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
      */
     default boolean putWithLimit(@NotNull CharSequence cs, int maxBytes) {
         return Utf8s.encodeUtf16WithLimit(this, cs, maxBytes);
+    }
+
+    private void escapeAscii(char c) {
+        switch (c) {
+            case '"' -> putAscii("\"\"");
+            case '\\' -> putAscii("\\\\");
+            default -> putAscii(c);
+        }
     }
 }

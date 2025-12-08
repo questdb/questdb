@@ -373,6 +373,17 @@ public class CharsTest {
     }
 
     @Test
+    public void testEqualsLowerCaseAscii() {
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar baz", "foo bar baz", 0, 11));
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar baz", "FoO bAr BaZ", 0, 11));
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar", "foo bar baz", 0, 7));
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar", "bar foo bar baz", 4, 11));
+        Assert.assertFalse(Chars.equalsLowerCaseAscii("foo bar baz", "foo bar", 0, 7));
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo_bar_baz", "foo_BAR_baz", 0, 11));
+        Assert.assertFalse(Chars.equalsLowerCaseAscii("foo_bar_baz", "foo_foo_baz", 0, 11));
+    }
+
+    @Test
     public void testIPv4ToString() {
         Assert.assertEquals("255.255.255.255", TestUtils.ipv4ToString(0xffffffff));
         Assert.assertEquals("0.0.0.25", TestUtils.ipv4ToString(25));

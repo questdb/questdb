@@ -279,6 +279,7 @@ pub fn column_type_to_parquet_type(
             None,
             Some(column_id),
         )?),
+        _ => todo!(),
     }
 }
 
@@ -311,7 +312,6 @@ impl Column {
         symbol_offsets_size: usize,
         designated_timestamp: bool,
     ) -> ParquetResult<Self> {
-        assert!(row_count > 0, "row_count == 0");
         assert!(
             !primary_data_ptr.is_null() || primary_data_size == 0,
             "primary_data_ptr inconsistent with primary_data_size"

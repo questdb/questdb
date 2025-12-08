@@ -81,7 +81,7 @@ public class ImportFilesFunctionFactory implements FunctionFactory {
     public static class ImportFilesCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(ImportFilesCursorFactory.class);
         private final FilesRecordCursor cursor;
-        private final Path importPath = new Path(MemoryTag.NATIVE_FUNC_RSS);
+        private final Path importPath = new Path(MemoryTag.NATIVE_PATH);
 
         public ImportFilesCursorFactory(CairoConfiguration configuration) {
             super(METADATA);

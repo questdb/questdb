@@ -126,7 +126,7 @@ public class LineUdpParserSupport {
             int columnIndex,
             CharSequence value
     ) {
-        if (value.length() > 0) {
+        if (!value.isEmpty()) {
             try {
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.LONG:

@@ -69,7 +69,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
@@ -80,8 +79,6 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -89,9 +86,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
-import java.util.Arrays;
 import java.util.Base64;
-import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -100,24 +95,16 @@ import java.util.function.Supplier;
 import static io.questdb.cutlass.auth.AuthUtils.EC_ALGORITHM;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
-@RunWith(Parameterized.class)
 public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(LineTcpReceiverTest.class);
     private static final long TEST_TIMEOUT_IN_MS = 120000;
     private final boolean walEnabled;
     private Path path;
 
-    public LineTcpReceiverTest(WalMode walMode, TestTimestampType timestampType) {
-        this.walEnabled = (walMode == WalMode.WITH_WAL);
-        this.timestampType = timestampType;
-    }
-
-    @Parameterized.Parameters(name = "{0}-{1}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL, TestTimestampType.MICRO}, {WalMode.NO_WAL, TestTimestampType.MICRO},
-                {WalMode.WITH_WAL, TestTimestampType.NANO}, {WalMode.NO_WAL, TestTimestampType.NANO},
-        });
+    public LineTcpReceiverTest() {
+        Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
+        this.walEnabled = TestUtils.isWal(rnd);
+        this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
     @Test
@@ -467,12 +454,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             sendLinger(lineData, tableName);
 
             String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "ts\tdt\n" +
-                    "1989-12-31T23:26:40.000000Z\t1989-12-31T23:26:40.000Z\n" +
-                    "1990-01-01T02:13:20.000000Z\t1990-01-01T02:13:20.000Z\n"
-                    : "ts\tdt\n" +
-                    "1989-12-31T23:26:40.000000000Z\t1989-12-31T23:26:40.000Z\n" +
-                    "1990-01-01T02:13:20.000000000Z\t1990-01-01T02:13:20.000Z\n";
+                    ? """
+                    ts\tdt
+                    1989-12-31T23:26:40.000000Z\t1989-12-31T23:26:40.000Z
+                    1990-01-01T02:13:20.000000Z\t1990-01-01T02:13:20.000Z
+                    """
+                    : """
+                    ts\tdt
+                    1989-12-31T23:26:40.000000000Z\t1989-12-31T23:26:40.000Z
+                    1990-01-01T02:13:20.000000000Z\t1990-01-01T02:13:20.000Z
+                    """;
             assertTable(expected, tableName);
         });
     }
@@ -514,9 +505,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             mayDrainWalQueue();
 
             // two of the three commits are lost
-            String expected = "location\tsource\ttemp\ttimestamp\n" +
-                    "us-eastcoast\tsensor2\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            String expected = """
+                    location\tsource\ttemp\ttimestamp
+                    us-eastcoast\tsensor2\t89.0\t2016-06-13T17:43:50.102400Z
+                    us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z
+                    """;
             assertTable(expected, weather);
         }, false, 250);
     }
@@ -526,12 +519,14 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         maxMeasurementSize = 250;
         String lineData =
-                "tab ts_nsec=1111111111111111111i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
-                        + "tab ts_nsec=2222222222222222222i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
-                        + "tab ts_nsec=3333333333333333333i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
-                        + "tab ts_nsec=4444444444444444444i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
-                        + "tab ts_nsec=5555555555555555555i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
-                        + "tab ts_nsec=6666666666666666666i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n";
+                """
+                        tab ts_nsec=1111111111111111111i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
+                        tab ts_nsec=2222222222222222222i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
+                        tab ts_nsec=3333333333333333333i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
+                        tab ts_nsec=4444444444444444444i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
+                        tab ts_nsec=5555555555555555555i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
+                        tab ts_nsec=6666666666666666666i,raw_msg="_________________________________________________________________________________________________________ ____________" 1619509249714000000
+                        """;
         runInContext((receiver) -> {
             sendLinger(lineData, "tab");
 
@@ -539,13 +534,15 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 Assert.assertTrue(isWalTable("tab"));
             }
-            String expected = "ts_nsec\traw_msg\ttimestamp\n" +
-                    "1111111111111111111\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
-                    "2222222222222222222\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
-                    "3333333333333333333\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
-                    "4444444444444444444\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
-                    "5555555555555555555\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
-                    "6666666666666666666\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n";
+            String expected = """
+                    ts_nsec\traw_msg\ttimestamp
+                    1111111111111111111\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z
+                    2222222222222222222\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z
+                    3333333333333333333\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z
+                    4444444444444444444\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z
+                    5555555555555555555\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z
+                    6666666666666666666\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z
+                    """;
             assertTable(expected, "tab");
         });
     }
@@ -565,22 +562,28 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         AbstractCairoTest.create(m);
 
         String lineData =
-                "weather windspeed=2.0 631150000000000000\n" +
-                        "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
-                        "weather windspeed=4.0 631170000000000000\n";
+                """
+                        weather windspeed=2.0 631150000000000000
+                        weather timetocycle=0.0,windspeed=3.0 631160000000000000
+                        weather windspeed=4.0 631170000000000000
+                        """;
 
         runInContext((receiver) -> {
             sendLinger(lineData, "weather");
 
             String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "windspeed\ttimestamp\ttimetocycle\n" +
-                    "2.0\t1989-12-31T23:26:40.000000Z\tnull\n" +
-                    "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
-                    "4.0\t1990-01-01T05:00:00.000000Z\tnull\n"
-                    : "windspeed\ttimestamp\ttimetocycle\n" +
-                    "2.0\t1989-12-31T23:26:40.000000000Z\tnull\n" +
-                    "3.0\t1990-01-01T02:13:20.000000000Z\t0.0\n" +
-                    "4.0\t1990-01-01T05:00:00.000000000Z\tnull\n";
+                    ? """
+                    windspeed\ttimestamp\ttimetocycle
+                    2.0\t1989-12-31T23:26:40.000000Z\tnull
+                    3.0\t1990-01-01T02:13:20.000000Z\t0.0
+                    4.0\t1990-01-01T05:00:00.000000Z\tnull
+                    """
+                    : """
+                    windspeed\ttimestamp\ttimetocycle
+                    2.0\t1989-12-31T23:26:40.000000000Z\tnull
+                    3.0\t1990-01-01T02:13:20.000000000Z\t0.0
+                    4.0\t1990-01-01T05:00:00.000000000Z\tnull
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -674,10 +677,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 Assert.assertTrue(isWalTable("table"));
             }
-            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
-                    "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
-                    "value 2\t\t\t1970-01-01T00:00:00.000000Z\n" +
-                    "\tvalue=\\2\t\t1970-01-02T00:00:00.000000Z\n";
+            String expected = """
+                    tag1\ttag=2\tполе=3\ttimestamp
+                    value 1\tзначение 2\t{"ключ": "число"}\t1970-01-01T00:00:00.000000Z
+                    value 2\t\t\t1970-01-01T00:00:00.000000Z
+                    \tvalue=\\2\t\t1970-01-02T00:00:00.000000Z
+                    """;
             assertTable(expected, "table");
         });
     }
@@ -812,10 +817,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             createTable(m);
 
             String lineData =
-                    "up out=1.0 631150000000000000\n" +
-                            "up out=2.0 631152000000000000\n" +
-                            "up out=3.0 631160000000000000\n" +
-                            "up out=4.0 631170000000000000\n";
+                    """
+                            up out=1.0 631150000000000000
+                            up out=2.0 631152000000000000
+                            up out=3.0 631160000000000000
+                            up out=4.0 631170000000000000
+                            """;
             sendLinger(lineData, "up");
 
             mayDrainWalQueue();
@@ -1017,9 +1024,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testSomeWritersReleased() throws Exception {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         runInContext((receiver) -> {
-            String lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
-                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
-                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            String lineData = """
+                    weather,location=us-midwest temperature=85 1465839830102300200
+                    weather,location=us-eastcoast temperature=89 1465839830102400200
+                    weather,location=us-westcost temperature=82 1465839830102500200
+                    """;
 
             int iterations = 8;
             int threadCount = 8;
@@ -1138,10 +1147,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 Assert.assertTrue(isWalTable("table"));
             }
-            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
-                    "value 1\tзначение 2\t{\"ключ\": \n" +
-                    " \"число\", \r\n" +
-                    " \"key2\": \"value2\"}\n\t1970-01-01T00:00:00.000000Z\n";
+            String expected = """
+                    tag1\ttag=2\tполе=3\ttimestamp
+                    value 1\tзначение 2\t{"ключ":\s
+                     "число", \r
+                     "key2": "value2"}
+                    \t1970-01-01T00:00:00.000000Z
+                    """;
             assertTable(expected, "table");
         });
     }
@@ -1151,23 +1163,27 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         maxMeasurementSize = 4096;
         runInContext((receiver) -> {
-            String lineData = "plug,room=6A watts=\"3195\" 1631817296977\n" +
-                    "plug,room=6A watts=\"3188\" 1631817599910\n" +
-                    "plug,room=6A watts=\"3180\" 1631817902842\n" +
-                    "plug,room=6A watts=\"469\" 1631817902842\n" +
-                    "plug,label=Power,room=6A watts=\"475\" 1631817478737\n";
+            String lineData = """
+                    plug,room=6A watts="3195" 1631817296977
+                    plug,room=6A watts="3188" 1631817599910
+                    plug,room=6A watts="3180" 1631817902842
+                    plug,room=6A watts="469" 1631817902842
+                    plug,label=Power,room=6A watts="475" 1631817478737
+                    """;
             sendLinger(lineData, "plug");
 
             mayDrainWalQueue();
             if (walEnabled) {
                 Assert.assertTrue(isWalTable("plug"));
             }
-            String expected = "room\twatts\ttimestamp\tlabel\n" +
-                    "6A\t3195\t1970-01-01T00:27:11.817296Z\t\n" +
-                    "6A\t475\t1970-01-01T00:27:11.817478Z\tPower\n" +
-                    "6A\t3188\t1970-01-01T00:27:11.817599Z\t\n" +
-                    "6A\t3180\t1970-01-01T00:27:11.817902Z\t\n" +
-                    "6A\t469\t1970-01-01T00:27:11.817902Z\t\n";
+            String expected = """
+                    room\twatts\ttimestamp\tlabel
+                    6A\t3195\t1970-01-01T00:27:11.817296Z\t
+                    6A\t475\t1970-01-01T00:27:11.817478Z\tPower
+                    6A\t3188\t1970-01-01T00:27:11.817599Z\t
+                    6A\t3180\t1970-01-01T00:27:11.817902Z\t
+                    6A\t469\t1970-01-01T00:27:11.817902Z\t
+                    """;
             assertTable(expected, "plug");
         });
     }
@@ -1177,17 +1193,21 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         maxMeasurementSize = 4096;
         runInContext((receiver) -> {
-            String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
-                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n";
+            String lineData = """
+                    plug,room=6A watts="1" 2631819999000
+                    plug,label=Power,room=6B watts="22" 1631817902842
+                    """;
             sendLinger(lineData, "plug");
 
             mayDrainWalQueue();
             if (walEnabled) {
                 Assert.assertTrue(isWalTable("plug"));
             }
-            String expected = "room\twatts\ttimestamp\tlabel\n" +
-                    "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
-                    "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
+            String expected = """
+                    room\twatts\ttimestamp\tlabel
+                    6B\t22\t1970-01-01T00:27:11.817902Z\tPower
+                    6A\t1\t1970-01-01T00:43:51.819999Z\t
+                    """;
             assertTable(expected, "plug");
         });
     }
@@ -1197,19 +1217,23 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         maxMeasurementSize = 4096;
         runInContext((receiver) -> {
-            String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
-                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
-                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
+            String lineData = """
+                    plug,room=6A watts="1" 2631819999000
+                    plug,label=Power,room=6B watts="22" 1631817902842
+                    plug,label=Line,room=6C watts="333" 1531817902842
+                    """;
             sendLinger(lineData, "plug");
 
             mayDrainWalQueue();
             if (walEnabled) {
                 Assert.assertTrue(isWalTable("plug"));
             }
-            String expected = "room\twatts\ttimestamp\tlabel\n" +
-                    "6C\t333\t1970-01-01T00:25:31.817902Z\tLine\n" +
-                    "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
-                    "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
+            String expected = """
+                    room\twatts\ttimestamp\tlabel
+                    6C\t333\t1970-01-01T00:25:31.817902Z\tLine
+                    6B\t22\t1970-01-01T00:27:11.817902Z\tPower
+                    6A\t1\t1970-01-01T00:43:51.819999Z\t
+                    """;
             assertTable(expected, "plug");
         });
     }
@@ -1229,19 +1253,23 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             try (RecordCursorFactory cursorFactory = select("weather")) {
                 try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
                     println(cursorFactory, cursor);
-                    TestUtils.assertEquals("windspeed\ttimetocycle\tts\n" +
-                            "1\t2\t1970-01-01T00:00:00.000001Z\n" +
-                            "2\t4\t1970-01-01T00:00:00.000002Z\n", sink);
+                    TestUtils.assertEquals("""
+                            windspeed\ttimetocycle\tts
+                            1\t2\t1970-01-01T00:00:00.000001Z
+                            2\t4\t1970-01-01T00:00:00.000002Z
+                            """, sink);
                 }
 
                 execute("drop table weather");
 
                 runInContext((receiver) -> {
                     String lineData =
-                            "weather windspeed=1.0 631150000000000000\n" +
-                                    "weather windspeed=2.0 631152000000000000\n" +
-                                    "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
-                                    "weather windspeed=4.0 631170000000000000\n";
+                            """
+                                    weather windspeed=1.0 631150000000000000
+                                    weather windspeed=2.0 631152000000000000
+                                    weather timetocycle=0.0,windspeed=3.0 631160000000000000
+                                    weather windspeed=4.0 631170000000000000
+                                    """;
                     sendLinger(lineData, "weather");
                 });
                 mayDrainWalQueue();
@@ -1270,10 +1298,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             engine.releaseInactive();
             runInContext((receiver) -> {
                 String lineData =
-                        "test col=\"1.1.1.1\" 631150000000000000\n" +
-                                "test col=\"1.1.1.1\" 31152000000000000\n" +
-                                "test col=\"1.1.1.1\" 631160000000000000\n" +
-                                "test col=\"1.1.1.1\" 631170000000000000\n";
+                        """
+                                test col="1.1.1.1" 631150000000000000
+                                test col="1.1.1.1" 31152000000000000
+                                test col="1.1.1.1" 631160000000000000
+                                test col="1.1.1.1" 631170000000000000
+                                """;
                 sendLinger(lineData, "test");
             });
             mayDrainWalQueue();
@@ -1281,11 +1311,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 Assert.assertTrue(isWalTable("test"));
             }
 
-            String expected = "col\tts\n" +
-                    "1.1.1.1\t1970-12-27T13:20:00.000000Z\n" +
-                    "1.1.1.1\t1989-12-31T23:26:40.000000Z\n" +
-                    "1.1.1.1\t1990-01-01T02:13:20.000000Z\n" +
-                    "1.1.1.1\t1990-01-01T05:00:00.000000Z\n";
+            String expected = """
+                    col\tts
+                    1.1.1.1\t1970-12-27T13:20:00.000000Z
+                    1.1.1.1\t1989-12-31T23:26:40.000000Z
+                    1.1.1.1\t1990-01-01T02:13:20.000000Z
+                    1.1.1.1\t1990-01-01T05:00:00.000000Z
+                    """;
             assertTable(expected, "test");
         });
     }
@@ -1302,19 +1334,23 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             engine.releaseInactive();
             runInContext((receiver) -> {
                 String lineData =
-                        "test col=\"12.35.40.11\",col=\"23.44.87.56\" 631150000000000000\n" +
-                                "test col=\"23.45.09.12\",col=\"32.11.35.67\" 31152000000000000\n" +
-                                "test col=\"255.255.255.255\",col=\"80.45.86.21\" 631160000000000000\n" +
-                                "test col=\"34.54.23.89\",col=\"22.54.68.90\" 631170000000000000\n";
+                        """
+                                test col="12.35.40.11",col="23.44.87.56" 631150000000000000
+                                test col="23.45.09.12",col="32.11.35.67" 31152000000000000
+                                test col="255.255.255.255",col="80.45.86.21" 631160000000000000
+                                test col="34.54.23.89",col="22.54.68.90" 631170000000000000
+                                """;
                 sendLinger(lineData, "test");
             });
             mayDrainWalQueue();
 
-            String expected = "col\tts\n" +
-                    "23.45.9.12\t1970-12-27T13:20:00.000000Z\n" +
-                    "12.35.40.11\t1989-12-31T23:26:40.000000Z\n" +
-                    "255.255.255.255\t1990-01-01T02:13:20.000000Z\n" +
-                    "34.54.23.89\t1990-01-01T05:00:00.000000Z\n";
+            String expected = """
+                    col\tts
+                    23.45.9.12\t1970-12-27T13:20:00.000000Z
+                    12.35.40.11\t1989-12-31T23:26:40.000000Z
+                    255.255.255.255\t1990-01-01T02:13:20.000000Z
+                    34.54.23.89\t1990-01-01T05:00:00.000000Z
+                    """;
             assertTable(expected, "test");
         });
     }
@@ -1332,10 +1368,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             engine.releaseInactive();
             runInContext((receiver) -> {
                 String lineData =
-                        "test col=\"12.35.40.11\",coll=\"23.44.87.56\" 631150000000000000\n" +
-                                "test col=\"23.45.09.12\",coll=\"32.11.35.67\" 31152000000000000\n" +
-                                "test col=\"255.255.255.255\",coll=\"80.45.86.21\" 631160000000000000\n" +
-                                "test col=\"34.54.23.89\",coll=\"22.54.68.90\" 631170000000000000\n";
+                        """
+                                test col="12.35.40.11",coll="23.44.87.56" 631150000000000000
+                                test col="23.45.09.12",coll="32.11.35.67" 31152000000000000
+                                test col="255.255.255.255",coll="80.45.86.21" 631160000000000000
+                                test col="34.54.23.89",coll="22.54.68.90" 631170000000000000
+                                """;
                 sendLinger(lineData, "test");
             });
             mayDrainWalQueue();
@@ -1343,11 +1381,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 Assert.assertTrue(isWalTable("test"));
             }
 
-            String expected = "col\tcoll\tts\n" +
-                    "23.45.9.12\t32.11.35.67\t1970-12-27T13:20:00.000000Z\n" +
-                    "12.35.40.11\t23.44.87.56\t1989-12-31T23:26:40.000000Z\n" +
-                    "255.255.255.255\t80.45.86.21\t1990-01-01T02:13:20.000000Z\n" +
-                    "34.54.23.89\t22.54.68.90\t1990-01-01T05:00:00.000000Z\n";
+            String expected = """
+                    col\tcoll\tts
+                    23.45.9.12\t32.11.35.67\t1970-12-27T13:20:00.000000Z
+                    12.35.40.11\t23.44.87.56\t1989-12-31T23:26:40.000000Z
+                    255.255.255.255\t80.45.86.21\t1990-01-01T02:13:20.000000Z
+                    34.54.23.89\t22.54.68.90\t1990-01-01T05:00:00.000000Z
+                    """;
             assertTable(expected, "test");
         });
     }
@@ -1366,8 +1406,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // Check that -1 and -2 are not magic numbers in ILP parsing
             runInContext((receiver) -> {
                 String lineData =
-                        "test col=\"255.255.255.254\" 631150000000000000\n" +
-                                "test col=\"255.255.255.255\" 631150000000000000\n";
+                        """
+                                test col="255.255.255.254" 631150000000000000
+                                test col="255.255.255.255" 631150000000000000
+                                """;
                 sendLinger(lineData, "test");
             });
             mayDrainWalQueue();
@@ -1375,9 +1417,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 Assert.assertTrue(isWalTable("test"));
             }
 
-            String expected = "col\tts\n" +
-                    "255.255.255.254\t1989-12-31T23:26:40.000000Z\n" +
-                    "255.255.255.255\t1989-12-31T23:26:40.000000Z\n";
+            String expected = """
+                    col\tts
+                    255.255.255.254\t1989-12-31T23:26:40.000000Z
+                    255.255.255.255\t1989-12-31T23:26:40.000000Z
+                    """;
             assertTable(expected, "test");
         });
     }
@@ -1394,10 +1438,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             engine.releaseInactive();
             runInContext((receiver) -> {
                 String lineData =
-                        "test col=\"0.0.0.0\" 631150000000000000\n" +
-                                "test col=\"0.0.0.0\" 31152000000000000\n" +
-                                "test col=\"0.0.0.0\" 631160000000000000\n" +
-                                "test col=\"0.0.0.0\" 631170000000000000\n";
+                        """
+                                test col="0.0.0.0" 631150000000000000
+                                test col="0.0.0.0" 31152000000000000
+                                test col="0.0.0.0" 631160000000000000
+                                test col="0.0.0.0" 631170000000000000
+                                """;
                 sendLinger(lineData, "test");
             });
             mayDrainWalQueue();
@@ -1405,11 +1451,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 Assert.assertTrue(isWalTable("test"));
             }
 
-            String expected = "col\tts\n" +
-                    "\t1970-12-27T13:20:00.000000Z\n" +
-                    "\t1989-12-31T23:26:40.000000Z\n" +
-                    "\t1990-01-01T02:13:20.000000Z\n" +
-                    "\t1990-01-01T05:00:00.000000Z\n";
+            String expected = """
+                    col\tts
+                    \t1970-12-27T13:20:00.000000Z
+                    \t1989-12-31T23:26:40.000000Z
+                    \t1990-01-01T02:13:20.000000Z
+                    \t1990-01-01T05:00:00.000000Z
+                    """;
             assertTable(expected, "test");
         });
     }
@@ -1426,10 +1474,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             engine.releaseInactive();
             runInContext((receiver) -> {
                 String lineData =
-                        "test col=\"\" 631150000000000000\n" +
-                                "test col=\"\" 31152000000000000\n" +
-                                "test col=\"\" 631160000000000000\n" +
-                                "test col=\"\" 631170000000000000\n";
+                        """
+                                test col="" 631150000000000000
+                                test col="" 31152000000000000
+                                test col="" 631160000000000000
+                                test col="" 631170000000000000
+                                """;
                 sendLinger(lineData, "test");
             });
             mayDrainWalQueue();
@@ -1437,11 +1487,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 Assert.assertTrue(isWalTable("test"));
             }
 
-            String expected = "col\tts\n" +
-                    "\t1970-12-27T13:20:00.000000Z\n" +
-                    "\t1989-12-31T23:26:40.000000Z\n" +
-                    "\t1990-01-01T02:13:20.000000Z\n" +
-                    "\t1990-01-01T05:00:00.000000Z\n";
+            String expected = """
+                    col\tts
+                    \t1970-12-27T13:20:00.000000Z
+                    \t1989-12-31T23:26:40.000000Z
+                    \t1990-01-01T02:13:20.000000Z
+                    \t1990-01-01T05:00:00.000000Z
+                    """;
             assertTable(expected, "test");
         });
     }
@@ -1494,8 +1546,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 Assert.assertTrue(isWalTable(tableName));
             }
-            String expected = "tag1\ttag2\ttimestamp\n" +
-                    "value 1\tvalue 2\t1970-01-01T00:00:00.000000Z\n";
+            String expected = """
+                    tag1\ttag2\ttimestamp
+                    value 1\tvalue 2\t1970-01-01T00:00:00.000000Z
+                    """;
             assertTable(expected, tableName);
         });
     }
@@ -1577,9 +1631,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 Assert.assertTrue(isWalTable("लаблअца"));
             }
-            assertTable("символ\tполе\tвремя\n" +
-                    "\tзначение\t2021-04-27T07:40:49.714000Z\n" +
-                    "значение2\tзначение3\t2021-04-27T07:40:49.714000Z\n", "लаблअца");
+            assertTable("""
+                    символ\tполе\tвремя
+                    \tзначение\t2021-04-27T07:40:49.714000Z
+                    значение2\tзначение3\t2021-04-27T07:40:49.714000Z
+                    """, "लаблअца");
         });
     }
 
@@ -1597,9 +1653,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 Assert.assertTrue(isWalTable("लаблअца"));
             }
-            String expected = "поле\ttimestamp\tсимвол\n" +
-                    "значение\t2021-04-27T07:40:49.714000Z\t\n" +
-                    "\t2021-04-27T07:40:49.714000Z\tзначение2\n";
+            String expected = """
+                    поле\ttimestamp\tсимвол
+                    значение\t2021-04-27T07:40:49.714000Z\t
+                    \t2021-04-27T07:40:49.714000Z\tзначение2
+                    """;
             assertTable(expected, "लаблअца");
         });
     }
@@ -1630,10 +1688,14 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 Assert.assertTrue(isWalTable("table_a"));
             }
             String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest\n" +
-                    "2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5\n"
-                    : "ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest\n" +
-                    "2016-06-13T17:43:50.100400000Z\t1\tB\t92\t1.5\n";
+                    ? """
+                    ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest
+                    2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5
+                    """
+                    : """
+                    ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest
+                    2016-06-13T17:43:50.100400000Z\t1\tB\t92\t1.5
+                    """;
             assertTable(expected, "table_a");
         });
     }
@@ -1643,10 +1705,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         runInContext((receiver) -> {
             String lineData =
-                    "up out=1.0 631150000000000000\n" +
-                            "up in=2.0 631152000000000000\n" +
-                            "up in=3.0 631160000000000000\n" +
-                            "up in=4.0 631170000000000000\n";
+                    """
+                            up out=1.0 631150000000000000
+                            up in=2.0 631152000000000000
+                            up in=3.0 631160000000000000
+                            up in=4.0 631170000000000000
+                            """;
             sendLinger(lineData, "up");
 
             mayDrainWalQueue();
@@ -1654,11 +1718,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 Assert.assertTrue(isWalTable("up"));
             }
             String expected =
-                    "out\ttimestamp\tin\n" +
-                            "1.0\t1989-12-31T23:26:40.000000Z\tnull\n" +
-                            "null\t1990-01-01T00:00:00.000000Z\t2.0\n" +
-                            "null\t1990-01-01T02:13:20.000000Z\t3.0\n" +
-                            "null\t1990-01-01T05:00:00.000000Z\t4.0\n";
+                    """
+                            out\ttimestamp\tin
+                            1.0\t1989-12-31T23:26:40.000000Z\tnull
+                            null\t1990-01-01T00:00:00.000000Z\t2.0
+                            null\t1990-01-01T02:13:20.000000Z\t3.0
+                            null\t1990-01-01T05:00:00.000000Z\t4.0
+                            """;
             assertTable(expected, "up");
         });
     }
@@ -1668,18 +1734,22 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
         runInContext((receiver) -> {
             String lineData =
-                    "up out=1.0 631150000000000000\n" +
-                            "up ..=2.0 631152000000000000\n" +
-                            "up ..=3.0 631160000000000000\n" +
-                            "up ..=4.0 631170000000000000\n";
+                    """
+                            up out=1.0 631150000000000000
+                            up ..=2.0 631152000000000000
+                            up ..=3.0 631160000000000000
+                            up ..=4.0 631170000000000000
+                            """;
             sendLinger(lineData, "up");
 
             mayDrainWalQueue();
             if (walEnabled) {
                 Assert.assertTrue(isWalTable("up"));
             }
-            String expected = "out\ttimestamp\n" +
-                    "1.0\t1989-12-31T23:26:40.000000Z\n";
+            String expected = """
+                    out\ttimestamp
+                    1.0\t1989-12-31T23:26:40.000000Z
+                    """;
             assertTable(expected, "up");
         });
     }
@@ -1735,8 +1805,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 Assert.assertTrue(isWalTable("tableCRASH"));
             }
-            String expected = "tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp\n" +
-                    "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.4\t2021-04-27T07:40:49.714000Z\n";
+            String expected = """
+                    tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp
+                    1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.4\t2021-04-27T07:40:49.714000Z
+                    """;
             assertTable(expected, "tableCRASH");
         });
     }
@@ -1759,8 +1831,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             TestUtils.createTable(engine, m);
 
             send(lineData, "messages");
-            String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +
-                    "1970-01-01T00:00:00.000001Z\t843530699759026177\t820703963477180437\t820704412095479830\t820704412095479833\t6\n";
+            String expected = """
+                    ts\tid\tauthor\tguild\tchannel\tflags
+                    1970-01-01T00:00:00.000001Z\t843530699759026177\t820703963477180437\t820704412095479830\t820704412095479833\t6
+                    """;
 
             mayDrainWalQueue();
             if (walEnabled) {

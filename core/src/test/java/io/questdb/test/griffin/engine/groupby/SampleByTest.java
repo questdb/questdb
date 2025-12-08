@@ -158,6 +158,92 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalFillNull() throws Exception {
+        assertQuery(
+                "s\tk\tfirst\tfirst1\tfirst2\tfirst3\tfirst4\tfirst5\n" +
+                        "PSWH\t1970-01-03T00:00:00.000000Z\t70\t541.6\t67154.89\t3924477733600.754\t\t171705796933093680712781416201650020517931179005901547038.65348\n" +
+                        "PSWH\t1970-01-03T00:30:00.000000Z\t\t\t\t\t\t\n" +
+                        "PSWH\t1970-01-03T01:00:00.000000Z\t5\t857.2\t443913.23\t5747798769957.464\t1073257280251575967463745455.9151\t335225873464827472524349814824447701044723533870441165873.69526\n",
+                "select s, k, " +
+                        "first(dec8), " +
+                        "first(dec16), " +
+                        "first(dec32), " +
+                        "first(dec64), " +
+                        "first(dec128), " +
+                        "first(dec256) " +
+                        "from x sample by 30m fill(NULL)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_decimal(2,0,15) dec8," +
+                        " rnd_decimal(4,1,15) dec16," +
+                        " rnd_decimal(8,2,15) dec32," +
+                        " rnd_decimal(16,3,15) dec64," +
+                        " rnd_decimal(32,4,15) dec128," +
+                        " rnd_decimal(64,5,15) dec256," +
+                        " rnd_symbol(2,3,4,0) s, " +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(2)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimalFillPrev() throws Exception {
+        assertQuery(
+                "s\tk\tfirst\tfirst1\tfirst2\tfirst3\tfirst4\tfirst5\n" +
+                        "PSWH\t1970-01-03T00:00:00.000000Z\t70\t541.6\t67154.89\t3924477733600.754\t\t171705796933093680712781416201650020517931179005901547038.65348\n" +
+                        "PSWH\t1970-01-03T00:30:00.000000Z\t70\t541.6\t67154.89\t3924477733600.754\t\t171705796933093680712781416201650020517931179005901547038.65348\n" +
+                        "PSWH\t1970-01-03T01:00:00.000000Z\t5\t857.2\t443913.23\t5747798769957.464\t1073257280251575967463745455.9151\t335225873464827472524349814824447701044723533870441165873.69526\n",
+                "select s, k, " +
+                        "first(dec8), " +
+                        "first(dec16), " +
+                        "first(dec32), " +
+                        "first(dec64), " +
+                        "first(dec128), " +
+                        "first(dec256) " +
+                        "from x sample by 30m fill(prev)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_decimal(2,0,15) dec8," +
+                        " rnd_decimal(4,1,15) dec16," +
+                        " rnd_decimal(8,2,15) dec32," +
+                        " rnd_decimal(16,3,15) dec64," +
+                        " rnd_decimal(32,4,15) dec128," +
+                        " rnd_decimal(64,5,15) dec256," +
+                        " rnd_symbol(2,3,4,0) s, " +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(2)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimalInterpolated() throws Exception {
+        assertException(
+                "select k, first(b) from x sample by 3h fill(linear)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_decimal(4,0,0) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                10,
+                "support for LINEAR fill is not yet implemented"
+        );
+    }
+
+    @Test
     public void testFillPrevConsistency() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table telem (created timestamp, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
@@ -7006,13 +7092,15 @@ public class SampleByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                                Async Group By workers: 1
-                                  keys: [tstmp,sym]
-                                  values: [first(val),avg(val),last(val),max(val)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
+                                Radix sort light
+                                  keys: [tstmp]
+                                    Async Group By workers: 1
+                                      keys: [tstmp,sym]
+                                      values: [first(val),avg(val),last(val),max(val)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """
             );
         });
@@ -7380,6 +7468,74 @@ public class SampleByTest extends AbstractCairoTest {
                 }
                 assertEquals(expected, sink);
             }
+        });
+    }
+
+    @Test
+    public void testSampleByWithOnlyOneFillOption() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE weather ( ts TIMESTAMP, temperature DOUBLE, humidity INTEGER ) TIMESTAMP(ts);");
+            execute("""
+                    INSERT INTO weather (ts, temperature, humidity) VALUES
+                        ('2024-01-01T00:00:00Z', 10.0, 10),
+                        ('2024-01-01T00:03:00Z', 11.5, 11),
+                        ('2024-01-01T00:04:00Z', 12.0, 12),
+                        ('2024-01-01T00:07:00Z', 13.0, 13);
+                    """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts	humidity
+                            2024-01-01T00:00:00.000000Z	10
+                            2024-01-01T00:01:00.000000Z	10
+                            2024-01-01T00:02:00.000000Z	10
+                            2024-01-01T00:03:00.000000Z	11
+                            2024-01-01T00:04:00.000000Z	12
+                            2024-01-01T00:05:00.000000Z	12
+                            2024-01-01T00:06:00.000000Z	12
+                            2024-01-01T00:07:00.000000Z	13
+                            """,
+                    """
+                              WITH imputed AS ( \s
+                                SELECT \s
+                                    ts,
+                                    last(temperature) AS temperature,
+                                    last(humidity) As humidity\s
+                                FROM weather
+                                SAMPLE BY 1m FILL(PREV)
+                            )
+                            SELECT ts, humidity
+                            FROM imputed
+                            """,
+                    "ts"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts	humidity	temperature
+                            2024-01-01T00:00:00.000000Z	10	10.0
+                            2024-01-01T00:01:00.000000Z	10	10.0
+                            2024-01-01T00:02:00.000000Z	10	10.0
+                            2024-01-01T00:03:00.000000Z	11	11.5
+                            2024-01-01T00:04:00.000000Z	12	12.0
+                            2024-01-01T00:05:00.000000Z	12	12.0
+                            2024-01-01T00:06:00.000000Z	12	12.0
+                            2024-01-01T00:07:00.000000Z	13	13.0
+                            """,
+                    """
+                              WITH imputed AS ( \s
+                                SELECT \s
+                                    ts,
+                                    last(temperature) AS temperature,
+                                    last(humidity) As humidity\s
+                                FROM weather
+                                SAMPLE BY 1m FILL(PREV)
+                            )
+                            SELECT ts, humidity, temperature
+                            FROM imputed
+                            """,
+                    "ts"
+            );
         });
     }
 

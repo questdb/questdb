@@ -74,11 +74,14 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDecimalToDecimalFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDecimalToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToVarcharFunctionFactory;
@@ -90,15 +93,19 @@ import io.questdb.griffin.engine.functions.cast.CastFloatToVarcharFunctionFactor
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIPv4ToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLong256ToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLong256ToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastShortToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastShortToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastShortToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToVarcharFunctionFactory;
@@ -107,6 +114,7 @@ import io.questdb.griffin.engine.functions.cast.CastTimestampToTimestampFunction
 import io.questdb.griffin.engine.functions.cast.CastTimestampToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastVarcharToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
@@ -114,6 +122,7 @@ import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
 import io.questdb.griffin.engine.functions.columns.CharColumn;
 import io.questdb.griffin.engine.functions.columns.DateColumn;
+import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.columns.FloatColumn;
 import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
@@ -137,6 +146,7 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -186,6 +196,8 @@ import io.questdb.griffin.engine.groupby.vect.SumLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
+import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
@@ -193,8 +205,7 @@ import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.AsofJoinColumnAccessHelper;
-import io.questdb.griffin.engine.join.ChainedSymbolColumnAccessHelper;
+import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
@@ -209,16 +220,20 @@ import io.questdb.griffin.engine.join.LtJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.MarkoutHorizonRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.NoopColumnAccessHelper;
+import io.questdb.griffin.engine.join.NoopSymbolShortCircuit;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
-import io.questdb.griffin.engine.join.SingleStringColumnAccessHelper;
-import io.questdb.griffin.engine.join.SingleSymbolColumnAccessHelper;
-import io.questdb.griffin.engine.join.SingleVarcharColumnAccessHelper;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.StringToSymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.SymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.SymbolKeyMappingRecordCopier;
+import io.questdb.griffin.engine.join.SymbolShortCircuit;
+import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
@@ -286,6 +301,7 @@ import io.questdb.std.BitSet;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
@@ -305,6 +321,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 
 import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
@@ -338,40 +355,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * The matrix doesn't cover generic types (e.g. geohash) since they have a more complex structure.
      */
     private static final int[][] UNION_CAST_MATRIX = new int[][]{
-            { 0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  0}, //  0 = unknown
-            {11,  1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  1}, //  1 = BOOLEAN
-            {11, 11,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  2}, //  2 = BYTE
-            {11, 11,  3,  3,  3,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  3}, //  3 = SHORT
-            {11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 11}, //  4 = CHAR
-            {11, 11,  5,  5,  5,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  5}, //  5 = INT
-            {11, 11,  6,  6,  6,  6,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  6}, //  6 = LONG
-            {11, 11,  7,  7,  7,  7,  7,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  7}, //  7 = DATE
-            {11, 11,  8,  8,  8,  8,  8,  8,  8,  9, 10, 11,  8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  8}, //  8 = TIMESTAMP
-            {11, 11,  9,  9,  9,  9,  9,  9,  9,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,  9}, //  9 = FLOAT
-            {11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 10}, // 10 = DOUBLE
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11}, // 11 = STRING
-            {11, 11, 11, 11, 11, 11, 11, 11,  8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 11}, // 12 = SYMBOL
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 13}, // 13 = LONG256
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 14 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 15 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 16 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 17 = unknown
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 18, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 18}, // 18 = BINARY
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 19, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 19}, // 19 = UUID
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 20, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 20}, // 20 = CURSOR
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 21, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 21}, // 21 = VARARG
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11, 22}, // 22 = RECORD
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, 11, 11, 11, 11, 11, 11, 23}, // 23 = GEOHASH
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, 11, 11, 11, 11, 11, 11, 24}, // 24 = LONG128
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, 11, 11, 11, 11, 11, 25}, // 25 = IPv4
-            {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26}, // 26 = VARCHAR
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 27, 11, 11, 11, 11, 11, 27}, // 27 = ARRAY
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 28, 11, 11, 11, 11, 28}, // 28 = regclass
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 29, 11, 11, 11, 29}, // 29 = regprocedure
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 30, 11, 11, 30}, // 30 = text[]
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 31, 11, 31}, // 31 = PARAMETER
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 32, 32}, // 32 = INTERVAL
-            { 0,  1,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33}  // 33 = NULL
+            { 0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  0}, //  0 = unknown
+            {11,  1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  1}, //  1 = BOOLEAN
+            {11, 11,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  2}, //  2 = BYTE
+            {11, 11,  3,  3,  3,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  3}, //  3 = SHORT
+            {11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11}, //  4 = CHAR
+            {11, 11,  5,  5,  5,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  5}, //  5 = INT
+            {11, 11,  6,  6,  6,  6,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  6}, //  6 = LONG
+            {11, 11,  7,  7,  7,  7,  7,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  7}, //  7 = DATE
+            {11, 11,  8,  8,  8,  8,  8,  8,  8,  9, 10, 11,  8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  8}, //  8 = TIMESTAMP
+            {11, 11,  9,  9,  9,  9,  9,  9,  9,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  9}, //  9 = FLOAT
+            {11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 10}, // 10 = DOUBLE
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11}, // 11 = STRING
+            {11, 11, 11, 11, 11, 11, 11, 11,  8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11}, // 12 = SYMBOL
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 13}, // 13 = LONG256
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 14 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 15 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 16 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 17 = unknown
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 18, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 18}, // 18 = BINARY
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 19, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 19}, // 19 = UUID
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 20, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 20}, // 20 = CURSOR
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 21, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 21}, // 21 = VARARG
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 22}, // 22 = RECORD
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 23}, // 23 = GEOHASH
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24}, // 24 = LONG128
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 25}, // 25 = IPv4
+            {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, -1, -1, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26}, // 26 = VARCHAR
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 27, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 27}, // 27 = ARRAY
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 28 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 29 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 30 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 31 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 32 = unknown
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 33 = unknown
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 34, 11, 11, 11, 11, 11, 34}, // 34 = DECIMAL
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 35, 11, 11, 11, 11, 35}, // 35 = regclass
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 36, 11, 11, 11, 36}, // 36 = regprocedure
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 37, 11, 11, 37}, // 37 = text[]
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 38, 11, 38}, // 38 = PARAMETER
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 39, 39}, // 39 = INTERVAL
+            { 0,  1,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, -1, -1, -1, -1, -1, -1, 34, 35, 36, 37, 38, 39, 40}  // 40 = NULL
     };
     // @formatter:on
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
@@ -402,6 +426,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
+    private final MarkoutHorizonInfo markoutHorizonInfo = new MarkoutHorizonInfo();
     private final LongList prefixes = new LongList();
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
@@ -433,6 +458,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
+    // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
+    // Tracks the last model with non-empty ORDER BY as we descend through nested models
+    private QueryModel lastSeenOrderByModel;
 
     public SqlCodeGenerator(
             CairoConfiguration configuration,
@@ -471,7 +499,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int[][] expected = new int[ColumnType.NULL + 1][ColumnType.NULL + 1];
         for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
             for (int typeB = 0; typeB <= ColumnType.NULL; typeB++) {
-                final int outType = (isGeoType(typeA) || isGeoType(typeB)) ? -1 : commonWideningType(typeA, typeB);
+                final int outType = (isGeoType(typeA) || isGeoType(typeB) || isDecimalType(typeA) || isDecimalType(typeB)) ? -1 : commonWideningType(typeA, typeB);
                 expected[typeA][typeB] = outType;
             }
         }
@@ -510,8 +538,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         int geoBitsA = getGeoHashBits(typeA);
         int geoBitsB = getGeoHashBits(typeB);
-        boolean isGeoHashA = geoBitsA != 0;
-        boolean isGeoHashB = geoBitsB != 0;
+        boolean isGeoHashA = ColumnType.isGeoHash(typeA);
+        boolean isGeoHashB = ColumnType.isGeoHash(typeB);
         if (isGeoHashA != isGeoHashB) {
             // One type is geohash, the other isn't. Since a stringy type can be parsed
             // into geohash, output geohash when the other type is stringy. If not,
@@ -523,6 +551,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (isGeoHashA) {
             // Both types are geohash, resolve to the one with fewer geohash bits.
             return geoBitsA < geoBitsB ? typeA : typeB;
+        }
+
+        boolean isDecimalA = ColumnType.isDecimalType(tagA);
+        boolean isDecimalB = ColumnType.isDecimalType(tagB);
+        if (isDecimalA || isDecimalB) {
+            int a = DecimalUtil.getTypePrecisionScale(typeA);
+            int b = DecimalUtil.getTypePrecisionScale(typeB);
+            if (a != 0 && b != 0) {
+                // Both types are decimal/implicitly castable to decimal.
+                int precisionA = Numbers.decodeLowShort(a);
+                int scaleA = Numbers.decodeHighShort(a);
+                int precisionB = Numbers.decodeLowShort(b);
+                int scaleB = Numbers.decodeHighShort(b);
+                final int scale = Math.max(scaleA, scaleB);
+                final int precision = Math.min(Math.max(precisionA - scaleA, precisionB - scaleB) + scale, Decimals.MAX_PRECISION);
+                return ColumnType.getDecimalType(precision, scale);
+            }
+            // We also support casting between decimal and stringy types.
+            return isStringyType(typeA) ? typeB :
+                    isStringyType(typeB) ? typeA :
+                            ColumnType.STRING; // Fallback should be supported by any type
         }
 
         if (tagA == INTERVAL || tagB == INTERVAL) {
@@ -700,7 +749,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
         if (ColumnType.isUndefined(func.getType())) {
             func.assignType(type, context.getBindVariableService());
-        } else if ((!func.isConstant() && !func.isRuntimeConstant()) || !ColumnType.isAssignableFrom(func.getType(), type)) {
+        } else if ((!func.isConstant() && !func.isRuntimeConstant()) || !ColumnType.isConvertibleFrom(func.getType(), type)) {
             throw SqlException.$(pos, message);
         }
     }
@@ -865,6 +914,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             toleranceInterval *= multiplier;
         }
         return toleranceInterval;
+    }
+
+    private static int validateAndGetSlaveTimestampIndex(RecordMetadata slaveMetadata, RecordCursorFactory slaveBase) {
+        int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+
+        // slave.supportsFilterStealing() means slave is nothing but a filter.
+        // if slave is just a filter, then it must have the same metadata as its base,
+        // that includes the timestamp index.
+        assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
+        return slaveTimestampIndex;
     }
 
     private static RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) throws SqlException {
@@ -1116,93 +1175,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
-    private RecordCursorFactory createAsOfJoin(
-            RecordMetadata metadata,
-            RecordCursorFactory master,
-            RecordSink masterKeySink,
-            RecordCursorFactory slave,
-            RecordSink slaveKeySink,
-            int columnSplit,
-            JoinContext joinContext,
-            long toleranceInterval
-    ) {
-        valueTypes.clear();
-        valueTypes.add(ColumnType.LONG);
-
-        return new AsOfJoinLightRecordCursorFactory(
-                configuration,
-                metadata,
-                master,
-                slave,
-                keyTypes,
-                valueTypes,
-                masterKeySink,
-                slaveKeySink,
-                columnSplit,
-                joinContext,
-                toleranceInterval
-        );
-    }
-
-    private @NotNull AsofJoinColumnAccessHelper createAsofColumnAccessHelper(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, boolean selfJoin) {
-        AsofJoinColumnAccessHelper columnAccessHelper = NoopColumnAccessHelper.INSTANCE;
-        assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
-        AsofJoinColumnAccessHelper[] symbolShortCircuits = null;
-        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-            int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
-            int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
-            if (slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
-                int masterColType = masterMetadata.getColumnType(masterIndex);
-                AsofJoinColumnAccessHelper newSymbolShortCircuit;
-                switch (masterColType) {
-                    case SYMBOL:
-                        if (selfJoin && masterIndex == slaveIndex) {
-                            // self join on the same column -> there is no point in attempting short-circuiting
-                            // NOTE: This check is naive, it can generate false positives
-                            //       For example 'select t1.s, t2.s2 from t as t1 asof join t as t2 on t1.s = t2.s2'
-                            //       This is deemed as a self-join (which it is), and due to the way columns are projected
-                            //       it will take this branch (even when it fact it's comparing different columns)
-                            //       and won't create a short circuit. This is OK from correctness perspective,
-                            //       but it is a missed opportunity for performance optimization. Doing a perfect check
-                            //       would require a more complex logic, which is not worth it for now
-                            continue;
-                        }
-                        newSymbolShortCircuit = new SingleSymbolColumnAccessHelper(configuration, masterIndex, slaveIndex);
-                        break;
-                    case VARCHAR:
-                        newSymbolShortCircuit = new SingleVarcharColumnAccessHelper(masterIndex, slaveIndex);
-                        break;
-                    case STRING:
-                        newSymbolShortCircuit = new SingleStringColumnAccessHelper(masterIndex, slaveIndex);
-                        break;
-                    default:
-                        // unsupported type for short circuit
-                        continue;
-                }
-                if (columnAccessHelper == NoopColumnAccessHelper.INSTANCE) {
-                    // ok, a single symbol short circuit
-                    columnAccessHelper = newSymbolShortCircuit;
-                } else if (symbolShortCircuits == null) {
-                    // 2 symbol short circuits, we need to chain them
-                    symbolShortCircuits = new AsofJoinColumnAccessHelper[2];
-                    symbolShortCircuits[0] = columnAccessHelper;
-                    symbolShortCircuits[1] = newSymbolShortCircuit;
-                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(symbolShortCircuits);
-                } else {
-                    // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
-                    // this allocates arrays, but it should be very rare
-                    int size = symbolShortCircuits.length;
-                    AsofJoinColumnAccessHelper[] newSymbolShortCircuits = new AsofJoinColumnAccessHelper[size + 1];
-                    System.arraycopy(symbolShortCircuits, 0, newSymbolShortCircuits, 0, size);
-                    newSymbolShortCircuits[size] = newSymbolShortCircuit;
-                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(newSymbolShortCircuits);
-                    symbolShortCircuits = newSymbolShortCircuits;
-                }
-            }
-        }
-        return columnAccessHelper;
-    }
-
     @NotNull
     private RecordCursorFactory createFullFatJoin(
             RecordCursorFactory master,
@@ -1242,15 +1214,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // at this point listColumnFilterB has column indexes of the master record that are JOIN keys
-        // so masterSink writes key columns of master record to a sink
-        RecordSink masterSink = RecordSinkFactory.getInstance(
-                asm,
-                masterMetadata,
-                listColumnFilterB,
-                writeSymbolAsString,
-                writeStringAsVarcharB,
-                writeTimestampAsNanosB
-        );
+        // so masterCopier writes key columns of master record to a sink
+        RecordSink masterCopier = createRecordCopierMaster(masterMetadata);
 
         // This metadata allocates native memory, it has to be closed in case join
         // generation is unsuccessful. The exception can be thrown anywhere between
@@ -1318,15 +1283,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     keyTypes,
                     valueTypes,
                     slaveTypes,
-                    masterSink,
-                    RecordSinkFactory.getInstance( // slaveKeySink
-                            asm,
-                            slaveMetadata,
-                            listColumnFilterA,
-                            writeSymbolAsString,
-                            writeStringAsVarcharA,
-                            writeTimestampAsNanosA
-                    ),
+                    masterCopier,
+                    createRecordCopierSlave(slaveMetadata),
                     masterMetadata.getColumnCount(),
                     RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB), // slaveValueSink
                     columnIndex,
@@ -1363,23 +1321,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
          */
         final RecordMetadata masterMetadata = master.getMetadata();
         final RecordMetadata slaveMetadata = slave.getMetadata();
-        final RecordSink masterKeySink = RecordSinkFactory.getInstance(
-                asm,
-                masterMetadata,
-                listColumnFilterB,
-                writeSymbolAsString,
-                writeStringAsVarcharB,
-                writeTimestampAsNanosB
-        );
-
-        final RecordSink slaveKeySink = RecordSinkFactory.getInstance(
-                asm,
-                slaveMetadata,
-                listColumnFilterA,
-                writeSymbolAsString,
-                writeStringAsVarcharA,
-                writeTimestampAsNanosA
-        );
+        final RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
+        final RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
 
         if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
             valueTypes.clear();
@@ -1396,8 +1339,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slave,
                         keyTypes,
                         valueTypes,
-                        masterKeySink,
-                        slaveKeySink,
+                        masterKeyCopier,
+                        slaveKeyCopier,
                         masterMetadata.getColumnCount(),
                         context
                 );
@@ -1414,8 +1357,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slave,
                         keyTypes,
                         valueTypes,
-                        masterKeySink,
-                        slaveKeySink,
+                        masterKeyCopier,
+                        slaveKeyCopier,
                         masterMetadata.getColumnCount(),
                         filter,
                         context,
@@ -1430,8 +1373,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slave,
                     keyTypes,
                     valueTypes,
-                    masterKeySink,
-                    slaveKeySink,
+                    masterKeyCopier,
+                    slaveKeyCopier,
                     masterMetadata.getColumnCount(),
                     context,
                     joinType
@@ -1457,8 +1400,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slave,
                     keyTypes,
                     valueTypes,
-                    masterKeySink,
-                    slaveKeySink,
+                    masterKeyCopier,
+                    slaveKeyCopier,
                     slaveSink,
                     masterMetadata.getColumnCount(),
                     context
@@ -1473,8 +1416,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slave,
                     keyTypes,
                     valueTypes,
-                    masterKeySink,
-                    slaveKeySink,
+                    masterKeyCopier,
+                    slaveKeyCopier,
                     slaveSink,
                     masterMetadata.getColumnCount(),
                     filter,
@@ -1490,8 +1433,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 slave,
                 keyTypes,
                 valueTypes,
-                masterKeySink,
-                slaveKeySink,
+                masterKeyCopier,
+                slaveKeyCopier,
                 slaveSink,
                 masterMetadata.getColumnCount(),
                 context,
@@ -1543,31 +1486,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return metadata;
     }
 
-    private RecordCursorFactory createLtJoin(
-            RecordMetadata metadata,
-            RecordCursorFactory master,
-            RecordSink masterKeySink,
-            RecordCursorFactory slave,
-            RecordSink slaveKeySink,
-            int columnSplit,
-            JoinContext joinContext,
-            long toleranceInterval
-    ) {
-        valueTypes.clear();
-        valueTypes.add(ColumnType.LONG);
+    private @NotNull RecordSink createRecordCopierMaster(RecordMetadata masterMetadata) {
+        return RecordSinkFactory.getInstance(
+                asm,
+                masterMetadata,
+                listColumnFilterB,
+                writeSymbolAsString,
+                writeStringAsVarcharB,
+                writeTimestampAsNanosB
+        );
+    }
 
-        return new LtJoinLightRecordCursorFactory(
-                configuration,
-                metadata,
-                master,
-                slave,
-                keyTypes,
-                valueTypes,
-                masterKeySink,
-                slaveKeySink,
-                columnSplit,
-                joinContext,
-                toleranceInterval
+    private @NotNull RecordSink createRecordCopierSlave(RecordMetadata slaveMetadata) {
+        return RecordSinkFactory.getInstance(
+                asm,
+                slaveMetadata,
+                listColumnFilterA,
+                writeSymbolAsString,
+                writeStringAsVarcharA,
+                writeTimestampAsNanosA
         );
     }
 
@@ -1600,6 +1537,198 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
+    private @NotNull SymbolShortCircuit createSymbolShortCircuit(
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata,
+            boolean isSelfJoin
+    ) {
+        SymbolShortCircuit symbolShortCircuit = NoopSymbolShortCircuit.INSTANCE;
+        assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
+        SymbolJoinKeyMapping[] mappings = null;
+        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+            int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
+            int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
+            if (slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
+                int masterColType = masterMetadata.getColumnType(masterIndex);
+                SymbolJoinKeyMapping newMapping;
+                switch (masterColType) {
+                    case SYMBOL:
+                        if (isSelfJoin && masterIndex == slaveIndex) {
+                            // self join on the same column -> there is no point in attempting short-circuiting
+                            // NOTE: This check is naive, it can generate false positives
+                            //       For example 'select t1.s, t2.s2 from t as t1 asof join t as t2 on t1.s = t2.s2'
+                            //       This is deemed as a self-join (which it is), and due to the way columns are projected
+                            //       it will take this branch (even when it fact it's comparing different columns)
+                            //       and won't create a short circuit. This is OK from correctness perspective,
+                            //       but it is a missed opportunity for performance optimization. Doing a perfect check
+                            //       would require a more complex logic, which is not worth it for now
+                            continue;
+                        }
+                        newMapping = new SymbolToSymbolJoinKeyMapping(configuration, masterIndex, slaveIndex);
+                        break;
+                    case VARCHAR:
+                        newMapping = new VarcharToSymbolJoinKeyMapping(masterIndex, slaveIndex);
+                        break;
+                    case STRING:
+                        newMapping = new StringToSymbolJoinKeyMapping(masterIndex, slaveIndex);
+                        break;
+                    default:
+                        // unsupported type for short circuit
+                        continue;
+                }
+                if (symbolShortCircuit == NoopSymbolShortCircuit.INSTANCE) {
+                    // ok, a single symbol short circuit
+                    symbolShortCircuit = (SymbolShortCircuit) newMapping;
+                } else if (mappings == null) {
+                    // 2 symbol mappings, we need to chain them
+                    mappings = new SymbolJoinKeyMapping[2];
+                    mappings[0] = (SymbolJoinKeyMapping) symbolShortCircuit;
+                    mappings[1] = newMapping;
+                    symbolShortCircuit = new ChainedSymbolShortCircuit(mappings);
+                } else {
+                    // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
+                    // this allocates arrays, but it should be very rare
+                    int size = mappings.length;
+                    SymbolJoinKeyMapping[] newMappings = Arrays.copyOf(mappings, size + 1);
+                    newMappings[size] = newMapping;
+                    symbolShortCircuit = new ChainedSymbolShortCircuit(newMappings);
+                    mappings = newMappings;
+                }
+            }
+        }
+        return symbolShortCircuit;
+    }
+
+    /**
+     * Attempts to detect the "markout horizon" pattern in a cross-join with ORDER BY.
+     * <p>
+     * The pattern consists of:
+     * <ol>
+     *   <li>A cross-join between a table with a designated timestamp and an arithmetic sequence
+     *   <li>An ORDER BY clause on the sum of the timestamp and the sequence element
+     * </ol>
+     * <p>
+     * Detection isn't foolproof and can result in false positives. We do not attempt it unless
+     * the hint {@value SqlHints#MARKOUT_HORIZON_HINT} is present in the query.
+     * <p>
+     * These are the prerequisites for the Markout Horizon optimization to kick in:
+     * <ol>
+     *  <li><code>markout_horizon(lhs rhs)</code> hint is present
+     *  <li>LHS (master) cursor supports random access
+     *  <li>RHS (slave) cursor originates from the <code>long_sequence</code> function
+     *  <li>LHS table has a designated timestamp column
+     *  <li><code>ORDER BY</code> is a sum of two operands
+     *  <li>one operand is the designated timestamp of LHS table
+     *  <li>the other operand is a column of the RHS table
+     * </ol>
+     *
+     * @param masterAlias         alias for the master LHS of the join
+     * @param masterModel         QueryModel for the LHS of the join
+     * @param masterMetadata      Metadata for the LHS of the join
+     * @param masterCursorFactory the LHS cursor factory
+     * @param slaveModel          QueryModel for the RHS of the join
+     * @param slaveMetadata       Metadata for the RHS of the join (should be an arithmetic sequence)
+     * @param slaveCursorFactory  the RHS cursor factory (should produce an arithmetic sequence)
+     * @return MarkoutHorizonInfo if pattern is detected, null otherwise
+     */
+    private MarkoutHorizonInfo detectMarkoutHorizonPattern(
+            CharSequence masterAlias,
+            QueryModel masterModel,
+            RecordMetadata masterMetadata,
+            RecordCursorFactory masterCursorFactory,
+            QueryModel slaveModel,
+            RecordMetadata slaveMetadata,
+            RecordCursorFactory slaveCursorFactory
+    ) {
+        // Detect the markout_horizon hint, and ensure the master cursor supports random access
+        if (!SqlHints.hasMarkoutHorizonHint(masterModel, masterAlias, slaveModel.getName()) ||
+                !masterCursorFactory.recordCursorSupportsRandomAccess()
+        ) {
+            return null;
+        }
+
+        // Ensure the slave table is `long_sequence()`, or based on it
+        RecordCursorFactory rootFac = slaveCursorFactory;
+        while (!rootFac.getClass().getSimpleName().contains("LongSequence")) {
+            rootFac = rootFac.getBaseFactory();
+            if (rootFac == null) {
+                return null;
+            }
+        }
+        // Ensure the master table has a designated timestamp column
+        int designatedTimestampIndex = masterMetadata.getTimestampIndex();
+        if (designatedTimestampIndex == -1) {
+            return null;
+        }
+
+        // Ensure we have an ORDER BY clause.
+        // lastSeenOrderByModel was captured as we were descending through nested models
+        if (lastSeenOrderByModel == null) {
+            return null;
+        }
+        // Ensure there's only one sort column
+        if (lastSeenOrderByModel.getOrderBy().size() != 1) {
+            return null;
+        }
+        // Ensure sort direction is ascending
+        IntList dirs = lastSeenOrderByModel.getOrderByDirection();
+        int dir = (dirs.size() > 0) ? dirs.getQuick(0) : ORDER_DIRECTION_ASCENDING;
+        if (dir != ORDER_DIRECTION_ASCENDING) {
+            return null;
+        }
+
+        // The ORDER BY node may be a column alias (LITERAL) - resolve it to the actual expression
+        ExpressionNode orderByNode = lastSeenOrderByModel.getOrderBy().getQuick(0);
+        ExpressionNode orderByExpr = orderByNode;
+        if (orderByNode.type == ExpressionNode.LITERAL) {
+            QueryColumn queryColumn = lastSeenOrderByModel.getAliasToColumnMap().get(orderByNode.token);
+            if (queryColumn != null) {
+                orderByExpr = queryColumn.getAst();
+            }
+        }
+        // Ensure that ORDER BY is an addition operation
+        if (orderByExpr.type != ExpressionNode.OPERATION || !"+".contentEquals(orderByExpr.token)) {
+            return null;
+        }
+        // The ORDER BY should be timestamp_column + offset_column, or vice versa
+        ExpressionNode lhs = orderByExpr.lhs;
+        ExpressionNode rhs = orderByExpr.rhs;
+        if (lhs == null || rhs == null) {
+            return null;
+        }
+
+        // Try to identify which operand is the timestamp from master and which is from slave
+        int timestampColumnIndex = -1;
+        ExpressionNode slaveColumnNode = null;
+
+        // Check if LHS is the designated timestamp column from master
+        if (lhs.type == ExpressionNode.LITERAL) {
+            int colIndex = masterMetadata.getColumnIndexQuiet(lhs.token);
+            if (colIndex >= 0 && colIndex == designatedTimestampIndex) {
+                timestampColumnIndex = colIndex;
+                slaveColumnNode = rhs;
+            }
+        }
+
+        // If not found, check if RHS is the designated timestamp column from master and LHS is from slave
+        if (timestampColumnIndex == -1 && rhs.type == ExpressionNode.LITERAL) {
+            int colIndex = masterMetadata.getColumnIndexQuiet(rhs.token);
+            if (colIndex >= 0 && colIndex == designatedTimestampIndex) {
+                timestampColumnIndex = colIndex;
+                slaveColumnNode = lhs;
+            }
+        }
+
+        if (slaveColumnNode == null || slaveColumnNode.type != ExpressionNode.LITERAL) {
+            return null;
+        }
+        int slaveColumnIndex = slaveMetadata.getColumnIndexQuiet(slaveColumnNode.token);
+        if (slaveColumnIndex == -1) {
+            return null; // Slave column not found
+        }
+        return markoutHorizonInfo.of(timestampColumnIndex, slaveColumnIndex);
+    }
+
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
         final ObjList<Function> result = new ObjList<>();
         for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
@@ -1611,6 +1740,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private ObjList<Function> generateCastFunctions(
+            SqlExecutionContext executionContext,
             RecordMetadata castToMetadata,
             RecordMetadata castFromMetadata,
             int modelPosition
@@ -1919,6 +2049,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         )
                                 );
                                 break;
+                            case ColumnType.DECIMAL8:
+                            case ColumnType.DECIMAL16:
+                            case ColumnType.DECIMAL32:
+                            case ColumnType.DECIMAL64:
+                                castFunctions.add(
+                                        new CastDecimalToStrFunctionFactory.Func64(
+                                                Decimal64LoaderFunctionFactory.getInstance(DecimalColumn.newInstance(i, fromType))
+                                        )
+                                );
+                                break;
+                            case ColumnType.DECIMAL128:
+                                castFunctions.add(
+                                        new CastDecimalToStrFunctionFactory.Func128(DecimalColumn.newInstance(i, fromType))
+                                );
+                                break;
+                            case ColumnType.DECIMAL256:
+                                castFunctions.add(
+                                        new CastDecimalToStrFunctionFactory.Func(DecimalColumn.newInstance(i, fromType))
+                                );
+                                break;
                             case ColumnType.INTERVAL:
                                 castFunctions.add(new CastIntervalToStrFunctionFactory.Func(IntervalColumn.newInstance(i, fromType)));
                                 break;
@@ -2145,6 +2295,96 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                         }
                         break;
+                    case ColumnType.DECIMAL8:
+                    case ColumnType.DECIMAL16:
+                    case ColumnType.DECIMAL32:
+                    case ColumnType.DECIMAL64:
+                    case ColumnType.DECIMAL128:
+                    case ColumnType.DECIMAL256:
+                        if (ColumnType.isDecimalType(fromTag)) {
+                            if (fromType == toType) {
+                                castFunctions.add(DecimalColumn.newInstance(i, fromType));
+                                break;
+                            }
+                            castFunctions.add(
+                                    CastDecimalToDecimalFunctionFactory.newInstance(
+                                            0,
+                                            new DecimalColumn(i, fromType),
+                                            toType,
+                                            executionContext
+                                    )
+                            );
+                            break;
+                        }
+                        switch (fromTag) {
+                            case INT:
+                                castFunctions.add(
+                                        CastIntToDecimalFunctionFactory.newInstance(
+                                                0,
+                                                IntColumn.newInstance(i),
+                                                toType,
+                                                executionContext
+                                        )
+                                );
+                                break;
+                            case SHORT:
+                                castFunctions.add(
+                                        CastShortToDecimalFunctionFactory.newInstance(
+                                                0,
+                                                ShortColumn.newInstance(i),
+                                                toType,
+                                                executionContext
+                                        )
+                                );
+                                break;
+                            case LONG:
+                                castFunctions.add(
+                                        CastLongToDecimalFunctionFactory.newInstance(
+                                                0,
+                                                LongColumn.newInstance(i),
+                                                toType,
+                                                executionContext.getDecimal256()
+                                        )
+                                );
+                                break;
+                            case BYTE:
+                                castFunctions.add(
+                                        CastByteToDecimalFunctionFactory.newInstance(
+                                                0,
+                                                ByteColumn.newInstance(i),
+                                                toType,
+                                                executionContext
+                                        )
+                                );
+                                break;
+                            case STRING:
+                                castFunctions.add(
+                                        CastStrToDecimalFunctionFactory.newInstance(
+                                                executionContext.getDecimal256(),
+                                                0,
+                                                toType,
+                                                new StrColumn(i)
+                                        )
+                                );
+                                break;
+                            case VARCHAR:
+                                castFunctions.add(
+                                        CastVarcharToDecimalFunctionFactory.newInstance(
+                                                executionContext.getDecimal256(),
+                                                0,
+                                                toType,
+                                                new VarcharColumn(i)
+                                        )
+                                );
+                                break;
+                            default:
+                                throw SqlException.unsupportedCast(
+                                        modelPosition,
+                                        castFromMetadata.getColumnName(i),
+                                        fromType,
+                                        toType
+                                );
+                        }
                     case ColumnType.BINARY:
                         castFunctions.add(BinColumn.newInstance(i));
                         break;
@@ -2376,7 +2616,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             CharSequence alias = timestamp.token;
             final CharSequence currTimestamp = curr.getTimestamp().token;
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                final QueryColumn col = model.getColumns().getQuick(i);
+                final QueryColumn col = model.getBottomUpColumns().getQuick(i);
                 final ExpressionNode ast = col.getAst();
                 if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)) {
                     final CharSequence ts;
@@ -2642,6 +2882,409 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return unionAllFactory;
     }
 
+    private RecordCursorFactory generateJoinAsof(
+            final boolean isSelfJoin,
+            final QueryModel model,
+            final QueryModel slaveModel,
+            final RecordCursorFactory master,
+            final RecordMetadata masterMetadata,
+            final CharSequence masterAlias,
+            final RecordCursorFactory slave,
+            final RecordMetadata slaveMetadata
+    ) throws SqlException {
+        long toleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
+        CharSequence slaveAlias = slaveModel.getName();
+
+        if (fullFatJoins || !slave.recordCursorSupportsRandomAccess()) {
+            return createFullFatJoin(
+                    master,
+                    masterMetadata,
+                    masterAlias,
+                    slave,
+                    slaveMetadata,
+                    slaveAlias,
+                    slaveModel.getJoinKeywordPosition(),
+                    CREATE_FULL_FAT_AS_OF_JOIN,
+                    slaveModel.getJoinContext(),
+                    toleranceInterval
+            );
+        }
+
+        final JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
+        try {
+            boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
+            if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
+                SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, isSelfJoin);
+                int joinColumnSplit = masterMetadata.getColumnCount();
+                JoinContext slaveContext = slaveModel.getJoinContext();
+                if (!hasLinearHint) {
+                    if (slave.supportsTimeFrameCursor()) {
+                        boolean isSingleSymbolJoin = isSingleSymbolJoin(symbolShortCircuit);
+                        boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
+                        if (hasDenseHint) {
+                            if (isSingleSymbolJoin) {
+                                int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                                return new AsOfJoinDenseSingleSymbolRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        slave,
+                                        joinColumnSplit,
+                                        slaveSymbolColumnIndex,
+                                        (SymbolJoinKeyMapping) symbolShortCircuit,
+                                        slaveContext,
+                                        toleranceInterval
+                                );
+                            }
+                            return new AsOfJoinDenseRecordCursorFactory(
+                                    configuration,
+                                    joinMetadata,
+                                    master,
+                                    createRecordCopierMaster(masterMetadata),
+                                    slave,
+                                    createRecordCopierSlave(slaveMetadata),
+                                    joinColumnSplit,
+                                    keyTypes,
+                                    slaveContext,
+                                    toleranceInterval
+                            );
+                        }
+                        RecordSink recordCopierMaster;
+                        if (isSingleSymbolJoin) {
+                            SymbolJoinKeyMapping symbolJoinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
+                            int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                            boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
+                            if (hasIndexHint && slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
+                                return new AsOfJoinIndexedRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        slave,
+                                        joinColumnSplit,
+                                        slaveSymbolColumnIndex,
+                                        symbolJoinKeyMapping,
+                                        slaveContext,
+                                        toleranceInterval
+                                );
+                            }
+                            boolean hasMemoizedHint = SqlHints.hasAsOfMemoizedHint(model, masterAlias, slaveAlias);
+                            boolean hasMemoizedDrivebyHint = SqlHints.hasAsOfMemoizedDrivebyHint(model, masterAlias, slaveAlias);
+                            if (hasMemoizedHint || hasMemoizedDrivebyHint) {
+                                return new AsOfJoinMemoizedRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        slave,
+                                        joinColumnSplit,
+                                        slaveSymbolColumnIndex,
+                                        symbolJoinKeyMapping,
+                                        slaveContext,
+                                        toleranceInterval,
+                                        hasMemoizedDrivebyHint
+                                );
+                            }
+
+                            // We're falling back to the default Fast scan. We can still optimize one thing:
+                            // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
+                            // For that to work, we need code that maps master symbol key to slave symbol key.
+                            writeSymbolAsString.unset(slaveSymbolColumnIndex);
+                            recordCopierMaster = new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit);
+                        } else {
+                            recordCopierMaster = createRecordCopierMaster(masterMetadata);
+                        }
+                        return new AsOfJoinFastRecordCursorFactory(
+                                configuration,
+                                joinMetadata,
+                                master,
+                                recordCopierMaster,
+                                slave,
+                                createRecordCopierSlave(slaveMetadata),
+                                joinColumnSplit,
+                                symbolShortCircuit,
+                                slaveContext,
+                                toleranceInterval
+                        );
+                    } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                        RecordCursorFactory slaveBase = slave.getBaseFactory();
+                        int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
+
+                        Function stolenFilter = slave.getFilter();
+                        assert stolenFilter != null;
+
+                        Misc.free(slave.getCompiledFilter());
+                        Misc.free(slave.getBindVarMemory());
+                        Misc.freeObjList(slave.getBindVarFunctions());
+                        slave.halfClose();
+
+                        return new FilteredAsOfJoinFastRecordCursorFactory(
+                                configuration,
+                                joinMetadata,
+                                master,
+                                createRecordCopierMaster(masterMetadata),
+                                slaveBase,
+                                createRecordCopierSlave(slaveMetadata),
+                                stolenFilter,
+                                masterMetadata.getColumnCount(),
+                                NullRecordFactory.getInstance(slaveMetadata),
+                                null,
+                                slaveTimestampIndex,
+                                toleranceInterval
+                        );
+                    } else if (slave.isProjection()) {
+                        RecordCursorFactory projectionBase = slave.getBaseFactory();
+                        // We know projectionBase does not support supportsTimeFrameCursor, because
+                        // Projections forward this call to its base factory and if we are in this branch
+                        // then slave.supportsTimeFrameCursor() returned false in one the previous branches.
+                        // There is still chance that projectionBase is just a filter
+                        // and its own base supports timeFrameCursor. let's see.
+                        if (projectionBase.supportsFilterStealing()) {
+                            // ok cool, it's used only as a filter.
+                            RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
+                            if (filterStealingBase.supportsTimeFrameCursor()) {
+                                IntList stolenCrossIndex = slave.getColumnCrossIndex();
+                                assert stolenCrossIndex != null;
+                                Function stolenFilter = projectionBase.getFilter();
+                                assert stolenFilter != null;
+
+                                // index *after* applying the projection
+                                int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+                                assert stolenCrossIndex.get(slaveTimestampIndex) == filterStealingBase.getMetadata().getTimestampIndex();
+
+                                Misc.free(projectionBase.getCompiledFilter());
+                                Misc.free(projectionBase.getBindVarMemory());
+                                Misc.freeObjList(projectionBase.getBindVarFunctions());
+                                projectionBase.halfClose();
+
+                                return new FilteredAsOfJoinFastRecordCursorFactory(
+                                        configuration,
+                                        joinMetadata,
+                                        master,
+                                        createRecordCopierMaster(masterMetadata),
+                                        filterStealingBase,
+                                        createRecordCopierSlave(slaveMetadata),
+                                        stolenFilter,
+                                        masterMetadata.getColumnCount(),
+                                        NullRecordFactory.getInstance(slaveMetadata),
+                                        stolenCrossIndex,
+                                        slaveTimestampIndex,
+                                        toleranceInterval
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // fallback for keyed join when no optimizations are applicable, or when asof_linear hint is used:
+                if (isSingleSymbolJoin(symbolShortCircuit)) {
+                    // We're falling back to the default Light scan. We can still optimize one thing:
+                    // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
+                    // For that to work, we need code that maps master symbol key to slave symbol key.
+                    int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                    writeSymbolAsString.unset(slaveSymbolColumnIndex);
+                    SymbolJoinKeyMapping joinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
+                    keyTypes.clear();
+                    keyTypes.add(ColumnType.INT);
+                    return new AsOfJoinLightRecordCursorFactory(
+                            configuration,
+                            joinMetadata,
+                            master,
+                            slave,
+                            keyTypes,
+                            new SymbolKeyMappingRecordCopier(joinKeyMapping),
+                            createRecordCopierSlave(slaveMetadata),
+                            joinKeyMapping,
+                            joinColumnSplit,
+                            slaveContext,
+                            toleranceInterval
+                    );
+                } else {
+                    return new AsOfJoinLightRecordCursorFactory(
+                            configuration,
+                            joinMetadata,
+                            master,
+                            slave,
+                            keyTypes,
+                            createRecordCopierMaster(masterMetadata),
+                            createRecordCopierSlave(slaveMetadata),
+                            null,
+                            joinColumnSplit,
+                            slaveContext,
+                            toleranceInterval
+                    );
+                }
+            }
+
+            // reaching this point means the join is non-keyed
+            if (!hasLinearHint) {
+                if (slave.supportsTimeFrameCursor()) {
+                    return new AsOfJoinNoKeyFastRecordCursorFactory(
+                            configuration,
+                            joinMetadata,
+                            master,
+                            slave,
+                            masterMetadata.getColumnCount(),
+                            toleranceInterval
+                    );
+                }
+                if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                    // Try to steal the filter from the slave. This downgrades to
+                    // single-threaded Java-level filtering, so it's only worth it if the filter
+                    // selectivity is low. We don't have statistics to tell selectivity, so
+                    // we allow the user to disable this with the asof_linear_search hint.
+                    RecordCursorFactory slaveBase = slave.getBaseFactory();
+                    int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
+
+                    Function stolenFilter = slave.getFilter();
+                    assert stolenFilter != null;
+
+                    Misc.free(slave.getCompiledFilter());
+                    Misc.free(slave.getBindVarMemory());
+                    Misc.freeObjList(slave.getBindVarFunctions());
+                    slave.halfClose();
+                    return new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
+                            configuration,
+                            joinMetadata,
+                            master,
+                            slaveBase,
+                            stolenFilter,
+                            masterMetadata.getColumnCount(),
+                            NullRecordFactory.getInstance(slaveMetadata),
+                            null,
+                            slaveTimestampIndex,
+                            toleranceInterval
+                    );
+                }
+                if (slave.isProjection()) {
+                    RecordCursorFactory projectionBase = slave.getBaseFactory();
+                    // We know projectionBase does not support supportsTimeFrameCursor, because
+                    // projections forward this call to its base factory, and if we are in this branch,
+                    // slave.supportsTimeFrameCursor() returned false in a previous branch.
+                    // There is still chance that projectionBase is just a filter
+                    // and its own base supports timeFrameCursor. Let's see.
+                    if (projectionBase.supportsFilterStealing()) {
+                        // ok, cool, it's used only as a filter
+                        RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
+                        if (filterStealingBase.supportsTimeFrameCursor()) {
+                            IntList stolenCrossIndex = slave.getColumnCrossIndex();
+                            assert stolenCrossIndex != null;
+                            Function stolenFilter = projectionBase.getFilter();
+                            assert stolenFilter != null;
+
+                            // index *after* applying the projection
+                            int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+                            assert stolenCrossIndex.get(slaveTimestampIndex) == filterStealingBase.getMetadata().getTimestampIndex();
+
+                            Misc.free(projectionBase.getCompiledFilter());
+                            Misc.free(projectionBase.getBindVarMemory());
+                            Misc.freeObjList(projectionBase.getBindVarFunctions());
+                            projectionBase.halfClose();
+
+                            return new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
+                                    configuration,
+                                    joinMetadata,
+                                    master,
+                                    filterStealingBase,
+                                    stolenFilter,
+                                    masterMetadata.getColumnCount(),
+                                    NullRecordFactory.getInstance(slaveMetadata),
+                                    stolenCrossIndex,
+                                    slaveTimestampIndex,
+                                    toleranceInterval
+                            );
+                        }
+                    }
+                }
+            }
+            // fallback for non-keyed join when no optimizations are applicable, or the asof_linear hint is used:
+            return new AsOfJoinLightNoKeyRecordCursorFactory(
+                    joinMetadata,
+                    master,
+                    slave,
+                    masterMetadata.getColumnCount(),
+                    toleranceInterval
+            );
+        } catch (Throwable t) {
+            Misc.free(joinMetadata);
+            throw t;
+        }
+    }
+
+    private @NotNull RecordCursorFactory generateJoinLt(
+            QueryModel model,
+            QueryModel slaveModel,
+            RecordCursorFactory master,
+            RecordMetadata masterMetadata,
+            CharSequence masterAlias,
+            RecordCursorFactory slave,
+            RecordMetadata slaveMetadata
+    ) throws SqlException {
+        long toleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
+        CharSequence slaveAlias = slaveModel.getName();
+
+        if (!slave.recordCursorSupportsRandomAccess() || fullFatJoins) {
+            return createFullFatJoin(
+                    master,
+                    masterMetadata,
+                    masterAlias,
+                    slave,
+                    slaveMetadata,
+                    slaveAlias,
+                    slaveModel.getJoinKeywordPosition(),
+                    CREATE_FULL_FAT_LT_JOIN,
+                    slaveModel.getJoinContext(),
+                    toleranceInterval
+            );
+        }
+
+        JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
+        try {
+            if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
+                RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
+                RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
+                int columnSplit = masterMetadata.getColumnCount();
+                JoinContext joinContext = slaveModel.getJoinContext();
+                valueTypes.clear();
+                valueTypes.add(LONG);
+                return new LtJoinLightRecordCursorFactory(
+                        configuration,
+                        joinMetadata,
+                        master,
+                        slave,
+                        keyTypes,
+                        valueTypes,
+                        masterKeyCopier,
+                        slaveKeyCopier,
+                        columnSplit,
+                        joinContext,
+                        toleranceInterval
+                );
+            }
+
+            boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
+            if (!hasLinearHint && slave.supportsTimeFrameCursor()) {
+                return new LtJoinNoKeyFastRecordCursorFactory(
+                        configuration,
+                        joinMetadata,
+                        master,
+                        slave,
+                        masterMetadata.getColumnCount(),
+                        toleranceInterval
+                );
+            }
+
+            return new LtJoinNoKeyRecordCursorFactory(
+                    joinMetadata,
+                    master,
+                    slave,
+                    masterMetadata.getColumnCount(),
+                    toleranceInterval
+            );
+        } catch (Throwable t) {
+            Misc.free(joinMetadata);
+            throw t;
+        }
+    }
+
     private RecordCursorFactory generateJoins(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final ObjList<QueryModel> joinModels = model.getJoinModels();
         IntList ordered = model.getOrderedJoinModels();
@@ -2667,7 +3310,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 RecordCursorFactory slave = null;
-                boolean releaseSlave = true;
+                boolean closeSlaveOnFail = true;
                 try {
                     // compile
                     slave = generateQuery(slaveModel, executionContext, index > 0);
@@ -2680,7 +3323,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // making it faster compared to ordering of join record source that
                         // doesn't allow rowid access.
                         master = slave;
-                        releaseSlave = false;
+                        closeSlaveOnFail = false;
                         masterAlias = slaveModel.getName();
                     } else {
                         // not the root, join to "master"
@@ -2694,415 +3337,105 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_CROSS_RIGHT:
                             case JOIN_CROSS_FULL:
                                 assert slaveModel.getOuterJoinExpressionClause() != null;
-                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1);
+                                joinMetadata = createJoinMetadata(
+                                        masterAlias,
+                                        masterMetadata,
+                                        slaveModel.getName(),
+                                        slaveMetadata,
+                                        joinType == JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1);
                                 filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
-                                switch (joinType) {
-                                    case JOIN_CROSS_LEFT:
-                                        master = new NestedLoopLeftJoinRecordCursorFactory(
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                masterMetadata.getColumnCount(),
-                                                filter,
-                                                NullRecordFactory.getInstance(slaveMetadata)
-                                        );
-                                        break;
-                                    case JOIN_CROSS_RIGHT:
-                                        master = new NestedLoopRightJoinRecordCursorFactory(
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                masterMetadata.getColumnCount(),
-                                                filter,
-                                                NullRecordFactory.getInstance(masterMetadata)
-                                        );
-                                        break;
-                                    case JOIN_CROSS_FULL:
-                                        master = new NestedLoopFullJoinRecordCursorFactory(
-                                                configuration,
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                masterMetadata.getColumnCount(),
-                                                filter,
-                                                NullRecordFactory.getInstance(masterMetadata),
-                                                NullRecordFactory.getInstance(slaveMetadata)
-                                        );
-                                        break;
-                                }
+                                master = switch (joinType) {
+                                    case JOIN_CROSS_LEFT -> new NestedLoopLeftJoinRecordCursorFactory(
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            filter,
+                                            NullRecordFactory.getInstance(slaveMetadata)
+                                    );
+                                    case JOIN_CROSS_RIGHT -> new NestedLoopRightJoinRecordCursorFactory(
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            filter,
+                                            NullRecordFactory.getInstance(masterMetadata)
+                                    );
+                                    case JOIN_CROSS_FULL -> new NestedLoopFullJoinRecordCursorFactory(
+                                            configuration,
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            filter,
+                                            NullRecordFactory.getInstance(masterMetadata),
+                                            NullRecordFactory.getInstance(slaveMetadata)
+                                    );
+                                    default -> throw new AssertionError("unreachable");
+                                };
                                 masterAlias = null;
                                 break;
                             case JOIN_CROSS:
                                 validateOuterJoinExpressions(slaveModel, "CROSS");
-                                master = new CrossJoinRecordCursorFactory(
-                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+
+                                // Try to detect the markout horizon pattern
+                                MarkoutHorizonInfo horizonInfo = detectMarkoutHorizonPattern(
+                                        masterAlias,
+                                        model,
+                                        masterMetadata,
                                         master,
-                                        slave,
-                                        masterMetadata.getColumnCount()
+                                        slaveModel,
+                                        slaveMetadata,
+                                        slave
                                 );
+
+                                if (horizonInfo != null) {
+                                    // Create RecordSink for materializing slave records
+                                    entityColumnFilter.of(slaveMetadata.getColumnCount());
+                                    RecordSink slaveRecordSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter);
+
+                                    // Use the optimized MarkoutHorizonRecordCursorFactory
+                                    master = new MarkoutHorizonRecordCursorFactory(
+                                            configuration,
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            horizonInfo.masterTimestampColumnIndex,
+                                            horizonInfo.slaveSequenceColumnIndex,
+                                            slaveRecordSink
+                                    );
+                                } else {
+                                    // Fall back to standard CrossJoinRecordCursorFactory
+                                    master = new CrossJoinRecordCursorFactory(
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount()
+                                    );
+                                }
                                 masterAlias = null;
                                 break;
                             case JOIN_ASOF:
-                                validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
-                                validateOuterJoinExpressions(slaveModel, "ASOF");
-                                // note: the self-join is imperfect and might generate false negatives when using subqueries
-                                // rules: 1. when it returns `true`, the join is a self-join for sure
-                                //        2. when it returns `false`, the join may or may not be self-join
-                                boolean selfJoin = isSameTable(master, slave);
-                                processJoinContext(index == 1, selfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
-                                validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
-                                long asOfToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
-                                boolean hasIndexHint = SqlHints.hasAsOfIndexSearchHint(model, masterAlias, slaveModel.getName());
-                                boolean hasLinearHint = SqlHints.hasAsOfLinearSearchHint(model, masterAlias, slaveModel.getName());
-                                boolean hasFastHint = SqlHints.hasAsOfFastSearchHint(model, masterAlias, slaveModel.getName());
-                                if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
-                                    if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
-                                        RecordSink masterSink = RecordSinkFactory.getInstance(
-                                                asm,
-                                                masterMetadata,
-                                                listColumnFilterB,
-                                                writeSymbolAsString,
-                                                writeStringAsVarcharB,
-                                                writeTimestampAsNanosB
-                                        );
-                                        RecordSink slaveSink = RecordSinkFactory.getInstance(
-                                                asm,
-                                                slaveMetadata,
-                                                listColumnFilterA,
-                                                writeSymbolAsString,
-                                                writeStringAsVarcharA,
-                                                writeTimestampAsNanosA
-                                        );
-                                        boolean created = false;
-                                        if (!hasLinearHint) {
-                                            if (slave.supportsTimeFrameCursor()) {
-                                                int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-                                                AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, selfJoin);
-                                                boolean isOptimizable = columnAccessHelper != NoopColumnAccessHelper.INSTANCE;
-                                                JoinRecordMetadata metadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
-                                                int joinColumnSplit = masterMetadata.getColumnCount();
-                                                JoinContext slaveContext = slaveModel.getJoinContext();
-                                                if (isOptimizable && hasIndexHint && isSingleSymbolJoinWithIndex(slaveMetadata)) {
-                                                    master = new AsOfJoinIndexedRecordCursorFactory(
-                                                            configuration,
-                                                            metadata,
-                                                            master,
-                                                            slave,
-                                                            joinColumnSplit,
-                                                            slaveSymbolColumnIndex,
-                                                            columnAccessHelper,
-                                                            slaveContext,
-                                                            asOfToleranceInterval
-                                                    );
-                                                } else if (isOptimizable && !hasFastHint && isSingleSymbolJoin(slaveMetadata)) {
-                                                    master = new AsOfJoinMemoizedRecordCursorFactory(
-                                                            configuration,
-                                                            metadata,
-                                                            master,
-                                                            slave,
-                                                            joinColumnSplit,
-                                                            slaveSymbolColumnIndex,
-                                                            columnAccessHelper,
-                                                            slaveContext,
-                                                            asOfToleranceInterval,
-                                                            SqlHints.hasAsOfDrivebyCacheHint(model, masterAlias, slaveModel.getName())
-                                                    );
-                                                } else {
-                                                    master = new AsOfJoinFastRecordCursorFactory(
-                                                            configuration,
-                                                            metadata,
-                                                            master,
-                                                            masterSink,
-                                                            slave,
-                                                            slaveSink,
-                                                            joinColumnSplit,
-                                                            columnAccessHelper,
-                                                            slaveContext,
-                                                            asOfToleranceInterval
-                                                    );
-                                                }
-                                                created = true;
-                                            } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
-                                                RecordCursorFactory slaveBase = slave.getBaseFactory();
-                                                int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-
-                                                // slave.supportsFilterStealing() means slave is nothing but a filter.
-                                                // if slave is just a filter, then it must have the same metadata as its base,
-                                                // that includes the timestamp index.
-                                                assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
-
-                                                Function stolenFilter = slave.getFilter();
-                                                assert stolenFilter != null;
-
-                                                Misc.free(slave.getCompiledFilter());
-                                                Misc.free(slave.getBindVarMemory());
-                                                Misc.freeObjList(slave.getBindVarFunctions());
-                                                slave.halfClose();
-
-                                                master = new FilteredAsOfJoinFastRecordCursorFactory(
-                                                        configuration,
-                                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                        master,
-                                                        masterSink,
-                                                        slaveBase,
-                                                        slaveSink,
-                                                        stolenFilter,
-                                                        masterMetadata.getColumnCount(),
-                                                        NullRecordFactory.getInstance(slaveMetadata),
-                                                        null,
-                                                        slaveTimestampIndex,
-                                                        asOfToleranceInterval
-                                                );
-                                                created = true;
-                                            } else if (slave.isProjection()) {
-                                                RecordCursorFactory projectionBase = slave.getBaseFactory();
-                                                // We know projectionBase does not support supportsTimeFrameCursor, because
-                                                // Projections forward this call to its base factory and if we are in this branch
-                                                // then slave.supportsTimeFrameCursor() returned false in one the previous branches.
-                                                // There is still chance that projectionBase is just a filter
-                                                // and its own base supports timeFrameCursor. let's see.
-                                                if (projectionBase.supportsFilterStealing()) {
-                                                    // ok, cool, is used only as a filter.
-                                                    RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
-                                                    if (filterStealingBase.supportsTimeFrameCursor()) {
-                                                        IntList stolenCrossIndex = slave.getColumnCrossIndex();
-                                                        assert stolenCrossIndex != null;
-                                                        Function stolenFilter = projectionBase.getFilter();
-                                                        assert stolenFilter != null;
-
-                                                        // index *after* applying the projection
-                                                        int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-                                                        assert stolenCrossIndex.get(slaveTimestampIndex) == filterStealingBase.getMetadata().getTimestampIndex();
-
-                                                        Misc.free(projectionBase.getCompiledFilter());
-                                                        Misc.free(projectionBase.getBindVarMemory());
-                                                        Misc.freeObjList(projectionBase.getBindVarFunctions());
-                                                        projectionBase.halfClose();
-
-                                                        master = new FilteredAsOfJoinFastRecordCursorFactory(
-                                                                configuration,
-                                                                createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                                master,
-                                                                masterSink,
-                                                                filterStealingBase,
-                                                                slaveSink,
-                                                                stolenFilter,
-                                                                masterMetadata.getColumnCount(),
-                                                                NullRecordFactory.getInstance(slaveMetadata),
-                                                                stolenCrossIndex,
-                                                                slaveTimestampIndex,
-                                                                asOfToleranceInterval
-                                                        );
-                                                        created = true;
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if (!created) {
-                                            master = createAsOfJoin(
-                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                    master,
-                                                    masterSink,
-                                                    slave,
-                                                    slaveSink,
-                                                    masterMetadata.getColumnCount(),
-                                                    slaveModel.getJoinContext(),
-                                                    asOfToleranceInterval
-                                            );
-                                        }
-                                    } else {
-                                        boolean created = false;
-                                        if (!hasLinearHint) {
-                                            if (slave.supportsTimeFrameCursor()) {
-                                                master = new AsOfJoinNoKeyFastRecordCursorFactory(
-                                                        configuration,
-                                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                        master,
-                                                        slave,
-                                                        masterMetadata.getColumnCount(),
-                                                        asOfToleranceInterval
-                                                );
-                                                created = true;
-                                            } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
-                                                // Try to steal the filter from the slave. This downgrades to
-                                                // single-threaded Java-level filtering, so it's only worth it if the filter
-                                                // selectivity is low. We don't have statistics to tell selectivity, so
-                                                // we allow the user to disable this with the asof_linear_search hint.
-                                                RecordCursorFactory slaveBase = slave.getBaseFactory();
-                                                int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-
-                                                // slave.supportsFilterStealing() means slave is nothing but a filter.
-                                                // If slave is just a filter, it must have the same metadata as its base,
-                                                // which includes the timestamp index.
-                                                assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
-
-                                                Function stolenFilter = slave.getFilter();
-                                                assert stolenFilter != null;
-
-                                                Misc.free(slave.getCompiledFilter());
-                                                Misc.free(slave.getBindVarMemory());
-                                                Misc.freeObjList(slave.getBindVarFunctions());
-                                                slave.halfClose();
-
-                                                master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
-                                                        configuration,
-                                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                        master,
-                                                        slaveBase,
-                                                        stolenFilter,
-                                                        masterMetadata.getColumnCount(),
-                                                        NullRecordFactory.getInstance(slaveMetadata),
-                                                        null,
-                                                        slaveTimestampIndex,
-                                                        asOfToleranceInterval
-                                                );
-                                                created = true;
-                                            } else if (slave.isProjection()) {
-                                                RecordCursorFactory projectionBase = slave.getBaseFactory();
-                                                // We know projectionBase does not support supportsTimeFrameCursor, because
-                                                // projections forward this call to its base factory, and if we are in this branch,
-                                                // slave.supportsTimeFrameCursor() returned false in a previous branch.
-                                                // There is still chance that projectionBase is just a filter
-                                                // and its own base supports timeFrameCursor. Let's see.
-                                                if (projectionBase.supportsFilterStealing()) {
-                                                    // ok, cool, it's used only as a filter
-                                                    RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
-                                                    if (filterStealingBase.supportsTimeFrameCursor()) {
-                                                        IntList stolenCrossIndex = slave.getColumnCrossIndex();
-                                                        assert stolenCrossIndex != null;
-                                                        Function stolenFilter = projectionBase.getFilter();
-                                                        assert stolenFilter != null;
-
-                                                        // index *after* applying the projection
-                                                        int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-                                                        assert stolenCrossIndex.get(slaveTimestampIndex) == filterStealingBase.getMetadata().getTimestampIndex();
-
-                                                        Misc.free(projectionBase.getCompiledFilter());
-                                                        Misc.free(projectionBase.getBindVarMemory());
-                                                        Misc.freeObjList(projectionBase.getBindVarFunctions());
-                                                        projectionBase.halfClose();
-
-                                                        master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
-                                                                configuration,
-                                                                createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                                master,
-                                                                filterStealingBase,
-                                                                stolenFilter,
-                                                                masterMetadata.getColumnCount(),
-                                                                NullRecordFactory.getInstance(slaveMetadata),
-                                                                stolenCrossIndex,
-                                                                slaveTimestampIndex,
-                                                                asOfToleranceInterval
-                                                        );
-                                                        created = true;
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        // slow path: this always works but can be quite slow, especially with large slave tables
-                                        if (!created) {
-                                            master = new AsOfJoinLightNoKeyRecordCursorFactory(
-                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                    master,
-                                                    slave,
-                                                    masterMetadata.getColumnCount(),
-                                                    asOfToleranceInterval
-                                            );
-                                        }
-                                    }
-                                } else {
-                                    master = createFullFatJoin(
-                                            master,
-                                            masterMetadata,
-                                            masterAlias,
-                                            slave,
-                                            slaveMetadata,
-                                            slaveModel.getName(),
-                                            slaveModel.getJoinKeywordPosition(),
-                                            CREATE_FULL_FAT_AS_OF_JOIN,
-                                            slaveModel.getJoinContext(),
-                                            asOfToleranceInterval
-                                    );
-                                }
-                                masterAlias = null;
-                                // if we fail after this step, master will release slave
-                                releaseSlave = false;
-                                break;
                             case JOIN_LT:
-                                long ltToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
-                                validateOuterJoinExpressions(slaveModel, "LT");
-                                boolean ltLinearSearch = SqlHints.hasAsOfLinearSearchHint(model, masterAlias, slaveModel.getName());
-                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
-                                if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
-                                    if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
-                                        master = createLtJoin(
-                                                createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                master,
-                                                RecordSinkFactory.getInstance(
-                                                        asm,
-                                                        masterMetadata,
-                                                        listColumnFilterB,
-                                                        writeSymbolAsString,
-                                                        writeStringAsVarcharB,
-                                                        writeTimestampAsNanosB
-                                                ),
-                                                slave,
-                                                RecordSinkFactory.getInstance(
-                                                        asm,
-                                                        slaveMetadata,
-                                                        listColumnFilterA,
-                                                        writeSymbolAsString,
-                                                        writeStringAsVarcharA,
-                                                        writeTimestampAsNanosA
-                                                ),
-                                                masterMetadata.getColumnCount(),
-                                                slaveModel.getJoinContext(),
-                                                ltToleranceInterval
-                                        );
-                                    } else {
-                                        if (!ltLinearSearch && slave.supportsTimeFrameCursor()) {
-                                            master = new LtJoinNoKeyFastRecordCursorFactory(
-                                                    configuration,
-                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                    master,
-                                                    slave,
-                                                    masterMetadata.getColumnCount(),
-                                                    ltToleranceInterval
-                                            );
-                                        } else {
-                                            master = new LtJoinNoKeyRecordCursorFactory(
-                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                    master,
-                                                    slave,
-                                                    masterMetadata.getColumnCount(),
-                                                    ltToleranceInterval
-                                            );
-                                        }
-                                    }
-                                } else {
-                                    master = createFullFatJoin(
-                                            master,
-                                            masterMetadata,
-                                            masterAlias,
-                                            slave,
-                                            slaveMetadata,
-                                            slaveModel.getName(),
-                                            slaveModel.getJoinKeywordPosition(),
-                                            CREATE_FULL_FAT_LT_JOIN,
-                                            slaveModel.getJoinContext(),
-                                            ltToleranceInterval
-                                    );
-                                }
-                                masterAlias = null;
-                                // if we fail after this step, master will release slave
-                                releaseSlave = false;
+                                validateOuterJoinExpressions(slaveModel, joinType == JOIN_ASOF ? "ASOF" : "LT");
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
+                                // isSelfJoin is imperfect and might generate false negatives when using subqueries:
+                                //  - if `true`, the join is a self-join for sure
+                                //  - if `false`, the join may or may not be self-join
+                                boolean isSelfJoin = isSameTable(master, slave);
+                                processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                master = joinType == JOIN_ASOF
+                                        ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata, masterAlias, slave, slaveMetadata)
+                                        : generateJoinLt(model, slaveModel, master, masterMetadata, masterAlias, slave, slaveMetadata);
+                                masterAlias = null;
+                                // from now on, master owns slave, so we don't have to close it
+                                closeSlaveOnFail = false;
                                 break;
                             case JOIN_SPLICE:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
+                                validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 validateOuterJoinExpressions(slaveModel, "SPLICE");
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
@@ -3110,29 +3443,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             // splice join result does not have timestamp
                                             createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
                                             master,
-                                            RecordSinkFactory.getInstance(
-                                                    asm,
-                                                    masterMetadata,
-                                                    listColumnFilterB,
-                                                    writeSymbolAsString,
-                                                    writeStringAsVarcharB,
-                                                    writeTimestampAsNanosB
-                                            ),
+                                            createRecordCopierMaster(masterMetadata),
                                             slave,
-                                            RecordSinkFactory.getInstance(
-                                                    asm,
-                                                    slaveMetadata,
-                                                    listColumnFilterA,
-                                                    writeSymbolAsString,
-                                                    writeStringAsVarcharA,
-                                                    writeTimestampAsNanosA
-                                            ),
+                                            createRecordCopierSlave(slaveMetadata),
                                             masterMetadata.getColumnCount(),
                                             slaveModel.getJoinContext()
                                     );
-                                    // if we fail after this step, master will release slave
-                                    releaseSlave = false;
-                                    validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
+                                    // from now on, master owns slave, so we don't have to close it
+                                    closeSlaveOnFail = false;
                                 } else {
                                     if (!master.recordCursorSupportsRandomAccess()) {
                                         throw SqlException.position(slaveModel.getJoinKeywordPosition()).put("left side of splice join doesn't support random access");
@@ -3183,7 +3501,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } catch (Throwable th) {
                     Misc.free(joinMetadata);
                     master = Misc.free(master);
-                    if (releaseSlave) {
+                    if (closeSlaveOnFail) {
                         Misc.free(slave);
                     }
                     throw th;
@@ -3887,26 +4205,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        return generateLimit(
-                generateOrderBy(
-                        generateLatestBy(
-                                generateFilter(
-                                        generateSelect(
-                                                model,
-                                                executionContext,
-                                                processJoins
-                                        ),
-                                        model,
-                                        executionContext
-                                ),
-                                model
-                        ),
-                        model,
-                        executionContext
-                ),
-                model,
-                executionContext
-        );
+        // Remember the last model with non-empty ORDER BY as we descend through nested models.
+        // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
+        // several levels up from the model that holds the join clause.
+        final QueryModel savedOrderByModel = lastSeenOrderByModel;
+        try {
+            final ObjList<ExpressionNode> orderBy = model.getOrderBy();
+            if (orderBy != null && orderBy.size() > 0) {
+                lastSeenOrderByModel = model;
+            }
+            RecordCursorFactory factory;
+
+            factory = generateSelect(model, executionContext, processJoins);
+            factory = generateFilter(factory, model, executionContext);
+            factory = generateLatestBy(factory, model);
+            factory = generateOrderBy(factory, model, executionContext);
+            factory = generateLimit(factory, model, executionContext);
+
+            return factory;
+        } finally {
+            lastSeenOrderByModel = savedOrderByModel;
+        }
     }
 
     @NotNull
@@ -4002,7 +4321,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // but TopDownColumns may have different order and count with BottomUpColumns.
         // Need to reorganize sampleByFill according to the position relationship between
         // TopDownColumns and BottomUpColumns to ensure correct fill value alignment.
-        if (fillCount != 0 && model.getTopDownColumns().size() != 0) {
+        if (fillCount > 1 && model.getTopDownColumns().size() != 0) {
             tempColumnsList.clear();
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                 final QueryColumn column = model.getBottomUpColumns().getQuick(i);
@@ -4386,29 +4705,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateSelect(
             QueryModel model,
             SqlExecutionContext executionContext,
-            boolean processJoins
+            boolean shouldProcessJoins
     ) throws SqlException {
-        switch (model.getSelectModelType()) {
-            case SELECT_MODEL_CHOOSE:
-                return generateSelectChoose(model, executionContext);
-            case SELECT_MODEL_GROUP_BY:
-                return generateSelectGroupBy(model, executionContext);
-            case SELECT_MODEL_VIRTUAL:
-                return generateSelectVirtual(model, executionContext);
-            case SELECT_MODEL_WINDOW:
-                return generateSelectWindow(model, executionContext);
-            case SELECT_MODEL_DISTINCT:
-                return generateSelectDistinct(model, executionContext);
-            case SELECT_MODEL_CURSOR:
-                return generateSelectCursor(model, executionContext);
-            case SELECT_MODEL_SHOW:
-                return model.getTableNameFunction();
-            default:
-                if (model.getJoinModels().size() > 1 && processJoins) {
-                    return generateJoins(model, executionContext);
-                }
-                return generateNoSelect(model, executionContext);
-        }
+        return switch (model.getSelectModelType()) {
+            case SELECT_MODEL_CHOOSE -> generateSelectChoose(model, executionContext);
+            case SELECT_MODEL_GROUP_BY -> generateSelectGroupBy(model, executionContext);
+            case SELECT_MODEL_VIRTUAL -> generateSelectVirtual(model, executionContext);
+            case SELECT_MODEL_WINDOW -> generateSelectWindow(model, executionContext);
+            case SELECT_MODEL_DISTINCT -> generateSelectDistinct(model, executionContext);
+            case SELECT_MODEL_CURSOR -> generateSelectCursor(model, executionContext);
+            case SELECT_MODEL_SHOW -> model.getTableNameFunction();
+            default -> shouldProcessJoins && model.getJoinModels().size() > 1
+                    ? generateJoins(model, executionContext)
+                    : generateNoSelect(model, executionContext);
+        };
     }
 
     private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -5323,12 +5633,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function f;
                     try {
                         f = functionParser.parseFunction(ast, baseMetadata, executionContext);
-                        if (!(f instanceof WindowFunction)) {
+                        if (!(f instanceof WindowFunction af)) {
                             Misc.free(f);
                             throw SqlException.$(ast.position, "non-window function called in window context");
                         }
 
-                        WindowFunction af = (WindowFunction) f;
                         functions.extendAndSet(i, f);
 
                         // sorting and/or multiple passes are required, so fall back to old implementation
@@ -5700,8 +6009,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionFactory(
@@ -5719,8 +6028,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionAllFactory(
@@ -5737,8 +6046,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionFactory(
@@ -5756,8 +6065,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateIntersectOrExceptAllFactory(
@@ -5775,8 +6084,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionFactory(
@@ -5794,8 +6103,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateIntersectOrExceptAllFactory(
@@ -5910,7 +6219,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnSizeShifts.add(Numbers.msb(typeSize));
 
                     queryMeta.add(new TableColumnMetadata(
-                            Chars.toString(column.getName()),
+                            metadata.getColumnName(columnIndex),
                             type,
                             metadata.isColumnIndexed(columnIndex),
                             metadata.getIndexValueBlockCapacity(columnIndex),
@@ -6693,26 +7002,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
     }
 
-    private boolean isSingleSymbolJoin(RecordMetadata slaveMetadata) {
-        return isSingleSymbolJoin(slaveMetadata, false);
-    }
-
-    /**
-     * Checks if the ASOF JOIN is on a single symbol column, and optionally requires the slave column is indexed.
-     * This is a precondition to enable some optimized ASOF JOIN implementations.
-     */
-    private boolean isSingleSymbolJoin(RecordMetadata slaveMetadata, boolean requireSlaveIndex) {
-        // Must be joining on exactly one column (besides timestamps)
-        if (listColumnFilterA.size() != 1 || listColumnFilterB.size() != 1) {
-            return false;
-        }
-        int slaveIndex = listColumnFilterA.getColumnIndexFactored(0);
-        return slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL &&
-                (!requireSlaveIndex || slaveMetadata.isColumnIndexed(slaveIndex));
-    }
-
-    private boolean isSingleSymbolJoinWithIndex(RecordMetadata slaveMetadata) {
-        return isSingleSymbolJoin(slaveMetadata, true);
+    private boolean isSingleSymbolJoin(SymbolShortCircuit symbolShortCircuit) {
+        return symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
+                !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
     }
 
     // skips skipped models until finding a WHERE clause
@@ -6829,7 +7121,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private void processJoinContext(
             boolean vanillaMaster,
-            boolean selfJoin,
+            boolean isSelfJoin,
             JoinContext jc,
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata
@@ -6874,7 +7166,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 writeSymbolAsString.set(columnIndexA);
                 writeSymbolAsString.set(columnIndexB);
             } else if (columnTypeB == ColumnType.SYMBOL) {
-                if (selfJoin && Chars.equalsIgnoreCase(columnNameA, columnNameB)) {
+                if (isSelfJoin && Chars.equalsIgnoreCase(columnNameA, columnNameB)) {
                     keyTypes.add(ColumnType.SYMBOL);
                 } else {
                     keyTypes.add(ColumnType.STRING);
@@ -7032,6 +7324,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @FunctionalInterface
     interface ModelOperator {
         void operate(ObjectPool<ExpressionNode> pool, QueryModel model);
+    }
+
+    /**
+     * Container class to hold the detected parameters of a markout horizon pattern.
+     */
+    private static class MarkoutHorizonInfo {
+        int masterTimestampColumnIndex;
+        int slaveSequenceColumnIndex;
+
+        MarkoutHorizonInfo of(int timestampColumnIndex, int slaveColumnIndex) {
+            this.masterTimestampColumnIndex = timestampColumnIndex;
+            this.slaveSequenceColumnIndex = slaveColumnIndex;
+            return this;
+        }
     }
 
     private static class RecordCursorFactoryStub implements RecordCursorFactory {

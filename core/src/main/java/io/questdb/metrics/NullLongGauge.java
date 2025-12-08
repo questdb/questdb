@@ -42,6 +42,11 @@ public class NullLongGauge implements AtomicLongGauge {
     }
 
     @Override
+    public long decrementAndGet() {
+        return 0;
+    }
+
+    @Override
     public CharSequence getName() {
         return null;
     }

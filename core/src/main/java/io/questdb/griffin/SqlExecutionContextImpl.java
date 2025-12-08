@@ -41,6 +41,9 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -56,6 +59,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal256 decimal256 = new Decimal256();
+    private final Decimal64 decimal64 = new Decimal64();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
     private final int sharedQueryWorkerCount;
@@ -85,6 +91,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
+    private boolean validationOnly = false;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int sharedQueryWorkerCount) {
         assert sharedQueryWorkerCount >= 0;
@@ -201,6 +208,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return cloneSymbolTables;
     }
 
+    public Decimal128 getDecimal128() {
+        return decimal128;
+    }
+
+    public Decimal256 getDecimal256() {
+        return decimal256;
+    }
+
+    public Decimal64 getDecimal64() {
+        return decimal64;
+    }
+
     @Override
     public int getIntervalFunctionType() {
         return intervalFunctionType;
@@ -307,6 +326,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isValidationOnly() {
+        return validationOnly;
+    }
+
+    @Override
     public boolean isWalApplication() {
         return false;
     }
@@ -327,6 +351,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
         this.allowNonDeterministicFunction = true;
+        this.validationOnly = false;
     }
 
     @Override
@@ -399,6 +424,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.useSimpleCircuitBreaker = value;
     }
 
+    public void setValidationOnly(boolean validationOnly) {
+        this.validationOnly = validationOnly;
+    }
+
     @Override
     public void storeTelemetry(short event, short origin) {
         telemetryFacade.store(event, origin);
@@ -426,8 +455,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.bindVariableService = bindVariableService;
     }
 
-    public void with(SqlExecutionCircuitBreaker circuitBreaker) {
+    public SqlExecutionContext with(SqlExecutionCircuitBreaker circuitBreaker) {
         this.circuitBreaker = circuitBreaker;
+        return this;
     }
 
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext) {

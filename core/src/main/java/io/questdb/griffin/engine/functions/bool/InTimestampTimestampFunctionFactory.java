@@ -344,7 +344,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -482,7 +482,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 

@@ -29,6 +29,8 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Mutable;
 
 public interface GroupByFunction extends Function, Mutable {
@@ -80,6 +82,15 @@ public interface GroupByFunction extends Function, Mutable {
      */
     default boolean earlyExit(MapValue mapValue) {
         return false;
+    }
+
+    /**
+     * Returns recorded cardinality for hash set based functions such as count_distinct().
+     * <p>
+     * A prior {@link #resetStats()} call should be made to reset the counter before computing any values.
+     */
+    default long getCardinalityStat() {
+        return 0;
     }
 
     default int getSampleByFlags() {
@@ -148,6 +159,13 @@ public interface GroupByFunction extends Function, Mutable {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Reset statistics for functions that support cardinality counter. After calling this method and prior
+     * to any compute calls, {@link #getCardinalityStat()} will return 0.
+     */
+    default void resetStats() {
+    }
+
     default void setAllocator(GroupByAllocator allocator) {
         // no-op
     }
@@ -157,11 +175,22 @@ public interface GroupByFunction extends Function, Mutable {
         throw new UnsupportedOperationException();
     }
 
+    // to be used when doing interpolation
+    default void setDecimal128(MapValue mapValue, Decimal128 value) {
+        throw new UnsupportedOperationException();
+    }
+
+    // to be used when doing interpolation
+    default void setDecimal256(MapValue mapValue, Decimal256 value) {
+        throw new UnsupportedOperationException();
+    }
+
     // used when doing interpolation
     default void setDouble(MapValue mapValue, double value) {
         throw new UnsupportedOperationException();
     }
 
+    // used by generated code
     default void setEmpty(MapValue value) {
         setNull(value);
     }

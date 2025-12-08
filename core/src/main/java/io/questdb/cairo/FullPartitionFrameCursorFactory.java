@@ -76,11 +76,6 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
     }
 
     @Override
-    public boolean hasInterval() {
-        return false;
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         int order = sink.getOrder();
         if (order == ORDER_ANY || order < 0) {

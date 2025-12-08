@@ -46,9 +46,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -63,7 +61,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
@@ -74,8 +71,6 @@ import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.engine.ops.Operation;
-import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -115,7 +110,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
-import io.questdb.test.griffin.AsOfJoinTest;
+import io.questdb.test.griffin.engine.join.AsOfJoinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVariableTestSetter;
 import io.questdb.test.tools.BindVariableTestTuple;
@@ -256,6 +251,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
             count++;
         }
 
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        int skip = count > 0 && rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
+        int k = 0;
+        while (k < skip && cursor.hasNext()) {
+            k++;
+        }
+        sink.clear();
+        cursor.toTop();
+        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+
         if (!sizeCanBeVariable) {
             if (sizeExpected) {
                 Assert.assertTrue("Concrete cursor size expected but was -1", cursorSize != -1);
@@ -267,6 +272,20 @@ public abstract class AbstractCairoTest extends AbstractTest {
             Assert.assertEquals("Actual cursor records vs cursor.size()", count, cursorSize);
             if (cursorSizeBeforeFetch != -1) {
                 Assert.assertEquals("Cursor size before fetch and after", cursorSizeBeforeFetch, cursorSize);
+            }
+        } else {
+            if (count > 0) {
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+                cursor.toTop();
+                skip = rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
+                while (counter.get() < skip && cursor.hasNext()) {
+                    counter.inc();
+                }
+                cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                Assert.assertEquals("Actual cursor records vs cursor.calculateSize()", count, counter.get());
+            } else {
+                cursor.toTop();
+                Assert.assertFalse(cursor.hasNext());
             }
         }
 
@@ -333,7 +352,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 boolean cursorExhausted = false;
                 for (int i = 0, n = target; i < n; i++) {
                     cursor.recordAt(factRec, rows.getQuick(i));
-                    // intentionally calling hasNext() twice: we want to adcanced the cursor position,
+                    // intentionally calling hasNext() twice: we want to advance the cursor position,
                     // but we do *NOT* want to call it in step-lock with recordAt()
                     if (!cursorExhausted) {
                         cursorExhausted = !cursor.hasNext();
@@ -698,43 +717,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
             Assert.assertEquals(size, sizeAfterReopen);
         }
-    }
-
-    private static void assertException0(CharSequence sql, SqlExecutionContext sqlExecutionContext, boolean fullFatJoins) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.setFullFatJoins(fullFatJoins);
-            CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
-            if (cq.getRecordCursorFactory() != null) {
-                try (
-                        RecordCursorFactory factory = cq.getRecordCursorFactory();
-                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-                ) {
-                    sink.clear();
-                    Record record = cursor.getRecord();
-                    while (cursor.hasNext()) {
-                        // ignore the output, we're looking for an error
-                        TestUtils.println(record, factory.getMetadata(), sink);
-                        sink.clear();
-                    }
-                }
-            } else if (cq.getOperation() != null) {
-                try (
-                        Operation op = cq.getOperation();
-                        OperationFuture fut = op.execute(sqlExecutionContext, null)
-                ) {
-                    fut.await();
-                }
-            } else {
-                // make sure to close update/insert operation
-                try (
-                        UpdateOperation ignore = cq.getUpdateOperation();
-                        InsertOperation ignored = cq.popInsertOperation()
-                ) {
-                    execute(compiler, sql, sqlExecutionContext);
-                }
-            }
-        }
-        Assert.fail("SQL statement should have failed");
     }
 
     private static void assertSymbolColumnThreadSafety(int numberOfIterations, int symbolColumnCount, ObjList<SymbolTable> symbolTables, int[] symbolTableKeySnapshot, String[][] symbolTableValueSnapshot) {
@@ -1165,7 +1147,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql) throws Exception {
-        assertException0(sql, sqlExecutionContext, false);
+        TestUtils.assertException(engine, sqlExecutionContext, false, sql, sink);
     }
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, SqlExecutionContext executionContext) throws Exception {
@@ -1190,7 +1172,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, SqlExecutionContext executionContext, boolean fullFatJoins) throws Exception {
-        assertException0(sql, executionContext, fullFatJoins);
+        TestUtils.assertException(engine, executionContext, fullFatJoins, sql, sink);
     }
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {

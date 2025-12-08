@@ -57,9 +57,9 @@ public class MD5VarcharFunctionFactory implements FunctionFactory {
 
     private static class MD5Func extends VarcharFunction implements UnaryFunction {
         private final Function data;
+        private final Digest hashFn = new Digest(Digest.DigestAlgorithm.MD5);
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
-        private final Digest hashFn = new Digest(Digest.DigestAlgorithm.MD5);
 
         public MD5Func(final Function data) {
             this.data = data;

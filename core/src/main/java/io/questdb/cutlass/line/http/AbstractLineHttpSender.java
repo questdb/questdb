@@ -71,7 +71,6 @@ public abstract class AbstractLineHttpSender implements Sender {
     private final DirectByteSlice bufferView = new DirectByteSlice();
     private final long flushIntervalNanos;
     private final ObjList<String> hosts;
-    private final int initialBackoffMillis;
     private final boolean isTls;
     private final int maxBackoffMillis;
     private final int maxNameLength;
@@ -179,7 +178,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         assert authToken == null || (username == null && password == null);
         this.maxRetriesNanos = maxRetriesNanos;
         this.maxBackoffMillis = maxBackoffMillis;
-        this.initialBackoffMillis = Math.min(maxBackoffMillis, RETRY_INITIAL_BACKOFF_MS);
         this.hosts = hosts;
         this.ports = ports;
         this.currentAddressIndex = currentAddressIndex;
@@ -268,24 +266,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                 }
                 long retryingDeadlineNanos = Long.MIN_VALUE; // we want to start retry timer only after a first failure
                 int retryBackoff = Math.min(maxBackoffMillis, RETRY_INITIAL_BACKOFF_MS);
-                long hostBlacklistBitmap = 0; // allows blacklisting up to 64 hosts; we blacklist a host upon receiving a non-retryable error
-                final int blacklistableCount = Math.min(64, hosts.size());
-                final long allBlacklistedMask = (blacklistableCount == 64) ? -1L : ((1L << blacklistableCount) - 1);
                 for (int i = 0; ; i++) {
                     currentAddressIndex = i % hosts.size();
-                    if (currentAddressIndex < 64) {
-                        // we can blacklist only the first 64 hosts, that's fine, we don't expect more hosts anyway
-                        // and if there ever are more hosts then the side effect is that we will retry on the same host
-                        // even after it returned a non-retryable error
-                        if (hostBlacklistBitmap == allBlacklistedMask) {
-                            // if all hosts are blacklisted, we can't retry
-                            break;
-                        }
-                        if ((hostBlacklistBitmap & (1L << currentAddressIndex)) != 0) {
-                            // this host is blacklisted, skip it
-                            continue;
-                        }
-                    }
 
                     final String host = hosts.getQuick(currentAddressIndex);
                     final int port = ports.getQuick(currentAddressIndex);
@@ -309,11 +291,6 @@ public abstract class AbstractLineHttpSender implements Sender {
                             // So, the protocol is set to PROTOCOL_VERSION_V1 here for both scenarios.
                             protocolVersion = PROTOCOL_VERSION_V1;
                             break;
-                        }
-                        if (!isRetryableHttpStatus(statusCode)) {
-                            if (currentAddressIndex < 64) {
-                                hostBlacklistBitmap |= (1L << currentAddressIndex);
-                            }
                         }
                         if (lastErrorSink == null) {
                             lastErrorSink = new StringSink();
@@ -357,8 +334,8 @@ public abstract class AbstractLineHttpSender implements Sender {
             throw new LineSenderException("Failed to detect server line protocol version");
         }
 
-        if (protocolVersion == PROTOCOL_VERSION_V1) {
-            return new LineHttpSenderV1(
+        return switch (protocolVersion) {
+            case PROTOCOL_VERSION_V1 -> new LineHttpSenderV1(
                     hosts,
                     ports,
                     path,
@@ -377,8 +354,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     currentAddressIndex,
                     rnd
             );
-        } else {
-            return new LineHttpSenderV2(
+            case PROTOCOL_VERSION_V2 -> new LineHttpSenderV2(
                     hosts,
                     ports,
                     path,
@@ -397,7 +373,27 @@ public abstract class AbstractLineHttpSender implements Sender {
                     currentAddressIndex,
                     rnd
             );
-        }
+            case PROTOCOL_VERSION_V3 -> new LineHttpSenderV3(
+                    hosts,
+                    ports,
+                    path,
+                    clientConfiguration,
+                    tlsConfig,
+                    cli,
+                    autoFlushRows,
+                    authToken,
+                    username,
+                    password,
+                    maxNameLength,
+                    maxRetriesNanos,
+                    maxBackoffMillis,
+                    minRequestThroughput,
+                    flushIntervalNanos,
+                    currentAddressIndex,
+                    rnd
+            );
+            default -> throw new LineSenderException("Unsupported protocol version: " + protocolVersion);
+        };
     }
 
     public static boolean isNotFound(DirectUtf8Sequence statusCode) {
@@ -647,7 +643,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
 
         long retryingDeadlineNanos = Long.MIN_VALUE;
-        int retryBackoff = initialBackoffMillis;
+        int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
         int contentLen = request.getContentLength();
         int actualTimeoutMillis = baseTimeoutMillis;
         if (minRequestThroughput > 0) {
@@ -1056,7 +1052,9 @@ public abstract class AbstractLineHttpSender implements Sender {
             if (supportVersions.size() == 0) {
                 return PROTOCOL_VERSION_V1;
             }
-            if (supportVersions.contains(PROTOCOL_VERSION_V2)) {
+            if (supportVersions.contains(PROTOCOL_VERSION_V3)) {
+                return PROTOCOL_VERSION_V3;
+            } else if (supportVersions.contains(PROTOCOL_VERSION_V2)) {
                 return PROTOCOL_VERSION_V2;
             } else if (supportVersions.contains(PROTOCOL_VERSION_V1)) {
                 return PROTOCOL_VERSION_V1;

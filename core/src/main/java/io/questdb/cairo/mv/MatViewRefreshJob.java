@@ -332,7 +332,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 if (periodLo == Numbers.LONG_NULL) {
                     periodLo = baseTableReader.getMinTimestamp();
                 }
-                if (periodLo < rangeTo) {
+                // Check the last refresh txn: -1 means that there was no initial refresh, and we can
+                // ignore this range refresh. If we don't ignore it and later on the base table/view
+                // gets any range replace txns, the subsequent initial refresh may leave some dangling
+                // rows in the view since it only considers min/max timestamps from the table reader.
+                if (periodLo < rangeTo && viewState.getLastRefreshBaseTxn() != -1) {
                     minTs = periodLo;
                     maxTs = rangeTo;
                     // Bump lastPeriodHi once we're done. Its value is exclusive.
@@ -662,6 +666,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             factory = viewState.acquireRecordFactory();
             copier = viewState.getRecordToRowCopier();
 
+            OUTER:
             for (int i = 0; i <= maxRetries; i++) {
                 try {
                     if (factory == null) {
@@ -710,7 +715,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     long replacementTimestampHi = Long.MIN_VALUE;
 
                     while (intervalIterator.next()) {
-                        refreshSqlExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi(), viewDefinition.getBaseTableTimestampDriver().getTimestampType());
+                        refreshSqlExecutionContext.setRange(
+                                intervalIterator.getTimestampLo(),
+                                intervalIterator.getTimestampHi(),
+                                viewDefinition.getBaseTableTimestampDriver().getTimestampType()
+                        );
                         if (replacementTimestampHi != intervalIterator.getTimestampLo()) {
                             if (replacementTimestampHi > replacementTimestampLo) {
                                 // Gap in the refresh intervals, commit the previous batch
@@ -731,6 +740,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         try (RecordCursor cursor = factory.getCursor(refreshSqlExecutionContext)) {
                             final Record record = cursor.getRecord();
                             final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+                            long insertedRows = 0;
                             while (cursor.hasNext()) {
                                 final long timestamp = record.getTimestamp(cursorTimestampIndex);
                                 if (timestamp < replacementTimestampLo || timestamp > replacementTimestampHi) {
@@ -741,11 +751,26 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                             .put(']');
                                 }
                                 final TableWriter.Row row = walWriter.newRow(timestamp);
-                                copier.copy(record, row);
+                                copier.copy(refreshSqlExecutionContext, record, row);
                                 row.append();
-                                rowCount++;
+                                insertedRows++;
                             }
 
+                            // Check if we've inserted a lot of rows in a single iteration.
+                            if (insertedRows > batchSize && i < maxRetries && intervalStep > 1) {
+                                // Yes, the transaction is large, thus try once again with a proportionally smaller step.
+                                final double transactionRatio = (double) batchSize / insertedRows;
+                                intervalStep = Math.max((int) (transactionRatio * intervalStep) - 1, 1);
+                                walWriter.rollback();
+                                LOG.info().$("inserted too many rows in a single iteration, retrying with a reduced step [view=").$(viewTableToken)
+                                        .$(", insertedRows=").$(insertedRows)
+                                        .$(", batchSize=").$(batchSize)
+                                        .$(", intervalStep=").$(intervalStep)
+                                        .I$();
+                                continue OUTER;
+                            }
+
+                            rowCount += insertedRows;
                             if (rowCount >= commitTarget) {
                                 if (intervalIterator.isLast()) {
                                     commitMatView(
@@ -787,6 +812,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     break;
                 } catch (TableReferenceOutOfDateException e) {
                     factory = Misc.free(factory);
+                    walWriter.rollback();
                     if (i == maxRetries) {
                         LOG.info().$("base table is under heavy DDL changes, will retry refresh later [view=").$(viewTableToken)
                                 .$(", totalAttempts=").$(maxRetries)
@@ -797,9 +823,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
+                    walWriter.rollback();
                     if (th instanceof CairoException && CairoException.isCairoOomError(th) && i < maxRetries && intervalStep > 1) {
                         intervalStep /= 2;
-                        LOG.info().$("query failed with out-of-memory, retrying with a reduced intervalStep [view=").$(viewTableToken)
+                        LOG.info().$("query failed with out-of-memory, retrying with a reduced step [view=").$(viewTableToken)
                                 .$(", intervalStep=").$(intervalStep)
                                 .$(", error=").$safe(((CairoException) th).getFlyweightMessage())
                                 .I$();
