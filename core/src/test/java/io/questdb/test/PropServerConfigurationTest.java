@@ -316,6 +316,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getGroupByAllocatorDefaultChunkSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlOrderBySortEnabled());
         Assert.assertEquals(600, configuration.getCairoConfiguration().getSqlOrderByRadixSortThreshold());
+        Assert.assertEquals(1000, configuration.getCairoConfiguration().getCopierColumnCountThreshold());
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
@@ -2025,6 +2026,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());
         Assert.assertFalse(configuration.isSqlOrderBySortEnabled());
         Assert.assertEquals(100, configuration.getSqlOrderByRadixSortThreshold());
+        Assert.assertEquals(1000, configuration.getCopierColumnCountThreshold());
         Assert.assertEquals(32, configuration.getSqlParallelWorkStealingThreshold());
         Assert.assertEquals(42, configuration.getSqlParquetFrameCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlPageFrameMaxRows());
