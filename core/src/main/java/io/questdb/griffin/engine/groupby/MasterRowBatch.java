@@ -42,7 +42,7 @@ import io.questdb.std.QuietCloseable;
  * RecordArray for efficient storage and random access.
  */
 public class MasterRowBatch implements Mutable, QuietCloseable {
-    public static final int BATCH_SIZE = 10;
+    public static final int BATCH_SIZE = 100;
 
     private final RecordArray recordArray;
     private final LongList recordOffsets = new LongList(BATCH_SIZE);
