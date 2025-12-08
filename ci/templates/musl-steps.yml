@@ -6,24 +6,28 @@ steps:
 
   - bash: |
       set -eux
-      # Pull the Alpine image with GraalVM pre-installed
+      # Pull the Alpine image
       docker pull raphaeldalmon/alpine-azp:latest
 
       # Create a unique container name based on build ID
       CONTAINER_NAME="musl-build-$(Build.BuildId)-$(System.JobAttempt)"
       echo "##vso[task.setvariable variable=CONTAINER_NAME]$CONTAINER_NAME"
 
-      # Start the container with the source mounted
+      # Start the container
       docker run -d \
         --name "$CONTAINER_NAME" \
-        -v "$(Build.SourcesDirectory):/workspace:rw" \
-        -v "$HOME/.m2/repository:/root/.m2/repository:rw" \
         -w /workspace \
         raphaeldalmon/alpine-azp:latest \
         tail -f /dev/null
 
       # Wait for container to be ready
       sleep 2
+
+      # Copy source code into the container (avoids DinD volume mount issues)
+      docker cp "$(Build.SourcesDirectory)/." "$CONTAINER_NAME:/workspace/"
+
+      # Verify the copy worked
+      docker exec "$CONTAINER_NAME" ls -la /workspace/
       docker exec "$CONTAINER_NAME" java -version
     displayName: "Start Alpine/musl container"
 
@@ -37,10 +41,9 @@ steps:
   - bash: |
       set -eux
       docker exec \
-        -e MAVEN_OPTS="-Dmaven.repo.local=/root/.m2/repository -Xmx3g -XX:+UseParallelGC" \
+        -e MAVEN_OPTS="-Xmx3g -XX:+UseParallelGC" \
         $(CONTAINER_NAME) \
         mvn compile -DskipTests -P build-web-console -P qdbr-release \
-          -Dmaven.repo.local=/root/.m2/repository \
           -Dmaven.resolver.transport=wagon \
           -Dmaven.wagon.httpconnectionManager.ttlSeconds=30
     displayName: "Compile with Maven"
@@ -56,7 +59,7 @@ steps:
   - bash: |
       set -eux
       docker exec \
-        -e MAVEN_OPTS="-Xlog:gc -Dfile.encoding=UTF-8 -Dmaven.repo.local=/root/.m2/repository -Xmx3g -XX:+UseParallelGC" \
+        -e MAVEN_OPTS="-Xlog:gc -Dfile.encoding=UTF-8 -Xmx3g -XX:+UseParallelGC" \
         $(CONTAINER_NAME) \
         mvn clean test \
           --batch-mode --quiet \
@@ -66,7 +69,6 @@ steps:
           -DfailIfNoTests=false \
           -Dsurefire.failIfNoSpecifiedTests=false \
           -P build-web-console \
-          -Dmaven.repo.local=/root/.m2/repository \
           -Dmaven.resolver.transport=wagon \
           -Dmaven.wagon.httpconnectionManager.ttlSeconds=30
     displayName: "Run tests"
