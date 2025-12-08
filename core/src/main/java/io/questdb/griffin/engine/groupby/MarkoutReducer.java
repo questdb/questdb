@@ -64,23 +64,23 @@ public class MarkoutReducer {
     private static final int ITERATOR_OFFSET_MASTER_ROW_INDEX = 0;         // int (4 bytes)
     private static final int ITERATOR_OFFSET_MASTER_TIMESTAMP = 8;         // long (8 bytes)
     private static final int ITERATOR_OFFSET_NEXT_ITER_ADDR = 16;          // long (8 bytes)
-    private static final int ITERATOR_OFFSET_NEXT_SEQUENCE_ROW_NUM = 32;   // int (4 bytes)
-    private static final int ITERATOR_OFFSET_NEXT_TIMESTAMP = 24;          // long (8 bytes)
     private static final int ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START = 36; // int (4 bytes)
+    private static final int ITERATOR_OFFSET_SEQUENCE_ROW_NUM = 32;   // int (4 bytes)
+    private static final int ITERATOR_OFFSET_TIMESTAMP = 24;          // long (8 bytes)
     private static final int ITERATOR_SIZE = 40;
     private static final long BLOCK_SIZE = BLOCK_HEADER_SIZE + (ITERATORS_PER_BLOCK * ITERATOR_SIZE);
     // Combined record for aggregation - maps baseMetadata columns to source records
     private final CombinedRecord combinedRecord = new CombinedRecord();
     private Map asofJoinMap;
+    // Per-batch state
+    private MasterRowBatch batch;
     // Column mappings for CombinedRecord (obtained from atom)
     private int[] columnIndices;
     private int[] columnSources;
-    private RecordSink groupByKeyCopier;
-    // Per-batch state
-    private MasterRowBatch batch;
     // Iterator block management
     private long firstIteratorBlockAddr;
     private GroupByFunctionsUpdater functionUpdater;
+    private RecordSink groupByKeyCopier;
     private boolean hasBufferedValue;  // True if we read a price but didn't store it yet
     private long lastIteratorBlockAddr;
     private long lastSlaveRowId;
@@ -164,14 +164,10 @@ public class MarkoutReducer {
         this.hasBufferedValue = false;
 
         try {
-            int nextMasterRowIndex = 0;
-            Record firstMasterRow = batch.getRowAt(nextMasterRowIndex++);
-            long firstMasterTs = firstMasterRow.getTimestamp(masterTimestampColumnIndex);
-
             firstIteratorBlockAddr = lastIteratorBlockAddr = block_alloc();
-
-            long iter = createIterator(0, firstMasterTs);
+            long iter = createIterator(0, batch.getRowAt(0).getTimestamp(masterTimestampColumnIndex));
             long prevIter = iter;
+            int nextMasterRowIndex = 0;
 
             while (true) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -179,19 +175,32 @@ public class MarkoutReducer {
                 gotoNextRow(iter);
                 long nextIter = iter_nextIterAddr(iter);
                 if (nextMasterRowIndex < batch.size()) {
-                    long nextIterTs = iter_nextTimestamp(nextIter);
-                    long nextMasterTs = batch.getRowAt(nextMasterRowIndex).getTimestamp(masterTimestampColumnIndex);
-                    long nextInitialTs = nextMasterTs + firstSequenceTimeOffset;
-                    if (nextIterTs == Long.MIN_VALUE || nextInitialTs < nextIterTs) {
-                        nextIter = insertIteratorAfter(iter, nextMasterRowIndex, nextMasterTs);
-                        nextMasterRowIndex++;
+                    // We have a pending iterator (not yet active)
+                    final long nextIterTs = iter_timestamp(nextIter);
+                    final long nextMasterTs = batch.getRowAt(nextMasterRowIndex).getTimestamp(masterTimestampColumnIndex);
+                    if (nextIterTs != Long.MIN_VALUE) {
+                        // The next active iterator is non-empty.
+                        // Compare active and pending iterator timestamps to decide which one goes next.
+                        long nextInitialTs = nextMasterTs + firstSequenceTimeOffset;
+                        if (nextInitialTs < nextIterTs) {
+                            // Pending iterator has lower timestamp, activate it
+                            nextIter = insertIteratorAfter(iter, nextMasterRowIndex, nextMasterTs);
+                            nextMasterRowIndex++;
+                        }
+                    } else {
+                        // nextIter is empty. This only happens when nextIter == iter,
+                        // it's the last one in the circular list, and it's exhausted.
+                        // Discard it and re-initialize everything to the new, and now only, iterator.
+                        discardIterator(iter);
+                        prevIter = iter = nextIter = createIterator(0, nextMasterTs);
                     }
                 }
                 if (isEmpty(iter)) {
-                    // iterator still being empty here implies master batch is exhausted.
-                    // If this is the last iterator, we're all done.
+                    // Current iterator is exhausted, remove it from the circular list.
                     nextIter = removeIterator(prevIter, iter);
                     if (nextIter == 0) {
+                        // No more iterators in the circular list. Since we already went through the
+                        // step that activates any pending iterator, we're all done.
                         break;
                     }
                 } else {
@@ -254,16 +263,16 @@ public class MarkoutReducer {
         return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR);
     }
 
-    private static int iter_nextSequenceRowNum(long iterAddr) {
-        return Unsafe.getUnsafe().getInt(iterAddr + ITERATOR_OFFSET_NEXT_SEQUENCE_ROW_NUM);
-    }
-
-    private static long iter_nextTimestamp(long iterAddr) {
-        return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_NEXT_TIMESTAMP);
-    }
-
     private static int iter_offsetFromBlockStart(long iterAddr) {
         return Unsafe.getUnsafe().getInt(iterAddr + ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START);
+    }
+
+    private static int iter_sequenceRowNum(long iterAddr) {
+        return Unsafe.getUnsafe().getInt(iterAddr + ITERATOR_OFFSET_SEQUENCE_ROW_NUM);
+    }
+
+    private static void iter_setMasterRowIndex(long iterAddr, int value) {
+        Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_MASTER_ROW_INDEX, value);
     }
 
     private static void iter_setMasterTimestamp(long iterAddr, long value) {
@@ -274,20 +283,20 @@ public class MarkoutReducer {
         Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_NEXT_ITER_ADDR, value);
     }
 
-    private static void iter_setNextSequenceRowNum(long iterAddr, int value) {
-        Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_NEXT_SEQUENCE_ROW_NUM, value);
-    }
-
-    private static void iter_setNextTimestamp(long iterAddr, long value) {
-        Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_NEXT_TIMESTAMP, value);
-    }
-
     private static void iter_setOffsetFromBlockStart(long iterAddr, int value) {
         Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START, value);
     }
 
-    private static void iter_setTradeIndex(long iterAddr, int value) {
-        Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_MASTER_ROW_INDEX, value);
+    private static void iter_setSequenceRowNum(long iterAddr, int value) {
+        Unsafe.getUnsafe().putInt(iterAddr + ITERATOR_OFFSET_SEQUENCE_ROW_NUM, value);
+    }
+
+    private static void iter_setTimestamp(long iterAddr, long value) {
+        Unsafe.getUnsafe().putLong(iterAddr + ITERATOR_OFFSET_TIMESTAMP, value);
+    }
+
+    private static long iter_timestamp(long iterAddr) {
+        return Unsafe.getUnsafe().getLong(iterAddr + ITERATOR_OFFSET_TIMESTAMP);
     }
 
     /**
@@ -336,28 +345,9 @@ public class MarkoutReducer {
     }
 
     /**
-     * Compute and store the next timestamp based on current row number.
-     * Sets Long.MIN_VALUE if exhausted.
-     */
-    private void computeNextTimestamp(long iterAddr) {
-        int nextSequenceRowNum = iter_nextSequenceRowNum(iterAddr);
-
-        if (nextSequenceRowNum >= sequenceRowCount) {
-            iter_setNextTimestamp(iterAddr, Long.MIN_VALUE);
-            return;
-        }
-
-        long sequenceRecordOffset = sequenceRecordOffsets.getQuick(nextSequenceRowNum);
-        Record sequenceRec = sequenceRecordArray.getRecordAt(sequenceRecordOffset);
-        long sequenceOffset = sequenceRec.getLong(sequenceColumnIndex);
-        long masterTimestamp = iter_masterTimestamp(iterAddr);
-        iter_setNextTimestamp(iterAddr, masterTimestamp + sequenceOffset);
-    }
-
-    /**
      * Create a new iterator and add it to the block. Points to itself (circular list of one).
      */
-    private long createIterator(int tradeIndex, long masterTimestamp) {
+    private long createIterator(int rowIndex, long masterTimestamp) {
         int slotIndex = block_nextFreeSlot(lastIteratorBlockAddr);
 
         // Check if current block is full, allocate new one if needed
@@ -372,14 +362,14 @@ public class MarkoutReducer {
         long iterAddr = lastIteratorBlockAddr + offsetFromBlockStart;
 
         // Initialize iterator fields
-        iter_setTradeIndex(iterAddr, tradeIndex);
+        iter_setMasterRowIndex(iterAddr, rowIndex);
         iter_setMasterTimestamp(iterAddr, masterTimestamp);
         iter_setNextIterAddr(iterAddr, iterAddr); // Points to itself
-        iter_setNextSequenceRowNum(iterAddr, 0);
+        iter_setSequenceRowNum(iterAddr, 0);
         iter_setOffsetFromBlockStart(iterAddr, offsetFromBlockStart);
 
         // Compute first timestamp
-        computeNextTimestamp(iterAddr);
+        updateTimestamp(iterAddr);
 
         // Update block metadata
         block_setNextFreeSlot(lastIteratorBlockAddr, slotIndex + 1);
@@ -398,12 +388,12 @@ public class MarkoutReducer {
                 // This is the only block - reset it for reuse
                 block_setNextFreeSlot(blockAddr, 0);
             } else if (blockAddr == firstIteratorBlockAddr) {
-                // First block is empty but there are more blocks - free it and update firstIteratorBlockAddr
+                // This is the first block, and there are more after it - free it and update firstIteratorBlockAddr
                 long nextBlockAddr = block_nextBlockAddr(blockAddr);
                 block_free(blockAddr);
                 firstIteratorBlockAddr = nextBlockAddr;
             } else {
-                // Non-first block is empty - find predecessor, update its link, and free this block
+                // This isn't the first block - find predecessor, update its link, and free this block
                 long prevBlockAddr = firstIteratorBlockAddr;
                 while (block_nextBlockAddr(prevBlockAddr) != blockAddr) {
                     prevBlockAddr = block_nextBlockAddr(prevBlockAddr);
@@ -423,12 +413,12 @@ public class MarkoutReducer {
         Record masterRecord = batch.getRowAt(iter_masterRowIndex(currentIterAddr));
 
         // nextSequenceRowNum is the current row to emit (we haven't called gotoNextRow yet)
-        int sequenceRowNum = iter_nextSequenceRowNum(currentIterAddr);
+        int sequenceRowNum = iter_sequenceRowNum(currentIterAddr);
         long sequenceOffset = sequenceRecordOffsets.getQuick(sequenceRowNum);
         Record sequenceRecord = sequenceRecordArray.getRecordAt(sequenceOffset);
 
         // Get horizon timestamp
-        long horizonTs = iter_nextTimestamp(currentIterAddr);
+        long horizonTs = iter_timestamp(currentIterAddr);
 
         // ASOF JOIN lookup: find matching slave record
         Record matchedSlaveRecord = null;
@@ -479,9 +469,8 @@ public class MarkoutReducer {
      * Advance iterator to the next row and compute its timestamp.
      */
     private void gotoNextRow(long iterAddr) {
-        int nextSequenceRowNum = iter_nextSequenceRowNum(iterAddr);
-        iter_setNextSequenceRowNum(iterAddr, nextSequenceRowNum + 1);
-        computeNextTimestamp(iterAddr);
+        iter_setSequenceRowNum(iterAddr, iter_sequenceRowNum(iterAddr) + 1);
+        updateTimestamp(iterAddr);
     }
 
     /**
@@ -500,7 +489,7 @@ public class MarkoutReducer {
      * Check if iterator is exhausted (no more rows to emit).
      */
     private boolean isEmpty(long iterAddr) {
-        return iter_nextSequenceRowNum(iterAddr) >= sequenceRowCount;
+        return iter_sequenceRowNum(iterAddr) >= sequenceRowCount;
     }
 
     /**
@@ -516,6 +505,23 @@ public class MarkoutReducer {
             return 0;  // This was the only iterator in the list
         }
         return nextAddr;
+    }
+
+    /**
+     * Compute and store the next timestamp based on current row number.
+     * Sets Long.MIN_VALUE if exhausted.
+     */
+    private void updateTimestamp(long iterAddr) {
+        int sequenceRowNum = iter_sequenceRowNum(iterAddr);
+        if (sequenceRowNum >= sequenceRowCount) {
+            iter_setTimestamp(iterAddr, Long.MIN_VALUE);
+            return;
+        }
+        long sequenceRecOffset = sequenceRecordOffsets.getQuick(sequenceRowNum);
+        Record sequenceRecord = sequenceRecordArray.getRecordAt(sequenceRecOffset);
+        long tsOffset = sequenceRecord.getLong(sequenceColumnIndex);
+        long masterTimestamp = iter_masterTimestamp(iterAddr);
+        iter_setTimestamp(iterAddr, masterTimestamp + tsOffset);
     }
 
     /**
@@ -716,6 +722,19 @@ public class MarkoutReducer {
             return src != null ? src.getVarcharSize(columnIndices[col]) : -1;
         }
 
+        private Record getSourceRecord(int col) {
+            switch (columnSources[col]) {
+                case SOURCE_MASTER:
+                    return masterRecord;
+                case SOURCE_SEQUENCE:
+                    return sequenceRecord;
+                case SOURCE_SLAVE:
+                    return slaveRecord;
+                default:
+                    return null;
+            }
+        }
+
         /**
          * Initialize the column mappings. Called once per reduce() call.
          */
@@ -731,19 +750,6 @@ public class MarkoutReducer {
             this.masterRecord = masterRecord;
             this.sequenceRecord = sequenceRecord;
             this.slaveRecord = slaveRecord;
-        }
-
-        private Record getSourceRecord(int col) {
-            switch (columnSources[col]) {
-                case SOURCE_MASTER:
-                    return masterRecord;
-                case SOURCE_SEQUENCE:
-                    return sequenceRecord;
-                case SOURCE_SLAVE:
-                    return slaveRecord;
-                default:
-                    return null;
-            }
         }
     }
 }
