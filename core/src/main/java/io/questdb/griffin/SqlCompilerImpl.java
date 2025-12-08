@@ -3499,7 +3499,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         DefaultLifecycleManager.INSTANCE,
                         engine.getConfiguration().getDbRoot(),
                         engine.getDdlListener(tableToken),
-                        engine.getCheckpointStatus(),
                         engine
                 );
             } else {
