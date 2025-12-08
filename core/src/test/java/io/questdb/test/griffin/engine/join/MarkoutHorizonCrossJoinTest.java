@@ -495,10 +495,10 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
             // Price increases linearly: price = 1.0 + (x / 1000.0)
             execute("""
                     INSERT INTO prices SELECT
-                        (x * 100_000)::TIMESTAMP,
+                        (x * 1_000)::TIMESTAMP,
                         rnd_symbol('AX', 'BX', 'CX', 'DX', 'EX', 'FX', 'GX', 'HX', 'IX', 'JX', 'KX', 'LX', 'MX', 'NX'),
                         1.0 + (x / 1000.0)
-                    FROM long_sequence(1000)
+                    FROM long_sequence(1_000_000)
                     """);
 
             // Create orders table
@@ -513,17 +513,18 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
             // This creates 200 master rows which triggers multiple batches (BATCH_SIZE=10)
             execute("""
                     INSERT INTO orders SELECT
-                        (x * 500_000)::TIMESTAMP,
+                        (1_200_000 + x * 500_000)::TIMESTAMP,
                         rnd_symbol('AX', 'BX', 'CX', 'DX', 'EX', 'FX', 'GX', 'HX', 'IX', 'JX', 'KX', 'LX', 'MX', 'NX')
-                    FROM long_sequence(200)
+                    FROM long_sequence(2000)
                     """);
 
             final int offsetCount = 121;
+            final int offsetDelta = (offsetCount - 1) / 2 + 1;
             final String sqlWithHint = String.format("""
                     WITH
                     offsets AS (
-                        SELECT x-61 AS sec_offs, 1_000_000 * (x-61) AS usec_offs
-                        FROM long_sequence(%d)
+                        SELECT x-%2$d AS sec_offs, 1_000_000 * (x-%2$d) AS usec_offs
+                        FROM long_sequence(%1$d)
                     ),
                     horizon AS (SELECT * FROM (
                         SELECT /*+ markout_horizon(orders offsets) */ sec_offs, sym, order_ts, order_ts + usec_offs AS horizon_ts
@@ -532,13 +533,12 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     ) TIMESTAMP(horizon_ts))
                     SELECT /*+ markout_curve */
                         sec_offs,
-                        weighted_avg(price, price),
-                        weighted_stddev(price, price),
+                        sum(price),
                         count(*)
                     FROM horizon l ASOF JOIN prices p ON (l.sym = p.sym)
                     GROUP BY sec_offs
                     ORDER BY sec_offs
-                    """, offsetCount);
+                    """, offsetCount, offsetDelta);
 
             final String sqlWithoutHint = sqlWithHint.replace("markout_curve", "XXX");
 
