@@ -87,6 +87,7 @@ public class MarkoutReducer {
     private int sequenceColumnIndex;
     // Shared sequence data (read-only)
     private RecordArray sequenceRecordArray;
+    private Record sequenceRecord;  // Per-worker record for thread-safe access
     private LongList sequenceRecordOffsets;
     private int sequenceRowCount;
     // ASOF JOIN lookup state
@@ -121,6 +122,7 @@ public class MarkoutReducer {
             return;
         }
         this.sequenceRecordArray = atom.getSequenceRecordArray();
+        this.sequenceRecord = atom.getSequenceRecord(slotId);  // Per-worker record for thread-safe access
         this.sequenceRecordOffsets = atom.getSequenceRecordOffsets();
         this.sequenceColumnIndex = atom.getSequenceColumnIndex();
         long firstSequenceTimeOffset = atom.getFirstSequenceTimeOffset();
@@ -411,7 +413,8 @@ public class MarkoutReducer {
         // nextSequenceRowNum is the current row to emit (we haven't called gotoNextRow yet)
         int sequenceRowNum = iter_sequenceRowNum(currentIterAddr);
         long sequenceOffset = sequenceRecordOffsets.getQuick(sequenceRowNum);
-        Record sequenceRecord = sequenceRecordArray.getRecordAt(sequenceOffset);
+        // Use per-worker sequenceRecord for thread-safe access to shared sequenceRecordArray
+        sequenceRecordArray.recordAt(sequenceRecord, sequenceOffset);
 
         // Get horizon timestamp
         long horizonTs = iter_timestamp(currentIterAddr);
@@ -514,7 +517,8 @@ public class MarkoutReducer {
             return;
         }
         long sequenceRecOffset = sequenceRecordOffsets.getQuick(sequenceRowNum);
-        Record sequenceRecord = sequenceRecordArray.getRecordAt(sequenceRecOffset);
+        // Use per-worker sequenceRecord for thread-safe access to shared sequenceRecordArray
+        sequenceRecordArray.recordAt(sequenceRecord, sequenceRecOffset);
         long tsOffset = sequenceRecord.getLong(sequenceColumnIndex);
         long masterTimestamp = iter_masterTimestamp(iterAddr);
         iter_setTimestamp(iterAddr, masterTimestamp + tsOffset);

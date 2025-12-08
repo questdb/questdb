@@ -365,6 +365,14 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         return -1;
     }
 
+    /**
+     * Create a new record instance that can be used with {@link #recordAt(Record, long)}.
+     * This is useful for thread-safe concurrent access where each thread needs its own record.
+     */
+    public Record newRecord() {
+        return newChainRecord();
+    }
+
     @Override
     public void skip(int bytes) {
         mem.skip(bytes);

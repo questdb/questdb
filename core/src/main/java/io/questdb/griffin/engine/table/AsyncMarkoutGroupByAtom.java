@@ -101,6 +101,9 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
     private long firstSequenceTimeOffset;
     // Owner resources (for work stealing)
     private RecordCursor ownerSlaveCursor;
+    private Record ownerSequenceRecord;
+    // Per-worker sequence records for thread-safe access to shared sequenceRecordArray
+    private final ObjList<Record> perWorkerSequenceRecords;
     private RecordArray sequenceRecordArray;
     private long sequenceRowCount;
     // Stored execution context for lazy cursor creation
@@ -162,6 +165,12 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
             // Initialize per-worker locks
             this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
+
+            // Initialize per-worker sequence records (will be created when sequenceRecordArray is populated)
+            this.perWorkerSequenceRecords = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerSequenceRecords.add(null);
+            }
 
             // Initialize per-worker cursors (will be populated lazily)
             this.perWorkerSlaveCursors = new ObjList<>(slotCount);
@@ -238,6 +247,12 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
         Misc.free(sequenceRecordArray);
         sequenceRecordArray = null;
         sequenceRecordOffsets.clear();
+
+        // Clear per-worker sequence records (they'll be recreated from the new array)
+        ownerSequenceRecord = null;
+        for (int i = 0, n = perWorkerSequenceRecords.size(); i < n; i++) {
+            perWorkerSequenceRecords.setQuick(i, null);
+        }
 
         // Clear aggregation resources for potential reuse
         Misc.free(ownerMap);
@@ -397,6 +412,25 @@ public class AsyncMarkoutGroupByAtom implements StatefulAtom, Closeable, Reopena
 
     public long getSequenceRowCount() {
         return sequenceRowCount;
+    }
+
+    /**
+     * Get the sequence record for the given slot.
+     * Each worker needs its own Record instance for thread-safe access to the shared sequenceRecordArray.
+     */
+    public Record getSequenceRecord(int slotId) {
+        if (slotId == -1) {
+            if (ownerSequenceRecord == null) {
+                ownerSequenceRecord = sequenceRecordArray.newRecord();
+            }
+            return ownerSequenceRecord;
+        }
+        Record record = perWorkerSequenceRecords.getQuick(slotId);
+        if (record == null) {
+            record = sequenceRecordArray.newRecord();
+            perWorkerSequenceRecords.setQuick(slotId, record);
+        }
+        return record;
     }
 
     /**
