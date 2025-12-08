@@ -51,7 +51,7 @@ jobs:
       - task: Docker@2
         inputs:
           command: 'login'
-          containerRegistry: quest_docker_hub
+          containerRegistry: sklarsa dockerhub
 
       - task: CmdLine@2
         displayName: Setup docker buildx
