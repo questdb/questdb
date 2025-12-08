@@ -4137,7 +4137,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // to create independent cursors for parallel ASOF JOIN processing
             int workerCount = executionContext.getSharedQueryWorkerCount();
             int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
-            slaveFactories = new ObjList<>(slotCount + 1);  // +1 for owner
+            slaveFactories = new ObjList<>(slotCount + 1);  // +1 for owner thread
             for (int i = 0; i <= slotCount; i++) {
                 slaveFactories.add(generateQuery(curveInfo.asofSlaveModel, executionContext, true));
             }
@@ -4145,20 +4145,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Get timestamp index from master
             RecordMetadata masterMetadata = masterFactory.getMetadata();
             int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
-            if (masterTimestampColumnIndex == -1) {
-                LOG.debug().$("markout_curve: master has no designated timestamp, falling back to standard GROUP BY").$();
-                Misc.free(nestedFactory);
-                Misc.free(masterFactory);
-                Misc.freeObjList(slaveFactories);
-                Misc.free(sequenceFactory);
-                return null;
-            }
-
-            // Find the sequence column index (the offset column from long_sequence)
+            // Find the offset sequence column index (the offset column from long_sequence)
             RecordMetadata sequenceMetadata = sequenceFactory.getMetadata();
             int sequenceColumnIndex = findSequenceColumnIndex(sequenceMetadata);
-            if (sequenceColumnIndex == -1) {
-                LOG.debug().$("markout_curve: could not find sequence column, falling back to standard GROUP BY").$();
+            if (masterTimestampColumnIndex == -1 || sequenceColumnIndex == -1) {
+                LOG.debug().$("markout_curve: ")
+                        .$(masterTimestampColumnIndex == -1 ?
+                                "master has no designated timestamp" :
+                                "could not find offset sequence column"
+                        ).$(", falling back to standard GROUP BY").$();
                 Misc.free(nestedFactory);
                 Misc.free(masterFactory);
                 Misc.freeObjList(slaveFactories);
