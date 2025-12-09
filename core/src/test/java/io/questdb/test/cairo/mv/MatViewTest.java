@@ -2604,61 +2604,61 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testEstimateBucketsForRows() {
-        final long targetRows = 100_000L;
+        final long targetRows = 1_000_000L;
 
         // Basic case: 1 billion rows, hourly bucket, daily partitions, 30 partitions
         // totalBuckets = (24hours / 1hour) * 30 = 720
         // rowsPerBucket = 1B / 720 ≈ 1,388,888
-        // bucketsForRows = 100000 / 1,388,888 ≈ 0.072 -> 1 (minimum)
+        // bucketsForRows = 1000000 / 1,388,888 ≈ 0.72 -> 1 (minimum)
         testEstimateBucketsForRows(targetRows, 1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 1, 2);
 
         // Small table: 1000 rows
         // totalBuckets = 720
         // rowsPerBucket = 1000 / 720 ≈ 1.39
-        // bucketsForRows = 100000 / 1.39 ≈ 7194
-        testEstimateBucketsForRows(targetRows, 1_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 50_000, 100_000);
+        // bucketsForRows = 1000000 / 1.39 ≈ 719400
+        testEstimateBucketsForRows(targetRows, 1_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 500_000, 1000_000);
 
         // Large table: 5 billion rows
         // totalBuckets = 720
         // rowsPerBucket = 5B / 720 ≈ 6,944,444
-        // bucketsForRows = 100000 / 6,944,444 ≈ 0.0144 -> 1 (minimum)
+        // bucketsForRows = 1000000 / 6,944,444 ≈ 0.144 -> 1 (minimum)
         testEstimateBucketsForRows(targetRows, 5_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 1, 2);
 
         // Daily bucket
         // totalBuckets = (24hours / 24hours) * 30 = 30
         // rowsPerBucket = 1B / 30 ≈ 33,333,333
-        // bucketsForRows = 100000 / 33,333,333 ≈ 0.003 -> 1 (minimum)
+        // bucketsForRows = 1000000 / 33,333,333 ≈ 0.03 -> 1 (minimum)
         testEstimateBucketsForRows(targetRows, 1_000_000_000L, Micros.DAY_MICROS, Micros.DAY_MICROS, 30, 1, 2);
 
         // Weekly bucket
         // totalBuckets = (24hours / 168hours) * 30 ≈ 4.3
         // rowsPerBucket = 1B / 4.3 ≈ 233,333,333
-        // bucketsForRows = 100000 / 233,333,333 ≈ 0.0004 -> 1 (minimum)
+        // bucketsForRows = 1000000 / 233,333,333 ≈ 0.004 -> 1 (minimum)
         testEstimateBucketsForRows(targetRows, 1_000_000_000L, Micros.WEEK_MICROS, Micros.DAY_MICROS, 30, 1, 2);
 
         // Monthly bucket (30 days)
         // totalBuckets = (24hours / 720hours) * 30 = 1
         // rowsPerBucket = 1B / 1 = 1B
-        // bucketsForRows = 100000 / 1B ≈ 0.0001 -> 1 (minimum)
+        // bucketsForRows = 1000000 / 1B ≈ 0.001 -> 1 (minimum)
         testEstimateBucketsForRows(targetRows, 1_000_000_000L, Micros.MONTH_MICROS_APPROX, Micros.DAY_MICROS, 30, 1, 2);
 
         // Edge case: Weekly partitions with hourly bucket
         // totalBuckets = (168hours / 1hour) * 4 = 672
         // rowsPerBucket = 1B / 672 ≈ 1,488,095
-        // bucketsForRows = 100000 / 1,488,095 ≈ 0.067 -> 1 (minimum)
+        // bucketsForRows = 1000000 / 1,488,095 ≈ 0.67 -> 1 (minimum)
         testEstimateBucketsForRows(targetRows, 1_000_000_000L, Micros.HOUR_MICROS, Micros.WEEK_MICROS, 4, 1, 2);
 
         // Edge case: Single partition (monthly)
         // totalBuckets = (720hours / 1hour) * 1 = 720
         // rowsPerBucket = 1B / 720 ≈ 1,388,888
-        // bucketsForRows = 100000 / 1,388,888 ≈ 0.072 -> 1 (minimum)
+        // bucketsForRows = 1000000 / 1,388,888 ≈ 0.72 -> 1 (minimum)
         testEstimateBucketsForRows(targetRows, 1_000_000_000L, Micros.HOUR_MICROS, Micros.MONTH_MICROS_APPROX, 1, 1, 2);
 
         // Edge case: Many partitions (1000)
         // totalBuckets = 24 * 1000 = 24000
         // rowsPerBucket = 1B / 24000 ≈ 41,666
-        // bucketsForRows = 100000 / 41,666 ≈ 2.4 -> 2
-        testEstimateBucketsForRows(targetRows, 1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 1000, 2, 5);
+        // bucketsForRows = 1000000 / 41,666 ≈ 24
+        testEstimateBucketsForRows(targetRows, 1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 1000, 20, 30);
 
         // Edge case: Zero partition count
         long result = MatViewRefreshJob.estimateBucketsForRows(targetRows, 1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 0);
@@ -2671,50 +2671,50 @@ public class MatViewTest extends AbstractCairoTest {
         // Overflow prevention test: Very large rows
         // totalBuckets = 24
         // rowsPerBucket = (Long.MAX_VALUE / 2) / 24 ≈ very large
-        // bucketsForRows = 100000 / very large -> 1 (minimum)
+        // bucketsForRows = 1000000 / very large -> 1 (minimum)
         testEstimateBucketsForRows(targetRows, Long.MAX_VALUE / 2, Micros.HOUR_MICROS, Micros.DAY_MICROS, 1, 1, 2);
 
         // Test with nanoseconds (1000x microseconds)
         // totalBuckets = 24 * 30 = 720
         // rowsPerBucket = 1B / 720 ≈ 1,388,888
-        // bucketsForRows = 100000 / 1,388,888 ≈ 0.072 -> 1 (minimum)
+        // bucketsForRows = 1000000 / 1,388,888 ≈ 0.72 -> 1 (minimum)
         testEstimateBucketsForRows(targetRows, 1_000_000_000L, Nanos.HOUR_NANOS, Nanos.DAY_NANOS, 30, 1, 2);
 
         // Very small bucket compared to partition (millisecond bucket)
         // totalBuckets = (24 * 60 * 60 * 1000) * 30 = 2,592,000,000
         // rowsPerBucket = 1B / 2,592,000,000 ≈ 0.386
-        // bucketsForRows = 100000 / 0.386 ≈ 259,067
-        testEstimateBucketsForRows(targetRows, 1_000_000_000L, Micros.MILLI_MICROS, Micros.DAY_MICROS, 30, 200_000, 300_000);
+        // bucketsForRows = 1000000 / 0.386 ≈ 2,590,670
+        testEstimateBucketsForRows(targetRows, 1_000_000_000L, Micros.MILLI_MICROS, Micros.DAY_MICROS, 30, 2_000_000, 3_000_000);
 
         // Bucket larger than partition duration
         // totalBuckets = (24hours / 168hours) * 1 ≈ 0.14
         // rowsPerBucket = 1B / 0.14 ≈ 7B
-        // bucketsForRows = 100000 / 7B ≈ 0.000014 -> 1 (minimum)
+        // bucketsForRows = 1000000 / 7B ≈ 0.00014 -> 1 (minimum)
         testEstimateBucketsForRows(targetRows, 1_000_000_000L, Micros.WEEK_MICROS, Micros.DAY_MICROS, 1, 1, 2);
 
         // Sparse data case: 100 rows, hourly bucket, daily partitions, 10 partitions
         // totalBuckets = 24 * 10 = 240
         // rowsPerBucket = 100 / 240 ≈ 0.417 (this is the key case where rowsPerBucket < 1)
-        // bucketsForRows = 100000 / 0.417 ≈ 240000
-        testEstimateBucketsForRows(targetRows, 100L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 10, 200_000, 300_000);
+        // bucketsForRows = 1000000 / 0.417 ≈ 2400000
+        testEstimateBucketsForRows(targetRows, 100L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 10, 2_000_000, 3_000_000);
 
         // Very sparse data: 10 rows spread across many buckets
         // totalBuckets = 24 * 30 = 720
         // rowsPerBucket = 10 / 720 ≈ 0.014
-        // bucketsForRows = 100000 / 0.014 ≈ 7200000
-        testEstimateBucketsForRows(targetRows, 10L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 7_000_000, 8_000_000);
+        // bucketsForRows = 1000000 / 0.014 ≈ 72000000
+        testEstimateBucketsForRows(targetRows, 10L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 70_000_000, 80_000_000);
 
         // Medium density: 1 million rows
         // totalBuckets = 720
         // rowsPerBucket = 1M / 720 ≈ 1389
-        // bucketsForRows = 100000 / 1389 ≈ 72
-        testEstimateBucketsForRows(targetRows, 1_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 70, 80);
+        // bucketsForRows = 1000000 / 1389 ≈ 720
+        testEstimateBucketsForRows(targetRows, 1_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 700, 800);
 
         // Medium density: 100 million rows
         // totalBuckets = (3,600,000,000 / 1) * 30000 = 108,000,000,000,000
         // rowsPerBucket = 100M / 108T ≈ 0.00000093
-        // bucketsForRows = 100K / 0.00000093 ≈ 108,000,000,000
-        testEstimateBucketsForRows(targetRows, 100_000_000L, 1, Micros.HOUR_MICROS, 30000, 107000000000L, 110000000000L);
+        // bucketsForRows = 1000000 / 0.00000093 ≈ 1,080,000,000,000
+        testEstimateBucketsForRows(targetRows, 100_000_000L, 1, Micros.HOUR_MICROS, 30000, 1070000000000L, 1100000000000L);
     }
 
     @Test

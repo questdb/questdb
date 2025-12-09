@@ -63,7 +63,7 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
     @Override
     public long nextTimestamp(long timestamp, long numSteps) {
         try {
-            return addMonth(timestamp, (int) Math.multiplyExact(numSteps, stepMonths));
+            return addMonth(timestamp, Math.toIntExact(Math.multiplyExact(numSteps, stepMonths)));
         } catch (ArithmeticException e) {
             return Long.MAX_VALUE;
         }
