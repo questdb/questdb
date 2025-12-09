@@ -160,7 +160,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
-    private CharSequenceIntHashMap columnAliasRefCounts = new CharSequenceIntHashMap(8, 0.4, 0);
+    private final CharSequenceIntHashMap columnAliasRefCounts = new CharSequenceIntHashMap(8, 0.4, 0);
     // where clause expressions that do not reference any tables, not necessarily constants
     private ExpressionNode constWhereClause;
     private JoinContext context;

@@ -45,9 +45,11 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "('2025-07-01T12:00:00Z', ARRAY[ [10.1, 10.2], [0, 0] ], ARRAY[ [9.3, 9.2], [0, 0] ]), " +
                     "('2025-07-01T12:00:01Z', ARRAY[ [10.3, 10.5], [0, 0] ], ARRAY[ [9.7, 9.4], [0, 0] ])"
             );
-            assertSql("second\tspread\n" +
-                            "0\t0.8\n" +
-                            "1\t0.6\n",
+            assertSql("""
+                            second\tspread
+                            0\t0.8
+                            1\t0.6
+                            """,
                     "SELECT second(ts), round(asks[1][1] - bids[1][1], 2) spread FROM order_book");
         });
     }
@@ -78,15 +80,19 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "FROM order_book";
             assertPlanNoLeakCheck(
                     sql,
-                    "VirtualRecord\n" +
-                            "  functions: [memoize(array_sum(asks[2,1:4])),memoize(array_sum(bids[2,1:4])),bid_vol/ask_vol]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: order_book\n"
+                    """
+                            VirtualRecord
+                              functions: [memoize(array_sum(asks[2,1:4])),memoize(array_sum(bids[2,1:4])),bid_vol/ask_vol]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: order_book
+                            """
             );
-            assertSql("ask_vol\tbid_vol\tratio\n" +
-                            "38.0\t68.0\t1.7894736842105263\n" +
-                            "37.0\t81.0\t2.189189189189189\n",
+            assertSql("""
+                            ask_vol\tbid_vol\tratio
+                            38.0\t68.0\t1.7894736842105263
+                            37.0\t81.0\t2.189189189189189
+                            """,
                     sql
             );
         });
@@ -99,9 +105,11 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "(0, ARRAY[ [10.0, 10.02, 10.04, 10.10, 10.12, 10.14], [10.0, 15, 13, 12, 18, 20] ], NULL), " +
                     "(1, ARRAY[ [10.0, 10.02, 10.04, 10.10, 10.12, 10.14], [10.0,  5,  3, 12, 18, 20] ], NULL)"
             );
-            assertSql("cum_volumes\ttarget_level\tprice\n" +
-                            "[10.0,25.0,38.0,50.0,68.0,88.0]\t3\t10.04\n" +
-                            "[10.0,15.0,18.0,30.0,48.0,68.0]\t4\t10.1\n",
+            assertSql("""
+                            cum_volumes\ttarget_level\tprice
+                            [10.0,25.0,38.0,50.0,68.0,88.0]\t3\t10.04
+                            [10.0,15.0,18.0,30.0,48.0,68.0]\t4\t10.1
+                            """,
                     "SELECT " +
                             "array_cum_sum(asks[2]) cum_volumes, " +
                             "insertion_point(cum_volumes, 30.0, true) target_level, " +
@@ -124,15 +132,19 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "FROM order_book";
             assertPlanNoLeakCheck(
                     sql,
-                    "VirtualRecord\n" +
-                            "  functions: [memoize(round(asks[1,1]+bids[1,1]/2,-2)),asks[1]-mid_price*asks[2],mid_price-bids[1]*bids[2]]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: order_book\n"
+                    """
+                            VirtualRecord
+                              functions: [memoize(round(asks[1,1]+bids[1,1]/2,-2)),asks[1]-mid_price*asks[2],mid_price-bids[1]*bids[2]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: order_book
+                            """
             );
-            assertSql("mid_price\tweighted_ask_pressure\tweighted_bid_pressure\n" +
-                            "5.5\t[7.5,14.999999999999991]\t[5.0,8.000000000000007]\n" +
-                            "5.65\t[10.999999999999996,6.75]\t[11.000000000000014,11.250000000000004]\n",
+            assertSql("""
+                            mid_price\tweighted_ask_pressure\tweighted_bid_pressure
+                            5.5\t[7.5,14.999999999999991]\t[5.0,8.000000000000007]
+                            5.65\t[10.999999999999996,6.75]\t[11.000000000000014,11.250000000000004]
+                            """,
                     sql);
         });
     }
@@ -146,9 +158,11 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "(2_000_000, ARRAY[ [0.0], [ 4.0] ], ARRAY[ [0.0], [ 8.0] ]), " +
                     "(3_000_000, ARRAY[ [0.0], [ 4.0] ], ARRAY[ [0.0], [ 4.0] ])"
             );
-            assertSql("ts\tprev_ask_vol\tcurr_ask_vol\tprev_bid_vol\tcurr_bid_vol\n" +
-                            "1970-01-01T00:00:02.000000Z\t9.0\t4.0\t9.0\t8.0\n" +
-                            "1970-01-01T00:00:03.000000Z\t4.0\t4.0\t8.0\t4.0\n",
+            assertSql("""
+                            ts\tprev_ask_vol\tcurr_ask_vol\tprev_bid_vol\tcurr_bid_vol
+                            1970-01-01T00:00:02.000000Z\t9.0\t4.0\t9.0\t8.0
+                            1970-01-01T00:00:03.000000Z\t4.0\t4.0\t8.0\t4.0
+                            """,
                     "SELECT * FROM (SELECT " +
                             "ts ts, " +
                             "lag(asks[2, 1]) OVER () prev_ask_vol, " +
@@ -209,12 +223,14 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "WHERE top > 3 * deep";
             assertPlanNoLeakCheck(
                     sql,
-                    "Filter filter: 3*deep<top\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [memoize(array_avg(asks[2,1:3])),memoize(array_avg(asks[2,3:6]))]\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: order_book\n"
+                    """
+                            Filter filter: 3*deep<top
+                                VirtualRecord
+                                  functions: [memoize(array_avg(asks[2,1:3])),memoize(array_avg(asks[2,3:6]))]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: order_book
+                            """
             );
             assertSql("top\tdeep\n22.5\t5.0\n", sql);
         });

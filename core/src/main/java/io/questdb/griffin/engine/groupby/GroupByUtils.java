@@ -205,11 +205,10 @@ public class GroupByUtils {
                         throw SqlException.invalidColumn(node.position, node.token);
                     }
 
-                    if (func instanceof GroupByFunction) {
+                    if (func instanceof GroupByFunction groupByFunc) {
                         // configure map value columns for group-by functions
                         // some functions may need more than one column in values,
                         // so we have them do all the work
-                        GroupByFunction groupByFunc = (GroupByFunction) func;
 
                         // insert the function into our function list even before we validate it support a given
                         // fill type. it's to close the function properly when the validation fails
@@ -438,11 +437,10 @@ public class GroupByUtils {
                         executionContext
                 );
 
-                if (function instanceof GroupByFunction) {
+                if (function instanceof GroupByFunction func) {
                     // configure map value columns for group-by functions
                     // some functions may need more than one column in values,
                     // so we have them do all the work
-                    GroupByFunction func = (GroupByFunction) function;
                     workerGroupByFunctions.add(func);
                 } else {
                     // it's a key function; we don't need it

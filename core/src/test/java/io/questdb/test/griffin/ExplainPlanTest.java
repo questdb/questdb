@@ -11736,11 +11736,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = rnd_long() ",
-                "Async Filter workers: 1\n" +
-                        "  filter: l=rnd_long()\n" +
-                        "    PageFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
+                """
+                        Async Filter workers: 1
+                          filter: l=rnd_long()
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """
         );
     }
 
