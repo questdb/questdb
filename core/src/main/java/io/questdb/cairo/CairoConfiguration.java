@@ -325,7 +325,7 @@ public interface CairoConfiguration {
 
     long getMatViewRefreshOomRetryTimeout();
 
-    int getMatViewRowsPerQueryEstimate();
+    long getMatViewRowsPerQueryEstimate();
 
     int getMaxCrashFiles();
 
@@ -583,6 +583,8 @@ public interface CairoConfiguration {
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
+
+    int getSqlParallelFilterDispatchLimit();
 
     double getSqlParallelFilterPreTouchThreshold();
 

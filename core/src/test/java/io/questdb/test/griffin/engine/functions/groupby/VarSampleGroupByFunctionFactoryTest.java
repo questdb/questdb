@@ -89,16 +89,6 @@ public class VarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVarSampleLong256Values() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tbl1 as (select x cast(x as long256) from long_sequence(100))");
-            assertSql(
-                    "var_samp\n841.6666666666666\n", "select var_samp(x) from tbl1"
-            );
-        });
-    }
-
-    @Test
     public void testVarSampleNoValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x int)");

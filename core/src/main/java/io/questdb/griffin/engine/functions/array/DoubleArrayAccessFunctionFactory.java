@@ -158,7 +158,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     }
 
     private static boolean isIndexArg(int argType) {
-        return ColumnType.isAssignableFrom(argType, ColumnType.LONG);
+        return ColumnType.isSameOrBuiltInWideningCast(argType, ColumnType.LONG);
     }
 
     private static void validateIndexArgs(ObjList<Function> args, IntList argPositions) throws SqlException {
@@ -167,7 +167,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             int argType = arg.getType();
             if (!isIndexArg(argType) && !ColumnType.isInterval(argType)) {
                 throw SqlException.position(argPositions.get(i))
-                        .put("invalid type for array access [type=").put(argType).put(']');
+                        .put("invalid type for array access [type=").put(ColumnType.nameOf(argType)).put(']');
             }
             if (!arg.isConstant()) {
                 continue;

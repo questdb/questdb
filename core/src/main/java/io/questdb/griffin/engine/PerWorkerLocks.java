@@ -38,6 +38,8 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
  * Used to synchronize access to list-like collections used by worker threads.
  */
 public class PerWorkerLocks {
+    // Reserve extra int array elements to avoid false sharing. A cache line is assumed to take 64 bytes.
+    private static final int INTS_PER_SLOT = 64 / Integer.BYTES;
     private final AtomicIntegerArray locks;
     // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
     private final Rnd rnd;
@@ -49,7 +51,7 @@ public class PerWorkerLocks {
                 configuration.getMicrosecondClock().getTicks()
         );
         this.workerCount = workerCount;
-        locks = new AtomicIntegerArray(workerCount);
+        locks = new AtomicIntegerArray(INTS_PER_SLOT * workerCount);
     }
 
     public int acquireSlot(int workerId, SqlExecutionCircuitBreaker sqlCircuitBreaker) {
@@ -57,7 +59,7 @@ public class PerWorkerLocks {
         while (true) {
             for (int i = 0; i < workerCount; i++) {
                 int id = (i + workerId) % workerCount;
-                if (locks.compareAndSet(id, 0, 1)) {
+                if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
                     return id;
                 }
             }
@@ -71,7 +73,7 @@ public class PerWorkerLocks {
         while (!circuitBreaker.checkIfTripped()) {
             for (int i = 0; i < workerCount; i++) {
                 int id = (i + workerId) % workerCount;
-                if (locks.compareAndSet(id, 0, 1)) {
+                if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
                     return id;
                 }
             }
@@ -82,7 +84,7 @@ public class PerWorkerLocks {
 
     public void releaseSlot(int slot) {
         if (slot > -1) {
-            locks.set(slot, 0);
+            locks.set(INTS_PER_SLOT * slot, 0);
         }
     }
 }

@@ -502,7 +502,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewRowsPerQueryEstimate() {
+    public long getMatViewRowsPerQueryEstimate() {
         return getDelegate().getMatViewRowsPerQueryEstimate();
     }
 
@@ -994,6 +994,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlPageFrameMinRows() {
         return getDelegate().getSqlPageFrameMinRows();
+    }
+
+    @Override
+    public int getSqlParallelFilterDispatchLimit() {
+        return getDelegate().getSqlParallelFilterDispatchLimit();
     }
 
     @Override
