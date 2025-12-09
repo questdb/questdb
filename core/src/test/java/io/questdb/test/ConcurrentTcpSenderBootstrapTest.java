@@ -25,13 +25,13 @@
 package io.questdb.test;
 
 import io.questdb.PropertyKey;
-import io.questdb.ServerMain;
 import io.questdb.client.Sender;
 import io.questdb.std.Files;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.test.cutlass.line.tcp.AbstractLineTcpReceiverTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -81,6 +81,23 @@ public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
         });
     }
 
+    private static @NotNull Thread getThread(int threadNo, TestServerMain serverMain, AtomicReference<Throwable> error) {
+        return new Thread(() -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("localhost")
+                    .port(serverMain.getConfiguration().getLineTcpReceiverConfiguration().getBindPort())
+                    .enableAuth(AbstractLineTcpReceiverTest.AUTH_KEY_ID1)
+                    .authToken(AbstractLineTcpReceiverTest.AUTH_TOKEN_KEY1)
+                    .build()) {
+                sender.table("test" + threadNo).stringColumn("value", "test").atNow();
+                sender.flush();
+            } catch (Throwable e) {
+                error.set(e);
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
     private static void testConcurrentSenders(int nThreads, int startingOffset) throws InterruptedException {
         try (final TestServerMain serverMain = startWithEnvVariables(
                 PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(nThreads + 1)
@@ -89,21 +106,7 @@ public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
             AtomicReference<Throwable> error = new AtomicReference<>();
             ObjList<Thread> threads = new ObjList<>();
             for (int i = startingOffset; i < nThreads + startingOffset; i++) {
-                int threadNo = i;
-                Thread th = new Thread(() -> {
-                    try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                            .address("localhost")
-                            .port(serverMain.getConfiguration().getLineTcpReceiverConfiguration().getBindPort())
-                            .enableAuth(AbstractLineTcpReceiverTest.AUTH_KEY_ID1)
-                            .authToken(AbstractLineTcpReceiverTest.AUTH_TOKEN_KEY1)
-                            .build()) {
-                        sender.table("test" + threadNo).stringColumn("value", "test").atNow();
-                        sender.flush();
-                    } catch (Throwable e) {
-                        error.set(e);
-                        throw new RuntimeException(e);
-                    }
-                });
+                Thread th = getThread(i, serverMain, error);
                 threads.add(th);
                 th.start();
             }

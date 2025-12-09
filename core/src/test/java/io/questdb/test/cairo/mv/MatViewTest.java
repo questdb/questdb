@@ -31,11 +31,14 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
+import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.mv.WalTxnRangeLoader;
 import io.questdb.cairo.sql.RecordCursor;
@@ -48,6 +51,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.catalogue.MatViewsFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.jit.JitUtil;
+import io.questdb.mp.Queue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
@@ -77,8 +81,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
-import static io.questdb.cairo.wal.WalUtils.EVENT_FILE_NAME;
-import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.test.tools.TestUtils.generateRandom;
 
 
@@ -581,6 +584,11 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterRefreshParamsPeriodIntervalToManual() throws Exception {
+        testAlterRefreshParamsToManual("period(sample by interval)");
+    }
+
+    @Test
     public void testAlterRefreshParamsPeriodToManual() throws Exception {
         testAlterRefreshParamsToManual("period(length 1h)");
     }
@@ -617,6 +625,16 @@ public class MatViewTest extends AbstractCairoTest {
                 new TestRefreshParams()
                         .ofDeferred()
                         .ofPeriod()
+        );
+    }
+
+    @Test
+    public void testAlterRefreshParamsToPeriodInterval() throws Exception {
+        testAlterRefreshParamsToTarget(
+                "immediate period(sample by interval)",
+                new TestRefreshParams()
+                        .ofDeferred()
+                        .ofPeriodInterval()
         );
     }
 
@@ -889,7 +907,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h_t set refresh every 2h period (start)",
                     64,
-                    "'length' expected"
+                    "'length' or 'sample' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h_t set refresh period( length",
@@ -965,6 +983,21 @@ public class MatViewTest extends AbstractCairoTest {
                     "alter materialized view price_1h_t set refresh period (length 25h delay 2h)",
                     62,
                     "maximum supported length interval is 24 hours: 25h"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (sample)",
+                    61,
+                    "'by' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (sample by)",
+                    64,
+                    "'interval' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (sample by interval foobar)",
+                    74,
+                    "')' expected"
             );
 
             assertQueryNoLeakCheck(
@@ -2571,8 +2604,6 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testEstimateRowsPerBucket() {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
-
         // Basic case: 1 billion rows, hourly bucket, daily partitions, 30 partitions
         // Expected: (1B * 1hour) / (24hours * 30 partitions) = 1B / 720 ≈ 1,388,888
         testEstimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 1_000_000, 2_000_000);
@@ -3311,6 +3342,11 @@ public class MatViewTest extends AbstractCairoTest {
                     46,
                     "column 'sym' already indexed"
             );
+
+            execute("alter materialized view price_1h alter column sym drop index;");
+            drainQueues();
+            execute("alter materialized view price_1h alter column sym add index;");
+            drainQueues();
 
             String sql = "select * from price_1h where sym = 'eurusd';";
             assertQueryNoLeakCheck(
@@ -4099,6 +4135,75 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testManualPeriodMatView() throws Exception {
+        // Verifies that manual period mat views don't refresh automatically when a period ends.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2001-01-01T01:00:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh manual deferred period (sample by interval) as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2001-01-01T01:01')" +
+                            ",('gbpusd', 1.323, '2001-01-01T01:02')" +
+                            ",('jpyusd', 103.21, '2001-01-01T01:02')" +
+                            ",('gbpusd', 1.321, '2001-01-01T01:02')"
+            );
+            drainWalQueue();
+
+            // range refresh should not happen when a period ends
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            for (int i = 0; i < 10; i++) {
+                currentMicros += Micros.HOUR_MICROS;
+                drainMatViewTimerQueue(timerJob);
+            }
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n",
+                    "price_1h order by sym"
+            );
+            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views";
+            assertQueryNoLeakCheck(
+                    """
+                            view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            price_1h\tmanual\tbase_price\t\t\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t-1\t1
+                            """,
+                    matViewsSql,
+                    null
+            );
+
+            // the view should refresh after an explicit incremental refresh call
+            execute("refresh materialized view price_1h incremental;");
+            drainWalAndMatViewQueues();
+
+            assertQueryNoLeakCheck(
+                    """
+                            view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            price_1h\tmanual\tbase_price\t2001-01-01T11:00:00.000000Z\t2001-01-01T11:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t1\t1
+                            """,
+                    matViewsSql,
+                    null
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tprice\tts
+                            gbpusd\t1.321\t2001-01-01T01:00:00.000000Z
+                            jpyusd\t103.21\t2001-01-01T01:00:00.000000Z
+                            """,
+                    "price_1h order by sym"
+            );
+        });
+    }
+
+    @Test
     public void testManualPeriodMatViewFullRefreshNoTimerJob() throws Exception {
         testPeriodRefresh("manual deferred", "full", false);
     }
@@ -4504,6 +4609,93 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPeriodRangeRefreshIsIgnoredPriorToInitialRefresh() throws Exception {
+        // Here, we're reproducing a scenario when a period range refresh was issued concurrently
+        // with writes to the base table (or base view) for an immediate period view. In such a case,
+        // the range refresh should be ignored or, otherwise, if later on the base table gets any range
+        // replace txns that deletes some rows, the subsequent initial refresh may leave some dangling
+        // deleted rows in the view since it only considers min/max timestamps from the table reader.
+        assertMemoryLeak(() -> {
+            execute("create table x (i int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            execute(
+                    "create materialized view x_10s refresh immediate deferred period (sample by interval) as " +
+                            "select max(i) as max_i, ts from x sample by 10s"
+            );
+
+            // create timer job and make sure to finish the initial period
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            currentMicros += 10 * Micros.SECOND_MICROS;
+            drainMatViewTimerQueue(timerJob);
+
+            // at this point, we should have a pending range refresh message in the task queue
+            final Queue<MatViewRefreshTask> taskQueue = ((MatViewStateStoreImpl) engine.getMatViewStateStore()).getTaskQueue();
+            final MatViewRefreshTask periodRangeTask = new MatViewRefreshTask();
+            Assert.assertTrue(taskQueue.tryDequeue(periodRangeTask));
+            Assert.assertFalse(taskQueue.tryDequeue(new MatViewRefreshTask()));
+
+            // insert a row to be later deleted
+            execute("insert into x values (1, '2000-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+
+            // now, there should be a pending incremental refresh task in the queue; let's save it for later
+            final MatViewRefreshTask incrementalTask = new MatViewRefreshTask();
+            Assert.assertTrue(taskQueue.tryDequeue(incrementalTask));
+            Assert.assertFalse(taskQueue.tryDequeue(new MatViewRefreshTask()));
+
+            // let's add back the period range refresh task and run the refresh job
+            taskQueue.enqueue(periodRangeTask);
+            drainWalAndMatViewQueues();
+            Assert.assertFalse(taskQueue.tryDequeue(new MatViewRefreshTask()));
+
+            // insert a row in a range replace txn; the txn will delete the above row
+            final TableToken baseTableToken = engine.getTableTokenIfExists("x");
+            Assert.assertNotNull(baseTableToken);
+            try (WalWriter walWriter = engine.getWalWriter(baseTableToken)) {
+                final TableWriter.Row row = walWriter.newRow(parseFloorPartialTimestamp("2000-01-01T00:00:10.000000Z"));
+                row.putInt(0, 2);
+                row.append();
+                walWriter.commitWithParams(
+                        parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z"),
+                        parseFloorPartialTimestamp("2000-01-01T00:00:20.000000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalQueue();
+
+            // there should be no new tasks in the queue since they're deduplicated
+            Assert.assertFalse(taskQueue.tryDequeue(new MatViewRefreshTask()));
+
+            // finally, add back the incremental refresh task and run the refresh job
+            taskQueue.enqueue(incrementalTask);
+            currentMicros += 10 * Micros.SECOND_MICROS;
+            drainWalAndMatViewQueues();
+            Assert.assertFalse(taskQueue.tryDequeue(new MatViewRefreshTask()));
+
+            // verify mat view rows: the 00:00:00 bucket must not be present in the view
+            assertQueryNoLeakCheck(
+                    """
+                            max_i\tts
+                            2\t2000-01-01T00:00:10.000000Z
+                            """,
+                    "x_10s",
+                    "ts",
+                    true,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            x_10s\tx\tvalid\t
+                            """,
+                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testQueryError() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -4568,7 +4760,6 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testQueryTimestampMixedWithAggregates() throws Exception {
-        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL;");
             execute("INSERT INTO x VALUES ('2010-01-01T01'),('2010-01-01T01'),('2020-01-01T01'),('2030-01-01T01');");
@@ -7646,6 +7837,16 @@ public class MatViewTest extends AbstractCairoTest {
             this.periodDelayUnit = 'h';
             this.timerStartUs = MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2020-12-12T00:00:00.000000Z");
             this.timerTimeZone = "Europe/London";
+            return this;
+        }
+
+        TestRefreshParams ofPeriodInterval() throws NumericException {
+            refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
+            this.periodLength = 1;
+            this.periodLengthUnit = 'h';
+            this.periodDelay = 0;
+            this.periodDelayUnit = 0;
+            this.timerStartUs = MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2020-12-12T00:00:00.000000Z");
             return this;
         }
 

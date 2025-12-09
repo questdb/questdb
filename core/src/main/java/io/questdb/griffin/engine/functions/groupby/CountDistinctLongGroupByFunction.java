@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -35,28 +34,25 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
-import io.questdb.griffin.engine.groupby.GroupByLongList;
 import io.questdb.std.Numbers;
 
 public class CountDistinctLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final GroupByLongList list;
     private final GroupByLongHashSet setA;
     private final GroupByLongHashSet setB;
+    private long cardinality;
     private int valueIndex;
 
-    public CountDistinctLongGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor, int workerCount) {
+    public CountDistinctLongGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
         setA = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
         setB = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-        list = new GroupByLongList(Math.max(workerCount, 4));
     }
 
     @Override
     public void clear() {
         setA.resetPtr();
         setB.resetPtr();
-        list.resetPtr();
     }
 
     @Override
@@ -65,6 +61,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
         if (value != Numbers.LONG_NULL) {
             mapValue.putLong(valueIndex, 1);
             mapValue.putLong(valueIndex + 1, value);
+            cardinality++;
         } else {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
@@ -79,6 +76,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
             if (cnt == 0) {
                 mapValue.putLong(valueIndex, 1);
                 mapValue.putLong(valueIndex + 1, value);
+                cardinality++;
             } else if (cnt == 1) { // inlined value
                 final long valueB = mapValue.getLong(valueIndex + 1);
                 if (value != valueB) {
@@ -86,6 +84,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
                     setA.add(valueB);
                     mapValue.putLong(valueIndex, 2);
                     mapValue.putLong(valueIndex + 1, setA.ptr());
+                    cardinality++;
                 }
             } else { // non-empty set
                 final long ptr = mapValue.getLong(valueIndex + 1);
@@ -94,6 +93,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
                     setA.addAt(index, value);
                     mapValue.putLong(valueIndex, cnt + 1);
                     mapValue.putLong(valueIndex + 1, setA.ptr());
+                    cardinality++;
                 }
             }
         }
@@ -105,18 +105,12 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     }
 
     @Override
+    public long getCardinalityStat() {
+        return cardinality;
+    }
+
+    @Override
     public long getLong(Record rec) {
-        final long cnt = rec.getLong(valueIndex);
-        if (cnt != -1) {
-            return cnt;
-        }
-        final MapValue value;
-        if (rec instanceof MapRecord) {
-            value = ((MapRecord) rec).getValue();
-        } else {
-            value = (MapValue) rec;
-        }
-        mergeAccumulatedSets(value);
         return rec.getLong(valueIndex);
     }
 
@@ -145,7 +139,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
         valueIndex = columnTypes.getColumnCount();
         // count
         columnTypes.add(ColumnType.LONG);
-        // inlined single value (count=1) or GroupByLongHashSet (count>1) or GroupByLongList pointer (count=-1)
+        // inlined single value (count=1) or GroupByLongHashSet pointer (count>1)
         columnTypes.add(ColumnType.LONG);
     }
 
@@ -162,12 +156,12 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final long srcCount = srcValue.getLong(valueIndex);
-        if (srcCount == 0) {
+        if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
             return;
         }
 
         final long destCount = destValue.getLong(valueIndex);
-        if (destCount == 0) {
+        if (destCount == 0 || destCount == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcCount);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
             return;
@@ -175,13 +169,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
         if (srcCount == 1) { // inlined src value
             final long srcVal = srcValue.getLong(valueIndex + 1);
-            if (destCount == -1) { // dest holds accumulated sets
-                // pick up the first set and add the value there
-                final long destPtr = destValue.getLong(valueIndex + 1);
-                list.of(destPtr);
-                setA.of(list.get(0)).add(srcVal);
-                list.set(0, setA.ptr());
-            } else if (destCount == 1) { // dest holds inlined value
+            if (destCount == 1) { // dest also holds inlined value
                 final long destVal = destValue.getLong(valueIndex + 1);
                 if (destVal != srcVal) {
                     setA.of(0).add(srcVal);
@@ -200,29 +188,38 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
         // src holds a set
         final long srcPtr = srcValue.getLong(valueIndex + 1);
-        if (destCount == -1) { // dest holds accumulated sets
-            final long destPtr = destValue.getLong(valueIndex + 1);
-            list.of(destPtr).add(srcPtr);
-            destValue.putLong(valueIndex + 1, list.ptr());
-        } else if (destCount == 1) { // dest holds inlined value
+        if (destCount == 1) { // dest holds inlined value
             final long destVal = destValue.getLong(valueIndex + 1);
             setA.of(srcPtr).add(destVal);
             destValue.putLong(valueIndex, setA.size());
             destValue.putLong(valueIndex + 1, setA.ptr());
         } else { // dest holds a set
             final long destPtr = destValue.getLong(valueIndex + 1);
-            list.of(0).add(destPtr);
-            list.add(srcPtr);
-            destValue.putLong(valueIndex, -1);
-            destValue.putLong(valueIndex + 1, list.ptr());
+            setA.of(destPtr);
+            setB.of(srcPtr);
+
+            if (setA.size() > (setB.size() >>> 1)) {
+                setA.merge(setB);
+                destValue.putLong(valueIndex, setA.size());
+                destValue.putLong(valueIndex + 1, setA.ptr());
+            } else {
+                // Set A is significantly smaller than set B, so we merge it into set B.
+                setB.merge(setA);
+                destValue.putLong(valueIndex, setB.size());
+                destValue.putLong(valueIndex + 1, setB.ptr());
+            }
         }
+    }
+
+    @Override
+    public void resetStats() {
+        this.cardinality = 0;
     }
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
-        list.setAllocator(allocator);
     }
 
     @Override
@@ -246,39 +243,5 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
-    }
-
-    private void mergeAccumulatedSets(MapValue value) {
-        final long listPtr = value.getLong(valueIndex + 1);
-        assert listPtr != 0;
-        list.of(listPtr);
-        assert list.size() > 0;
-
-        // select set with max size and use it as dest set
-        int maxSize = -1;
-        int maxIndex = -1;
-        for (int i = 0, n = list.size(); i < n; i++) {
-            setA.of(list.get(i));
-            final int size = setA.size();
-            if (size > maxSize) {
-                maxSize = setA.size();
-                maxIndex = i;
-            }
-        }
-        // init the dest set and erase the pointer in the list
-        setA.of(list.get(maxIndex));
-        list.set(maxIndex, 0);
-
-        for (int i = 0, n = list.size(); i < n; i++) {
-            final long srcPtr = list.get(i);
-            if (srcPtr == 0) {
-                continue;
-            }
-            setB.of(srcPtr);
-            setA.merge(setB);
-        }
-
-        value.putLong(valueIndex, setA.size());
-        value.putLong(valueIndex + 1, setA.ptr());
     }
 }

@@ -159,7 +159,6 @@ sys     0m0.424s
 ~/tmp/go/bin/tsbs_generate_data --use-case="cpu-only" --seed=123 --scale=4000 --timestamp-start="2016-01-01T00:00:00Z" --timestamp-end="2016-01-02T00:00:00Z" --log-interval="10s" --format="influx" > /tmp/bigcpu
 
 shared.worker.count=1
-shared.worker.affinity=1
 line.tcp.msg.buffer.size=32768
 line.tcp.max.uncommitted.rows=10000000
 #line.tcp.net.bind.to=10.0.0.1:9009
@@ -834,7 +833,6 @@ rm /tmp/bigcpu2.bak
  GOPATH=~/tmp/go go install -v ./...
 
 shared.worker.count=1
-#shared.worker.affinity=1
 line.tcp.msg.buffer.size=32768
 line.tcp.max.uncommitted.rows=10000000
 #line.tcp.net.bind.to=10.0.0.1:9009

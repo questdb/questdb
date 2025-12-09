@@ -193,7 +193,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.metrics = configuration.getMetrics();
             // Message bus and metrics must be initialized before the pools.
             this.writerPool = new WriterPool(configuration, this);
-            this.scoreboardPool = TxnScoreboardPoolFactory.createPool(configuration);
+            this.scoreboardPool = new TxnScoreboardPoolV2(configuration);
             this.readerPool = new ReaderPool(configuration, scoreboardPool, messageBus, partitionOverwriteControl);
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
             this.tableMetadataPool = new TableMetadataPool(configuration);
@@ -471,6 +471,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
+    @TestOnly
+    // this is used in replication test
+    public void clearWalWriterPool() {
+        walWriterPool.releaseAll();
+    }
+
     @Override
     public void close() {
         Misc.free(sqlCompilerPool);
@@ -593,18 +599,18 @@ public class CairoEngine implements Closeable, WriterSource {
                     path.of(configuration.getDbRoot()).concat(tableToken).$();
                     if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
                         throw CairoException.critical(configuration.getFilesFacade().errno())
-                                .put("could not remove table [table=").put(tableToken).put(']');
+                                .put("could not remove table [table=").put(tableToken).put(", thread=").put(Thread.currentThread().getId()).put(']');
                     }
+
+                    tableNameRegistry.dropTable(tableToken);
+                    // Remove the scoreboard after dropping the table from the registry
+                    // Otherwise someone (like Column Purge Job) can create pooled instances of the scoreboard
+                    // it from the registry without knowing that the table is being dropped.
+                    // Then it can push the scoreboard max txn value into incorrect state.
+                    scoreboardPool.remove(tableToken);
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
                 }
-
-                tableNameRegistry.dropTable(tableToken);
-                // Remove the scoreboard after dropping the table from the registry
-                // Otherwise someone (like Column Purge Job) can create pooled instances of the scoreboard
-                // it from the registry without knowing that the table is being dropped.
-                // Then it can push the scoreboard max txn value into incorrect state.
-                scoreboardPool.remove(tableToken);
                 return;
             }
             throw CairoException.nonCritical().put("could not lock '").put(tableToken)
@@ -648,7 +654,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 DefaultLifecycleManager.INSTANCE,
                 backupDirName,
                 getDdlListener(tableToken),
-                checkpointAgent,
                 this
         );
     }

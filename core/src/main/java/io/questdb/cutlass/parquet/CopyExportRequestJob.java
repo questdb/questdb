@@ -36,14 +36,19 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.Callable;
 
 public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportRequestTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(CopyExportRequestJob.class);
     private final CopyExportContext copyContext;
     private final CopyExportRequestTask localTaskCopy;
     private final @NotNull MicrosecondClock microsecondClock;
+    @TestOnly
+    private @Nullable Callable<Exception> callback;
     private SerialParquetExporter serialExporter;
 
     public CopyExportRequestJob(final CairoEngine engine) {
@@ -57,6 +62,12 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             close();
             throw t;
         }
+    }
+
+    @TestOnly
+    public CopyExportRequestJob(final CairoEngine engine, @Nullable Callable<Exception> callback) {
+        this(engine);
+        this.callback = callback;
     }
 
     @Override
@@ -81,11 +92,21 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     task.getDataPageSize(),
                     task.isStatisticsEnabled(),
                     task.getParquetVersion(),
-                    task.isRawArrayEncoding()
+                    task.isRawArrayEncoding(),
+                    task.getNowTimestampType(),
+                    task.getNow()
             );
             task.clear();
         } finally {
             subSeq.done(cursor);
+        }
+
+        if (this.callback != null) {
+            try {
+                this.callback.call();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
         }
 
         CopyExportContext.ExportTaskEntry entry = localTaskCopy.getEntry();
@@ -161,7 +182,6 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         localTaskCopy.getResult()
                 );
             } finally {
-
                 localTaskCopy.clear();
             }
         } finally {

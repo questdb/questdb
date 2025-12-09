@@ -74,6 +74,7 @@ import java.util.function.Consumer;
 import static io.questdb.client.Sender.*;
 import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createDoubleArray;
 import static io.questdb.test.tools.TestUtils.assertContains;
+import static io.questdb.test.tools.TestUtils.assertEventually;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.*;
 
@@ -441,6 +442,43 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123456789Z"), ChronoUnit.NANOS, PROTOCOL_VERSION_V2,
                 new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO},
                 "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123456789Z");
+    }
+
+    @Test
+    public void testDecimalDefaultValuesWithoutWal() throws Exception {
+        runInContext(r -> {
+            engine.execute("""
+                    CREATE TABLE decimal_test (
+                        dec8 DECIMAL(2, 0),
+                        dec16 DECIMAL(4, 1),
+                        dec32 DECIMAL(8, 2),
+                        dec64 DECIMAL(16, 4),
+                        dec128 DECIMAL(34, 8),
+                        dec256 DECIMAL(64, 16),
+                        value INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            assertTableExists(engine, "decimal_test");
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                sender.table("decimal_test")
+                        .longColumn("value", 1)
+                        .at(100_000, ChronoUnit.MICROS);
+                sender.flush();
+
+                assertTableSizeEventually(engine, "decimal_test", 1);
+                assertTable("""
+                        dec8\tdec16\tdec32\tdec64\tdec128\tdec256\tvalue\tts
+                        \t\t\t\t\t\t1\t1970-01-01T00:00:00.100000Z
+                        """, "decimal_test");
+            }
+        });
     }
 
     @Test
@@ -842,7 +880,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             }
         });
     }
-
 
     @Test
     public void testInsertDecimalTextFormatPrecisionOverflow() throws Exception {
@@ -1579,15 +1616,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     Sender sender1 = Sender.fromConfig(confString);
                     Sender sender2 = Sender.fromConfig(confString)
             ) {
-                SOCountDownLatch writerIsBack = new SOCountDownLatch(1);
-                engine.setPoolListener(
-                        (factoryType, thread, tableToken, event, segment, position) -> {
-                            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                                writerIsBack.countDown();
-                            }
-                        }
-                );
-
                 AtomicBoolean walRunning = new AtomicBoolean(true);
                 SOCountDownLatch doneAll = new SOCountDownLatch(3);
                 SOCountDownLatch doneILP = new SOCountDownLatch(2);
@@ -1661,17 +1689,18 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
                 Assert.assertEquals(0, errorCount.get());
 
-                // make sure to assert before closing the Sender
-                // since the Sender will always flush on close
-                writerIsBack.await();
-                TestUtils.assertSql(
-                        engine,
-                        sqlExecutionContext,
-                        "select count() from mytable",
-                        sink,
-                        "count\n" +
-                                N * 2 + "\n"
-                );
+
+                assertEventually(() -> {
+                    drainWalQueue();
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select count() from mytable",
+                            sink,
+                            "count\n" +
+                                    N * 2 + "\n"
+                    );
+                });
             }
         });
     }

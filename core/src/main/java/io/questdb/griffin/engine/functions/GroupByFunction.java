@@ -84,6 +84,15 @@ public interface GroupByFunction extends Function, Mutable {
         return false;
     }
 
+    /**
+     * Returns recorded cardinality for hash set based functions such as count_distinct().
+     * <p>
+     * A prior {@link #resetStats()} call should be made to reset the counter before computing any values.
+     */
+    default long getCardinalityStat() {
+        return 0;
+    }
+
     default int getSampleByFlags() {
         return SAMPLE_BY_FILL_VALUE | SAMPLE_BY_FILL_NONE | SAMPLE_BY_FILL_NULL | SAMPLE_BY_FILL_PREVIOUS;
     }
@@ -150,6 +159,13 @@ public interface GroupByFunction extends Function, Mutable {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Reset statistics for functions that support cardinality counter. After calling this method and prior
+     * to any compute calls, {@link #getCardinalityStat()} will return 0.
+     */
+    default void resetStats() {
+    }
+
     default void setAllocator(GroupByAllocator allocator) {
         // no-op
     }
@@ -174,6 +190,7 @@ public interface GroupByFunction extends Function, Mutable {
         throw new UnsupportedOperationException();
     }
 
+    // used by generated code
     default void setEmpty(MapValue value) {
         setNull(value);
     }

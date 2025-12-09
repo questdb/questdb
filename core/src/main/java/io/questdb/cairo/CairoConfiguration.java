@@ -126,6 +126,8 @@ public interface CairoConfiguration {
         return "crash+";
     }
 
+    boolean getAsyncMunmapEnabled();
+
     @NotNull
     String getAttachPartitionSuffix();
 
@@ -411,19 +413,19 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
-    int getParquetExportCopyReportFrequencyLines();
-
     int getParquetExportCompressionCodec();
 
     int getParquetExportCompressionLevel();
+
+    int getParquetExportCopyReportFrequencyLines();
 
     int getParquetExportDataPageSize();
 
     int getParquetExportRowGroupSize();
 
-    int getParquetExportVersion();
-
     CharSequence getParquetExportTableNamePrefix();
+
+    int getParquetExportVersion();
 
     int getPartitionEncoderParquetCompressionCodec();
 
@@ -464,6 +466,8 @@ public interface CairoConfiguration {
 
     int getRepeatMigrationsFromVersion();
 
+    int getRmdirMaxDepth();
+
     int getRndFunctionMemoryMaxPages();
 
     int getRndFunctionMemoryPageSize();
@@ -476,8 +480,6 @@ public interface CairoConfiguration {
     boolean getSampleByDefaultAlignmentCalendar();
 
     int getSampleByIndexSearchPageSize();
-
-    int getScoreboardFormat();
 
     long getSequencerCheckInterval();
 
@@ -581,6 +583,8 @@ public interface CairoConfiguration {
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
+
+    int getSqlParallelFilterDispatchLimit();
 
     double getSqlParallelFilterPreTouchThreshold();
 

@@ -50,20 +50,23 @@ import java.time.temporal.ChronoUnit;
 
 public class LineHttpSenderV2 extends AbstractLineHttpSender {
 
-    public LineHttpSenderV2(String host,
-                            int port,
-                            HttpClientConfiguration clientConfiguration,
-                            ClientTlsConfiguration tlsConfig,
-                            int autoFlushRows,
-                            String authToken,
-                            String username,
-                            String password,
-                            int maxNameLength,
-                            long maxRetriesNanos,
-                            int maxBackoffMillis,
-                            long minRequestThroughput,
-                            long flushIntervalNanos) {
-        super(host,
+    public LineHttpSenderV2(
+            String host,
+            int port,
+            HttpClientConfiguration clientConfiguration,
+            ClientTlsConfiguration tlsConfig,
+            int autoFlushRows,
+            String authToken,
+            String username,
+            String password,
+            int maxNameLength,
+            long maxRetriesNanos,
+            int maxBackoffMillis,
+            long minRequestThroughput,
+            long flushIntervalNanos
+    ) {
+        super(
+                host,
                 port,
                 clientConfiguration,
                 tlsConfig,
@@ -76,27 +79,31 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 maxBackoffMillis,
                 minRequestThroughput,
                 flushIntervalNanos,
-                new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks()));
+                new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks())
+        );
     }
 
-    public LineHttpSenderV2(ObjList<String> hosts,
-                            IntList ports,
-                            String path,
-                            HttpClientConfiguration clientConfiguration,
-                            ClientTlsConfiguration tlsConfig,
-                            @Nullable HttpClient client,
-                            int autoFlushRows,
-                            String authToken,
-                            String username,
-                            String password,
-                            int maxNameLength,
-                            long maxRetriesNanos,
-                            int maxBackoffMillis,
-                            long minRequestThroughput,
-                            long flushIntervalNanos,
-                            int currentAddressIndex,
-                            Rnd rnd) {
-        super(hosts,
+    public LineHttpSenderV2(
+            ObjList<String> hosts,
+            IntList ports,
+            String path,
+            HttpClientConfiguration clientConfiguration,
+            ClientTlsConfiguration tlsConfig,
+            @Nullable HttpClient client,
+            int autoFlushRows,
+            String authToken,
+            String username,
+            String password,
+            int maxNameLength,
+            long maxRetriesNanos,
+            int maxBackoffMillis,
+            long minRequestThroughput,
+            long flushIntervalNanos,
+            int currentAddressIndex,
+            Rnd rnd
+    ) {
+        super(
+                hosts,
                 ports,
                 path,
                 clientConfiguration,
@@ -112,27 +119,31 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 minRequestThroughput,
                 flushIntervalNanos,
                 currentAddressIndex,
-                rnd);
+                rnd
+        );
     }
 
     @SuppressWarnings("unused")
-    protected LineHttpSenderV2(String host,
-                               int port,
-                               String path,
-                               HttpClientConfiguration clientConfiguration,
-                               ClientTlsConfiguration tlsConfig,
-                               HttpClient client,
-                               int autoFlushRows,
-                               String authToken,
-                               String username,
-                               String password,
-                               int maxNameLength,
-                               long maxRetriesNanos,
-                               int maxBackoffMillis,
-                               long minRequestThroughput,
-                               long flushIntervalNanos,
-                               Rnd rnd) {
-        super(host,
+    protected LineHttpSenderV2(
+            String host,
+            int port,
+            String path,
+            HttpClientConfiguration clientConfiguration,
+            ClientTlsConfiguration tlsConfig,
+            HttpClient client,
+            int autoFlushRows,
+            String authToken,
+            String username,
+            String password,
+            int maxNameLength,
+            long maxRetriesNanos,
+            int maxBackoffMillis,
+            long minRequestThroughput,
+            long flushIntervalNanos,
+            Rnd rnd
+    ) {
+        super(
+                host,
                 port,
                 path,
                 clientConfiguration,
@@ -147,7 +158,8 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 maxBackoffMillis,
                 minRequestThroughput,
                 flushIntervalNanos,
-                rnd);
+                rnd
+        );
     }
 
     @Override
@@ -187,7 +199,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
 
     @Override
     public Sender doubleArray(CharSequence name, DoubleArray array) {
-        if (processNullArray(name, array)) {
+        if (array == null) {
             return this;
         }
         writeFieldName(name)
@@ -230,7 +242,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
 
     @Override
     public Sender longArray(@NotNull CharSequence name, LongArray values) {
-        if (processNullArray(name, values)) {
+        if (values == null) {
             return this;
         }
         writeFieldName(name)
@@ -263,7 +275,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
             ArrayShapeAppender<T> shapeAppender,
             ArrayDataAppender<T> dataAppender
     ) {
-        if (processNullArray(name, array)) {
+        if (array == null) {
             return this;
         }
         writeFieldName(name)
@@ -274,17 +286,6 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
         shapeAppender.append(request, array);
         dataAppender.append(request, array);
         return this;
-    }
-
-    private boolean processNullArray(CharSequence name, Object value) {
-        if (value == null) {
-            writeFieldName(name)
-                    .putAscii('=') // binary format flag
-                    .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
-                    .put((byte) ColumnType.NULL); // element type
-            return true;
-        }
-        return false;
     }
 
     private void putTimestamp(long timestamp, ChronoUnit unit) {

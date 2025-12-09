@@ -1,19 +1,56 @@
 FROM debian:bookworm AS builder
+
 ARG tag_name
+ARG GRAAL_JDK_VERSION=17.0.9
+ARG TARGETARCH
 
-ENV GOSU_VERSION=1.19
-ENV JDK_VERSION=17.0.16.8-1
+ENV GOSU_VERSION=1.19-go1.24.11
+ENV DEBIAN_FRONTEND=noninteractive
 
+# 1) Base tools + Maven
 RUN apt-get update \
-    && apt-get install --no-install-recommends git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip -y
+    && apt-get install --no-install-recommends -y \
+       git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip maven \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN wget -O - https://apt.corretto.aws/corretto.key | gpg --dearmor -o /usr/share/keyrings/corretto-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/corretto-keyring.gpg] https://apt.corretto.aws stable main" | tee /etc/apt/sources.list.d/corretto.list && \
-    apt-get update && \
-    apt-get install --no-install-recommends -y java-17-amazon-corretto-jdk=1:${JDK_VERSION} && \
-    apt-get -y install maven
+# 2) Download GraalVM CE archive + SHA256, arch-aware
+RUN set -eux; \
+    : "${TARGETARCH:=amd64}"; \
+    case "$TARGETARCH" in \
+      amd64) ARCH_SUFFIX="linux-x64" ;; \
+      arm64) ARCH_SUFFIX="linux-aarch64" ;; \
+      *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    echo "Building for TARGETARCH=${TARGETARCH}, using GraalVM suffix ${ARCH_SUFFIX}"; \
+    TAG="jdk-${GRAAL_JDK_VERSION}"; \
+    FILENAME="graalvm-community-jdk-${GRAAL_JDK_VERSION}_${ARCH_SUFFIX}_bin.tar.gz"; \
+    BASE_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${TAG}"; \
+    mkdir -p /tmp/graalvm; \
+    cd /tmp/graalvm; \
+    curl -L -o "${FILENAME}" "${BASE_URL}/${FILENAME}"; \
+    curl -L -o "${FILENAME}.sha256" "${BASE_URL}/${FILENAME}.sha256"
 
-ENV JAVA_HOME=/usr/lib/jvm/java-17-amazon-corretto
+# 3) Verify SHA256 and install GraalVM CE
+RUN set -eux; \
+    : "${TARGETARCH:=amd64}"; \
+    case "$TARGETARCH" in \
+      amd64) ARCH_SUFFIX="linux-x64" ;; \
+      arm64) ARCH_SUFFIX="linux-aarch64" ;; \
+      *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    cd /tmp/graalvm; \
+    FILENAME="graalvm-community-jdk-${GRAAL_JDK_VERSION}_${ARCH_SUFFIX}_bin.tar.gz"; \
+    # .sha256 contains only the hash, so wrap it with filename for sha256sum -c
+    HASH="$(cut -d ' ' -f1 "${FILENAME}.sha256")"; \
+    echo "${HASH}  ${FILENAME}" | sha256sum -c -; \
+    INSTALL_DIR="/usr/lib/jvm/graalvm-community-jdk-${GRAAL_JDK_VERSION}"; \
+    mkdir -p "${INSTALL_DIR}"; \
+    tar -xzf "${FILENAME}" -C "${INSTALL_DIR}" --strip-components=1; \
+    rm -rf /tmp/graalvm
+
+ENV JAVA_HOME=/usr/lib/jvm/graalvm-community-jdk-${GRAAL_JDK_VERSION}
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
 WORKDIR /build
 
 RUN echo tag_name ${tag_name:-master}
@@ -31,13 +68,11 @@ RUN tar xvfz questdb-*-rt-*.tar.gz
 RUN rm questdb-*-rt-*.tar.gz
 
 RUN dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
-    wget -O gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch" && \
-    wget -O gosu.asc "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch.asc" && \
-    export GNUPGHOME="$(mktemp -d)" && \
-    gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4 && \
-    gpg --batch --verify gosu.asc gosu && \
-    gpgconf --kill all && \
-    rm -rf "$GNUPGHOME" gosu.asc && \
+    wget -O "gosu-$dpkgArch" "https://github.com/questdb/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch" && \
+    wget -O SHA256SUMS "https://github.com/questdb/gosu/releases/download/$GOSU_VERSION/SHA256SUMS" && \
+    grep "gosu-$dpkgArch\$" SHA256SUMS | sha256sum -c - && \
+    rm SHA256SUMS && \
+    mv "gosu-$dpkgArch" gosu && \
     chmod +x gosu && \
     ./gosu --version && \
     ./gosu nobody true
@@ -46,7 +81,7 @@ RUN dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
 ######################### Build for RedHat OpenShift #########################
 ##############################################################################
 
-FROM registry.access.redhat.com/ubi9/ubi AS rhel
+FROM registry.access.redhat.com/ubi10/ubi-minimal AS rhel
 ARG tag_name
 
 WORKDIR /app
@@ -70,8 +105,11 @@ LABEL name=QuestDB \
     url="https://github.com/questdb/questdb"
 
 # Create questdb user and group
-RUN groupadd -g 10001 questdb && \
+RUN microdnf install -y shadow-utils util-linux grep && \
+    groupadd -g 10001 questdb && \
     useradd -u 10001 -g 10001 -d /var/lib/questdb -M -s /sbin/nologin questdb && \
+    microdnf remove -y shadow-utils && \
+    microdnf clean all && \
     mkdir -p /var/lib/questdb && \
     chown -R questdb:questdb /var/lib/questdb
 
@@ -91,7 +129,7 @@ ENTRYPOINT ["/docker-entrypoint.sh"]
 ########################## General-use Docker build ##########################
 ##############################################################################
 
-FROM debian:bookworm-slim AS questdb
+FROM quay.io/fedora/fedora-minimal:44 AS questdb
 ARG tag_name
 
 WORKDIR /app
@@ -103,8 +141,11 @@ COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 # Create questdb user and group
-RUN groupadd -g 10001 questdb && \
+RUN microdnf install -y shadow-utils util-linux grep && \
+    groupadd -g 10001 questdb && \
     useradd -u 10001 -g 10001 -d /var/lib/questdb -M -s /sbin/nologin questdb && \
+    microdnf remove -y shadow-utils && \
+    microdnf clean all && \
     mkdir -p /var/lib/questdb && \
     chown -R questdb:questdb /var/lib/questdb
 

@@ -40,7 +40,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TxnScoreboardPoolFactory;
+import io.questdb.cairo.TxnScoreboardPoolV2;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -109,6 +109,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -2322,8 +2323,10 @@ public class IODispatcherTest extends AbstractTest {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
                 httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
-                    public ObjList<String> getUrls() {
-                        return new ObjList<>("/upload");
+                    public ObjHashSet<String> getUrls() {
+                        return new ObjHashSet<>() {{
+                            add("/upload");
+                        }};
                     }
 
                     @Override
@@ -3770,8 +3773,8 @@ public class IODispatcherTest extends AbstractTest {
                 Transfer-Encoding: chunked\r
                 Content-Type: application/json; charset=utf-8\r
                 \r
-                25\r
-                {"error":"utf8 error in column list"}\r
+                67\r
+                {"query":"select 'oops' рекордно from long_sequence(10)\\n","error":"utf8 error in column list"}\r
                 00\r
                 \r
                 """);
@@ -7569,7 +7572,7 @@ public class IODispatcherTest extends AbstractTest {
 
         String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
         TableToken tableToken = new TableToken(tableName, dirName, null, 1, false, false, false);
-        try (TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, tableToken, TxnScoreboardPoolFactory.createPool(configuration)); TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()) {
+        try (TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, tableToken, new TxnScoreboardPoolV2(configuration)); TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()) {
             cursor.of(reader);
             Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
@@ -7586,7 +7589,7 @@ public class IODispatcherTest extends AbstractTest {
 
         String telemetry = TelemetryTask.TABLE_NAME;
         TableToken telemetryTableName = new TableToken(telemetry, telemetry, null, 0, false, false, false, false, true);
-        try (TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, telemetryTableName, TxnScoreboardPoolFactory.createPool(configuration)); TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()) {
+        try (TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, telemetryTableName, new TxnScoreboardPoolV2(configuration)); TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()) {
             cursor.of(reader);
             final StringSink sink = new StringSink();
             sink.clear();
@@ -8345,8 +8348,10 @@ public class IODispatcherTest extends AbstractTest {
                                                  int workerCount) implements HttpRequestHandlerFactory {
 
         @Override
-        public ObjList<String> getUrls() {
-            return new ObjList<>("/query");
+        public ObjHashSet<String> getUrls() {
+            return new ObjHashSet<>() {{
+                add("/query");
+            }};
         }
 
         @Override

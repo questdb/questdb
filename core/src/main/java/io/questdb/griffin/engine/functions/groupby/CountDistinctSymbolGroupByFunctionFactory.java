@@ -32,6 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CountDistinctSymbolGroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "count_distinct(K)";
@@ -53,8 +54,7 @@ public class CountDistinctSymbolGroupByFunctionFactory implements FunctionFactor
         return new CountDistinctSymbolGroupByFunction(
                 args.getQuick(0),
                 configuration.getCountDistinctCapacity(),
-                configuration.getCountDistinctLoadFactor(),
-                sqlExecutionContext.getSharedQueryWorkerCount()
+                configuration.getCountDistinctLoadFactor()
         );
     }
 }

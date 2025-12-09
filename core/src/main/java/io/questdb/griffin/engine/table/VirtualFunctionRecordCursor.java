@@ -87,6 +87,11 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         }
     }
 
+    @Override
+    public void expectLimitedIteration() {
+        baseCursor.expectLimitedIteration();
+    }
+
     public int getLongTopKColumnIndex(int columnIndex) {
         if (supportsRandomAccess && functions.getQuick(columnIndex) instanceof ColumnFunction columnFunction) {
             final int virtualColumnIndex = columnFunction.getColumnIndex();

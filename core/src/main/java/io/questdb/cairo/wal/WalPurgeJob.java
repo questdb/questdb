@@ -282,7 +282,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         try {
                             final int walId = Numbers.parseInt(walName, 3, walName.size());
                             onDiskWalIDSet.add(walId);
-                            long walLockFd = TableUtils.lock(ff, setWalLockPath(tableToken, walId).$(), true);
+                            long walLockFd = TableUtils.lock(ff, setWalLockPath(tableToken, walId).$(), false, true);
                             if (walLockFd > 0) {
                                 LOG.debug().$("locked: ").$(path).$(", lockFd=").$(walLockFd).I$();
                             }
@@ -625,7 +625,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         }
                         deleter.unlock(lockFd);
                         if (isWalDir(segmentId, walId)) {
-                            LOG.info().$("Java unlocked: [table=").$(tableToken).$(Files.SEPARATOR).$("wal").$(walId).$(".lock").$(", lockFd=").$(lockFd).I$();
+                            LOG.debug().$("Java unlocked: [table=").$(tableToken).$(Files.SEPARATOR).$("wal").$(walId).$(".lock").$(", lockFd=").$(lockFd).I$();
                         }
                     } else {
                         final int seqPart = getSeqPart(walId, segmentId); // -1 if not a seq part
