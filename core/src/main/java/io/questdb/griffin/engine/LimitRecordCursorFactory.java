@@ -202,16 +202,17 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
             this.base = base;
+            this.circuitBreaker = executionContext.getCircuitBreaker();
+
             loFunction.init(base, executionContext);
-            // swap lo and hi if lo > hi
             if (hiFunction != null) {
                 hiFunction.init(base, executionContext);
             }
-            this.circuitBreaker = executionContext.getCircuitBreaker();
             rowCount = -1;
             size = -1;
             lo = loFunction.getLong(null);
             hi = hiFunction != null ? hiFunction.getLong(null) : -1;
+            // swap lo and hi if lo > hi
             if (hi != -1 && hi < lo && Numbers.sameSign(lo, hi)) {
                 final long l = hi;
                 hi = lo;
