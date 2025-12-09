@@ -48,66 +48,46 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Worker logic for parallel markout query execution.
  * <p>
- * This class implements the k-way merge algorithm that emits horizon rows in timestamp order,
- * enabling efficient forward-only ASOF JOIN traversal.
- * <p>
- * Each worker processes a batch of master rows, builds a circular list of iterators,
- * emits horizons in timestamp order, performs ASOF lookups, and aggregates results.
+ * This class implements the k-way merge algorithm that emits markout horizon rows in
+ * timestamp order, performs ASOF JOIN, and aggregates the resulting rows.
  */
 public class MarkoutReducer {
-    // Native memory layout constants
     private static final int BLOCK_HEADER_SIZE = 16;
-    private static final int BLOCK_OFFSET_NEXT_BLOCK_ADDR = 0;    // long (8 bytes)
-    private static final int BLOCK_OFFSET_NEXT_FREE_SLOT = 8;     // int (4 bytes)
-    private static final int BLOCK_OFFSET_USED_SLOT_COUNT = 12;   // int (4 bytes)
+    private static final int BLOCK_OFFSET_NEXT_BLOCK_ADDR = 0;             // long (8 bytes)
+    private static final int BLOCK_OFFSET_NEXT_FREE_SLOT = 8;              // int (4 bytes)
+    private static final int BLOCK_OFFSET_USED_SLOT_COUNT = 12;            // int (4 bytes)
     private static final int ITERATORS_PER_BLOCK = 1024;
     private static final int ITERATOR_OFFSET_MASTER_ROW_INDEX = 0;         // int (4 bytes)
     private static final int ITERATOR_OFFSET_MASTER_TIMESTAMP = 8;         // long (8 bytes)
     private static final int ITERATOR_OFFSET_NEXT_ITER_ADDR = 16;          // long (8 bytes)
     private static final int ITERATOR_OFFSET_OFFSET_FROM_BLOCK_START = 36; // int (4 bytes)
-    private static final int ITERATOR_OFFSET_SEQUENCE_ROW_NUM = 32;   // int (4 bytes)
-    private static final int ITERATOR_OFFSET_TIMESTAMP = 24;          // long (8 bytes)
+    private static final int ITERATOR_OFFSET_SEQUENCE_ROW_NUM = 32;        // int (4 bytes)
+    private static final int ITERATOR_OFFSET_TIMESTAMP = 24;               // long (8 bytes)
     private static final int ITERATOR_SIZE = 40;
     private static final long BLOCK_SIZE = BLOCK_HEADER_SIZE + (ITERATORS_PER_BLOCK * ITERATOR_SIZE);
-    // Combined record for aggregation - maps baseMetadata columns to source records
     private final CombinedRecord combinedRecord = new CombinedRecord();
     private Map asofJoinMap;
-    // Per-batch state
     private MasterRowBatch batch;
-    // Iterator block management
     private long firstIteratorBlockAddr;
     private GroupByFunctionsUpdater functionUpdater;
     private RecordSink groupByKeyCopier;
-    private boolean hasBufferedValue;  // True if we read a price but didn't store it yet
+    private boolean hasBufferedValue;
     private long lastIteratorBlockAddr;
     private long lastSlaveRowId;
     private long lastSlaveTimestamp;
     private RecordSink masterKeyCopier;
     private Map partialMap;
     private int sequenceColumnIndex;
-    // Shared sequence data (read-only)
+    private Record sequenceRecord;
     private RecordArray sequenceRecordArray;
-    private Record sequenceRecord;  // Per-worker record for thread-safe access
     private LongList sequenceRecordOffsets;
     private int sequenceRowCount;
-    // ASOF JOIN lookup state
     private RecordCursor slaveCursor;
     private RecordSink slaveKeyCopier;
     private Record slaveRecord;
     private Record slaveRecordB;
     private int slaveTimestampIndex;
 
-    // ==================== Block accessor methods ====================
-
-    /**
-     * Process a batch of master rows through the markout pipeline.
-     * <p>
-     * This method implements the k-way merge algorithm:
-     * 1. Maintains a circular list of iterators, one per active master row
-     * 2. Emits horizon rows in timestamp order
-     * 3. For each horizon, performs ASOF JOIN lookup (TODO)
-     * 4. Aggregates results into the partial map
-     */
     public void reduce(
             AsyncMarkoutGroupByAtom atom,
             MasterRowBatch batch,
@@ -122,7 +102,7 @@ public class MarkoutReducer {
             return;
         }
         this.sequenceRecordArray = atom.getSequenceRecordArray();
-        this.sequenceRecord = atom.getSequenceRecord(slotId);  // Per-worker record for thread-safe access
+        this.sequenceRecord = atom.getSequenceRecord(slotId);
         this.sequenceRecordOffsets = atom.getSequenceRecordOffsets();
         this.sequenceColumnIndex = atom.getSequenceColumnIndex();
         long firstSequenceTimeOffset = atom.getFirstSequenceTimeOffset();
@@ -304,23 +284,22 @@ public class MarkoutReducer {
      * This method maintains the cursor position between calls, so it can only
      * be used when rows are emitted in strictly increasing timestamp order.
      */
-    private void advanceSlaveCursorTo(long horizonTs) {
+    private void advanceSlaveCursorTo(long masterTs) {
         // First, check if we have a buffered row that we can now store
         if (hasBufferedValue) {
-            if (lastSlaveTimestamp <= horizonTs) {
-                // Store the buffered row
-                MapKey joinKey = asofJoinMap.withKey();
-                joinKey.put(slaveRecord, slaveKeyCopier);
-                MapValue joinValue = joinKey.createValue();
-                joinValue.putLong(0, lastSlaveRowId);
-                hasBufferedValue = false;
-            } else {
-                // Buffered row is still past the horizon, nothing more to do
+            if (lastSlaveTimestamp > masterTs) {
+                // Buffered row is still past the master, nothing more to do
                 return;
             }
+            // Store the buffered row
+            MapKey joinKey = asofJoinMap.withKey();
+            joinKey.put(slaveRecord, slaveKeyCopier);
+            MapValue joinValue = joinKey.createValue();
+            joinValue.putLong(0, lastSlaveRowId);
+            hasBufferedValue = false;
         }
 
-        // Advance cursor forward-only
+        // Advance cursor and memorize join keys
         while (slaveCursor.hasNext()) {
             // Note: Column order in factory metadata may differ from table definition
             long priceTs = slaveRecord.getTimestamp(slaveTimestampIndex);
@@ -328,7 +307,7 @@ public class MarkoutReducer {
             lastSlaveTimestamp = priceTs;
             lastSlaveRowId = rowId;
 
-            if (priceTs <= horizonTs) {
+            if (priceTs <= masterTs) {
                 // Store joinKey -> rowId mapping
                 MapKey joinKey = asofJoinMap.withKey();
                 joinKey.put(slaveRecord, slaveKeyCopier);
@@ -406,24 +385,19 @@ public class MarkoutReducer {
         }
     }
 
-    private void emitAndAggregate(long currentIterAddr) {
-        // Get current horizon row data
-        Record masterRecord = batch.getRowAt(iter_masterRowIndex(currentIterAddr));
+    private void emitAndAggregate(long iterAddr) {
+        Record masterRecord = batch.getRowAt(iter_masterRowIndex(iterAddr));
 
-        // nextSequenceRowNum is the current row to emit (we haven't called gotoNextRow yet)
-        int sequenceRowNum = iter_sequenceRowNum(currentIterAddr);
+        int sequenceRowNum = iter_sequenceRowNum(iterAddr);
         long sequenceOffset = sequenceRecordOffsets.getQuick(sequenceRowNum);
-        // Use per-worker sequenceRecord for thread-safe access to shared sequenceRecordArray
         sequenceRecordArray.recordAt(sequenceRecord, sequenceOffset);
-
-        // Get horizon timestamp
-        long horizonTs = iter_timestamp(currentIterAddr);
+        long iterTs = iter_timestamp(iterAddr);
 
         // ASOF JOIN lookup: find matching slave record
         Record matchedSlaveRecord = null;
         if (asofJoinMap != null && slaveCursor != null && masterKeyCopier != null) {
-            // Advance slave cursor forward-only up to horizon timestamp
-            advanceSlaveCursorTo(horizonTs);
+            // Advance slave cursor forward-only up to iterator's timestamp
+            advanceSlaveCursorTo(iterTs);
 
             // Look up master's join key
             MapKey lookupKey = asofJoinMap.withKey();
@@ -465,7 +439,7 @@ public class MarkoutReducer {
     }
 
     /**
-     * Advance iterator to the next row and compute its timestamp.
+     * Advances the iterator to the next row and computes the new timestamp.
      */
     private void gotoNextRow(long iterAddr) {
         iter_setSequenceRowNum(iterAddr, iter_sequenceRowNum(iterAddr) + 1);
@@ -473,7 +447,7 @@ public class MarkoutReducer {
     }
 
     /**
-     * Insert a new iterator right after the given iterator in the circular list.
+     * Inserts a new iterator right after the given iterator in the circular list.
      */
     private long insertIteratorAfter(long iterAddr, int tradeIndex, long masterTimestamp) {
         long newIterAddr = createIterator(tradeIndex, masterTimestamp);
@@ -485,14 +459,14 @@ public class MarkoutReducer {
     }
 
     /**
-     * Check if iterator is exhausted (no more rows to emit).
+     * Checks if iterator is exhausted (no more rows to emit).
      */
     private boolean isEmpty(long iterAddr) {
         return iter_sequenceRowNum(iterAddr) >= sequenceRowCount;
     }
 
     /**
-     * Remove an iterator from the circular list.
+     * Removes an iterator from the circular list.
      *
      * @return the next iterator, or 0 if this was the only one
      */
@@ -507,7 +481,7 @@ public class MarkoutReducer {
     }
 
     /**
-     * Compute and store the next timestamp based on current row number.
+     * Computes and stores the next timestamp based on current row number.
      * Sets Long.MIN_VALUE if exhausted.
      */
     private void updateTimestamp(long iterAddr) {
@@ -723,20 +697,16 @@ public class MarkoutReducer {
         }
 
         private Record getSourceRecord(int col) {
-            switch (columnSources[col]) {
-                case SOURCE_MASTER:
-                    return masterRecord;
-                case SOURCE_SEQUENCE:
-                    return sequenceRecord;
-                case SOURCE_SLAVE:
-                    return slaveRecord;
-                default:
-                    return null;
-            }
+            return switch (columnSources[col]) {
+                case SOURCE_MASTER -> masterRecord;
+                case SOURCE_SEQUENCE -> sequenceRecord;
+                case SOURCE_SLAVE -> slaveRecord;
+                default -> null;
+            };
         }
 
         /**
-         * Initialize the column mappings. Called once per reduce() call.
+         * Initializes the column mappings. Called once per reduce() call.
          */
         void init(int[] columnSources, int[] columnIndices) {
             this.columnSources = columnSources;
@@ -744,7 +714,7 @@ public class MarkoutReducer {
         }
 
         /**
-         * Set the source records for this row. Called once per emitAndAggregate() call.
+         * Sets the source records for this row. Called once per emitAndAggregate() call.
          */
         void of(Record masterRecord, Record sequenceRecord, Record slaveRecord) {
             this.masterRecord = masterRecord;
