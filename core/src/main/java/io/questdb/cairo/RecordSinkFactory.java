@@ -44,6 +44,15 @@ public class RecordSinkFactory {
     private static final int FIELD_POOL_OFFSET = 3;
     private static final Log LOG = LogFactory.getLog(RecordSinkFactory.class);
 
+    // Default bytecode size limit. Methods larger than 8KB may not be fully optimized
+    // by C2 and cannot be inlined, causing significant performance degradation.
+    // This matches the threshold used in RecordToRowCopierUtils.
+    public static final int DEFAULT_METHOD_SIZE_LIMIT = 8000;
+
+    // Bytecode size estimates per column type
+    private static final int BASE_BYTECODE_PER_COLUMN = 12;  // aload, iconst, invokeInterface x2
+    private static final int COMPLEX_TYPE_OVERHEAD = 30;  // UUID, Decimal types need more bytecode
+
     public static RecordSink getInstance(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
@@ -99,17 +108,7 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar
     ) {
-        final Class<RecordSink> clazz = getInstanceClass(
-                asm,
-                columnTypes,
-                columnFilter,
-                keyFunctions,
-                skewIndex,
-                writeSymbolAsString,
-                writeStringAsVarchar,
-                null
-        );
-        return getInstance(clazz, keyFunctions);
+        return getInstance(asm, columnTypes, columnFilter, keyFunctions, skewIndex, writeSymbolAsString, writeStringAsVarchar, null);
     }
 
     public static RecordSink getInstance(
@@ -122,6 +121,48 @@ public class RecordSinkFactory {
             @Nullable BitSet writeStringAsVarchar,
             @Nullable BitSet writeTimestampAsNanos
     ) {
+        return getInstance(
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos,
+                DEFAULT_METHOD_SIZE_LIMIT
+        );
+    }
+
+    public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos,
+            int methodSizeLimit
+    ) {
+        int estimatedSize = estimateBytecodeSize(columnTypes, columnFilter, keyFunctions);
+
+        // Fall back to loop-based implementation when bytecode would exceed the limit
+        if (estimatedSize > methodSizeLimit) {
+            LoopingRecordSink sink = new LoopingRecordSink(
+                    columnTypes,
+                    columnFilter,
+                    skewIndex,
+                    writeSymbolAsString,
+                    writeStringAsVarchar,
+                    writeTimestampAsNanos
+            );
+            if (keyFunctions != null) {
+                sink.setFunctions(keyFunctions);
+            }
+            return sink;
+        }
+
         final Class<RecordSink> clazz = getInstanceClass(
                 asm,
                 columnTypes,
@@ -133,6 +174,52 @@ public class RecordSinkFactory {
                 writeTimestampAsNanos
         );
         return getInstance(clazz, keyFunctions);
+    }
+
+    /**
+     * Estimates the bytecode size for the copy method.
+     */
+    private static int estimateBytecodeSize(
+            ColumnTypes columnTypes,
+            ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions
+    ) {
+        int total = 0;
+
+        // Estimate bytecode for column copying
+        for (int i = 0, n = columnFilter.getColumnCount(); i < n; i++) {
+            int index = columnFilter.getColumnIndex(i);
+            int factor = columnFilter.getIndexFactor(index);
+            index = index * factor - 1;
+            int type = columnTypes.getColumnType(index);
+            total += estimateColumnBytecodeSize(type);
+        }
+
+        // Estimate bytecode for function keys
+        if (keyFunctions != null) {
+            for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+                int type = keyFunctions.getQuick(i).getType();
+                total += estimateColumnBytecodeSize(type);
+            }
+        }
+
+        return total;
+    }
+
+    /**
+     * Estimates the bytecode size for copying a single column.
+     */
+    private static int estimateColumnBytecodeSize(int type) {
+        int tag = ColumnType.tagOf(type);
+        int size = BASE_BYTECODE_PER_COLUMN;
+
+        // Complex types need more bytecode
+        if (tag == ColumnType.UUID || tag == ColumnType.LONG128 ||
+                tag == ColumnType.DECIMAL128 || tag == ColumnType.DECIMAL256) {
+            size += COMPLEX_TYPE_OVERHEAD;
+        }
+
+        return size;
     }
 
     /**
