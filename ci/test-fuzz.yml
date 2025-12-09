@@ -27,7 +27,8 @@ stages:
 
     jobs:
       - job: RunOn
-        clean: all
+        workspace:
+          clean: all
         displayName: "on"
         strategy:
           matrix:
