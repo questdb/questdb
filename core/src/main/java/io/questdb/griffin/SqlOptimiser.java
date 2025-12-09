@@ -85,8 +85,8 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.griffin.SqlCodeGenerator.joinsRequiringTimestamp;
 import static io.questdb.griffin.SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION;
+import static io.questdb.griffin.SqlCodeGenerator.joinsRequiringTimestamp;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.*;
@@ -170,8 +170,8 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<QueryColumn> tempColumns2 = new ObjList<>();
     private final IntList tempCrossIndexes = new IntList();
     private final IntList tempCrosses = new IntList();
-    private final ObjList<ExpressionNode> tempExprs = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tempCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
+    private final ObjList<ExpressionNode> tempExprs = new ObjList<>();
     private final IntList tempIntList = new IntList();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjList<CharSequence> trivialExpressionCandidates = new ObjList<>();

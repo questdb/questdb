@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.PropertyKey;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
@@ -479,6 +479,124 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFunctionMemoizationBasicColumnRefCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b double, c string)");
+            execute("insert into x values(3, 1.0, 'a'), (1, 2.0, 'b')");
+            final String query = "select a, b, a + b c1 from x order by  c1";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Sort light
+                              keys: [c1]
+                                VirtualRecord
+                                  functions: [a,b,memoize(a+b)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                            """
+            );
+            assertSql(
+                    """
+                            a\tb\tc1
+                            1\t2.0\t3.0
+                            3\t1.0\t4.0
+                            """,
+                    query
+            );
+
+            final String query2 = "select a_alias + 1, a_alias + 2 from (select a + 1 a_alias, b b1 from x) order by  b1";
+            assertPlanNoLeakCheck(
+                    query2,
+                    """
+                            SelectedRecord
+                                Sort light
+                                  keys: [b1]
+                                    VirtualRecord
+                                      functions: [a_alias+1,a_alias+2,b1]
+                                        VirtualRecord
+                                          functions: [memoize(a+1),b1]
+                                            SelectedRecord
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: x
+                            """
+            );
+            assertSql(
+                    """
+                            column\tcolumn1
+                            5\t6
+                            3\t4
+                            """,
+                    query2
+            );
+
+            final String query3 = "select sum(a_alias + 1), sum(a_alias + 2) from (select a + 1 a_alias, b b1 from x)";
+            assertPlanNoLeakCheck(
+                    query3,
+                    """
+                            GroupBy vectorized: false
+                              values: [sum(a_alias+1),sum(a_alias+2)]
+                                VirtualRecord
+                                  functions: [memoize(a+1)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                            """
+            );
+            assertSql(
+                    """
+                            sum\tsum1
+                            8\t10
+                            """,
+                    query3
+            );
+
+            final String query4 = "select b1, a_alias from (select a + 1 a_alias, b b1 from x) where a_alias > 10";
+            assertPlanNoLeakCheck(
+                    query4,
+                    """
+                            Filter filter: 10<a_alias
+                                VirtualRecord
+                                  functions: [b1,memoize(a+1)]
+                                    SelectedRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testFunctionMemoizationUnionModel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b double)");
+            execute("create table y (c int, d string)");
+            assertPlanNoLeakCheck(
+                    "select a1 + 1 , a1 + 2 from (select a + 1 a1 from x) union select a1 + 1 , a1 + 2 from (select c + 1 a1 from y) ",
+                    """
+                            Union
+                                VirtualRecord
+                                  functions: [a1+1,a1+2]
+                                    VirtualRecord
+                                      functions: [memoize(a+1)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                VirtualRecord
+                                  functions: [a1+1,a1+2]
+                                    VirtualRecord
+                                      functions: [memoize(c+1)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: y
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testHintsNotPropagatedToCte() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE left (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
@@ -530,108 +648,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertSql(
                     String.format(planTemplate, "Light"),
                     String.format(queryTemplate, "/*+ asof_linear(left right) */", "/*+ asof_dense(left right) */")
-            );
-        });
-    }
-
-    @Test
-    public void testFunctionMemoizationBasicColumnRefCount() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (a int, b double, c string)");
-            execute("insert into x values(3, 1.0, 'a'), (1, 2.0, 'b')");
-            final String query = "select a, b, a + b c1 from x order by  c1";
-            assertPlanNoLeakCheck(
-                    query,
-                    "Sort light\n" +
-                            "  keys: [c1]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [a,b,memoize(a+b)]\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n"
-            );
-            assertSql(
-                    "a\tb\tc1\n" +
-                            "1\t2.0\t3.0\n" +
-                            "3\t1.0\t4.0\n",
-                    query
-            );
-
-            final String query2 = "select a_alias + 1, a_alias + 2 from (select a + 1 a_alias, b b1 from x) order by  b1";
-            assertPlanNoLeakCheck(
-                    query2,
-                    "SelectedRecord\n" +
-                            "    Sort light\n" +
-                            "      keys: [b1]\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [a_alias+1,a_alias+2,b1]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [memoize(a+1),b1]\n" +
-                            "                SelectedRecord\n" +
-                            "                    PageFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: x\n"
-            );
-            assertSql(
-                    "column\tcolumn1\n" +
-                            "5\t6\n" +
-                            "3\t4\n",
-                    query2
-            );
-
-            final String query3 = "select sum(a_alias + 1), sum(a_alias + 2) from (select a + 1 a_alias, b b1 from x)";
-            assertPlanNoLeakCheck(
-                    query3,
-                    "GroupBy vectorized: false\n" +
-                            "  values: [sum(a_alias+1),sum(a_alias+2)]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [memoize(a+1)]\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n"
-            );
-            assertSql(
-                    "sum\tsum1\n" +
-                            "8\t10\n",
-                    query3
-            );
-
-            final String query4 = "select b1, a_alias from (select a + 1 a_alias, b b1 from x) where a_alias > 10";
-            assertPlanNoLeakCheck(
-                    query4,
-                    "Filter filter: 10<a_alias\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [b1,memoize(a+1)]\n" +
-                            "        SelectedRecord\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: x\n"
-            );
-        });
-    }
-
-    @Test
-    public void testFunctionMemoizationUnionModel() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (a int, b double)");
-            execute("create table y (c int, d string)");
-            assertPlanNoLeakCheck(
-                    "select a1 + 1 , a1 + 2 from (select a + 1 a1 from x) union select a1 + 1 , a1 + 2 from (select c + 1 a1 from y) ",
-                    "Union\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [a1+1,a1+2]\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [memoize(a+1)]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: x\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [a1+1,a1+2]\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [memoize(c+1)]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: y\n"
             );
         });
     }
