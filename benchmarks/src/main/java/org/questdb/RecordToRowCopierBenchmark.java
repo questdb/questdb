@@ -118,9 +118,9 @@ public class RecordToRowCopierBenchmark {
             ColumnType.TIMESTAMP
     };
 
-    //    @Param({"10", "50", "100", "200", "500", "1000"})
+    @Param({"10", "50", "100", "200", "500", "1000"})
     //    @Param({"450", "451", "452", "453", "454", "455", "456", "457", "458", "459", "500"})
-    @Param({"459", "460"})
+//    @Param({"459", "460"})
     private int columnCount;
 
     private EntityColumnFilter columnFilter;
