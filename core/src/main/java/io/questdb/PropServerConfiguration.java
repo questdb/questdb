@@ -196,6 +196,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final MicrosFormatCompiler compiler = new MicrosFormatCompiler();
     private final String confRoot;
     private final boolean configReloadEnabled;
+    private final boolean copierChunkedEnabled;
     private final int copierColumnCountThreshold;
     private final int createAsSelectRetryCount;
     private final int dateAdapterPoolCapacity;
@@ -1861,6 +1862,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
             this.copierColumnCountThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_COPIER_COLUMN_THRESHOLD, 500);
+            this.copierChunkedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
             this.writerAsyncCommandBusyWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
             this.writerAsyncCommandMaxWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
             this.writerTickRowsCountMod = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_TICK_ROWS_COUNT, 1024)) - 1;
@@ -3099,6 +3101,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull CharSequence getConfRoot() {
             return confRoot;
+        }
+
+        @Override
+        public boolean isCopierChunkedEnabled() {
+            return copierChunkedEnabled;
         }
 
         @Override

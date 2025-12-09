@@ -827,6 +827,33 @@ public class BytecodeAssembler {
         this.codeStart = position();
     }
 
+    public void startPrivateMethod(int nameIndex, int descriptorIndex, int maxStack, int maxLocal) {
+        // access flags
+        putShort(ACC_PRIVATE);
+        // name index
+        putShort(nameIndex);
+        // descriptor index
+        putShort(descriptorIndex);
+        // attribute count
+        putShort(1);
+
+        // code
+        putShort(codeAttributeIndex);
+
+        // attribute len
+        putInt(0);
+        // come back to this later
+        this.codeAttributeStart = position();
+        // max stack
+        putShort(maxStack);
+        // max locals
+        putShort(maxLocal);
+
+        // code len
+        putInt(0);
+        this.codeStart = position();
+    }
+
     public void startStackMapTables(int attributeNameIndex, int frameCount) {
         putShort(attributeNameIndex);
         this.stackMapTableCut = position();

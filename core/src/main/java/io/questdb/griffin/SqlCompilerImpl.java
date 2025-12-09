@@ -2772,7 +2772,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 VirtualRecord record = new VirtualRecord(valueFunctions);
-                RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter, configuration.getCopierColumnCountThreshold());
+                RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter, configuration.getCopierColumnCountThreshold(), configuration.isCopierChunkedEnabled());
                 insertOperation.addInsertRow(new InsertRowImpl(
                                 record,
                                 copier,
@@ -2850,7 +2850,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(tableNameExpr.position, "select clause must provide timestamp column");
                 }
 
-                copier = RecordToRowCopierUtils.generateCopier(asm, cursorMetadata, writerMetadata, listColumnFilter, configuration.getCopierColumnCountThreshold());
+                copier = RecordToRowCopierUtils.generateCopier(asm, cursorMetadata, writerMetadata, listColumnFilter, configuration.getCopierColumnCountThreshold(), configuration.isCopierChunkedEnabled());
             } else {
                 // fail when target table requires chronological data and cursor cannot provide it
                 if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
@@ -2905,7 +2905,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         cursorMetadata,
                         writerMetadata,
                         entityColumnFilter,
-                        configuration.getCopierColumnCountThreshold()
+                        configuration.getCopierColumnCountThreshold(),
+                        configuration.isCopierChunkedEnabled()
                 );
             }
 
@@ -3535,7 +3536,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             cursorMetadata,
                             writerMetadata,
                             entityColumnFilter,
-                            configuration.getCopierColumnCountThreshold()
+                            configuration.getCopierColumnCountThreshold(),
+                            configuration.isCopierChunkedEnabled()
                     ),
                     batchSize,
                     o3MaxLag,
@@ -4675,7 +4677,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     reader.getMetadata(),
                                     writerMetadata,
                                     entityColumnFilter,
-                                    configuration.getCopierColumnCountThreshold()
+                                    configuration.getCopierColumnCountThreshold(),
+                                    configuration.isCopierChunkedEnabled()
                             );
                             tableBackupRowCopiedCache.put(srcPath, recordToRowCopier);
                         }

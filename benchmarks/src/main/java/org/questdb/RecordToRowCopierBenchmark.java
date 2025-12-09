@@ -131,7 +131,7 @@ public class RecordToRowCopierBenchmark {
     private CairoEngine engine;
     // For compile benchmark
     private MockColumnTypes fromTypes;
-    @Param({"BYTECODE", "LOOP"})
+    @Param({"BYTECODE", "CHUNKED", "LOOP"})
     private String implementation;
     private MockRecord record;
     private MockRow row;
@@ -228,7 +228,13 @@ public class RecordToRowCopierBenchmark {
             // Use the default method size limit (8000 bytes) which will auto-fallback to loop
             copier = RecordToRowCopierUtils.generateCopier(
                     new BytecodeAssembler(), fromTypes, toMetadata, columnFilter,
-                    RecordToRowCopierUtils.DEFAULT_HUGE_METHOD_LIMIT);
+                    RecordToRowCopierUtils.DEFAULT_HUGE_METHOD_LIMIT, false);
+        } else if ("CHUNKED".equals(implementation)) {
+            // Force chunked generation by using a very small method size limit
+            // This triggers chunking even for smaller tables to benchmark the chunked path
+            copier = RecordToRowCopierUtils.generateCopier(
+                    new BytecodeAssembler(), fromTypes, toMetadata, columnFilter,
+                    0, true);
         } else {
             // Use loop implementation directly
             copier = new LoopingRecordToRowCopier(fromTypes, toMetadata, columnFilter);

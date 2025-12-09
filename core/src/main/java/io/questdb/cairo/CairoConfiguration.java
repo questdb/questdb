@@ -589,6 +589,17 @@ public interface CairoConfiguration {
      */
     int getCopierColumnCountThreshold();
 
+    /**
+     * Whether to use chunked bytecode generation for wide table copiers.
+     * When true (default), large schemas are split into sub-methods under 8KB each.
+     * When false, falls back to loop-based implementation for wide tables.
+     *
+     * @return true to enable chunked generation (default: true)
+     */
+    default boolean isCopierChunkedEnabled() {
+        return true;
+    }
+
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
