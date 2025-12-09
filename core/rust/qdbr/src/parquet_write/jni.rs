@@ -562,6 +562,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         }
         update_partition_data(&mut encoder.partition, col_data_ptr, row_count as usize)?;
         encoder.chunked_writer.write_chunk_as_single_row_group(&encoder.partition)?;
+        debug_assert!(encoder.current_buffer.len() >= 8, "buffer too small: length header requires 8 bytes");
         let data_len = (encoder.current_buffer.len() - 8) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
@@ -583,8 +584,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     _class: JClass,
     encoder: *mut StreamingParquetWriter,
 ) -> *const u8 {
-    eprintln!("finishStreamingParquetWrite called - Rust library has been recompiled!");
-
     if encoder.is_null() {
         let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
         err.add_context("error in StreamingPartitionEncoder.finish");
@@ -600,6 +599,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         encoder
             .chunked_writer
             .finish(encoder.additional_data.clone())?;
+        debug_assert!(encoder.current_buffer.len() >= 8, "buffer too small: length header requires 8 bytes");
         let data_len = (encoder.current_buffer.len() - 8) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
@@ -787,6 +787,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             encoder.current_buffer.set_len(0);
         }
         encoder.chunked_writer.write_chunk_as_single_row_group(&partition)?;
+        debug_assert!(encoder.current_buffer.len() >= 8, "buffer too small: length header requires 8 bytes");
         let data_len = (encoder.current_buffer.len() - 8) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())

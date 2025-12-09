@@ -390,7 +390,7 @@ public class CopyExportRequestTask implements Mutable {
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 
                 for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
-                    long localColTop = frame.hasColumnData(i) ? 0 : frameRowCount;
+                    long localColTop = frame.getPageAddress(i) > 0 ? 0 : frameRowCount;
                     assert metadata != null;
                     final int columnType = metadata.getColumnType(i);
                     if (ColumnType.isSymbol(columnType)) {

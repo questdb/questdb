@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
@@ -43,6 +44,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
@@ -68,6 +70,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     private static String exportRoot;
     private static TestHttpClient testHttpClient;
     private final CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
+    private Rnd rnd;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -86,6 +89,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Before
     public void setUp() {
         super.setUp();
+        rnd = TestUtils.generateRandom(LOG);
     }
 
     @Test
@@ -463,6 +467,77 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         Os.sleep(100);
                     }
                 }));
+    }
+
+    @Test
+    public void testExportParquetFuzz() throws Exception {
+        getExportTester()
+                .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
+                            engine.execute("""
+                                    create table xyz as (select
+                                        rnd_int() a,
+                                        rnd_double() b,
+                                        timestamp_sequence(0,1000) ts
+                                        from long_sequence(1000)
+                                    ) timestamp(ts) partition by hour""");
+
+                            String[] queries = new String[]{
+                                    "select count() from xyz",
+                                    "select a from xyz limit 1",
+                                    "select b from xyz limit 5",
+                                    "select ts, b from xyz limit 150",
+                            };
+
+                            String[] hostnames = {"localhost", "127.0.0.1"};
+                            int hostnameIndex = 0;
+                            try (TestHttpClient testHttpClient = new TestHttpClient();
+                                 var sink = new DirectUtf8Sink(16_384)
+                            ) {
+                                testHttpClient.setKeepConnection(true);
+                                for (int i = 0; i < 100; i++) {
+                                    int index = rnd.nextInt(queries.length);
+                                    if (rnd.nextInt(100) < 5) {
+                                        hostnameIndex = 1 - hostnameIndex;
+                                    }
+
+                                    // Export to Parquet
+                                    HttpClient.Request req = testHttpClient.getHttpClient().newRequest(hostnames[hostnameIndex], 9001);
+                                    req.GET().url("/exp");
+                                    String query = queries[index];
+                                    req.query("query", query);
+                                    req.query("fmt", "parquet");
+                                    if (rnd.nextBoolean()) {
+                                        req.query("rmode", "nodelay");
+                                    }
+                                    sink.clear();
+                                    testHttpClient.reqToSink(req, sink, null, null, null, null);
+                                    int bytesReceived = sink.size();
+
+                                    // Save to file
+                                    String filename = "test_export_" + i + ".parquet";
+                                    Path path = Path.getThreadLocal(root);
+                                    path.concat("export").concat(filename).$();
+                                    Files.mkdirs(path, engine.getConfiguration().getMkDirMode());
+                                    long fd = Files.openRW(path.$(), CairoConfiguration.O_NONE);
+                                    try {
+                                        Files.truncate(fd, bytesReceived);
+                                        long bytesWritten = Files.write(fd, sink.ptr(), bytesReceived, 0);
+                                        Assert.assertEquals(bytesReceived, bytesWritten);
+                                    } finally {
+                                        Files.close(fd);
+                                    }
+
+                                    // Read back using read_parquet() and compare with result of direct query
+                                    String selectFromParquet = "read_parquet('" + filename + "')";
+                                    var expectedSink = new StringSink();
+                                    var actualSink = new StringSink();
+                                    TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
+                                    TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
+                                    TestUtils.assertEquals(expectedSink, actualSink);
+                                }
+                            }
+                        }
+                );
     }
 
     @Test
@@ -1444,5 +1519,18 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             }
         }
         return req.send();
+    }
+
+    private HttpQueryTestBuilder getExportTester() {
+        return new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+//                .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+//                .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+//                .withSendBufferSize(Math.max(1024, rnd.nextInt(4099)))
+                .withCopyExportRoot(root + "/export")
+                .withCopyInputRoot(root + "/export");
     }
 }

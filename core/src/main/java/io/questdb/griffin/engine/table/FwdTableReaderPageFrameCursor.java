@@ -401,10 +401,5 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         public long getPartitionLo() {
             return partitionLo;
         }
-
-        @Override
-        public boolean hasColumnData(int columnIndex) {
-            return reader.getColumnTop(reader.getColumnBase(partitionIndex), columnIndexes.getQuick(columnIndex)) - partitionLo <= 0;
-        }
     }
 }

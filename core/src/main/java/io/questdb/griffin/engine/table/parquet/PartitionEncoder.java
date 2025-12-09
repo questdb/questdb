@@ -109,9 +109,7 @@ public class PartitionEncoder {
         }
     }
 
-    public static native long finishStreamingParquetWrite(
-            long writerPtr
-    ) throws CairoException;
+    public static native long finishStreamingParquetWrite(long writerPtr) throws CairoException;
 
     public static void populateEmptyPartition(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) throws CairoException {
         final int timestampIndex = tableReader.getMetadata().getTimestampIndex();

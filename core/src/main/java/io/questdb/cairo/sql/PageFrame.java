@@ -67,14 +67,6 @@ public interface PageFrame {
     int getColumnCount();
 
     /**
-     * Checks if a column has actual data in this frame (vs. being entirely column top/NULL).
-     *
-     * @param columnIndex index of column within this frame
-     * @return true if column has data, false if entire frame predates the column
-     */
-    boolean hasColumnData(int columnIndex);
-
-    /**
      * Returns page frame format.
      * <p>
      * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
