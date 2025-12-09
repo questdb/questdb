@@ -26,8 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.log.Log;
@@ -86,23 +88,186 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
+     * Copies all metadata files for a table from source to destination.
+     * Includes: _meta, _name (optional), _txn, _cv, mat view state (optional), mat view definition (optional)
+     *
+     * @param srcPath            source path (will be modified)
+     * @param dstPath            destination path (will be modified)
+     * @param recoveredMetaFiles counter for recovered meta files
+     * @param recoveredTxnFiles  counter for recovered txn files
+     * @param recoveredCVFiles   counter for recovered CV files
+     */
+    public void copyMetadataFiles(
+            Path srcPath,
+            Path dstPath,
+            AtomicInteger recoveredMetaFiles,
+            AtomicInteger recoveredTxnFiles,
+            AtomicInteger recoveredCVFiles
+    ) {
+        int srcPathLen = srcPath.size();
+        int dstPathLen = dstPath.size();
+        try {
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.META_FILE_NAME, false);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.TABLE_NAME_FILE, true);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredTxnFiles, TableUtils.TXN_FILE_NAME, false);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredCVFiles, TableUtils.COLUMN_VERSION_FILE_NAME, false);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredCVFiles, MatViewState.MAT_VIEW_STATE_FILE_NAME, true);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredCVFiles, MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME, true);
+        } finally {
+            srcPath.trimTo(srcPathLen);
+            dstPath.trimTo(dstPathLen);
+        }
+    }
+
+    public MemoryMARW getMemFile() {
+        return memFile;
+    }
+
+    public TableMetadata getTableMetadata() {
+        return tableMetadata;
+    }
+
+    public TxReader getTableTxReader() {
+        return txWriter;
+    }
+
+    /**
+     * Processes WAL sequencer metadata - copies meta file and updates txnlog if needed.
+     *
+     * @param srcPath           source path (will be modified)
+     * @param dstPath           destination path (will be modified)
+     * @param recoveredWalFiles counter for recovered WAL files
+     */
+    public void processWalSequencerMetadata(
+            Path srcPath,
+            Path dstPath,
+            AtomicInteger recoveredWalFiles,
+            long lastSeqTxn
+    ) {
+        // Go inside SEQ_DIR
+        srcPath.concat(WalUtils.SEQ_DIR);
+        int srcSeqLen = srcPath.size();
+        srcPath.concat(TableUtils.META_FILE_NAME);
+
+        dstPath.concat(WalUtils.SEQ_DIR);
+        int dstSeqLen = dstPath.size();
+        dstPath.concat(TableUtils.META_FILE_NAME);
+
+        if (ff.exists(srcPath.$())) {
+            if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("Recovery failed. Could not copy meta file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
+            } else {
+                final long newMaxTxn;
+                if (lastSeqTxn > -1) {
+                    newMaxTxn = lastSeqTxn;
+                } else {
+                    // Read max txn from source checkpoint
+                    openSmallFile(ff, srcPath.trimTo(srcSeqLen), srcSeqLen, memFile, TableUtils.CHECKPOINT_SEQ_TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                    newMaxTxn = memFile.getLong(0L);
+                }
+
+                dstPath.trimTo(dstSeqLen).concat(TableUtils.META_FILE_NAME);
+                memFile.smallFile(ff, dstPath.$(), MemoryTag.MMAP_SEQUENCER_METADATA);
+                dstPath.trimTo(dstSeqLen);
+                openSmallFile(ff, dstPath, dstSeqLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
+
+                if (newMaxTxn >= 0) {
+                    dstPath.trimTo(dstSeqLen);
+                    openSmallFile(ff, dstPath, dstSeqLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                    long oldMaxTxn = memFile.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+                    if (newMaxTxn < oldMaxTxn) {
+                        memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
+                        LOG.info()
+                                .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
+                                .$(", oldMaxTxn=").$(oldMaxTxn)
+                                .$(", newMaxTxn=").$(newMaxTxn)
+                                .I$();
+                    }
+                }
+
+                recoveredWalFiles.incrementAndGet();
+                LOG.info()
+                        .$("recovered ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)
+                        .$(", dst=").$(dstPath)
+                        .I$();
+            }
+        }
+    }
+
+    /**
+     * Rebuilds table files including symbol maps and optionally purges non-attached partitions.
+     *
+     * @param tablePath            path to the table directory
+     * @param recoveredSymbolFiles counter for recovered symbol files
+     */
+    public void rebuildTableFiles(
+            Path tablePath,
+            AtomicInteger recoveredSymbolFiles
+    ) {
+        pathTableLen = tablePath.size();
+        try {
+            if (tableMetadata == null) {
+                tableMetadata = new TableReaderMetadata(configuration);
+            }
+            tableMetadata.loadMetadata(tablePath.concat(TableUtils.META_FILE_NAME).$());
+
+            if (txWriter == null) {
+                txWriter = new TxWriter(configuration.getFilesFacade(), configuration);
+            }
+            txWriter.ofRW(tablePath.trimTo(pathTableLen).concat(TableUtils.TXN_FILE_NAME).$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
+            txWriter.unsafeLoadAll();
+
+            if (columnVersionReader == null) {
+                columnVersionReader = new ColumnVersionReader();
+            }
+            tablePath.trimTo(pathTableLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+            columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
+            columnVersionReader.readUnsafe();
+
+            // Symbols are not append-only data structures, they can be corrupt
+            // when symbol files are copied while written to. We need to rebuild them.
+            rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
+
+            if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
+                LOG.info().$("resetting WAL lag [table=").$(tablePath)
+                        .$(", walLagRowCount=").$(txWriter.getLagRowCount())
+                        .I$();
+                // WAL Lag values is not strictly append-only data structures, it can be overwritten
+                // while the snapshot was copied. Resetting it will re-apply data from copied WAL files
+                txWriter.resetLagAppliedRows();
+            }
+
+            if (PartitionBy.isPartitioned(tableMetadata.getPartitionBy())) {
+                // Remove non-attached partitions
+                LOG.debug().$("purging non attached partitions [path=").$(tablePath.$()).I$();
+                partitionCleanPath = tablePath; // parameter for `removePartitionDirsNotAttached`
+                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(
+                        tableMetadata.getTimestampType(),
+                        tableMetadata.getPartitionBy()
+                );
+                ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
+            }
+        } finally {
+            tablePath.trimTo(pathTableLen);
+        }
+    }
+
+    /**
      * Recovers all table files from source (checkpoint/backup) to destination.
      * Combines metadata file copying
      *
-     * @param srcPath                     source path (will be modified)
-     * @param dstPath                     destination path (will be modified)
-     * @param truncateAllUnappliedWalTxns flag to indicate whether to fully truncate unapplied WAL
-     *                                    transactions from sequencer log
-     * @param recoveredMetaFiles          counter for recovered meta files
-     * @param recoveredTxnFiles           counter for recovered txn files
-     * @param recoveredCVFiles            counter for recovered CV files
-     * @param recoveredWalFiles           counter for recovered WAL files
-     * @param symbolFilesCount            counter for recovered symbol files
+     * @param srcPath            source path (will be modified)
+     * @param dstPath            destination path (will be modified)
+     * @param recoveredMetaFiles counter for recovered meta files
+     * @param recoveredTxnFiles  counter for recovered txn files
+     * @param recoveredCVFiles   counter for recovered CV files
+     * @param recoveredWalFiles  counter for recovered WAL files
+     * @param symbolFilesCount   counter for recovered symbol files
      */
     public void restoreTableFiles(
             Path srcPath,
             Path dstPath,
-            boolean truncateAllUnappliedWalTxns,
             AtomicInteger recoveredMetaFiles,
             AtomicInteger recoveredTxnFiles,
             AtomicInteger recoveredCVFiles,
@@ -119,12 +284,10 @@ public class TableSnapshotRestore implements QuietCloseable {
         TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
 
         // Rebuild symbol files and other table-specific processing
-        long seqTxn = rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
+        rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
 
         // Handle WAL-specific processing
-        srcPath.trimTo(srcPathLen);
-        dstPath.trimTo(dstPathLen);
-        processWalSequencerMetadata(srcPath, dstPath, srcPathLen, dstPathLen, recoveredWalFiles, memFile, seqTxn, truncateAllUnappliedWalTxns);
+        processWalSequencerMetadata(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredWalFiles, -1);
     }
 
     /**
@@ -204,108 +367,6 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Copies all metadata files for a table from source to destination.
-     * Includes: _meta, _name (optional), _txn, _cv, mat view state (optional), mat view definition (optional)
-     *
-     * @param srcPath            source path (will be modified)
-     * @param dstPath            destination path (will be modified)
-     * @param recoveredMetaFiles counter for recovered meta files
-     * @param recoveredTxnFiles  counter for recovered txn files
-     * @param recoveredCVFiles   counter for recovered CV files
-     */
-    private void copyMetadataFiles(
-            Path srcPath,
-            Path dstPath,
-            AtomicInteger recoveredMetaFiles,
-            AtomicInteger recoveredTxnFiles,
-            AtomicInteger recoveredCVFiles
-    ) {
-        int srcPathLen = srcPath.size();
-        int dstPathLen = dstPath.size();
-        try {
-            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.META_FILE_NAME, false);
-            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.TABLE_NAME_FILE, true);
-            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredTxnFiles, TableUtils.TXN_FILE_NAME, false);
-            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredCVFiles, TableUtils.COLUMN_VERSION_FILE_NAME, false);
-            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredCVFiles, MatViewState.MAT_VIEW_STATE_FILE_NAME, true);
-            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredCVFiles, MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME, true);
-        } finally {
-            srcPath.trimTo(srcPathLen);
-            dstPath.trimTo(dstPathLen);
-        }
-    }
-
-    /**
-     * Processes WAL sequencer metadata - copies meta file and updates txnlog if needed.
-     *
-     * @param srcPath           source path (will be modified)
-     * @param dstPath           destination path (will be modified)
-     * @param srcPathLen        length to trim srcPath to for SEQ_DIR
-     * @param dstPathLen        length to trim dstPath to for SEQ_DIR
-     * @param recoveredWalFiles counter for recovered WAL files
-     * @param memFile           memory for file operations
-     */
-    private void processWalSequencerMetadata(
-            Path srcPath,
-            Path dstPath,
-            int srcPathLen,
-            int dstPathLen,
-            AtomicInteger recoveredWalFiles,
-            MemoryCMARW memFile,
-            long seqTxn,
-            boolean truncateAllUnappliedWalTxns
-    ) {
-        // Go inside SEQ_DIR
-        srcPath.trimTo(srcPathLen).concat(WalUtils.SEQ_DIR);
-        int srcSeqLen = srcPath.size();
-        srcPath.concat(TableUtils.META_FILE_NAME);
-
-        dstPath.trimTo(dstPathLen).concat(WalUtils.SEQ_DIR);
-        int dstSeqLen = dstPath.size();
-        dstPath.concat(TableUtils.META_FILE_NAME);
-
-        if (ff.exists(srcPath.$())) {
-            if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-                throw CairoException.critical(ff.errno())
-                        .put("Recovery failed. Could not copy meta file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
-            } else {
-                final long newMaxTxn;
-                if (!truncateAllUnappliedWalTxns) {
-                    srcPath.trimTo(srcSeqLen);
-                    openSmallFile(ff, srcPath, srcSeqLen, memFile, TableUtils.CHECKPOINT_SEQ_TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-                    newMaxTxn = memFile.getLong(0L);
-                } else {
-                    newMaxTxn = seqTxn;
-                }
-
-                memFile.smallFile(ff, dstPath.$(), MemoryTag.MMAP_SEQUENCER_METADATA);
-                dstPath.trimTo(dstSeqLen);
-                openSmallFile(ff, dstPath, dstSeqLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
-
-                if (newMaxTxn >= 0) {
-                    dstPath.trimTo(dstSeqLen);
-                    openSmallFile(ff, dstPath, dstSeqLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-                    long oldMaxTxn = memFile.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
-                    if (newMaxTxn < oldMaxTxn) {
-                        memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
-                        LOG.info()
-                                .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
-                                .$(", oldMaxTxn=").$(oldMaxTxn)
-                                .$(", newMaxTxn=").$(newMaxTxn)
-                                .I$();
-                    }
-                }
-
-                recoveredWalFiles.incrementAndGet();
-                LOG.info()
-                        .$("recovered ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)
-                        .$(", dst=").$(dstPath)
-                        .I$();
-            }
-        }
-    }
-
-    /**
      * Rebuilds symbol files for all symbol columns in the table.
      *
      * @param tablePath            path to the table directory
@@ -341,65 +402,6 @@ public class TableSnapshotRestore implements QuietCloseable {
                 );
                 recoveredSymbolFiles.incrementAndGet();
             }
-        }
-    }
-
-    /**
-     * Rebuilds table files including symbol maps and optionally purges non-attached partitions.
-     *
-     * @param tablePath            path to the table directory
-     * @param recoveredSymbolFiles counter for recovered symbol files
-     */
-    private long rebuildTableFiles(
-            Path tablePath,
-            AtomicInteger recoveredSymbolFiles
-    ) {
-        pathTableLen = tablePath.size();
-        try {
-            if (tableMetadata == null) {
-                tableMetadata = new TableReaderMetadata(configuration);
-            }
-            tableMetadata.loadMetadata(tablePath.concat(TableUtils.META_FILE_NAME).$());
-
-            if (txWriter == null) {
-                txWriter = new TxWriter(configuration.getFilesFacade(), configuration);
-            }
-            txWriter.ofRW(tablePath.trimTo(pathTableLen).concat(TableUtils.TXN_FILE_NAME).$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
-            txWriter.unsafeLoadAll();
-
-            if (columnVersionReader == null) {
-                columnVersionReader = new ColumnVersionReader();
-            }
-            tablePath.trimTo(pathTableLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-            columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
-            columnVersionReader.readUnsafe();
-
-            // Symbols are not append-only data structures, they can be corrupt
-            // when symbol files are copied while written to. We need to rebuild them.
-            rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
-
-            if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
-                LOG.info().$("resetting WAL lag [table=").$(tablePath)
-                        .$(", walLagRowCount=").$(txWriter.getLagRowCount())
-                        .I$();
-                // WAL Lag values is not strictly append-only data structures, it can be overwritten
-                // while the snapshot was copied. Resetting it will re-apply data from copied WAL files
-                txWriter.resetLagAppliedRows();
-            }
-
-            if (PartitionBy.isPartitioned(tableMetadata.getPartitionBy())) {
-                // Remove non-attached partitions
-                LOG.debug().$("purging non attached partitions [path=").$(tablePath.$()).I$();
-                partitionCleanPath = tablePath; // parameter for `removePartitionDirsNotAttached`
-                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(
-                        tableMetadata.getTimestampType(),
-                        tableMetadata.getPartitionBy()
-                );
-                ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
-            }
-            return txWriter.getSeqTxn();
-        } finally {
-            tablePath.trimTo(pathTableLen);
         }
     }
 

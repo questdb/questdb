@@ -570,7 +570,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             recoveryAgent.restoreTableFiles(
                                     srcPath,
                                     dstPath,
-                                    false,
                                     recoveredMetaFiles,
                                     recoveredTxnFiles,
                                     recoveredCVFiles,
