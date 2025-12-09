@@ -987,11 +987,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getCopierColumnCountThreshold() {
-        return getDelegate().getCopierColumnCountThreshold();
-    }
-
-    @Override
     public int getSqlPageFrameMaxRows() {
         return getDelegate().getSqlPageFrameMaxRows();
     }

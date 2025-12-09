@@ -197,7 +197,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String confRoot;
     private final boolean configReloadEnabled;
     private final boolean copierChunkedEnabled;
-    private final int copierColumnCountThreshold;
     private final int createAsSelectRetryCount;
     private final int dateAdapterPoolCapacity;
     private final String dbDirectory;
@@ -1861,7 +1860,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 3), 3);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
-            this.copierColumnCountThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_COPIER_COLUMN_THRESHOLD, 500);
             this.copierChunkedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
             this.writerAsyncCommandBusyWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
             this.writerAsyncCommandMaxWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
@@ -3102,17 +3100,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         public @NotNull CharSequence getConfRoot() {
             return confRoot;
         }
-
-        @Override
-        public boolean isCopierChunkedEnabled() {
-            return copierChunkedEnabled;
-        }
-
-        @Override
-        public int getCopierColumnCountThreshold() {
-            return copierColumnCountThreshold;
-        }
-
+        
         @Override
         public @NotNull LongSupplier getCopyIDSupplier() {
             if (cairoSQLCopyIdSupplier == 0) {
@@ -4219,6 +4207,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isColumnAliasExpressionEnabled() {
             return cairoSqlColumnAliasExpressionEnabled;
+        }
+
+        @Override
+        public boolean isCopierChunkedEnabled() {
+            return copierChunkedEnabled;
         }
 
         @Override

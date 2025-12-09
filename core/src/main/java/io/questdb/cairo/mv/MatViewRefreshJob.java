@@ -577,7 +577,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 factory.getMetadata(),
                 tableWriter.getMetadata(),
                 columnFilter,
-                configuration.getCopierColumnCountThreshold(),
                 configuration.isCopierChunkedEnabled()
         );
     }

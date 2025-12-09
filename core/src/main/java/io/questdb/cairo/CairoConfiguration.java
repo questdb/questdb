@@ -580,26 +580,6 @@ public interface CairoConfiguration {
 
     int getSqlOrderByRadixSortThreshold();
 
-    /**
-     * Column count threshold for switching from bytecode to loop-based RecordToRowCopier.
-     * When the number of columns exceeds this threshold, a loop-based implementation is used
-     * to avoid JVM bytecode size limitations (64KB per method).
-     *
-     * @return maximum column count for bytecode generation (default: 1000)
-     */
-    int getCopierColumnCountThreshold();
-
-    /**
-     * Whether to use chunked bytecode generation for wide table copiers.
-     * When true (default), large schemas are split into sub-methods under 8KB each.
-     * When false, falls back to loop-based implementation for wide tables.
-     *
-     * @return true to enable chunked generation (default: true)
-     */
-    default boolean isCopierChunkedEnabled() {
-        return true;
-    }
-
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
@@ -761,6 +741,17 @@ public interface CairoConfiguration {
      * @return true if SqlParser should return the expression normalized instead of the default behavior.
      */
     boolean isColumnAliasExpressionEnabled();
+
+    /**
+     * Whether to use chunked bytecode generation for wide table copiers.
+     * When true (default), large schemas are split into sub-methods under 8KB each.
+     * When false, falls back to loop-based implementation for wide tables.
+     *
+     * @return true to enable chunked generation (default: true)
+     */
+    default boolean isCopierChunkedEnabled() {
+        return true;
+    }
 
     boolean isDevModeEnabled();
 

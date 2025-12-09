@@ -1013,11 +1013,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getCopierColumnCountThreshold() {
-        return 1000;
-    }
-
-    @Override
     public int getSqlPageFrameMaxRows() {
         return 1_000_000;
     }

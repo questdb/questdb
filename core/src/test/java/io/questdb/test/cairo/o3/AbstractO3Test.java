@@ -509,7 +509,6 @@ public class AbstractO3Test extends AbstractTest {
                         metadata,
                         writer.getMetadata(),
                         toColumnFilter,
-                        sqlExecutionContext.getCairoEngine().getConfiguration().getCopierColumnCountThreshold(),
                         sqlExecutionContext.getCairoEngine().getConfiguration().isCopierChunkedEnabled()
                 );
             }

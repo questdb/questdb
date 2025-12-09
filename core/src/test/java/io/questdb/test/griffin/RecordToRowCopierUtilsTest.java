@@ -202,7 +202,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         to.add(toCol);
         ListColumnFilter mapping = new ListColumnFilter();
         mapping.add(1);
-        return RecordToRowCopierUtils.generateCopier(new BytecodeAssembler(), from, to, mapping, configuration.getCopierColumnCountThreshold());
+        return RecordToRowCopierUtils.generateCopier(new BytecodeAssembler(), from, to, mapping);
     }
 
     private void generateValue(Decimal256 d, int precision, int scale) {
@@ -240,7 +240,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         to.add(toCol);
         ListColumnFilter mapping = new ListColumnFilter();
         mapping.add(1);
-        RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, from, to, mapping, configuration.getCopierColumnCountThreshold());
+        RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, from, to, mapping);
 
         Decimal256 expectedValue;
         if (fitInTargetType) {
