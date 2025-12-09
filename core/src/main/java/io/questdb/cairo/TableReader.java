@@ -249,6 +249,25 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    public void closeExcessPartitions() {
+        // close all but N latest partitions
+        if (PartitionBy.isPartitioned(partitionBy) && openPartitionCount > maxOpenPartitions) {
+            final int originallyOpen = openPartitionCount;
+            int openCount = 0;
+            for (int partitionIndex = partitionCount - 1; partitionIndex > -1; partitionIndex--) {
+                final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+                long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+                if (partitionSize > -1 && ++openCount > maxOpenPartitions) {
+                    closePartition(partitionIndex);
+                    if (openCount == originallyOpen) {
+                        // ok, we've closed enough
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     public void dumpRawTxPartitionInfo(LongList container) {
         txFile.dumpRawTxPartitionInfo(container);
     }
@@ -554,22 +573,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // house-keep the partition versions
             checkSchedulePurgeO3Partitions();
         }
-        // close all but N latest partitions
-        if (PartitionBy.isPartitioned(partitionBy) && openPartitionCount > maxOpenPartitions) {
-            final int originallyOpen = openPartitionCount;
-            int openCount = 0;
-            for (int partitionIndex = partitionCount - 1; partitionIndex > -1; partitionIndex--) {
-                final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-                long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-                if (partitionSize > -1 && ++openCount > maxOpenPartitions) {
-                    closePartition(partitionIndex);
-                    if (openCount == originallyOpen) {
-                        // ok, we've closed enough
-                        break;
-                    }
-                }
-            }
-        }
+        closeExcessPartitions();
     }
 
     public boolean isActive() {
