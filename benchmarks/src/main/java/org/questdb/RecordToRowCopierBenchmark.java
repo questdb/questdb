@@ -84,13 +84,23 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * The benchmark uses mock Record and Row implementations to isolate the copier
  * performance from I/O overhead.
+ * <p>
+ * For forks(1) builds:
+ * mvn clean package -DskipTests -pl benchmarks -am 2>&1 | tail -3
+ * java -jar benchmarks/target/benchmarks.jar RecordToRowCopierBenchmark 2>&1 | tee /tmp/benchmark_fallback_test.tx
+ * <p>
+ * Otherwise, run in IntelliJ.
+ * <p>
+ * forks(1) is necessary if investigating inlining/C2 compilation behaviour:
+ * .forks(1)
+ * .jvmArgs("-Xms2G", "-Xmx2G", "-XX:+PrintCompilation", "-XX:+UnlockDiagnosticVMOptions", "-XX:+PrintInlining")
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 3, time = 1)
-@Fork(value = 2, jvmArgs = {"-Xms2G", "-Xmx2G"})
+@Fork(value = 1, jvmArgs = {"-Xms2G", "-Xmx2G"})
 public class RecordToRowCopierBenchmark {
 
     private static final int BATCH_SIZE = 10000;
@@ -109,8 +119,8 @@ public class RecordToRowCopierBenchmark {
     };
 
     //    @Param({"10", "50", "100", "200", "500", "1000"})
-//    @Param({"450", "451", "452", "453", "454", "455", "456", "457", "458", "459", "500"})
-    @Param({"459"})
+    //    @Param({"450", "451", "452", "453", "454", "455", "456", "457", "458", "459", "500"})
+    @Param({"459", "460"})
     private int columnCount;
 
     private EntityColumnFilter columnFilter;
@@ -131,8 +141,9 @@ public class RecordToRowCopierBenchmark {
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(RecordToRowCopierBenchmark.class.getSimpleName())
-                // Use fork(0) for IDE execution; remove for accurate results with uber JAR
+                // Use fork(1) to get diagnostic output from @Fork jvmArgs
                 .forks(0)
+                .jvmArgs("-Xms2G", "-Xmx2G")
                 .build();
         new Runner(opt).run();
     }
@@ -214,9 +225,10 @@ public class RecordToRowCopierBenchmark {
 
         // Create copier based on implementation type
         if ("BYTECODE".equals(implementation)) {
-            // Force bytecode generation by using high threshold
+            // Use the default method size limit (8000 bytes) which will auto-fallback to loop
             copier = RecordToRowCopierUtils.generateCopier(
-                    new BytecodeAssembler(), fromTypes, toMetadata, columnFilter, Integer.MAX_VALUE);
+                    new BytecodeAssembler(), fromTypes, toMetadata, columnFilter,
+                    RecordToRowCopierUtils.DEFAULT_HUGE_METHOD_LIMIT);
         } else {
             // Use loop implementation directly
             copier = new LoopingRecordToRowCopier(fromTypes, toMetadata, columnFilter);
