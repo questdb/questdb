@@ -40,7 +40,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public abstract class SampleByIntervalIterator {
     protected TimestampSampler sampler;
-    protected int step;
+    protected long step;
     private LongList intervals;
     // index of next txn timestamp interval to check against
     private int txnIntervalLoIndex;
@@ -58,7 +58,7 @@ public abstract class SampleByIntervalIterator {
     /**
      * Returns minimal number of SAMPLE BY buckets for in a single iteration.
      */
-    public abstract int getStep();
+    public abstract long getStep();
 
     /**
      * High boundary for the current iteration's interval.
@@ -120,7 +120,7 @@ public abstract class SampleByIntervalIterator {
      *
      * @see #getStep()
      */
-    public void toTop(int step) {
+    public void toTop(long step) {
         this.step = step;
         this.txnIntervalLoIndex = 0;
         toTop0();

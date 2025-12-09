@@ -316,7 +316,7 @@ public interface CairoConfiguration {
 
     long getMatViewRefreshOomRetryTimeout();
 
-    int getMatViewRowsPerQueryEstimate();
+    long getMatViewRowsPerQueryEstimate();
 
     int getMaxCrashFiles();
 
