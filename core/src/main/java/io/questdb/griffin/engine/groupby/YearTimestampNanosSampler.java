@@ -61,9 +61,9 @@ public class YearTimestampNanosSampler implements TimestampSampler {
     }
 
     @Override
-    public long nextTimestamp(long timestamp, int numSteps) {
+    public long nextTimestamp(long timestamp, long numSteps) {
         try {
-            return addYears(timestamp, numSteps * stepYears);
+            return addYears(timestamp, Math.toIntExact(Math.multiplyExact(numSteps, stepYears)));
         } catch (ArithmeticException e) {
             return Long.MAX_VALUE;
         }
