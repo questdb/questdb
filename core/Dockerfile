@@ -81,7 +81,7 @@ RUN dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
 ######################### Build for RedHat OpenShift #########################
 ##############################################################################
 
-FROM registry.access.redhat.com/ubi9/ubi AS rhel
+FROM registry.access.redhat.com/ubi10/ubi-minimal AS rhel
 ARG tag_name
 
 WORKDIR /app
@@ -105,8 +105,11 @@ LABEL name=QuestDB \
     url="https://github.com/questdb/questdb"
 
 # Create questdb user and group
-RUN groupadd -g 10001 questdb && \
+RUN microdnf install -y shadow-utils util-linux grep && \
+    groupadd -g 10001 questdb && \
     useradd -u 10001 -g 10001 -d /var/lib/questdb -M -s /sbin/nologin questdb && \
+    microdnf remove -y shadow-utils && \
+    microdnf clean all && \
     mkdir -p /var/lib/questdb && \
     chown -R questdb:questdb /var/lib/questdb
 
@@ -126,7 +129,7 @@ ENTRYPOINT ["/docker-entrypoint.sh"]
 ########################## General-use Docker build ##########################
 ##############################################################################
 
-FROM debian:bookworm-slim AS questdb
+FROM quay.io/fedora/fedora-minimal:44 AS questdb
 ARG tag_name
 
 WORKDIR /app
@@ -138,8 +141,11 @@ COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 # Create questdb user and group
-RUN groupadd -g 10001 questdb && \
+RUN microdnf install -y shadow-utils util-linux grep && \
+    groupadd -g 10001 questdb && \
     useradd -u 10001 -g 10001 -d /var/lib/questdb -M -s /sbin/nologin questdb && \
+    microdnf remove -y shadow-utils && \
+    microdnf clean all && \
     mkdir -p /var/lib/questdb && \
     chown -R questdb:questdb /var/lib/questdb
 
