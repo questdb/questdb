@@ -87,7 +87,7 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * For forks(1) builds:
  * mvn clean package -DskipTests -pl benchmarks -am 2>&1 | tail -3
- * java -jar benchmarks/target/benchmarks.jar RecordToRowCopierBenchmark 2>&1 | tee /tmp/benchmark_fallback_test.tx
+ * java -jar benchmarks/target/benchmarks.jar RecordToRowCopierBenchmark 2>&1 | tee /tmp/benchmark_fallback_test.txt
  * <p>
  * Otherwise, run in IntelliJ.
  * <p>
@@ -118,7 +118,7 @@ public class RecordToRowCopierBenchmark {
             ColumnType.TIMESTAMP
     };
 
-    @Param({"10", "50", "100", "200", "500", "1000"})
+    @Param({"10", "50", "100", "200", "459", "460", "500", "1000", "2000", "3000", "4000", "5000", "6000"})
     //    @Param({"450", "451", "452", "453", "454", "455", "456", "457", "458", "459", "500"})
 //    @Param({"459", "460"})
     private int columnCount;
@@ -142,7 +142,7 @@ public class RecordToRowCopierBenchmark {
         Options opt = new OptionsBuilder()
                 .include(RecordToRowCopierBenchmark.class.getSimpleName())
                 // Use fork(1) to get diagnostic output from @Fork jvmArgs
-                .forks(0)
+                .forks(1)
                 .jvmArgs("-Xms2G", "-Xmx2G")
                 .build();
         new Runner(opt).run();
@@ -230,11 +230,17 @@ public class RecordToRowCopierBenchmark {
                     new BytecodeAssembler(), fromTypes, toMetadata, columnFilter,
                     RecordToRowCopierUtils.DEFAULT_HUGE_METHOD_LIMIT, false);
         } else if ("CHUNKED".equals(implementation)) {
-            // Force chunked generation by using a very small method size limit
-            // This triggers chunking even for smaller tables to benchmark the chunked path
+            // For proper chunking test, we need:
+            // 1. estimatedSize > methodSizeLimit (to enter chunked path at line 170)
+            // 2. individual chunk size <= methodSizeLimit (to pass validation at line 1784)
+            //
+            // With CHUNK_TARGET_SIZE=6000, chunks are ~6000 bytes max.
+            // Use methodSizeLimit=6500 to allow chunks but force chunking for larger tables.
+            // NOTE: For small column counts (<300 cols, ~6000 bytes), this will use single-method
+            // (identical to BYTECODE) since estimatedSize <= 6500 or only 1 chunk is created.
             copier = RecordToRowCopierUtils.generateCopier(
                     new BytecodeAssembler(), fromTypes, toMetadata, columnFilter,
-                    0, true);
+                    RecordToRowCopierUtils.DEFAULT_HUGE_METHOD_LIMIT, true);
         } else {
             // Use loop implementation directly
             copier = new LoopingRecordToRowCopier(fromTypes, toMetadata, columnFilter);
