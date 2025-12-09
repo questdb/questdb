@@ -7358,18 +7358,18 @@ public class SqlOptimiser implements Mutable {
                 tempExprs.add(columns.getQuick(i).getAst());
             }
             int columnsSize = columns.size();
-            // isRecordNotMaterized flag indicates whether the generated RecordFactory will materialize records.
+            // isRecordNotMaterialized flag indicates whether the generated RecordFactory will materialize records.
             // For materialized records, operations like ORDER BY/WHERE won't call the child queryModel's calculations.
             // For GroupBy, window functions, and joins, materialization depends on specific scenarios.
-            boolean isRecordNotMaterized = parent.getSelectModelType() == SELECT_MODEL_VIRTUAL || parent.getSelectModelType() == SELECT_MODEL_CHOOSE;
-            if (isRecordNotMaterized) {
-                if (queryModel.getOrderBy() != null) {
+            boolean isRecordNotMaterialized = parent.getSelectModelType() == SELECT_MODEL_VIRTUAL || parent.getSelectModelType() == SELECT_MODEL_CHOOSE;
+            if (isRecordNotMaterialized) {
+                if (parent.getOrderBy() != null) {
                     tempExprs.addAll(parent.getOrderBy());
                 }
-                if (queryModel.getWhereClause() != null) {
+                if (parent.getWhereClause() != null) {
                     tempExprs.add(parent.getWhereClause());
                 }
-                if (queryModel.getLatestBy() != null) {
+                if (parent.getLatestBy() != null) {
                     tempExprs.addAll(parent.getLatestBy());
                 }
             }
