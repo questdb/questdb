@@ -273,7 +273,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         try {
             pathToNewPartition.trimTo(pplen);
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+            // srcDataMax is the row count in the existing column data
+            final long auxRowCount = srcDataMax - srcDataTop;
             if (srcDataTop > 0 && tableWriter.isCommitReplaceMode()) {
+                // Adjust source data indexes for what we need for the range replace merge.
                 long dataMax = 0;
                 if (prefixType == O3_BLOCK_DATA && prefixHi >= prefixLo) {
                     dataMax = prefixHi + 1;
@@ -286,14 +289,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             }
 
             if (srcDataTop > 0) {
-                // srcDataMax is the row count in the existing column data
-                final long auxRowCount = srcDataMax - srcDataTop;
                 // Size of data actually in the aux (fixed) file,
                 // THIS IS N+1 size, it used to be N offset, e.g. this used to be pointing at
                 // the last row of the aux vector (column)
                 final long oldAuxSize = columnTypeDriver.getAuxVectorSize(auxRowCount);
-
-                // Size of data in the index (fixed) file if it didn't have column top.
+                // Size of data in the aux (fixed) file if it didn't have column top.
                 // this size DOES NOT INCLUDE N+1, so it is N here
                 final long wouldBeAuxSize = columnTypeDriver.getAuxVectorSize(srcDataMax);
 
@@ -301,8 +301,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // Extend the existing column down, we will be discarding it anyway.
                     // Materialize nulls at the end of the column and add non-null data to merge.
                     // Do all of this beyond existing written data, using column as a buffer.
-                    // It is also fine in case when last partition contains WAL LAG, since
-                    // At the beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
+                    // It is also fine in case when last partition contains WAL LAG, since at the
+                    // beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
                     newAuxSize =
                             columnTypeDriver.getAuxVectorSize(auxRowCount) +
                                     columnTypeDriver.getAuxVectorSize(srcDataMax);
@@ -347,16 +347,16 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             dstAddrSize
                     );
 
-                    // now set the "empty" bit of fixed size column with references to those
-                    // null strings we just added
-                    // Call to o3setColumnRefs must be after o3shiftCopyAuxVector
-                    // because data first have to be shifted before overwritten
+                    // Now set the "empty" bit of fixed size column with references to those
+                    // null strings we just added.
+                    // Call to setPartAuxVectorNull must be after shiftCopyAuxVector
+                    // because the data has to be shifted before being overwritten.
                     columnTypeDriver.setPartAuxVectorNull(srcAuxAddr + oldAuxSize, 0, srcDataTop);
                     srcDataTop = 0;
                     srcDataFixOffset = oldAuxSize;
                 } else {
-                    // when we are shuffling "empty" space we can just reduce column top instead
-                    // of moving data
+                    // When we are shuffling "empty" space we can just reduce column top instead
+                    // of moving the data.
                     if (prefixType != O3_BLOCK_NONE) {
                         // Set the column top if it's not split partition case.
                         Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
@@ -383,17 +383,17 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
                     srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, srcDataMax - 1);
                     srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
+                    ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
                 }
-                ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
             }
 
-            // upgrade srcDataTop to offset
+            // Upgrade srcDataTop to offset.
             srcDataTopOffset = columnTypeDriver.getAuxVectorOffset(srcDataTop);
 
             dstAuxFd = openRW(ff, iFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
 
             // Use target partition size to determine the size of fixed file, it's already compensated
-            // for partitions splits and duplicates found by dedup
+            // for partitions splits and duplicates found by dedup.
             long newRowCount = o3SplitPartitionSize > 0 ? o3SplitPartitionSize : srcDataNewPartitionSize - srcDataTop;
             dstAuxSize = columnTypeDriver.getAuxVectorSize(newRowCount);
 
@@ -2439,7 +2439,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final boolean mixedIOFlag = tableWriter.allowMixedIO();
 
         try {
+            // Size of data actually in the file.
+            final long srcDataActualBytes = (srcDataMax - srcDataTop) << shl;
             if (srcDataTop > 0 && tableWriter.isCommitReplaceMode()) {
+                // Adjust source data indexes for what we need for the range replace merge.
                 long dataMax = 0;
                 if (prefixType == O3_BLOCK_DATA && prefixHi >= prefixLo) {
                     dataMax = prefixHi + 1;
@@ -2452,26 +2455,25 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             }
 
             if (srcDataTop > 0) {
-                // Size of data actually in the file.
-                final long srcDataActualBytes = (srcDataMax - srcDataTop) << shl;
                 // Size of data in the file if it didn't have column top.
-                final long srcDataMaxBytes = srcDataMax << shl;
+                final long wouldBeDataBytes = srcDataMax << shl;
+
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
                     // Extend the existing column down, we will be discarding it anyway.
                     // Materialize nulls at the end of the column and add non-null data to merge.
                     // Do all of this beyond existing written data, using column as a buffer.
-                    // It is also fine in case when last partition contains WAL LAG, since
-                    // At the beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
-                    srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
+                    // It is also fine in case when last partition contains WAL LAG, since at the
+                    // beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
+                    srcDataFixSize = srcDataActualBytes + wouldBeDataBytes;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     TableUtils.setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
-                    Vect.memcpy(srcDataFixAddr + srcDataMaxBytes, srcDataFixAddr, srcDataActualBytes);
+                    Vect.memcpy(srcDataFixAddr + wouldBeDataBytes, srcDataFixAddr, srcDataActualBytes);
                     srcDataTop = 0;
                     srcDataFixOffset = srcDataActualBytes;
                 } else {
-                    // when we are shuffling "empty" space we can just reduce column top instead
-                    // of moving data
+                    // When we are shuffling "empty" space we can just reduce column top instead
+                    // of moving the data.
                     if (prefixType != O3_BLOCK_NONE) {
                         // Set column top if it's not split partition.
                         Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
@@ -2487,11 +2489,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 }
             } else {
                 srcDataFixSize = srcDataMax << shl;
-                if (srcDataFixSize != 0) {
+                srcDataFixOffset = 0;
+                if (srcDataFixSize > 0) {
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                 }
-                srcDataFixOffset = 0;
             }
 
             srcDataTopOffset = srcDataTop << shl;
@@ -2507,7 +2509,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
             }
 
-            // when prefix is "data" we need to reduce it by "srcDataTop"
+            // When prefix is "data" we need to reduce it by "srcDataTop".
             if (prefixType == O3_BLOCK_DATA) {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1 - srcDataTop) << shl;
                 prefixHi -= srcDataTop;

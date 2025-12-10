@@ -61,8 +61,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // Timer refresh tests mess with the clock, so set the spin timeout
         // to a large value to avoid false positive errors.
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
-        setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, TestUtils.generateRandom(LOG).nextInt(10000));
         spinLockTimeout = SPIN_LOCK_TIMEOUT;
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        node1.setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, rnd.nextInt(10000));
     }
 
     @Test
@@ -79,7 +80,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testBaseTableCanHaveColumnsAdded() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG, 341214560770050L, 1764958653161L);
+            Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0.2, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 1, true);
