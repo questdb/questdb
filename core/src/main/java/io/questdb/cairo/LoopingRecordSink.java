@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BitSet;
+import io.questdb.std.BoolList;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
@@ -43,14 +44,14 @@ import org.jetbrains.annotations.Nullable;
  * from methods that are too large to be fully optimized.
  */
 public class LoopingRecordSink implements RecordSink {
-    private final int[] columnIndices;
-    private final int[] columnTypes;
-    private final int[] skewedIndices;
-    private final boolean[] symAsString;
-    private final boolean[] strAsVarchar;
-    private final boolean[] timestampAsNanos;
+    private final IntList columnIndices;
+    private final IntList columnTypes;
     private final Decimal128 decimal128;
     private final Decimal256 decimal256;
+    private final IntList skewedIndices;
+    private final BoolList strAsVarchar;
+    private final BoolList symAsString;
+    private final BoolList timestampAsNanos;
     private ObjList<Function> keyFunctions;
 
     public LoopingRecordSink(
@@ -62,35 +63,32 @@ public class LoopingRecordSink implements RecordSink {
             @Nullable BitSet writeTimestampAsNanos
     ) {
         int columnCount = columnFilter.getColumnCount();
-        this.columnIndices = new int[columnCount];
-        this.columnTypes = new int[columnCount];
-        this.skewedIndices = new int[columnCount];
-        this.symAsString = new boolean[columnCount];
-        this.strAsVarchar = new boolean[columnCount];
-        this.timestampAsNanos = new boolean[columnCount];
+        this.columnIndices = new IntList(columnCount);
+        this.columnTypes = new IntList(columnCount);
+        this.skewedIndices = new IntList(columnCount);
+        this.symAsString = new BoolList(columnCount);
+        this.strAsVarchar = new BoolList(columnCount);
+        this.timestampAsNanos = new BoolList(columnCount);
 
         boolean needsDecimal128 = false;
         boolean needsDecimal256 = false;
 
         for (int i = 0; i < columnCount; i++) {
-            int index = columnFilter.getColumnIndex(i);
-            int factor = columnFilter.getIndexFactor(index);
-            int actualIndex = index * factor - 1;
-            int type = columnTypes.getColumnType(actualIndex);
+            final int index = columnFilter.getColumnIndex(i);
+            final int factor = columnFilter.getIndexFactor(index);
+            final int actualIndex = index * factor - 1;
+            final int type = columnTypes.getColumnType(actualIndex);
 
-            this.columnIndices[i] = actualIndex;
-            this.columnTypes[i] = factor * ColumnType.tagOf(type);
-            this.skewedIndices[i] = getSkewedIndex(actualIndex, skewIndex);
-            this.symAsString[i] = writeSymbolAsString != null && writeSymbolAsString.get(actualIndex);
-            this.strAsVarchar[i] = writeStringAsVarchar != null && writeStringAsVarchar.get(actualIndex);
-            this.timestampAsNanos[i] = writeTimestampAsNanos != null && writeTimestampAsNanos.get(actualIndex);
+            this.columnIndices.extendAndSet(i, actualIndex);
+            this.columnTypes.extendAndSet(i, factor * ColumnType.tagOf(type));
+            this.skewedIndices.extendAndSet(i, getSkewedIndex(actualIndex, skewIndex));
+            this.symAsString.extendAndSet(i, writeSymbolAsString != null && writeSymbolAsString.get(actualIndex));
+            this.strAsVarchar.extendAndSet(i, writeStringAsVarchar != null && writeStringAsVarchar.get(actualIndex));
+            this.timestampAsNanos.extendAndSet(i, writeTimestampAsNanos != null && writeTimestampAsNanos.get(actualIndex));
 
-            int tag = ColumnType.tagOf(type);
-            if (tag == ColumnType.DECIMAL128) {
-                needsDecimal128 = true;
-            } else if (tag == ColumnType.DECIMAL256) {
-                needsDecimal256 = true;
-            }
+            final int tag = ColumnType.tagOf(type);
+            needsDecimal128 = tag == ColumnType.DECIMAL128;
+            needsDecimal256 = tag == ColumnType.DECIMAL256;
         }
 
         this.decimal128 = needsDecimal128 ? new Decimal128() : null;
@@ -100,12 +98,12 @@ public class LoopingRecordSink implements RecordSink {
     @Override
     public void copy(Record r, RecordSinkSPI w) {
         // Copy column data
-        for (int i = 0, n = columnIndices.length; i < n; i++) {
-            int type = columnTypes[i];
-            int skewedIdx = skewedIndices[i];
-            boolean symStr = symAsString[i];
-            boolean strVar = strAsVarchar[i];
-            boolean tsNanos = timestampAsNanos[i];
+        for (int i = 0, n = columnIndices.size(); i < n; i++) {
+            final int type = columnTypes.getQuick(i);
+            final int skewedIdx = skewedIndices.getQuick(i);
+            final boolean symStr = symAsString.get(i);
+            final boolean strVar = strAsVarchar.get(i);
+            final boolean tsNanos = timestampAsNanos.get(i);
 
             // Handle negative types (skip columns)
             if (type < 0) {
@@ -122,7 +120,7 @@ public class LoopingRecordSink implements RecordSink {
         // Copy function keys
         if (keyFunctions != null) {
             for (int i = 0, n = keyFunctions.size(); i < n; i++) {
-                Function func = keyFunctions.getQuick(i);
+                final Function func = keyFunctions.getQuick(i);
                 copyFunction(r, w, func);
             }
         }
@@ -131,6 +129,13 @@ public class LoopingRecordSink implements RecordSink {
     @Override
     public void setFunctions(ObjList<Function> keyFunctions) {
         this.keyFunctions = keyFunctions;
+    }
+
+    private static int getSkewedIndex(int src, @Nullable IntList skewIndex) {
+        if (skewIndex == null) {
+            return src;
+        }
+        return skewIndex.getQuick(src);
     }
 
     private void copyColumn(Record r, RecordSinkSPI w, int type, int idx, boolean symStr, boolean strVar, boolean tsNanos) {
@@ -352,12 +357,5 @@ public class LoopingRecordSink implements RecordSink {
             default:
                 throw new IllegalArgumentException("Unexpected function type: " + ColumnType.nameOf(type));
         }
-    }
-
-    private static int getSkewedIndex(int src, @Nullable IntList skewIndex) {
-        if (skewIndex == null) {
-            return src;
-        }
-        return skewIndex.getQuick(src);
     }
 }

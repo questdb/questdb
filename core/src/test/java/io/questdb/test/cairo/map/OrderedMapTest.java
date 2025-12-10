@@ -1126,7 +1126,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                             writeSymbolAsString.set(i);
                         }
                     }
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString, true);
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
@@ -1814,7 +1814,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                             writeSymbolAsString.set(i);
                         }
                     }
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString, true);
 
                     final int keyColumnOffset = map.getValueColumnCount();
 
@@ -1990,7 +1990,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                             writeSymbolAsString.set(i);
                         }
                     }
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString, true);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();

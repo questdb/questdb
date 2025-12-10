@@ -41,36 +41,35 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class RecordSinkFactory {
-    private static final int FIELD_POOL_OFFSET = 3;
-    private static final Log LOG = LogFactory.getLog(RecordSinkFactory.class);
-
     // Default bytecode size limit. Methods larger than 8KB may not be fully optimized
     // by C2 and cannot be inlined, causing significant performance degradation.
     // This matches the threshold used in RecordToRowCopierUtils.
     public static final int DEFAULT_METHOD_SIZE_LIMIT = 8000;
-
-    // Target size for each chunk, leaving buffer below 8KB limit
-    private static final int CHUNK_TARGET_SIZE = 6000;
-
     // Bytecode size estimates per column type
     private static final int BASE_BYTECODE_PER_COLUMN = 12;  // aload, iconst, invokeInterface x2
+    // Target size for each chunk, leaving buffer below 8KB limit
+    private static final int CHUNK_TARGET_SIZE = 6000;
     private static final int COMPLEX_TYPE_OVERHEAD = 30;  // UUID, Decimal types need more bytecode
+    private static final int FIELD_POOL_OFFSET = 3;
+    private static final Log LOG = LogFactory.getLog(RecordSinkFactory.class);
 
     public static RecordSink getInstance(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter
+            @Transient @NotNull ColumnFilter columnFilter,
+            boolean chunkedEnabled
     ) {
-        return getInstance(asm, columnTypes, columnFilter, null, null, null, null);
+        return getInstance(asm, columnTypes, columnFilter, null, null, null, null, null, chunkedEnabled);
     }
 
     public static RecordSink getInstance(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable BitSet writeSymbolAsString
+            @Nullable BitSet writeSymbolAsString,
+            boolean chunkedEnabled
     ) {
-        return getInstance(asm, columnTypes, columnFilter, null, null, writeSymbolAsString, null);
+        return getInstance(asm, columnTypes, columnFilter, null, null, writeSymbolAsString, null, null, chunkedEnabled);
     }
 
     public static RecordSink getInstance(
@@ -79,7 +78,8 @@ public class RecordSinkFactory {
             @Transient @NotNull ColumnFilter columnFilter,
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
-            @Nullable BitSet writeTimestampAsNanos
+            @Nullable BitSet writeTimestampAsNanos,
+            boolean chunkedEnabled
     ) {
         return getInstance(
                 asm,
@@ -87,55 +87,34 @@ public class RecordSinkFactory {
                 columnFilter,
                 null,
                 null,
-                writeSymbolAsString,
-                writeStringAsVarchar,
-                writeTimestampAsNanos);
-    }
-
-    public static RecordSink getInstance(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            @Nullable BitSet writeSymbolAsString
-    ) {
-        return getInstance(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null);
-    }
-
-    public static RecordSink getInstance(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            @Transient @Nullable IntList skewIndex,
-            @Nullable BitSet writeSymbolAsString,
-            @Nullable BitSet writeStringAsVarchar
-    ) {
-        return getInstance(asm, columnTypes, columnFilter, keyFunctions, skewIndex, writeSymbolAsString, writeStringAsVarchar, null);
-    }
-
-    public static RecordSink getInstance(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            @Transient @Nullable IntList skewIndex,
-            @Nullable BitSet writeSymbolAsString,
-            @Nullable BitSet writeStringAsVarchar,
-            @Nullable BitSet writeTimestampAsNanos
-    ) {
-        return getInstance(
-                asm,
-                columnTypes,
-                columnFilter,
-                keyFunctions,
-                skewIndex,
                 writeSymbolAsString,
                 writeStringAsVarchar,
                 writeTimestampAsNanos,
-                DEFAULT_METHOD_SIZE_LIMIT,
-                true  // chunked enabled by default
-        );
+                chunkedEnabled);
+    }
+
+    public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Nullable BitSet writeSymbolAsString,
+            boolean chunkedEnabled
+    ) {
+        return getInstance(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null, null, chunkedEnabled);
+    }
+
+    public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            boolean chunkedEnabled
+    ) {
+        return getInstance(asm, columnTypes, columnFilter, keyFunctions, skewIndex, writeSymbolAsString, writeStringAsVarchar, null, chunkedEnabled);
     }
 
     public static RecordSink getInstance(
@@ -147,7 +126,7 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
             @Nullable BitSet writeTimestampAsNanos,
-            int methodSizeLimit
+            boolean chunkedEnabled
     ) {
         return getInstance(
                 asm,
@@ -158,8 +137,8 @@ public class RecordSinkFactory {
                 writeSymbolAsString,
                 writeStringAsVarchar,
                 writeTimestampAsNanos,
-                methodSizeLimit,
-                true  // chunked enabled by default
+                chunkedEnabled,
+                DEFAULT_METHOD_SIZE_LIMIT
         );
     }
 
@@ -169,8 +148,8 @@ public class RecordSinkFactory {
      * 2. Chunked bytecode generation if chunkedEnabled and above limit
      * 3. LoopingRecordSink as final fallback
      *
-     * @param methodSizeLimit bytecode size limit per method (default 8000)
      * @param chunkedEnabled  whether to try chunked generation before looping
+     * @param methodSizeLimit bytecode size limit per method (default 8000), for testing
      */
     public static RecordSink getInstance(
             BytecodeAssembler asm,
@@ -181,8 +160,8 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
             @Nullable BitSet writeTimestampAsNanos,
-            int methodSizeLimit,
-            boolean chunkedEnabled
+            boolean chunkedEnabled,
+            int methodSizeLimit
     ) {
         int estimatedSize = estimateBytecodeSize(columnTypes, columnFilter, keyFunctions);
 
@@ -236,49 +215,36 @@ public class RecordSinkFactory {
     }
 
     /**
-     * Estimates the bytecode size for the copy method.
+     * Creates an instance of a record sink class previously generated via the
+     * {@link #getInstanceClass(BytecodeAssembler, ColumnTypes, ColumnFilter, ObjList, BitSet)} method.
      */
-    private static int estimateBytecodeSize(
-            ColumnTypes columnTypes,
-            ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions
-    ) {
-        int total = 0;
-
-        // Estimate bytecode for column copying
-        for (int i = 0, n = columnFilter.getColumnCount(); i < n; i++) {
-            int index = columnFilter.getColumnIndex(i);
-            int factor = columnFilter.getIndexFactor(index);
-            index = index * factor - 1;
-            int type = columnTypes.getColumnType(index);
-            total += estimateColumnBytecodeSize(type);
-        }
-
-        // Estimate bytecode for function keys
-        if (keyFunctions != null) {
-            for (int i = 0, n = keyFunctions.size(); i < n; i++) {
-                int type = keyFunctions.getQuick(i).getType();
-                total += estimateColumnBytecodeSize(type);
+    public static RecordSink getInstance(Class<RecordSink> clazz, @Nullable ObjList<Function> keyFunctions) {
+        try {
+            final RecordSink sink = clazz.getDeclaredConstructor().newInstance();
+            if (keyFunctions != null) {
+                sink.setFunctions(keyFunctions);
             }
+            return sink;
+        } catch (Exception e) {
+            LOG.critical().$("could not create an instance of RecordSink, cause: ").$(e).$();
+            throw BytecodeException.INSTANCE;
         }
-
-        return total;
     }
 
     /**
-     * Estimates the bytecode size for copying a single column.
+     * Same as the getInstance() methods, but returns the generated class instead of its instance.
+     * An instance can be later created via the {@link #getInstance(Class, ObjList)} method.
+     * <p>
+     * Used when creating per-worker sinks for parallel GROUP BY.
      */
-    private static int estimateColumnBytecodeSize(int type) {
-        int tag = ColumnType.tagOf(type);
-        int size = BASE_BYTECODE_PER_COLUMN;
-
-        // Complex types need more bytecode
-        if (tag == ColumnType.UUID || tag == ColumnType.LONG128 ||
-                tag == ColumnType.DECIMAL128 || tag == ColumnType.DECIMAL256) {
-            size += COMPLEX_TYPE_OVERHEAD;
-        }
-
-        return size;
+    public static Class<RecordSink> getInstanceClass(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Nullable BitSet writeSymbolAsString
+    ) {
+        return getInstanceClass(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null, null);
     }
 
     /**
@@ -312,85 +278,6 @@ public class RecordSinkFactory {
 
         boundaries.add(n);
         return boundaries;
-    }
-
-    /**
-     * Generates a chunked RecordSink with multiple private methods for columns.
-     * Returns null if chunking fails (e.g., chunk too large), signaling fallback to looping.
-     */
-    private static RecordSink generateChunkedSink(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            @Nullable IntList skewIndex,
-            @Nullable BitSet writeSymbolAsString,
-            @Nullable BitSet writeStringAsVarchar,
-            @Nullable BitSet writeTimestampAsNanos,
-            int methodSizeLimit
-    ) {
-        IntList boundaries = calculateChunkBoundaries(columnTypes, columnFilter);
-        int numChunks = boundaries.size() - 1;
-
-        // No benefit from chunking if only one chunk
-        if (numChunks <= 1) {
-            return null;
-        }
-
-        try {
-            Class<RecordSink> clazz = getChunkedInstanceClass(
-                    asm,
-                    columnTypes,
-                    columnFilter,
-                    keyFunctions,
-                    skewIndex,
-                    writeSymbolAsString,
-                    writeStringAsVarchar,
-                    writeTimestampAsNanos,
-                    boundaries,
-                    methodSizeLimit
-            );
-            if (clazz == null) {
-                return null;
-            }
-            return getInstance(clazz, keyFunctions);
-        } catch (BytecodeException e) {
-            // Chunking failed, fall back to looping
-            return null;
-        }
-    }
-
-    /**
-     * Creates an instance of a record sink class previously generated via the
-     * {@link #getInstanceClass(BytecodeAssembler, ColumnTypes, ColumnFilter, ObjList, BitSet)} method.
-     */
-    public static RecordSink getInstance(Class<RecordSink> clazz, @Nullable ObjList<Function> keyFunctions) {
-        try {
-            final RecordSink sink = clazz.getDeclaredConstructor().newInstance();
-            if (keyFunctions != null) {
-                sink.setFunctions(keyFunctions);
-            }
-            return sink;
-        } catch (Exception e) {
-            LOG.critical().$("could not create an instance of RecordSink, cause: ").$(e).$();
-            throw BytecodeException.INSTANCE;
-        }
-    }
-
-    /**
-     * Same as the getInstance() methods, but returns the generated class instead of its instance.
-     * An instance can be later created via the {@link #getInstance(Class, ObjList)} method.
-     * <p>
-     * Used when creating per-worker sinks for parallel GROUP BY.
-     */
-    public static Class<RecordSink> getInstanceClass(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            @Nullable BitSet writeSymbolAsString
-    ) {
-        return getInstanceClass(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null, null);
     }
 
     /**
@@ -457,6 +344,645 @@ public class RecordSinkFactory {
     }
 
     /**
+     * Estimates the bytecode size for the copy method.
+     */
+    private static int estimateBytecodeSize(
+            ColumnTypes columnTypes,
+            ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions
+    ) {
+        int total = 0;
+
+        // Estimate bytecode for column copying
+        for (int i = 0, n = columnFilter.getColumnCount(); i < n; i++) {
+            int index = columnFilter.getColumnIndex(i);
+            int factor = columnFilter.getIndexFactor(index);
+            index = index * factor - 1;
+            int type = columnTypes.getColumnType(index);
+            total += estimateColumnBytecodeSize(type);
+        }
+
+        // Estimate bytecode for function keys
+        if (keyFunctions != null) {
+            for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+                int type = keyFunctions.getQuick(i).getType();
+                total += estimateColumnBytecodeSize(type);
+            }
+        }
+
+        return total;
+    }
+
+    /**
+     * Estimates the bytecode size for copying a single column.
+     */
+    private static int estimateColumnBytecodeSize(int type) {
+        int tag = ColumnType.tagOf(type);
+        int size = BASE_BYTECODE_PER_COLUMN;
+
+        // Complex types need more bytecode
+        if (tag == ColumnType.UUID || tag == ColumnType.LONG128 ||
+                tag == ColumnType.DECIMAL128 || tag == ColumnType.DECIMAL256) {
+            size += COMPLEX_TYPE_OVERHEAD;
+        }
+
+        return size;
+    }
+
+    /**
+     * Generates a chunked RecordSink with multiple private methods for columns.
+     * Returns null if chunking fails (e.g., chunk too large), signaling fallback to looping.
+     */
+    private static RecordSink generateChunkedSink(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos,
+            int methodSizeLimit
+    ) {
+        IntList boundaries = calculateChunkBoundaries(columnTypes, columnFilter);
+        int numChunks = boundaries.size() - 1;
+
+        // No benefit from chunking if only one chunk
+        if (numChunks <= 1) {
+            return null;
+        }
+
+        try {
+            Class<RecordSink> clazz = getChunkedInstanceClass(
+                    asm,
+                    columnTypes,
+                    columnFilter,
+                    keyFunctions,
+                    skewIndex,
+                    writeSymbolAsString,
+                    writeStringAsVarchar,
+                    writeTimestampAsNanos,
+                    boundaries,
+                    methodSizeLimit
+            );
+            if (clazz == null) {
+                return null;
+            }
+            return getInstance(clazz, keyFunctions);
+        } catch (BytecodeException e) {
+            // Chunking failed, fall back to looping
+            return null;
+        }
+    }
+
+    /**
+     * Generates bytecode to copy a single column from Record to RecordSinkSPI.
+     */
+    private static void generateColumnCopyBytecode(
+            BytecodeAssembler asm,
+            int index,
+            int factor,
+            int type,
+            @Nullable IntList skewIndex,
+            boolean symAsString,
+            boolean strAsVarchar,
+            boolean timestampAsNanos,
+            int rGetInt, int rGetIPv4, int rGetGeoInt, int rGetLong, int rGetGeoLong, int rGetLong256,
+            int rGetLong128Lo, int rGetLong128Hi, int rGetDate, int rGetTimestamp, int rGetByte, int rGetGeoByte,
+            int rGetShort, int rGetGeoShort, int rGetChar, int rGetBool, int rGetFloat, int rGetDouble,
+            int rGetStr, int rGetVarchar, int rGetSym, int rGetBin, int rGetRecord, int rGetInterval, int rGetArray,
+            int rGetDecimal8, int rGetDecimal16, int rGetDecimal32, int rGetDecimal64, int rGetDecimal128, int rGetDecimal256,
+            int wSkip, int wPutInt, int wPutIPv4, int wPutLong, int wPutLong256, int wPutLong128, int wPutByte, int wPutShort,
+            int wPutChar, int wPutBool, int wPutFloat, int wPutDouble, int wPutStr, int wPutVarchar, int wPutStrAsVarchar,
+            int wPutDate, int wPutTimestamp, int wPutBin, int wPutRecord, int wPutInterval, int wPutArray,
+            int wPutDecimal128, int wPutDecimal256, int constantLong1000,
+            int decimal128FieldIndex, int decimal256FieldIndex
+    ) {
+        int skewedIdx = getSkewedIndex(index, skewIndex);
+
+        switch (factor * ColumnType.tagOf(type)) {
+            case ColumnType.INT:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetInt, 1);
+                asm.invokeInterface(wPutInt, 1);
+                break;
+            case ColumnType.IPv4:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetIPv4, 1);
+                asm.invokeInterface(wPutIPv4, 1);
+                break;
+            case ColumnType.SYMBOL:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                if (symAsString) {
+                    asm.invokeInterface(rGetSym, 1);
+                    if (strAsVarchar) {
+                        asm.invokeInterface(wPutStrAsVarchar, 1);
+                    } else {
+                        asm.invokeInterface(wPutStr, 1);
+                    }
+                } else {
+                    asm.invokeInterface(rGetInt, 1);
+                    asm.invokeInterface(wPutInt, 1);
+                }
+                break;
+            case ColumnType.LONG:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetLong, 1);
+                asm.invokeInterface(wPutLong, 2);
+                break;
+            case ColumnType.DATE:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetDate, 1);
+                asm.invokeInterface(wPutDate, 2);
+                break;
+            case ColumnType.TIMESTAMP:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetTimestamp, 1);
+                if (timestampAsNanos) {
+                    asm.ldc2_w(constantLong1000);
+                    asm.lmul();
+                }
+                asm.invokeInterface(wPutTimestamp, 2);
+                break;
+            case ColumnType.BYTE:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetByte, 1);
+                asm.invokeInterface(wPutByte, 1);
+                break;
+            case ColumnType.SHORT:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetShort, 1);
+                asm.invokeInterface(wPutShort, 1);
+                break;
+            case ColumnType.CHAR:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetChar, 1);
+                asm.invokeInterface(wPutChar, 1);
+                break;
+            case ColumnType.BOOLEAN:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetBool, 1);
+                asm.invokeInterface(wPutBool, 1);
+                break;
+            case ColumnType.FLOAT:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetFloat, 1);
+                asm.invokeInterface(wPutFloat, 1);
+                break;
+            case ColumnType.DOUBLE:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetDouble, 1);
+                asm.invokeInterface(wPutDouble, 2);
+                break;
+            case ColumnType.STRING:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetStr, 1);
+                if (strAsVarchar) {
+                    asm.invokeInterface(wPutStrAsVarchar, 1);
+                } else {
+                    asm.invokeInterface(wPutStr, 1);
+                }
+                break;
+            case ColumnType.VARCHAR:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetVarchar, 1);
+                asm.invokeInterface(wPutVarchar, 1);
+                break;
+            case ColumnType.BINARY:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetBin, 1);
+                asm.invokeInterface(wPutBin, 1);
+                break;
+            case ColumnType.LONG256:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetLong256, 1);
+                asm.invokeInterface(wPutLong256, 1);
+                break;
+            case ColumnType.RECORD:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetRecord, 1);
+                asm.invokeInterface(wPutRecord, 1);
+                break;
+            case ColumnType.GEOBYTE:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetGeoByte, 1);
+                asm.invokeInterface(wPutByte, 1);
+                break;
+            case ColumnType.GEOSHORT:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetGeoShort, 1);
+                asm.invokeInterface(wPutShort, 1);
+                break;
+            case ColumnType.GEOINT:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetGeoInt, 1);
+                asm.invokeInterface(wPutInt, 1);
+                break;
+            case ColumnType.GEOLONG:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetGeoLong, 1);
+                asm.invokeInterface(wPutLong, 2);
+                break;
+            case ColumnType.LONG128:
+            case ColumnType.UUID:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetLong128Lo, 1);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetLong128Hi, 1);
+                asm.invokeInterface(wPutLong128, 4);
+                break;
+            case ColumnType.INTERVAL:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetInterval, 1);
+                asm.invokeInterface(wPutInterval, 1);
+                break;
+            case ColumnType.DECIMAL8:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetDecimal8, 1);
+                asm.invokeInterface(wPutByte, 1);
+                break;
+            case ColumnType.DECIMAL16:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetDecimal16, 1);
+                asm.invokeInterface(wPutShort, 1);
+                break;
+            case ColumnType.DECIMAL32:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetDecimal32, 1);
+                asm.invokeInterface(wPutInt, 1);
+                break;
+            case ColumnType.DECIMAL64:
+                asm.aload(2);
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.invokeInterface(rGetDecimal64, 1);
+                asm.invokeInterface(wPutLong, 2);
+                break;
+            case ColumnType.DECIMAL128:
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.aload(0);
+                asm.getfield(decimal128FieldIndex);
+                asm.invokeInterface(rGetDecimal128, 2);
+                asm.aload(2);
+                asm.aload(0);
+                asm.getfield(decimal128FieldIndex);
+                asm.invokeInterface(wPutDecimal128, 1);
+                break;
+            case ColumnType.DECIMAL256:
+                asm.aload(1);
+                asm.iconst(skewedIdx);
+                asm.aload(0);
+                asm.getfield(decimal256FieldIndex);
+                asm.invokeInterface(rGetDecimal256, 2);
+                asm.aload(2);
+                asm.aload(0);
+                asm.getfield(decimal256FieldIndex);
+                asm.invokeInterface(wPutDecimal256, 1);
+                break;
+            default:
+                // Handle ARRAY type
+                if (ColumnType.tagOf(type) == ColumnType.ARRAY) {
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(skewedIdx);
+                    asm.iconst(type);
+                    asm.invokeInterface(rGetArray, 2);
+                    asm.invokeInterface(wPutArray, 1);
+                }
+                break;
+        }
+    }
+
+    /**
+     * Generates bytecode to copy function keys in the main copy method.
+     */
+    private static void generateFunctionCopyBytecode(
+            BytecodeAssembler asm,
+            ObjList<Function> keyFunctions,
+            int firstFieldIndex,
+            int fGetInt, int fGetIPv4, int fGetGeoInt, int fGetLong, int fGetGeoLong, int fGetLong256,
+            int fGetLong128Lo, int fGetLong128Hi, int fGetDate, int fGetTimestamp, int fGetByte, int fGetGeoByte,
+            int fGetShort, int fGetGeoShort, int fGetChar, int fGetBool, int fGetFloat, int fGetDouble,
+            int fGetStr, int fGetVarchar, int fGetSym, int fGetBin, int fGetRecord, int fGetInterval, int fGetArray,
+            int fGetDecimal8, int fGetDecimal16, int fGetDecimal32, int fGetDecimal64, int fGetDecimal128, int fGetDecimal256,
+            int wPutInt, int wPutIPv4, int wPutLong, int wPutLong256, int wPutLong128, int wPutByte, int wPutShort,
+            int wPutChar, int wPutBool, int wPutFloat, int wPutDouble, int wPutStr, int wPutVarchar, int wPutDate,
+            int wPutTimestamp, int wPutBin, int wPutRecord, int wPutInterval, int wPutArray,
+            int wPutDecimal128, int wPutDecimal256,
+            int decimal128FieldIndex, int decimal256FieldIndex
+    ) {
+        int functionSize = keyFunctions.size();
+        for (int i = 0; i < functionSize; i++) {
+            final Function func = keyFunctions.getQuick(i);
+            final int type = func.getType();
+
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.INT:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetInt, 1);
+                    asm.invokeInterface(wPutInt, 1);
+                    break;
+                case ColumnType.IPv4:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetIPv4, 1);
+                    asm.invokeInterface(wPutIPv4, 1);
+                    break;
+                case ColumnType.SYMBOL:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetSym, 1);
+                    asm.invokeInterface(wPutStr, 1);
+                    break;
+                case ColumnType.LONG:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetLong, 1);
+                    asm.invokeInterface(wPutLong, 2);
+                    break;
+                case ColumnType.DATE:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetDate, 1);
+                    asm.invokeInterface(wPutDate, 2);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetTimestamp, 1);
+                    asm.invokeInterface(wPutTimestamp, 2);
+                    break;
+                case ColumnType.BYTE:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetByte, 1);
+                    asm.invokeInterface(wPutByte, 1);
+                    break;
+                case ColumnType.SHORT:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetShort, 1);
+                    asm.invokeInterface(wPutShort, 1);
+                    break;
+                case ColumnType.CHAR:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetChar, 1);
+                    asm.invokeInterface(wPutChar, 1);
+                    break;
+                case ColumnType.BOOLEAN:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetBool, 1);
+                    asm.invokeInterface(wPutBool, 1);
+                    break;
+                case ColumnType.FLOAT:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetFloat, 1);
+                    asm.invokeInterface(wPutFloat, 1);
+                    break;
+                case ColumnType.DOUBLE:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetDouble, 1);
+                    asm.invokeInterface(wPutDouble, 2);
+                    break;
+                case ColumnType.STRING:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetStr, 1);
+                    asm.invokeInterface(wPutStr, 1);
+                    break;
+                case ColumnType.VARCHAR:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetVarchar, 1);
+                    asm.invokeInterface(wPutVarchar, 1);
+                    break;
+                case ColumnType.BINARY:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetBin, 1);
+                    asm.invokeInterface(wPutBin, 1);
+                    break;
+                case ColumnType.LONG256:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetLong256, 1);
+                    asm.invokeInterface(wPutLong256, 1);
+                    break;
+                case ColumnType.LONG128:
+                case ColumnType.UUID:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetLong128Lo, 1);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetLong128Hi, 1);
+                    asm.invokeInterface(wPutLong128, 4);
+                    break;
+                case ColumnType.INTERVAL:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetInterval, 1);
+                    asm.invokeInterface(wPutInterval, 1);
+                    break;
+                case ColumnType.ARRAY:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetArray, 1);
+                    asm.invokeInterface(wPutArray, 1);
+                    break;
+                case ColumnType.GEOBYTE:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetGeoByte, 1);
+                    asm.invokeInterface(wPutByte, 1);
+                    break;
+                case ColumnType.GEOSHORT:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetGeoShort, 1);
+                    asm.invokeInterface(wPutShort, 1);
+                    break;
+                case ColumnType.GEOINT:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetGeoInt, 1);
+                    asm.invokeInterface(wPutInt, 1);
+                    break;
+                case ColumnType.GEOLONG:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetGeoLong, 1);
+                    asm.invokeInterface(wPutLong, 2);
+                    break;
+                case ColumnType.DECIMAL8:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetDecimal8, 1);
+                    asm.invokeInterface(wPutByte, 1);
+                    break;
+                case ColumnType.DECIMAL16:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetDecimal16, 1);
+                    asm.invokeInterface(wPutShort, 1);
+                    break;
+                case ColumnType.DECIMAL32:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetDecimal32, 1);
+                    asm.invokeInterface(wPutInt, 1);
+                    break;
+                case ColumnType.DECIMAL64:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetDecimal64, 1);
+                    asm.invokeInterface(wPutLong, 2);
+                    break;
+                case ColumnType.DECIMAL128:
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.aload(0);
+                    asm.getfield(decimal128FieldIndex);
+                    asm.invokeInterface(fGetDecimal128, 2);
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(decimal128FieldIndex);
+                    asm.invokeInterface(wPutDecimal128, 1);
+                    break;
+                case ColumnType.DECIMAL256:
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.aload(0);
+                    asm.getfield(decimal256FieldIndex);
+                    asm.invokeInterface(fGetDecimal256, 2);
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(decimal256FieldIndex);
+                    asm.invokeInterface(wPutDecimal256, 1);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    /**
      * Sets function keys to the respective fields.
      * Generates bytecode equivalent of the following Java code:
      * <pre>
@@ -490,6 +1016,285 @@ public class RecordSinkFactory {
         // attributes
         asm.putShort(0);
         asm.endMethod();
+    }
+
+    /**
+     * Generates a chunked RecordSink class with multiple private methods for column copying.
+     * Returns null if any chunk exceeds the method size limit.
+     */
+    @SuppressWarnings("unchecked")
+    private static Class<RecordSink> getChunkedInstanceClass(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos,
+            IntList boundaries,
+            int methodSizeLimit
+    ) {
+        int numChunks = boundaries.size() - 1;
+
+        asm.init(RecordSink.class);
+        asm.setupPool();
+        final int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/chunkedsink"));
+        final int interfaceClassIndex = asm.poolClass(RecordSink.class);
+
+        // Pool all method references (same as single-method approach)
+        final int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        final int rGetIPv4 = asm.poolInterfaceMethod(Record.class, "getIPv4", "(I)I");
+        final int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
+        final int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
+        final int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
+        final int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
+        final int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(I)J");
+        final int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(I)J");
+        final int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
+        final int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
+        final int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
+        final int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoByte", "(I)B");
+        final int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
+        final int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoShort", "(I)S");
+        final int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
+        final int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
+        final int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
+        final int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
+        final int rGetStr = asm.poolInterfaceMethod(Record.class, "getStrA", "(I)Ljava/lang/CharSequence;");
+        final int rGetVarchar = asm.poolInterfaceMethod(Record.class, "getVarcharA", "(I)Lio/questdb/std/str/Utf8Sequence;");
+        final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSymA", "(I)Ljava/lang/CharSequence;");
+        final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
+        final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
+        final int rGetInterval = asm.poolInterfaceMethod(Record.class, "getInterval", "(I)Lio/questdb/std/Interval;");
+        final int rGetArray = asm.poolInterfaceMethod(Record.class, "getArray", "(II)Lio/questdb/cairo/arr/ArrayView;");
+        final int rGetDecimal8 = asm.poolInterfaceMethod(Record.class, "getDecimal8", "(I)B");
+        final int rGetDecimal16 = asm.poolInterfaceMethod(Record.class, "getDecimal16", "(I)S");
+        final int rGetDecimal32 = asm.poolInterfaceMethod(Record.class, "getDecimal32", "(I)I");
+        final int rGetDecimal64 = asm.poolInterfaceMethod(Record.class, "getDecimal64", "(I)J");
+        final int rGetDecimal128 = asm.poolInterfaceMethod(Record.class, "getDecimal128", "(ILio/questdb/std/Decimal128;)V");
+        final int rGetDecimal256 = asm.poolInterfaceMethod(Record.class, "getDecimal256", "(ILio/questdb/std/Decimal256;)V");
+
+        final int fGetInt = asm.poolInterfaceMethod(Function.class, "getInt", "(Lio/questdb/cairo/sql/Record;)I");
+        final int fGetIPv4 = asm.poolInterfaceMethod(Function.class, "getIPv4", "(Lio/questdb/cairo/sql/Record;)I");
+        final int fGetGeoInt = asm.poolInterfaceMethod(Function.class, "getGeoInt", "(Lio/questdb/cairo/sql/Record;)I");
+        final int fGetLong = asm.poolInterfaceMethod(Function.class, "getLong", "(Lio/questdb/cairo/sql/Record;)J");
+        final int fGetGeoLong = asm.poolInterfaceMethod(Function.class, "getGeoLong", "(Lio/questdb/cairo/sql/Record;)J");
+        final int fGetLong256 = asm.poolInterfaceMethod(Function.class, "getLong256A", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/Long256;");
+        final int fGetLong128Lo = asm.poolInterfaceMethod(Function.class, "getLong128Lo", "(Lio/questdb/cairo/sql/Record;)J");
+        final int fGetLong128Hi = asm.poolInterfaceMethod(Function.class, "getLong128Hi", "(Lio/questdb/cairo/sql/Record;)J");
+        final int fGetDate = asm.poolInterfaceMethod(Function.class, "getDate", "(Lio/questdb/cairo/sql/Record;)J");
+        final int fGetTimestamp = asm.poolInterfaceMethod(Function.class, "getTimestamp", "(Lio/questdb/cairo/sql/Record;)J");
+        final int fGetByte = asm.poolInterfaceMethod(Function.class, "getByte", "(Lio/questdb/cairo/sql/Record;)B");
+        final int fGetGeoByte = asm.poolInterfaceMethod(Function.class, "getGeoByte", "(Lio/questdb/cairo/sql/Record;)B");
+        final int fGetShort = asm.poolInterfaceMethod(Function.class, "getShort", "(Lio/questdb/cairo/sql/Record;)S");
+        final int fGetGeoShort = asm.poolInterfaceMethod(Function.class, "getGeoShort", "(Lio/questdb/cairo/sql/Record;)S");
+        final int fGetChar = asm.poolInterfaceMethod(Function.class, "getChar", "(Lio/questdb/cairo/sql/Record;)C");
+        final int fGetBool = asm.poolInterfaceMethod(Function.class, "getBool", "(Lio/questdb/cairo/sql/Record;)Z");
+        final int fGetFloat = asm.poolInterfaceMethod(Function.class, "getFloat", "(Lio/questdb/cairo/sql/Record;)F");
+        final int fGetDouble = asm.poolInterfaceMethod(Function.class, "getDouble", "(Lio/questdb/cairo/sql/Record;)D");
+        final int fGetStr = asm.poolInterfaceMethod(Function.class, "getStrA", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
+        final int fGetVarchar = asm.poolInterfaceMethod(Function.class, "getVarcharA", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/str/Utf8Sequence;");
+        final int fGetSym = asm.poolInterfaceMethod(Function.class, "getSymbol", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
+        final int fGetBin = asm.poolInterfaceMethod(Function.class, "getBin", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/BinarySequence;");
+        final int fGetRecord = asm.poolInterfaceMethod(Function.class, "getRecord", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/cairo/sql/Record;");
+        final int fGetInterval = asm.poolInterfaceMethod(Function.class, "getInterval", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/Interval;");
+        final int fGetArray = asm.poolInterfaceMethod(Function.class, "getArray", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/cairo/arr/ArrayView;");
+        final int fGetDecimal8 = asm.poolInterfaceMethod(Function.class, "getDecimal8", "(Lio/questdb/cairo/sql/Record;)B");
+        final int fGetDecimal16 = asm.poolInterfaceMethod(Function.class, "getDecimal16", "(Lio/questdb/cairo/sql/Record;)S");
+        final int fGetDecimal32 = asm.poolInterfaceMethod(Function.class, "getDecimal32", "(Lio/questdb/cairo/sql/Record;)I");
+        final int fGetDecimal64 = asm.poolInterfaceMethod(Function.class, "getDecimal64", "(Lio/questdb/cairo/sql/Record;)J");
+        final int fGetDecimal128 = asm.poolInterfaceMethod(Function.class, "getDecimal128", "(Lio/questdb/cairo/sql/Record;Lio/questdb/std/Decimal128;)V");
+        final int fGetDecimal256 = asm.poolInterfaceMethod(Function.class, "getDecimal256", "(Lio/questdb/cairo/sql/Record;Lio/questdb/std/Decimal256;)V");
+
+        final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
+        final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
+        final int wPutIPv4 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putIPv4", "(I)V");
+        final int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
+        final int wPutLong256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong256", "(Lio/questdb/std/Long256;)V");
+        final int wPutLong128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong128", "(JJ)V");
+        final int wPutByte = asm.poolInterfaceMethod(RecordSinkSPI.class, "putByte", "(B)V");
+        final int wPutShort = asm.poolInterfaceMethod(RecordSinkSPI.class, "putShort", "(S)V");
+        final int wPutChar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putChar", "(C)V");
+        final int wPutBool = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBool", "(Z)V");
+        final int wPutFloat = asm.poolInterfaceMethod(RecordSinkSPI.class, "putFloat", "(F)V");
+        final int wPutDouble = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDouble", "(D)V");
+        final int wPutStr = asm.poolInterfaceMethod(RecordSinkSPI.class, "putStr", "(Ljava/lang/CharSequence;)V");
+        final int wPutVarchar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putVarchar", "(Lio/questdb/std/str/Utf8Sequence;)V");
+        final int wPutStrAsVarchar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putVarchar", "(Ljava/lang/CharSequence;)V");
+        final int wPutDate = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDate", "(J)V");
+        final int wPutTimestamp = asm.poolInterfaceMethod(RecordSinkSPI.class, "putTimestamp", "(J)V");
+        final int wPutBin = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBin", "(Lio/questdb/std/BinarySequence;)V");
+        final int wPutRecord = asm.poolInterfaceMethod(RecordSinkSPI.class, "putRecord", "(Lio/questdb/cairo/sql/Record;)V");
+        final int wPutInterval = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInterval", "(Lio/questdb/std/Interval;)V");
+        final int wPutArray = asm.poolInterfaceMethod(RecordSinkSPI.class, "putArray", "(Lio/questdb/cairo/arr/ArrayView;)V");
+        final int wPutDecimal128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal128", "(Lio/questdb/std/Decimal128;)V");
+        final int wPutDecimal256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal256", "(Lio/questdb/std/Decimal256;)V");
+
+        final int constantLong1000 = asm.poolLongConst(1000L);
+        final int copyNameIndex = asm.poolUtf8("copy");
+        final int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
+        final int setFunctionsIndex = asm.poolUtf8("setFunctions");
+        final int setFunctionsSigIndex = asm.poolUtf8("(Lio/questdb/std/ObjList;)V");
+
+        final int getIndex = asm.poolMethod(ObjList.class, "get", "(I)Ljava/lang/Object;");
+
+        final int typeIndex = asm.poolUtf8("Lio/questdb/cairo/sql/Function;");
+        final int functionSize = keyFunctions != null ? keyFunctions.size() : 0;
+
+        // Pool sub-method names and references
+        int[] subMethodNameIndices = new int[numChunks];
+        int[] subMethodRefIndices = new int[numChunks];
+        for (int chunk = 0; chunk < numChunks; chunk++) {
+            subMethodNameIndices[chunk] = asm.poolUtf8().putAscii("copy").put(chunk).$();
+            int nameAndType = asm.poolNameAndType(subMethodNameIndices[chunk], copySigIndex);
+            subMethodRefIndices[chunk] = asm.poolMethod(thisClassIndex, nameAndType);
+        }
+
+        // Pool function fields
+        int firstFieldNameIndex = 0;
+        int firstFieldIndex = 0;
+        for (int i = 0; i < functionSize; i++) {
+            int fieldNameIndex = asm.poolUtf8().putAscii("f").put(i).$();
+            int nameAndType = asm.poolNameAndType(fieldNameIndex, typeIndex);
+            int fieldIndex = asm.poolField(thisClassIndex, nameAndType);
+            if (i == 0) {
+                firstFieldNameIndex = fieldNameIndex;
+                firstFieldIndex = fieldIndex;
+            }
+        }
+
+        var r = poolDecimalFields(asm, thisClassIndex, columnFilter, columnTypes, keyFunctions);
+        int decimal128FieldIndex = Numbers.decodeLowInt(r);
+        int decimal128ClassIndex = -1;
+        int decimal128CtorIndex = -1;
+        if (decimal128FieldIndex >= 0) {
+            decimal128ClassIndex = asm.poolClass(Decimal128.class);
+            decimal128CtorIndex = asm.poolMethod(decimal128ClassIndex, asm.getDefaultConstructorSigIndex());
+        }
+
+        int decimal256FieldIndex = Numbers.decodeHighInt(r);
+        int decimal256ClassIndex = -1;
+        int decimal256CtorIndex = -1;
+        if (decimal256FieldIndex >= 0) {
+            decimal256ClassIndex = asm.poolClass(Decimal256.class);
+            decimal256CtorIndex = asm.poolMethod(decimal256ClassIndex, asm.getDefaultConstructorSigIndex());
+        }
+
+        asm.finishPool();
+        asm.defineClass(thisClassIndex);
+        asm.interfaceCount(1);
+        asm.putShort(interfaceClassIndex);
+
+        // Fields
+        asm.fieldCount(functionSize + (decimal128FieldIndex >= 0 ? 1 : 0) + (decimal256FieldIndex >= 0 ? 1 : 0));
+        for (int i = 0; i < functionSize; i++) {
+            asm.defineField(firstFieldNameIndex + (i * FIELD_POOL_OFFSET), typeIndex);
+        }
+        if (decimal128FieldIndex >= 0) {
+            asm.defineField(asm.poolUtf8("decimal128"), asm.poolUtf8("Lio/questdb/std/Decimal128;"));
+        }
+        if (decimal256FieldIndex >= 0) {
+            asm.defineField(asm.poolUtf8("decimal256"), asm.poolUtf8("Lio/questdb/std/Decimal256;"));
+        }
+
+        // Methods: constructor + copy + setFunctions + numChunks sub-methods
+        asm.methodCount(3 + numChunks);
+
+        // Constructor
+        compileConstructor(asm, decimal128FieldIndex, decimal128ClassIndex, decimal128CtorIndex,
+                decimal256FieldIndex, decimal256ClassIndex, decimal256CtorIndex);
+
+        // Main copy method - just calls sub-methods
+        asm.startMethod(copyNameIndex, copySigIndex, 4, 3);
+        for (int chunk = 0; chunk < numChunks; chunk++) {
+            asm.aload(0);  // this
+            asm.aload(1);  // record
+            asm.aload(2);  // spi
+            asm.invokeVirtual(subMethodRefIndices[chunk]);
+        }
+        // Handle keyFunctions in the main method (after all chunks)
+        if (functionSize > 0) {
+            generateFunctionCopyBytecode(asm, keyFunctions, firstFieldIndex,
+                    fGetInt, fGetIPv4, fGetGeoInt, fGetLong, fGetGeoLong, fGetLong256,
+                    fGetLong128Lo, fGetLong128Hi, fGetDate, fGetTimestamp, fGetByte, fGetGeoByte,
+                    fGetShort, fGetGeoShort, fGetChar, fGetBool, fGetFloat, fGetDouble,
+                    fGetStr, fGetVarchar, fGetSym, fGetBin, fGetRecord, fGetInterval, fGetArray,
+                    fGetDecimal8, fGetDecimal16, fGetDecimal32, fGetDecimal64, fGetDecimal128, fGetDecimal256,
+                    wPutInt, wPutIPv4, wPutLong, wPutLong256, wPutLong128, wPutByte, wPutShort,
+                    wPutChar, wPutBool, wPutFloat, wPutDouble, wPutStr, wPutVarchar, wPutDate,
+                    wPutTimestamp, wPutBin, wPutRecord, wPutInterval, wPutArray,
+                    wPutDecimal128, wPutDecimal256, decimal128FieldIndex, decimal256FieldIndex);
+        }
+        asm.return_();
+        asm.endMethodCode();
+        asm.putShort(0);  // exceptions
+        asm.putShort(0);  // attributes
+        asm.endMethod();
+
+        // Generate each sub-method
+        for (int chunk = 0; chunk < numChunks; chunk++) {
+            int startCol = boundaries.get(chunk);
+            int endCol = boundaries.get(chunk + 1);
+
+            asm.startPrivateMethod(subMethodNameIndices[chunk], copySigIndex, 7, 5);
+
+            // Generate column copy bytecode for this chunk
+            for (int i = startCol; i < endCol; i++) {
+                int index = columnFilter.getColumnIndex(i);
+                final int factor = columnFilter.getIndexFactor(index);
+                index = (index * factor - 1);
+                final int type = columnTypes.getColumnType(index);
+
+                if (factor < 0) {
+                    int size = ColumnType.sizeOf(type);
+                    if (size > 0) {
+                        asm.aload(2);
+                        asm.iconst(size);
+                        asm.invokeInterface(wSkip, 1);
+                        continue;
+                    }
+                }
+
+                final boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(index);
+                final boolean strAsVarchar = writeStringAsVarchar != null && writeStringAsVarchar.get(index);
+                final boolean timestampAsNanos = writeTimestampAsNanos != null && writeTimestampAsNanos.get(index);
+
+                generateColumnCopyBytecode(asm, index, factor, type, skewIndex, symAsString, strAsVarchar, timestampAsNanos,
+                        rGetInt, rGetIPv4, rGetGeoInt, rGetLong, rGetGeoLong, rGetLong256,
+                        rGetLong128Lo, rGetLong128Hi, rGetDate, rGetTimestamp, rGetByte, rGetGeoByte,
+                        rGetShort, rGetGeoShort, rGetChar, rGetBool, rGetFloat, rGetDouble,
+                        rGetStr, rGetVarchar, rGetSym, rGetBin, rGetRecord, rGetInterval, rGetArray,
+                        rGetDecimal8, rGetDecimal16, rGetDecimal32, rGetDecimal64, rGetDecimal128, rGetDecimal256,
+                        wSkip, wPutInt, wPutIPv4, wPutLong, wPutLong256, wPutLong128, wPutByte, wPutShort,
+                        wPutChar, wPutBool, wPutFloat, wPutDouble, wPutStr, wPutVarchar, wPutStrAsVarchar,
+                        wPutDate, wPutTimestamp, wPutBin, wPutRecord, wPutInterval, wPutArray,
+                        wPutDecimal128, wPutDecimal256, constantLong1000,
+                        decimal128FieldIndex, decimal256FieldIndex);
+            }
+
+            asm.return_();
+            asm.endMethodCode();
+
+            // Validate chunk size
+            int chunkSize = asm.getMethodCodeSize();
+            if (chunkSize > methodSizeLimit) {
+                // Estimation was wrong, return null to fall back to looping
+                return null;
+            }
+
+            asm.putShort(0);  // exceptions
+            asm.putShort(0);  // attributes
+            asm.endMethod();
+        }
+
+        // setFunctions method
+        generateSetFunctions(asm, functionSize, firstFieldIndex, setFunctionsIndex, setFunctionsSigIndex, getIndex);
+
+        // Class attributes
+        asm.putShort(0);
+
+        return asm.loadClass();
     }
 
     private static Class<RecordSink> getInstanceClass(
@@ -1349,831 +2154,5 @@ public class RecordSinkFactory {
         }
 
         return Numbers.encodeLowHighInts(decimal128FieldIndex, decimal256FieldIndex);
-    }
-
-    /**
-     * Generates a chunked RecordSink class with multiple private methods for column copying.
-     * Returns null if any chunk exceeds the method size limit.
-     */
-    @SuppressWarnings("unchecked")
-    private static Class<RecordSink> getChunkedInstanceClass(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            @Nullable IntList skewIndex,
-            @Nullable BitSet writeSymbolAsString,
-            @Nullable BitSet writeStringAsVarchar,
-            @Nullable BitSet writeTimestampAsNanos,
-            IntList boundaries,
-            int methodSizeLimit
-    ) {
-        int numChunks = boundaries.size() - 1;
-
-        asm.init(RecordSink.class);
-        asm.setupPool();
-        final int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/chunkedsink"));
-        final int interfaceClassIndex = asm.poolClass(RecordSink.class);
-
-        // Pool all method references (same as single-method approach)
-        final int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
-        final int rGetIPv4 = asm.poolInterfaceMethod(Record.class, "getIPv4", "(I)I");
-        final int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
-        final int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
-        final int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
-        final int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
-        final int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(I)J");
-        final int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(I)J");
-        final int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
-        final int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
-        final int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
-        final int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoByte", "(I)B");
-        final int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
-        final int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoShort", "(I)S");
-        final int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
-        final int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
-        final int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
-        final int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
-        final int rGetStr = asm.poolInterfaceMethod(Record.class, "getStrA", "(I)Ljava/lang/CharSequence;");
-        final int rGetVarchar = asm.poolInterfaceMethod(Record.class, "getVarcharA", "(I)Lio/questdb/std/str/Utf8Sequence;");
-        final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSymA", "(I)Ljava/lang/CharSequence;");
-        final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
-        final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
-        final int rGetInterval = asm.poolInterfaceMethod(Record.class, "getInterval", "(I)Lio/questdb/std/Interval;");
-        final int rGetArray = asm.poolInterfaceMethod(Record.class, "getArray", "(II)Lio/questdb/cairo/arr/ArrayView;");
-        final int rGetDecimal8 = asm.poolInterfaceMethod(Record.class, "getDecimal8", "(I)B");
-        final int rGetDecimal16 = asm.poolInterfaceMethod(Record.class, "getDecimal16", "(I)S");
-        final int rGetDecimal32 = asm.poolInterfaceMethod(Record.class, "getDecimal32", "(I)I");
-        final int rGetDecimal64 = asm.poolInterfaceMethod(Record.class, "getDecimal64", "(I)J");
-        final int rGetDecimal128 = asm.poolInterfaceMethod(Record.class, "getDecimal128", "(ILio/questdb/std/Decimal128;)V");
-        final int rGetDecimal256 = asm.poolInterfaceMethod(Record.class, "getDecimal256", "(ILio/questdb/std/Decimal256;)V");
-
-        final int fGetInt = asm.poolInterfaceMethod(Function.class, "getInt", "(Lio/questdb/cairo/sql/Record;)I");
-        final int fGetIPv4 = asm.poolInterfaceMethod(Function.class, "getIPv4", "(Lio/questdb/cairo/sql/Record;)I");
-        final int fGetGeoInt = asm.poolInterfaceMethod(Function.class, "getGeoInt", "(Lio/questdb/cairo/sql/Record;)I");
-        final int fGetLong = asm.poolInterfaceMethod(Function.class, "getLong", "(Lio/questdb/cairo/sql/Record;)J");
-        final int fGetGeoLong = asm.poolInterfaceMethod(Function.class, "getGeoLong", "(Lio/questdb/cairo/sql/Record;)J");
-        final int fGetLong256 = asm.poolInterfaceMethod(Function.class, "getLong256A", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/Long256;");
-        final int fGetLong128Lo = asm.poolInterfaceMethod(Function.class, "getLong128Lo", "(Lio/questdb/cairo/sql/Record;)J");
-        final int fGetLong128Hi = asm.poolInterfaceMethod(Function.class, "getLong128Hi", "(Lio/questdb/cairo/sql/Record;)J");
-        final int fGetDate = asm.poolInterfaceMethod(Function.class, "getDate", "(Lio/questdb/cairo/sql/Record;)J");
-        final int fGetTimestamp = asm.poolInterfaceMethod(Function.class, "getTimestamp", "(Lio/questdb/cairo/sql/Record;)J");
-        final int fGetByte = asm.poolInterfaceMethod(Function.class, "getByte", "(Lio/questdb/cairo/sql/Record;)B");
-        final int fGetGeoByte = asm.poolInterfaceMethod(Function.class, "getGeoByte", "(Lio/questdb/cairo/sql/Record;)B");
-        final int fGetShort = asm.poolInterfaceMethod(Function.class, "getShort", "(Lio/questdb/cairo/sql/Record;)S");
-        final int fGetGeoShort = asm.poolInterfaceMethod(Function.class, "getGeoShort", "(Lio/questdb/cairo/sql/Record;)S");
-        final int fGetChar = asm.poolInterfaceMethod(Function.class, "getChar", "(Lio/questdb/cairo/sql/Record;)C");
-        final int fGetBool = asm.poolInterfaceMethod(Function.class, "getBool", "(Lio/questdb/cairo/sql/Record;)Z");
-        final int fGetFloat = asm.poolInterfaceMethod(Function.class, "getFloat", "(Lio/questdb/cairo/sql/Record;)F");
-        final int fGetDouble = asm.poolInterfaceMethod(Function.class, "getDouble", "(Lio/questdb/cairo/sql/Record;)D");
-        final int fGetStr = asm.poolInterfaceMethod(Function.class, "getStrA", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
-        final int fGetVarchar = asm.poolInterfaceMethod(Function.class, "getVarcharA", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/str/Utf8Sequence;");
-        final int fGetSym = asm.poolInterfaceMethod(Function.class, "getSymbol", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
-        final int fGetBin = asm.poolInterfaceMethod(Function.class, "getBin", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/BinarySequence;");
-        final int fGetRecord = asm.poolInterfaceMethod(Function.class, "getRecord", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/cairo/sql/Record;");
-        final int fGetInterval = asm.poolInterfaceMethod(Function.class, "getInterval", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/Interval;");
-        final int fGetArray = asm.poolInterfaceMethod(Function.class, "getArray", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/cairo/arr/ArrayView;");
-        final int fGetDecimal8 = asm.poolInterfaceMethod(Function.class, "getDecimal8", "(Lio/questdb/cairo/sql/Record;)B");
-        final int fGetDecimal16 = asm.poolInterfaceMethod(Function.class, "getDecimal16", "(Lio/questdb/cairo/sql/Record;)S");
-        final int fGetDecimal32 = asm.poolInterfaceMethod(Function.class, "getDecimal32", "(Lio/questdb/cairo/sql/Record;)I");
-        final int fGetDecimal64 = asm.poolInterfaceMethod(Function.class, "getDecimal64", "(Lio/questdb/cairo/sql/Record;)J");
-        final int fGetDecimal128 = asm.poolInterfaceMethod(Function.class, "getDecimal128", "(Lio/questdb/cairo/sql/Record;Lio/questdb/std/Decimal128;)V");
-        final int fGetDecimal256 = asm.poolInterfaceMethod(Function.class, "getDecimal256", "(Lio/questdb/cairo/sql/Record;Lio/questdb/std/Decimal256;)V");
-
-        final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
-        final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
-        final int wPutIPv4 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putIPv4", "(I)V");
-        final int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
-        final int wPutLong256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong256", "(Lio/questdb/std/Long256;)V");
-        final int wPutLong128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong128", "(JJ)V");
-        final int wPutByte = asm.poolInterfaceMethod(RecordSinkSPI.class, "putByte", "(B)V");
-        final int wPutShort = asm.poolInterfaceMethod(RecordSinkSPI.class, "putShort", "(S)V");
-        final int wPutChar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putChar", "(C)V");
-        final int wPutBool = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBool", "(Z)V");
-        final int wPutFloat = asm.poolInterfaceMethod(RecordSinkSPI.class, "putFloat", "(F)V");
-        final int wPutDouble = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDouble", "(D)V");
-        final int wPutStr = asm.poolInterfaceMethod(RecordSinkSPI.class, "putStr", "(Ljava/lang/CharSequence;)V");
-        final int wPutVarchar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putVarchar", "(Lio/questdb/std/str/Utf8Sequence;)V");
-        final int wPutStrAsVarchar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putVarchar", "(Ljava/lang/CharSequence;)V");
-        final int wPutDate = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDate", "(J)V");
-        final int wPutTimestamp = asm.poolInterfaceMethod(RecordSinkSPI.class, "putTimestamp", "(J)V");
-        final int wPutBin = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBin", "(Lio/questdb/std/BinarySequence;)V");
-        final int wPutRecord = asm.poolInterfaceMethod(RecordSinkSPI.class, "putRecord", "(Lio/questdb/cairo/sql/Record;)V");
-        final int wPutInterval = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInterval", "(Lio/questdb/std/Interval;)V");
-        final int wPutArray = asm.poolInterfaceMethod(RecordSinkSPI.class, "putArray", "(Lio/questdb/cairo/arr/ArrayView;)V");
-        final int wPutDecimal128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal128", "(Lio/questdb/std/Decimal128;)V");
-        final int wPutDecimal256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal256", "(Lio/questdb/std/Decimal256;)V");
-
-        final int constantLong1000 = asm.poolLongConst(1000L);
-        final int copyNameIndex = asm.poolUtf8("copy");
-        final int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
-        final int setFunctionsIndex = asm.poolUtf8("setFunctions");
-        final int setFunctionsSigIndex = asm.poolUtf8("(Lio/questdb/std/ObjList;)V");
-
-        final int getIndex = asm.poolMethod(ObjList.class, "get", "(I)Ljava/lang/Object;");
-
-        final int typeIndex = asm.poolUtf8("Lio/questdb/cairo/sql/Function;");
-        final int functionSize = keyFunctions != null ? keyFunctions.size() : 0;
-
-        // Pool sub-method names and references
-        int[] subMethodNameIndices = new int[numChunks];
-        int[] subMethodRefIndices = new int[numChunks];
-        for (int chunk = 0; chunk < numChunks; chunk++) {
-            subMethodNameIndices[chunk] = asm.poolUtf8().putAscii("copy").put(chunk).$();
-            int nameAndType = asm.poolNameAndType(subMethodNameIndices[chunk], copySigIndex);
-            subMethodRefIndices[chunk] = asm.poolMethod(thisClassIndex, nameAndType);
-        }
-
-        // Pool function fields
-        int firstFieldNameIndex = 0;
-        int firstFieldIndex = 0;
-        for (int i = 0; i < functionSize; i++) {
-            int fieldNameIndex = asm.poolUtf8().putAscii("f").put(i).$();
-            int nameAndType = asm.poolNameAndType(fieldNameIndex, typeIndex);
-            int fieldIndex = asm.poolField(thisClassIndex, nameAndType);
-            if (i == 0) {
-                firstFieldNameIndex = fieldNameIndex;
-                firstFieldIndex = fieldIndex;
-            }
-        }
-
-        var r = poolDecimalFields(asm, thisClassIndex, columnFilter, columnTypes, keyFunctions);
-        int decimal128FieldIndex = Numbers.decodeLowInt(r);
-        int decimal128ClassIndex = -1;
-        int decimal128CtorIndex = -1;
-        if (decimal128FieldIndex >= 0) {
-            decimal128ClassIndex = asm.poolClass(Decimal128.class);
-            decimal128CtorIndex = asm.poolMethod(decimal128ClassIndex, asm.getDefaultConstructorSigIndex());
-        }
-
-        int decimal256FieldIndex = Numbers.decodeHighInt(r);
-        int decimal256ClassIndex = -1;
-        int decimal256CtorIndex = -1;
-        if (decimal256FieldIndex >= 0) {
-            decimal256ClassIndex = asm.poolClass(Decimal256.class);
-            decimal256CtorIndex = asm.poolMethod(decimal256ClassIndex, asm.getDefaultConstructorSigIndex());
-        }
-
-        asm.finishPool();
-        asm.defineClass(thisClassIndex);
-        asm.interfaceCount(1);
-        asm.putShort(interfaceClassIndex);
-
-        // Fields
-        asm.fieldCount(functionSize + (decimal128FieldIndex >= 0 ? 1 : 0) + (decimal256FieldIndex >= 0 ? 1 : 0));
-        for (int i = 0; i < functionSize; i++) {
-            asm.defineField(firstFieldNameIndex + (i * FIELD_POOL_OFFSET), typeIndex);
-        }
-        if (decimal128FieldIndex >= 0) {
-            asm.defineField(asm.poolUtf8("decimal128"), asm.poolUtf8("Lio/questdb/std/Decimal128;"));
-        }
-        if (decimal256FieldIndex >= 0) {
-            asm.defineField(asm.poolUtf8("decimal256"), asm.poolUtf8("Lio/questdb/std/Decimal256;"));
-        }
-
-        // Methods: constructor + copy + setFunctions + numChunks sub-methods
-        asm.methodCount(3 + numChunks);
-
-        // Constructor
-        compileConstructor(asm, decimal128FieldIndex, decimal128ClassIndex, decimal128CtorIndex,
-                          decimal256FieldIndex, decimal256ClassIndex, decimal256CtorIndex);
-
-        // Main copy method - just calls sub-methods
-        asm.startMethod(copyNameIndex, copySigIndex, 4, 3);
-        for (int chunk = 0; chunk < numChunks; chunk++) {
-            asm.aload(0);  // this
-            asm.aload(1);  // record
-            asm.aload(2);  // spi
-            asm.invokeVirtual(subMethodRefIndices[chunk]);
-        }
-        // Handle keyFunctions in the main method (after all chunks)
-        if (functionSize > 0) {
-            generateFunctionCopyBytecode(asm, keyFunctions, firstFieldIndex,
-                    fGetInt, fGetIPv4, fGetGeoInt, fGetLong, fGetGeoLong, fGetLong256,
-                    fGetLong128Lo, fGetLong128Hi, fGetDate, fGetTimestamp, fGetByte, fGetGeoByte,
-                    fGetShort, fGetGeoShort, fGetChar, fGetBool, fGetFloat, fGetDouble,
-                    fGetStr, fGetVarchar, fGetSym, fGetBin, fGetRecord, fGetInterval, fGetArray,
-                    fGetDecimal8, fGetDecimal16, fGetDecimal32, fGetDecimal64, fGetDecimal128, fGetDecimal256,
-                    wPutInt, wPutIPv4, wPutLong, wPutLong256, wPutLong128, wPutByte, wPutShort,
-                    wPutChar, wPutBool, wPutFloat, wPutDouble, wPutStr, wPutVarchar, wPutDate,
-                    wPutTimestamp, wPutBin, wPutRecord, wPutInterval, wPutArray,
-                    wPutDecimal128, wPutDecimal256, decimal128FieldIndex, decimal256FieldIndex);
-        }
-        asm.return_();
-        asm.endMethodCode();
-        asm.putShort(0);  // exceptions
-        asm.putShort(0);  // attributes
-        asm.endMethod();
-
-        // Generate each sub-method
-        for (int chunk = 0; chunk < numChunks; chunk++) {
-            int startCol = boundaries.get(chunk);
-            int endCol = boundaries.get(chunk + 1);
-
-            asm.startPrivateMethod(subMethodNameIndices[chunk], copySigIndex, 7, 5);
-
-            // Generate column copy bytecode for this chunk
-            for (int i = startCol; i < endCol; i++) {
-                int index = columnFilter.getColumnIndex(i);
-                final int factor = columnFilter.getIndexFactor(index);
-                index = (index * factor - 1);
-                final int type = columnTypes.getColumnType(index);
-
-                if (factor < 0) {
-                    int size = ColumnType.sizeOf(type);
-                    if (size > 0) {
-                        asm.aload(2);
-                        asm.iconst(size);
-                        asm.invokeInterface(wSkip, 1);
-                        continue;
-                    }
-                }
-
-                final boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(index);
-                final boolean strAsVarchar = writeStringAsVarchar != null && writeStringAsVarchar.get(index);
-                final boolean timestampAsNanos = writeTimestampAsNanos != null && writeTimestampAsNanos.get(index);
-
-                generateColumnCopyBytecode(asm, index, factor, type, skewIndex, symAsString, strAsVarchar, timestampAsNanos,
-                        rGetInt, rGetIPv4, rGetGeoInt, rGetLong, rGetGeoLong, rGetLong256,
-                        rGetLong128Lo, rGetLong128Hi, rGetDate, rGetTimestamp, rGetByte, rGetGeoByte,
-                        rGetShort, rGetGeoShort, rGetChar, rGetBool, rGetFloat, rGetDouble,
-                        rGetStr, rGetVarchar, rGetSym, rGetBin, rGetRecord, rGetInterval, rGetArray,
-                        rGetDecimal8, rGetDecimal16, rGetDecimal32, rGetDecimal64, rGetDecimal128, rGetDecimal256,
-                        wSkip, wPutInt, wPutIPv4, wPutLong, wPutLong256, wPutLong128, wPutByte, wPutShort,
-                        wPutChar, wPutBool, wPutFloat, wPutDouble, wPutStr, wPutVarchar, wPutStrAsVarchar,
-                        wPutDate, wPutTimestamp, wPutBin, wPutRecord, wPutInterval, wPutArray,
-                        wPutDecimal128, wPutDecimal256, constantLong1000,
-                        decimal128FieldIndex, decimal256FieldIndex);
-            }
-
-            asm.return_();
-            asm.endMethodCode();
-
-            // Validate chunk size
-            int chunkSize = asm.getMethodCodeSize();
-            if (chunkSize > methodSizeLimit) {
-                // Estimation was wrong, return null to fall back to looping
-                return null;
-            }
-
-            asm.putShort(0);  // exceptions
-            asm.putShort(0);  // attributes
-            asm.endMethod();
-        }
-
-        // setFunctions method
-        generateSetFunctions(asm, functionSize, firstFieldIndex, setFunctionsIndex, setFunctionsSigIndex, getIndex);
-
-        // Class attributes
-        asm.putShort(0);
-
-        return asm.loadClass();
-    }
-
-    /**
-     * Generates bytecode to copy a single column from Record to RecordSinkSPI.
-     */
-    private static void generateColumnCopyBytecode(
-            BytecodeAssembler asm,
-            int index,
-            int factor,
-            int type,
-            @Nullable IntList skewIndex,
-            boolean symAsString,
-            boolean strAsVarchar,
-            boolean timestampAsNanos,
-            int rGetInt, int rGetIPv4, int rGetGeoInt, int rGetLong, int rGetGeoLong, int rGetLong256,
-            int rGetLong128Lo, int rGetLong128Hi, int rGetDate, int rGetTimestamp, int rGetByte, int rGetGeoByte,
-            int rGetShort, int rGetGeoShort, int rGetChar, int rGetBool, int rGetFloat, int rGetDouble,
-            int rGetStr, int rGetVarchar, int rGetSym, int rGetBin, int rGetRecord, int rGetInterval, int rGetArray,
-            int rGetDecimal8, int rGetDecimal16, int rGetDecimal32, int rGetDecimal64, int rGetDecimal128, int rGetDecimal256,
-            int wSkip, int wPutInt, int wPutIPv4, int wPutLong, int wPutLong256, int wPutLong128, int wPutByte, int wPutShort,
-            int wPutChar, int wPutBool, int wPutFloat, int wPutDouble, int wPutStr, int wPutVarchar, int wPutStrAsVarchar,
-            int wPutDate, int wPutTimestamp, int wPutBin, int wPutRecord, int wPutInterval, int wPutArray,
-            int wPutDecimal128, int wPutDecimal256, int constantLong1000,
-            int decimal128FieldIndex, int decimal256FieldIndex
-    ) {
-        int skewedIdx = getSkewedIndex(index, skewIndex);
-
-        switch (factor * ColumnType.tagOf(type)) {
-            case ColumnType.INT:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetInt, 1);
-                asm.invokeInterface(wPutInt, 1);
-                break;
-            case ColumnType.IPv4:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetIPv4, 1);
-                asm.invokeInterface(wPutIPv4, 1);
-                break;
-            case ColumnType.SYMBOL:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                if (symAsString) {
-                    asm.invokeInterface(rGetSym, 1);
-                    if (strAsVarchar) {
-                        asm.invokeInterface(wPutStrAsVarchar, 1);
-                    } else {
-                        asm.invokeInterface(wPutStr, 1);
-                    }
-                } else {
-                    asm.invokeInterface(rGetInt, 1);
-                    asm.invokeInterface(wPutInt, 1);
-                }
-                break;
-            case ColumnType.LONG:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetLong, 1);
-                asm.invokeInterface(wPutLong, 2);
-                break;
-            case ColumnType.DATE:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetDate, 1);
-                asm.invokeInterface(wPutDate, 2);
-                break;
-            case ColumnType.TIMESTAMP:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetTimestamp, 1);
-                if (timestampAsNanos) {
-                    asm.ldc2_w(constantLong1000);
-                    asm.lmul();
-                }
-                asm.invokeInterface(wPutTimestamp, 2);
-                break;
-            case ColumnType.BYTE:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetByte, 1);
-                asm.invokeInterface(wPutByte, 1);
-                break;
-            case ColumnType.SHORT:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetShort, 1);
-                asm.invokeInterface(wPutShort, 1);
-                break;
-            case ColumnType.CHAR:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetChar, 1);
-                asm.invokeInterface(wPutChar, 1);
-                break;
-            case ColumnType.BOOLEAN:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetBool, 1);
-                asm.invokeInterface(wPutBool, 1);
-                break;
-            case ColumnType.FLOAT:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetFloat, 1);
-                asm.invokeInterface(wPutFloat, 1);
-                break;
-            case ColumnType.DOUBLE:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetDouble, 1);
-                asm.invokeInterface(wPutDouble, 2);
-                break;
-            case ColumnType.STRING:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetStr, 1);
-                if (strAsVarchar) {
-                    asm.invokeInterface(wPutStrAsVarchar, 1);
-                } else {
-                    asm.invokeInterface(wPutStr, 1);
-                }
-                break;
-            case ColumnType.VARCHAR:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetVarchar, 1);
-                asm.invokeInterface(wPutVarchar, 1);
-                break;
-            case ColumnType.BINARY:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetBin, 1);
-                asm.invokeInterface(wPutBin, 1);
-                break;
-            case ColumnType.LONG256:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetLong256, 1);
-                asm.invokeInterface(wPutLong256, 1);
-                break;
-            case ColumnType.RECORD:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetRecord, 1);
-                asm.invokeInterface(wPutRecord, 1);
-                break;
-            case ColumnType.GEOBYTE:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetGeoByte, 1);
-                asm.invokeInterface(wPutByte, 1);
-                break;
-            case ColumnType.GEOSHORT:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetGeoShort, 1);
-                asm.invokeInterface(wPutShort, 1);
-                break;
-            case ColumnType.GEOINT:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetGeoInt, 1);
-                asm.invokeInterface(wPutInt, 1);
-                break;
-            case ColumnType.GEOLONG:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetGeoLong, 1);
-                asm.invokeInterface(wPutLong, 2);
-                break;
-            case ColumnType.LONG128:
-            case ColumnType.UUID:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetLong128Lo, 1);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetLong128Hi, 1);
-                asm.invokeInterface(wPutLong128, 4);
-                break;
-            case ColumnType.INTERVAL:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetInterval, 1);
-                asm.invokeInterface(wPutInterval, 1);
-                break;
-            case ColumnType.DECIMAL8:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetDecimal8, 1);
-                asm.invokeInterface(wPutByte, 1);
-                break;
-            case ColumnType.DECIMAL16:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetDecimal16, 1);
-                asm.invokeInterface(wPutShort, 1);
-                break;
-            case ColumnType.DECIMAL32:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetDecimal32, 1);
-                asm.invokeInterface(wPutInt, 1);
-                break;
-            case ColumnType.DECIMAL64:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetDecimal64, 1);
-                asm.invokeInterface(wPutLong, 2);
-                break;
-            case ColumnType.DECIMAL128:
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.aload(0);
-                asm.getfield(decimal128FieldIndex);
-                asm.invokeInterface(rGetDecimal128, 2);
-                asm.aload(2);
-                asm.aload(0);
-                asm.getfield(decimal128FieldIndex);
-                asm.invokeInterface(wPutDecimal128, 1);
-                break;
-            case ColumnType.DECIMAL256:
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.aload(0);
-                asm.getfield(decimal256FieldIndex);
-                asm.invokeInterface(rGetDecimal256, 2);
-                asm.aload(2);
-                asm.aload(0);
-                asm.getfield(decimal256FieldIndex);
-                asm.invokeInterface(wPutDecimal256, 1);
-                break;
-            default:
-                // Handle ARRAY type
-                if (ColumnType.tagOf(type) == ColumnType.ARRAY) {
-                    asm.aload(2);
-                    asm.aload(1);
-                    asm.iconst(skewedIdx);
-                    asm.iconst(type);
-                    asm.invokeInterface(rGetArray, 2);
-                    asm.invokeInterface(wPutArray, 1);
-                }
-                break;
-        }
-    }
-
-    /**
-     * Generates bytecode to copy function keys in the main copy method.
-     */
-    private static void generateFunctionCopyBytecode(
-            BytecodeAssembler asm,
-            ObjList<Function> keyFunctions,
-            int firstFieldIndex,
-            int fGetInt, int fGetIPv4, int fGetGeoInt, int fGetLong, int fGetGeoLong, int fGetLong256,
-            int fGetLong128Lo, int fGetLong128Hi, int fGetDate, int fGetTimestamp, int fGetByte, int fGetGeoByte,
-            int fGetShort, int fGetGeoShort, int fGetChar, int fGetBool, int fGetFloat, int fGetDouble,
-            int fGetStr, int fGetVarchar, int fGetSym, int fGetBin, int fGetRecord, int fGetInterval, int fGetArray,
-            int fGetDecimal8, int fGetDecimal16, int fGetDecimal32, int fGetDecimal64, int fGetDecimal128, int fGetDecimal256,
-            int wPutInt, int wPutIPv4, int wPutLong, int wPutLong256, int wPutLong128, int wPutByte, int wPutShort,
-            int wPutChar, int wPutBool, int wPutFloat, int wPutDouble, int wPutStr, int wPutVarchar, int wPutDate,
-            int wPutTimestamp, int wPutBin, int wPutRecord, int wPutInterval, int wPutArray,
-            int wPutDecimal128, int wPutDecimal256,
-            int decimal128FieldIndex, int decimal256FieldIndex
-    ) {
-        int functionSize = keyFunctions.size();
-        for (int i = 0; i < functionSize; i++) {
-            final Function func = keyFunctions.getQuick(i);
-            final int type = func.getType();
-
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.INT:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetInt, 1);
-                    asm.invokeInterface(wPutInt, 1);
-                    break;
-                case ColumnType.IPv4:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetIPv4, 1);
-                    asm.invokeInterface(wPutIPv4, 1);
-                    break;
-                case ColumnType.SYMBOL:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetSym, 1);
-                    asm.invokeInterface(wPutStr, 1);
-                    break;
-                case ColumnType.LONG:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetLong, 1);
-                    asm.invokeInterface(wPutLong, 2);
-                    break;
-                case ColumnType.DATE:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetDate, 1);
-                    asm.invokeInterface(wPutDate, 2);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetTimestamp, 1);
-                    asm.invokeInterface(wPutTimestamp, 2);
-                    break;
-                case ColumnType.BYTE:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetByte, 1);
-                    asm.invokeInterface(wPutByte, 1);
-                    break;
-                case ColumnType.SHORT:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetShort, 1);
-                    asm.invokeInterface(wPutShort, 1);
-                    break;
-                case ColumnType.CHAR:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetChar, 1);
-                    asm.invokeInterface(wPutChar, 1);
-                    break;
-                case ColumnType.BOOLEAN:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetBool, 1);
-                    asm.invokeInterface(wPutBool, 1);
-                    break;
-                case ColumnType.FLOAT:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetFloat, 1);
-                    asm.invokeInterface(wPutFloat, 1);
-                    break;
-                case ColumnType.DOUBLE:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetDouble, 1);
-                    asm.invokeInterface(wPutDouble, 2);
-                    break;
-                case ColumnType.STRING:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetStr, 1);
-                    asm.invokeInterface(wPutStr, 1);
-                    break;
-                case ColumnType.VARCHAR:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetVarchar, 1);
-                    asm.invokeInterface(wPutVarchar, 1);
-                    break;
-                case ColumnType.BINARY:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetBin, 1);
-                    asm.invokeInterface(wPutBin, 1);
-                    break;
-                case ColumnType.LONG256:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetLong256, 1);
-                    asm.invokeInterface(wPutLong256, 1);
-                    break;
-                case ColumnType.LONG128:
-                case ColumnType.UUID:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetLong128Lo, 1);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetLong128Hi, 1);
-                    asm.invokeInterface(wPutLong128, 4);
-                    break;
-                case ColumnType.INTERVAL:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetInterval, 1);
-                    asm.invokeInterface(wPutInterval, 1);
-                    break;
-                case ColumnType.ARRAY:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetArray, 1);
-                    asm.invokeInterface(wPutArray, 1);
-                    break;
-                case ColumnType.GEOBYTE:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetGeoByte, 1);
-                    asm.invokeInterface(wPutByte, 1);
-                    break;
-                case ColumnType.GEOSHORT:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetGeoShort, 1);
-                    asm.invokeInterface(wPutShort, 1);
-                    break;
-                case ColumnType.GEOINT:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetGeoInt, 1);
-                    asm.invokeInterface(wPutInt, 1);
-                    break;
-                case ColumnType.GEOLONG:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetGeoLong, 1);
-                    asm.invokeInterface(wPutLong, 2);
-                    break;
-                case ColumnType.DECIMAL8:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetDecimal8, 1);
-                    asm.invokeInterface(wPutByte, 1);
-                    break;
-                case ColumnType.DECIMAL16:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetDecimal16, 1);
-                    asm.invokeInterface(wPutShort, 1);
-                    break;
-                case ColumnType.DECIMAL32:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetDecimal32, 1);
-                    asm.invokeInterface(wPutInt, 1);
-                    break;
-                case ColumnType.DECIMAL64:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetDecimal64, 1);
-                    asm.invokeInterface(wPutLong, 2);
-                    break;
-                case ColumnType.DECIMAL128:
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.aload(0);
-                    asm.getfield(decimal128FieldIndex);
-                    asm.invokeInterface(fGetDecimal128, 2);
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(decimal128FieldIndex);
-                    asm.invokeInterface(wPutDecimal128, 1);
-                    break;
-                case ColumnType.DECIMAL256:
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.aload(0);
-                    asm.getfield(decimal256FieldIndex);
-                    asm.invokeInterface(fGetDecimal256, 2);
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(decimal256FieldIndex);
-                    asm.invokeInterface(wPutDecimal256, 1);
-                    break;
-                default:
-                    break;
-            }
-        }
     }
 }

@@ -70,7 +70,7 @@ public class RecordArrayTest extends AbstractCairoTest {
                     TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
             ) {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
-                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
+                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
                 try (RecordArray chain = new RecordArray(reader.getMetadata(), recordSink, SIZE_4M, Integer.MAX_VALUE)) {
                     LongList rows = new LongList();
                     Record cursorRecord = cursor.getRecord();
@@ -125,7 +125,7 @@ public class RecordArrayTest extends AbstractCairoTest {
             filter.add(-2);
             filter.add(3);
 
-            RecordSink sink = RecordSinkFactory.getInstance(asm, metadata, filter);
+            RecordSink sink = RecordSinkFactory.getInstance(asm, metadata, filter, true);
 
             long[] cols = new long[metadata.getColumnCount()];
 
@@ -203,7 +203,7 @@ public class RecordArrayTest extends AbstractCairoTest {
                     CreateTableTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
                     try (TableReader reader = newOffPoolReader(configuration, "x")) {
                         entityColumnFilter.of(reader.getMetadata().getColumnCount());
-                        RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
+                        RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
                         try (RecordArray chain = new RecordArray(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
                             populateChain(chain, reader);
@@ -374,7 +374,7 @@ public class RecordArrayTest extends AbstractCairoTest {
             try (TableReader reader = newOffPoolReader(configuration, "x")) {
 
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
-                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
+                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
                 try (RecordArray chain = new RecordArray(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
                     populateChain(chain, reader);
                     assertChain(chain, N, reader);

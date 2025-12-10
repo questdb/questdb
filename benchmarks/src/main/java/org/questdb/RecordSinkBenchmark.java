@@ -153,8 +153,8 @@ public class RecordSinkBenchmark {
                         types,
                         columnFilter,
                         null, null, null, null, null,
-                        Integer.MAX_VALUE,  // Very high limit to force single-method
-                        false  // Disable chunking
+                        false,  // Disable chunking
+                        Integer.MAX_VALUE  // Very high limit to force single-method
                 );
                 break;
             case "CHUNKED":
@@ -164,8 +164,8 @@ public class RecordSinkBenchmark {
                         types,
                         columnFilter,
                         null, null, null, null, null,
-                        RecordSinkFactory.DEFAULT_METHOD_SIZE_LIMIT,
-                        true  // Enable chunking
+                        true,  // Enable chunking
+                        RecordSinkFactory.DEFAULT_METHOD_SIZE_LIMIT
                 );
                 break;
             case "LOOP":

@@ -55,7 +55,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
             final RecordMetadata metadata = base.getMetadata();
             // sink will be storing record columns to map key
             columnFilter.of(metadata.getColumnCount());
-            RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter);
+            RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, configuration.isCopierChunkedEnabled());
             Map dataMap = new OrderedMap(
                     configuration.getSqlSmallMapPageSize(),
                     metadata,

@@ -3100,7 +3100,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         public @NotNull CharSequence getConfRoot() {
             return confRoot;
         }
-        
+
         @Override
         public @NotNull LongSupplier getCopyIDSupplier() {
             if (cairoSQLCopyIdSupplier == 0) {
