@@ -76,6 +76,16 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
         this.format = format;
     }
 
+    /**
+     * Sets the execution model to be explained and marks it as an EXPLAIN query.
+     * <p>
+     * This method wraps the provided execution model, and if it contains a query model,
+     * automatically marks it as an EXPLAIN query via {@link QueryModel#setExplainQuery(boolean)}.
+     * This ensures that the query execution uses appropriate metadata sources for query analysis.
+     *
+     * @param model the execution model to be explained (e.g., SELECT, UPDATE, INSERT)
+     * @see QueryModel#setExplainQuery(boolean)
+     */
     public void setModel(ExecutionModel model) {
         this.model = model;
 

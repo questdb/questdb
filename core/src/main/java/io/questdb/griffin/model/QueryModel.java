@@ -1101,6 +1101,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return distinct;
     }
 
+    /**
+     * Returns whether this query model represents an EXPLAIN query.
+     *
+     * @return {@code true} if this is an EXPLAIN query, {@code false} otherwise
+     * @see #setExplainQuery(boolean)
+     */
     public boolean isExplainQuery() {
         return explainQuery;
     }
@@ -1331,6 +1337,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.distinct = distinct;
     }
 
+    /**
+     * Marks this query model as an EXPLAIN query, which affects query execution behavior.
+     * <p>
+     * EXPLAIN queries analyze and display the execution plan without executing the actual data
+     * modification or retrieval. The flag is recursively propagated to nested models to ensure
+     * consistent behavior throughout the entire model tree.
+     *
+     * @param explainQuery {@code true} to mark this as an EXPLAIN query, {@code false} otherwise
+     * @see #isExplainQuery()
+     */
     public void setExplainQuery(boolean explainQuery) {
         this.explainQuery = explainQuery;
         if (nestedModel != null && nestedModel != this) {
