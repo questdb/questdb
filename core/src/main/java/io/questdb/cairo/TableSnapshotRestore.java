@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -123,7 +122,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         return memFile;
     }
 
-    public TableMetadata getTableMetadata() {
+    public TableReaderMetadata getTableMetadata() {
         return tableMetadata;
     }
 

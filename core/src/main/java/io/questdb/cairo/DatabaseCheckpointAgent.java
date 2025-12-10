@@ -279,6 +279,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     mem.close(false);
 
                                     long txn = reader.getTxn();
+                                    long seqTxn = reader.getSeqTxn();
                                     TxnScoreboard scoreboard = engine.getTxnScoreboard(tableToken);
                                     if (!scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, txn)) {
                                         throw CairoException.nonCritical().put("cannot lock table for checkpoint [table=").put(tableToken).put(']');
@@ -313,7 +314,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
                                     }
 
-                                    LOG.info().$("table included in the checkpoint [table=").$(tableToken).I$();
+                                    LOG.info().$("table included in the checkpoint [table=").$(tableToken)
+                                            .$(", txn=").$(txn)
+                                            .$(", seqTxn=").$(seqTxn)
+                                            .I$();
                                     break;
                                 } finally {
                                     Misc.free(reader);
