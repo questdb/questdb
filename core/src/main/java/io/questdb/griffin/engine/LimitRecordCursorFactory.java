@@ -42,10 +42,15 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final LimitRecordCursor cursor;
 
-    public LimitRecordCursorFactory(RecordCursorFactory base, Function loFunction, @Nullable Function hiFunction) {
+    public LimitRecordCursorFactory(
+            RecordCursorFactory base,
+            Function loFunction,
+            @Nullable Function hiFunction,
+            int argPos
+    ) {
         super(base.getMetadata());
         this.base = base;
-        this.cursor = new LimitRecordCursor(loFunction, hiFunction);
+        this.cursor = new LimitRecordCursor(loFunction, hiFunction, argPos);
     }
 
     @Override
@@ -123,6 +128,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private static class LimitRecordCursor implements RecordCursor {
+        private final int argPos;
         private final RecordCursor.Counter counter = new Counter();
         private final Function hiFunction;
         private final Function loFunction;
@@ -141,9 +147,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         // query execution plan only
         private long skippedRows;
 
-        public LimitRecordCursor(Function loFunction, Function hiFunction) {
+        public LimitRecordCursor(Function loFunction, Function hiFunction, int argPos) {
             this.loFunction = loFunction;
             this.hiFunction = hiFunction;
+            this.argPos = argPos;
         }
 
         @Override

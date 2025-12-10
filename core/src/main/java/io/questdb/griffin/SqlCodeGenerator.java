@@ -3952,10 +3952,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return factory;
         }
 
+        assert limitLo != null : "limitLo == null";
         try {
             final Function loFunc = getLoFunction(model, executionContext);
             final Function hiFunc = getHiFunction(model, executionContext);
-            return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
+            return new LimitRecordCursorFactory(factory, loFunc, hiFunc, limitLo.position);
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
