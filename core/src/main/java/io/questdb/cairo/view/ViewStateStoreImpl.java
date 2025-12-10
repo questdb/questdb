@@ -41,16 +41,7 @@ public class ViewStateStoreImpl implements ViewStateStore {
     private final ThreadLocal<ViewCompilerTask> taskHolder = new ThreadLocal<>(ViewCompilerTask::new);
     private final Queue<ViewCompilerTask> taskQueue = ConcurrentQueue.createConcurrentQueue(ViewCompilerTask::new);
 
-    // todo: add telemetry
-    //private final Telemetry<TelemetryViewTask> telemetry;
-    //private final ViewTelemetryFacade telemetryFacade;
-
     public ViewStateStoreImpl(CairoEngine engine) {
-//        this.telemetry = engine.getTelemetryMatView();
-//        this.telemetryFacade = telemetry.isEnabled()
-//                ? this::storeViewTelemetry
-//                : (event, tableToken, errorMessage, latencyUs) -> { /* no-op */ };
-
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
     }
 
@@ -96,8 +87,4 @@ public class ViewStateStoreImpl implements ViewStateStore {
     public boolean tryDequeueCompilerTask(ViewCompilerTask task) {
         return taskQueue.tryDequeue(task);
     }
-
-//    private void storeViewTelemetry(short event, TableToken tableToken, CharSequence errorMessage, long latencyUs) {
-//        TelemetryViewTask.store(telemetry, event, tableToken.getTableId(), errorMessage, latencyUs);
-//    }
 }
