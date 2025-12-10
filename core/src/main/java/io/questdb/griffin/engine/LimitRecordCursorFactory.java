@@ -215,8 +215,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (hiFunction != null) {
                 hiFunction.init(base, executionContext);
             }
-            rowCount = -1;
-            size = -1;
             lo = loFunction.getLong(null);
             hi = hiFunction != null ? hiFunction.getLong(null) : -1;
             // swap lo and hi if lo > hi
@@ -225,7 +223,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 hi = lo;
                 lo = l;
             }
-            skipToRows = -1;
+
+            rowCount = -1;
+            size = -1;
+            rowsToSkip = -1;
             skippedRows = 0;
             isLimitCounted = false;
             areRowsCounted = false;
