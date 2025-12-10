@@ -87,18 +87,15 @@ public class BytecodeAssembler {
     private int defaultConstructorSigIndex;
     private Class<?> host;
     private int objectClassIndex;
-    private int opcodeCount;
     private int poolCount;
     private int stackMapTableCut;
 
     public BytecodeAssembler() {
         this.buf = ByteBuffer.allocate(1024 * 1024).order(ByteOrder.BIG_ENDIAN);
         this.poolCount = 1;
-        this.opcodeCount = 0;
     }
 
     public void aload(int value) {
-        this.opcodeCount++;
         optimisedIO(aload_0, aload_1, aload_2, aload_3, aload, value);
     }
 
@@ -109,30 +106,26 @@ public class BytecodeAssembler {
 
     @SuppressWarnings("unused")
     public void athrow() {
-        this.opcodeCount++;
         putByte(0xbf);
     }
 
     @SuppressWarnings("unused")
     public void d2f() {
-        this.opcodeCount += 2; // putShort emits nop + d2f
         putShort(0x90);
     }
 
     @SuppressWarnings("unused")
     public void d2i() {
-        this.opcodeCount += 2; // putShort emits nop + d2i
         putShort(0x8E);
     }
 
     @SuppressWarnings("unused")
     public void d2l() {
-        this.opcodeCount += 2; // putShort emits nop + d2l
         putShort(0x8F);
     }
 
+    @SuppressWarnings("unused")
     public void dcmpg() {
-        this.opcodeCount++;
         putByte(0x98);
     }
 
@@ -151,12 +144,10 @@ public class BytecodeAssembler {
         putShort(superclassIndex);
     }
 
-    // todo
     public void defineDefaultConstructor() {
         defineDefaultConstructor(defaultConstructorMethodIndex);
     }
 
-    // todo
     public void defineDefaultConstructor(int superIndex) {
         // constructor method entry
         startMethod(defaultConstructorNameIndex, defaultConstructorDescIndex, 1, 1);
@@ -172,7 +163,6 @@ public class BytecodeAssembler {
         endMethod();
     }
 
-    // todo
     public void defineField(int nameIndex, int typeIndex) {
         putShort(ACC_PRIVATE);
         putShort(nameIndex);
@@ -181,7 +171,6 @@ public class BytecodeAssembler {
         putShort(0);
     }
 
-    // todo
     public void dump(String path) {
         try (FileOutputStream fos = new FileOutputStream(path)) {
             int p = buf.position();
@@ -196,18 +185,15 @@ public class BytecodeAssembler {
     }
 
     public void dup() {
-        this.opcodeCount++;
         putByte(0x59);
     }
 
     @SuppressWarnings("unused")
     public void dup2() {
-        this.opcodeCount++;
         putByte(0x5c);
     }
 
     public void dup_x2() {
-        this.opcodeCount++;
         putByte(0x5b);
     }
 
@@ -231,23 +217,19 @@ public class BytecodeAssembler {
     }
 
     public void f2d() {
-        this.opcodeCount += 2; // putShort emits nop + f2d
         putShort(0x8D);
     }
 
     @SuppressWarnings("unused")
     public void f2i() {
-        this.opcodeCount += 2; // putShort emits nop + f2i
         putShort(0x8B);
     }
 
     @SuppressWarnings("unused")
     public void f2l() {
-        this.opcodeCount += 2; // putShort emits nop + f2l
         putShort(0x8C);
     }
 
-    // todo
     public void fieldCount(int count) {
         putShort(count);
     }
@@ -265,15 +247,6 @@ public class BytecodeAssembler {
         return codeStart;
     }
 
-    /**
-     * Returns the size of the current method's bytecode in bytes.
-     * This is the value that matters for JVM's HugeMethodLimit (default 8000).
-     * Call this after endMethodCode() to get the final size.
-     */
-    public int getMethodCodeSize() {
-        return position() - codeStart;
-    }
-
     public int getDefaultConstructorDescIndex() {
         return defaultConstructorDescIndex;
     }
@@ -286,6 +259,15 @@ public class BytecodeAssembler {
         return defaultConstructorSigIndex;
     }
 
+    /**
+     * Returns the size of the current method's bytecode in bytes.
+     * This is the value that matters for JVM's HugeMethodLimit (default 8000).
+     * Call this after endMethodCode() to get the final size.
+     */
+    public int getMethodCodeSize() {
+        return position() - codeStart;
+    }
+
     public int getObjectInitMethodIndex() {
         return defaultConstructorMethodIndex;
     }
@@ -294,63 +276,45 @@ public class BytecodeAssembler {
         return poolCount;
     }
 
-    public long getSizeBytes() {
-        return buf.position();
-    }
-
-    public long getSizeOpcodes() {
-        return this.opcodeCount;
-    }
-
     public void getStatic(int index) {
-        this.opcodeCount++;
         putByte(178);
         putShort(index);
     }
 
     public void getfield(int index) {
-        this.opcodeCount++;
         putByte(0xb4);
         putShort(index);
     }
 
     public int goto_() {
-        this.opcodeCount++;
         return genericGoto(0xa7);
     }
 
     public void i2b() {
-        this.opcodeCount += 2; // putShort emits nop + i2b
         putShort(0x91);
     }
 
     public void i2d() {
-        this.opcodeCount += 2; // putShort emits nop + i2d
         putShort(0x87);
     }
 
     public void i2f() {
-        this.opcodeCount += 2; // putShort emits nop + i2f
         putShort(0x86);
     }
 
     public void i2l() {
-        this.opcodeCount += 2; // putShort emits nop + i2l
         putShort(0x85);
     }
 
     public void i2s() {
-        this.opcodeCount += 2; // putShort emits nop + i2s
         putShort(0x93);
     }
 
     public void iadd() {
-        this.opcodeCount++;
         putByte(0x60);
     }
 
     public void iconst(int v) {
-        this.opcodeCount++;
         if (v == -1) {
             putByte(iconst_m1);
         } else if (v > -1 && v < 6) {
@@ -369,45 +333,37 @@ public class BytecodeAssembler {
     }
 
     public int if_icmpge() {
-        this.opcodeCount++;
         return genericGoto(0xa2);
     }
 
     public int if_icmpne() {
-        this.opcodeCount++;
         return genericGoto(0xa0);
     }
 
     @SuppressWarnings("unused")
     public int ifle() {
-        this.opcodeCount++;
         return genericGoto(0x9e);
     }
 
     public int iflt() {
-        this.opcodeCount++;
         return genericGoto(0x9b);
     }
 
     public int ifne() {
-        this.opcodeCount++;
         return genericGoto(0x9a);
     }
 
     public void iinc(int index, int inc) {
-        this.opcodeCount++;
         putByte(iinc);
         putByte(index);
         putByte(inc);
     }
 
     public void iload(int value) {
-        this.opcodeCount++;
         optimisedIO(iload_0, iload_1, iload_2, iload_3, iload, value);
     }
 
     public void ineg() {
-        this.opcodeCount++;
         putByte(0x74);
     }
 
@@ -415,7 +371,6 @@ public class BytecodeAssembler {
         this.host = host;
         this.buf.clear();
         this.poolCount = 1;
-        this.opcodeCount = 0;
         this.utf8Cache.clear();
         this.classCache.clear();
     }
@@ -430,7 +385,6 @@ public class BytecodeAssembler {
     // information can also be derived from the descriptor of the selected method. The redundancy is
     // historical
     public void invokeInterface(int interfaceIndex, int argCount) {
-        this.opcodeCount++;
         putByte(185);
         putShort(interfaceIndex);
         putByte(argCount + 1);
@@ -442,99 +396,80 @@ public class BytecodeAssembler {
     }
 
     public void invokeStatic(int index) {
-        this.opcodeCount++;
         putByte(184);
         putShort(index);
     }
 
     public void invokeVirtual(int index) {
-        this.opcodeCount++;
         putByte(182);
         putShort(index);
     }
 
     public void invokespecial(int index) {
-        this.opcodeCount++;
         putByte(invokespecial);
         putShort(index);
     }
 
     public void irem() {
-        this.opcodeCount++;
         putByte(0x70);
     }
 
     public void ireturn() {
-        this.opcodeCount++;
         putByte(0xac);
     }
 
     public void istore(int value) {
-        this.opcodeCount++;
         optimisedIO(istore_0, istore_1, istore_2, istore_3, istore, value);
     }
 
     public void isub() {
-        this.opcodeCount++;
         putByte(0x64);
     }
 
     public void l2d() {
-        this.opcodeCount += 2; // putShort emits nop + l2d
         putShort(0x8A);
     }
 
     public void l2f() {
-        this.opcodeCount += 2; // putShort emits nop + l2f
         putShort(0x89);
     }
 
     public void l2i() {
-        this.opcodeCount += 2; // putShort emits nop + l2i
         putShort(0x88);
     }
 
     public void lcmp() {
-        this.opcodeCount++;
         putByte(0x94);
     }
 
     public void lconst_0() {
-        this.opcodeCount++;
         putByte(0x09);
     }
 
     public void ldc(int index) {
-        this.opcodeCount++;
         if (index < 256) {
             putByte(0x12);
             putByte(index);
         } else {
-            // Note: ldc_w does its own opcodeCount++, so decrement here to avoid double counting
-            this.opcodeCount--;
             ldc_w(index);
         }
     }
 
     public void ldc2_w(int index) {
-        this.opcodeCount++;
         putByte(0x14);
         putShort(index);
     }
 
     public void ldc_w(int index) {
-        this.opcodeCount++;
         putByte(0x13);
         putShort(index);
     }
 
     public void lload(int value) {
-        this.opcodeCount++;
         optimisedIO(lload_0, lload_1, lload_2, lload_3, lload, value);
     }
 
     public void lmul() {
-        this.opcodeCount++;
         putByte(0x69);
     }
 
@@ -545,12 +480,10 @@ public class BytecodeAssembler {
     }
 
     public void lreturn() {
-        this.opcodeCount++;
         putByte(0xad);
     }
 
     public void lstore(int value) {
-        this.opcodeCount++;
         optimisedIO(lstore_0, lstore_1, lstore_2, lstore_3, lstore, value);
     }
 
@@ -570,7 +503,6 @@ public class BytecodeAssembler {
     }
 
     public void new_(int classIndex) {
-        this.opcodeCount++;
         putByte(new_);
         putShort(classIndex);
     }
@@ -704,7 +636,6 @@ public class BytecodeAssembler {
     }
 
     public void pop() {
-        this.opcodeCount++;
         putByte(0x57);
     }
 
@@ -759,13 +690,11 @@ public class BytecodeAssembler {
     }
 
     public void putfield(int index) {
-        this.opcodeCount++;
         putByte(181);
         putShort(index);
     }
 
     public void return_() {
-        this.opcodeCount++;
         putByte(0xb1);
     }
 
