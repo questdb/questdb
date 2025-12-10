@@ -159,7 +159,7 @@ public class HttpQueryTestBuilder {
 
                 @Override
                 public @NotNull LongSupplier getCopyIDSupplier() {
-                    return copyIdGenerator::incrementAndGet;
+                    return copyIdGenerator::getAndIncrement;
                 }
 
                 public @NotNull FilesFacade getFilesFacade() {
