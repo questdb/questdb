@@ -262,7 +262,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         ExportQueryProcessorState state = LV.get(context);
         if (state == null) {
-            LV.set(context, state = new ExportQueryProcessorState(context, engine.getConfiguration().getFilesFacade()));
+            LV.set(context, state = new ExportQueryProcessorState(context, engine.getCopyExportContext()));
         }
 
         HttpChunkedResponse response = context.getChunkedResponse();
@@ -486,7 +486,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         } catch (Throwable th) {
             if (entry != null) {
                 engine.getCopyExportContext().releaseEntry(entry);
-                state.clear();
+                state.copyID = -1;
             }
             throw th;
         }
@@ -664,6 +664,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             } finally {
                 if (cleanup && entry != null) {
                     engine.getCopyExportContext().releaseEntry(entry);
+                    state.copyID = -1;
                 }
             }
         } else {
@@ -721,6 +722,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 response.put("PAR");
                                 state.parquetFileOffset = 3;
                                 response.bookmark();
+                                state.queryState = QUERY_PARQUET_EXPORT_DATA;
                                 response.sendChunk(false);
                             } catch (CairoException e) {
                                 sendException(response, 0, e.getFlyweightMessage(), state);
