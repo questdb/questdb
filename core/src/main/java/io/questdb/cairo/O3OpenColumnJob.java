@@ -295,14 +295,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 final long wouldBeAuxSize = columnTypeDriver.getAuxVectorSize(srcDataMax);
 
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
+                    // This value may be lower than auxRowCount.
+                    // We use it when copying non-column top column data.
+                    final long copyAuxRowCount = Math.max(0L, srcDataMax - srcDataTop);
                     // Extend the existing column down, we will be discarding it anyway.
                     // Materialize nulls at the end of the column and add non-null data to merge.
                     // Do all of this beyond existing written data, using column as a buffer.
                     // It is also fine in case when last partition contains WAL LAG, since at the
                     // beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
-                    newAuxSize =
-                            columnTypeDriver.getAuxVectorSize(auxRowCount) +
-                                    columnTypeDriver.getAuxVectorSize(srcDataMax);
+                    newAuxSize = oldAuxSize + wouldBeAuxSize;
 
                     srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
@@ -310,13 +311,16 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCount - 1);
                     }
 
-                    // at bottom of source var column set length of strings to null (-1) for as many strings
+                    // At bottom of source var column set length of strings to null (-1) for as many strings
                     // as srcDataTop value.
                     srcDataOffset = srcDataSize;
                     // We need to reserve null values for every column top value
                     // in the variable len file. Each null value takes 4 bytes for string
                     final long reservedBytesForColTopNulls = srcDataTop * columnTypeDriver.getDataVectorMinEntrySize();
-                    srcDataSize += reservedBytesForColTopNulls + srcDataSize;
+                    srcDataSize += reservedBytesForColTopNulls;
+                    if (copyAuxRowCount > 0) {
+                        srcDataSize += columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, copyAuxRowCount - 1);
+                    }
                     srcDataAddr = srcDataSize > 0 ? mapRW(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : srcDataAddr;
                     ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
 
@@ -328,18 +332,25 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // memset is faster than any SIMD implementation we can come with
                     columnTypeDriver.setDataVectorEntriesToNull(srcDataAddr + srcDataOffset, srcDataTop);
 
-                    // Copy var column data
-                    Vect.memcpy(srcDataAddr + srcDataOffset + reservedBytesForColTopNulls, srcDataAddr, srcDataOffset);
+                    if (copyAuxRowCount > 0) {
+                        // Copy var column data
+                        Vect.memcpy(
+                                srcDataAddr + srcDataOffset + reservedBytesForColTopNulls,
+                                srcDataAddr,
+                                columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, copyAuxRowCount - 1)
+                        );
+                    }
 
-                    // we need to shift copy the original column so that new block points at strings "below" the
-                    // nulls we created above
-                    long dstAddr = srcAuxAddr + wouldBeAuxSize;
-                    long dstAddrSize = newAuxSize - wouldBeAuxSize;
+                    // We need to shift copy the original column so that new block points at strings "below"
+                    // the nulls we created above.
+                    final long dstOffset = oldAuxSize + columnTypeDriver.auxRowsToBytes(srcDataTop);
+                    final long dstAddr = srcAuxAddr + dstOffset;
+                    final long dstAddrSize = newAuxSize - dstOffset;
                     columnTypeDriver.shiftCopyAuxVector(
                             -reservedBytesForColTopNulls,
                             srcAuxAddr,
                             0,
-                            auxRowCount - 1, // inclusive
+                            copyAuxRowCount - 1, // inclusive, -1 is tolerated by the driver
                             dstAddr,
                             dstAddrSize
                     );
@@ -2481,11 +2492,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         // New partition will have 0 column top, since srcDataTop <= prefixHi.
                     }
                     srcDataFixSize = srcDataActualBytes;
-                    if (srcDataFixSize != 0) {
+                    srcDataFixOffset = 0;
+                    if (srcDataFixSize > 0) {
                         srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                         ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     }
-                    srcDataFixOffset = 0;
                 }
             } else {
                 srcDataFixSize = srcDataMax << shl;
