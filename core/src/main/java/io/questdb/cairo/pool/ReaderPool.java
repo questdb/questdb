@@ -195,6 +195,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                         super.close();
                     }
                 } else {
+                    closeExcessPartitions();
                     detachedRefCount--;
                 }
             }

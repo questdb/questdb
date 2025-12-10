@@ -61,6 +61,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // Timer refresh tests mess with the clock, so set the spin timeout
         // to a large value to avoid false positive errors.
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
+        setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, TestUtils.generateRandom(LOG).nextInt(10000));
         spinLockTimeout = SPIN_LOCK_TIMEOUT;
     }
 

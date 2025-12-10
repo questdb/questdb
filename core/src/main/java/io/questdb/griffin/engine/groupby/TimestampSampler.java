@@ -36,7 +36,7 @@ public interface TimestampSampler extends Sinkable {
 
     int getTimestampType();
 
-    long nextTimestamp(long timestamp, int numSteps);
+    long nextTimestamp(long timestamp, long numSteps);
 
     default long nextTimestamp(long timestamp) {
         return nextTimestamp(timestamp, 1);

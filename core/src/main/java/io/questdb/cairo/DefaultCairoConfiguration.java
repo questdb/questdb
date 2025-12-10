@@ -540,8 +540,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewRowsPerQueryEstimate() {
-        return 10_000_000;
+    public long getMatViewRowsPerQueryEstimate() {
+        return 10_000_000L;
     }
 
     @Override
