@@ -56,7 +56,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -1082,8 +1081,6 @@ public class AggregateTest extends AbstractCairoTest {
 
     @Test
     public void testIntSymbolResolution() throws Exception {
-        // Fractional part is slightly different between parallel and non-parallel factories.
-        Assume.assumeTrue(enableParallelGroupBy);
         assertQuery(
                 """
                         s2	sum
