@@ -860,11 +860,10 @@ public class FuzzRunner {
 
     @NotNull
     private ObjList<FuzzTransaction> createTransactions(Rnd rnd, String tableNameBase) throws SqlException, NumericException {
-        String tableNameNoWal = tableNameBase + "_nonwal";
-
         createInitialTableWal(tableNameBase, initialRowCount);
 
-        ObjList<FuzzTransaction> transactions = generateTransactions(tableNameBase, rnd);
+        final String tableNameNoWal = tableNameBase + "_nonwal";
+        final ObjList<FuzzTransaction> transactions = generateTransactions(tableNameBase, rnd);
         createInitialTableNonWal(tableNameNoWal, transactions);
 
         applyNonWal(transactions, tableNameNoWal, rnd);

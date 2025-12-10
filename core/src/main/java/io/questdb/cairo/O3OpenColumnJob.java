@@ -2466,7 +2466,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     TableUtils.setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
-                    Vect.memcpy(srcDataFixAddr + wouldBeDataBytes, srcDataFixAddr, srcDataActualBytes);
+                    if (srcDataMax > srcDataTop) {
+                        Vect.memcpy(srcDataFixAddr + wouldBeDataBytes, srcDataFixAddr, srcDataMax - srcDataTop << shl);
+                    }
                     srcDataTop = 0;
                     srcDataFixOffset = srcDataActualBytes;
                 } else {
