@@ -342,6 +342,11 @@ else ()
     target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _simdjson)
 endif ()
 
+if (MUSL)
+    # For musl we need to link with static libstdc++ to avoid dynamic linking issues
+    target_link_libraries(questdb -static-libstdc++)
+endif ()
+
 # create output directory in case it does not exist, e.g. after mvn clean
 add_custom_command(TARGET _simdjson PRE_LINK
         COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT}
@@ -365,4 +370,12 @@ add_custom_command(TARGET questdb POST_BUILD
 )
 
 #jemalloc
-include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)
+set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
+find_library(JEMALLOC_LIB jemalloc PATHS ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc/lib NO_DEFAULT_PATH)
+if (JEMALLOC_LIB)
+    message(STATUS "Found jemalloc: ${JEMALLOC_LIB}")
+    target_link_libraries(questdb ${JEMALLOC_LIB})
+else ()
+    message(WARNING "jemalloc not found, using default allocator")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)
+endif ()

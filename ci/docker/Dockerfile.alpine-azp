@@ -1,0 +1,24 @@
+FROM alpine:3.23
+
+# Install all build dependencies including OpenJDK 17
+# Using --no-scripts to avoid QEMU emulation issues during cross-platform build
+RUN apk add --no-cache --no-scripts \
+    bash \
+    curl \
+    git \
+    zip \
+    build-base \
+    maven \
+    python3 \
+    sudo \
+    shadow \
+    openjdk17
+
+# Set Java environment
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Verify installation
+RUN java -version && mvn --version
+
+CMD [ "/bin/bash" ]

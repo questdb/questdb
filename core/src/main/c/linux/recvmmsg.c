@@ -26,6 +26,7 @@
 #define _GNU_SOURCE
 #include "jni.h"
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <string.h>

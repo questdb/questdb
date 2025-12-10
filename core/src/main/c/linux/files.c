@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 #define _GNU_SOURCE
+#define _LARGEFILE64_SOURCE
 
 #include "../share/files.h"
 #include "../share/sysutil.h"
