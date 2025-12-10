@@ -327,8 +327,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -6154,16 +6154,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         final TableToken tableToken = executionContext.getTableToken(tableName);
         if (model.isUpdate() && !model.isExplainQuery() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
-            // two phase update execution, this is client-side branch. It has to execute against the sequencer metadata
+            // Two phase UPDATE execution, this is client-side branch. It has to execute against the sequencer metadata
             // to allow the client to succeed even if WAL apply does not run.
+            // The query model could originate from EXPLAIN UPDATE, which should not be treated as an UPDATE.
             try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken, model.getMetadataVersion())) {
-                // it is not enough to rely on execution context to be different for WAL APPLY;
-                // in WAL APPLY we also must supply reader, outside of WAL APPLY reader is null
+                // It is not enough to rely on execution context to be different for WAL APPLY;
+                // In WAL APPLY we also must supply reader, outside of WAL APPLY reader is null
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, null, metadata);
             }
         } else {
-            // this is server side execution of the update. It executes against the reader metadata, which by now
-            // has to be fully up-to-date due to WAL apply execution order.
+            // This is either server side execution of an UPDATE statement, or any other query, including EXPLAIN UPDATE.
+            // It executes against the reader metadata, which by now has to be fully up-to-date due to WAL apply execution order.
             try (TableReader reader = executionContext.getReader(tableToken, model.getMetadataVersion())) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
             }
