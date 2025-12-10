@@ -40,5 +40,5 @@ public interface TablePageFrameCursor extends PageFrameCursor {
         return false;
     }
 
-    TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor);
+    TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows);
 }

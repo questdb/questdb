@@ -59,7 +59,7 @@ public class CopyExportRequestTask implements Mutable {
     private CopyExportContext.ExportTaskEntry entry;
     private RecordCursorFactory factory;
     private CharSequence fileName;
-    private @Nullable RecordMetadata metadata;
+    private RecordMetadata metadata;
     private long now;
     private int nowTimestampType;
     private @Nullable PageFrameCursor pageFrameCursor;
@@ -129,7 +129,7 @@ public class CopyExportRequestTask implements Mutable {
         return fileName;
     }
 
-    public @Nullable RecordMetadata getMetadata() {
+    public RecordMetadata getMetadata() {
         return metadata;
     }
 
@@ -391,7 +391,6 @@ public class CopyExportRequestTask implements Mutable {
 
                 for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
                     long localColTop = frame.getPageAddress(i) > 0 ? 0 : frameRowCount;
-                    assert metadata != null;
                     final int columnType = metadata.getColumnType(i);
                     if (ColumnType.isSymbol(columnType)) {
                         SymbolMapReader symbolMapReader = (SymbolMapReader) frameCursor.getSymbolTable(i);
@@ -429,7 +428,6 @@ public class CopyExportRequestTask implements Mutable {
                 columnData.clear();
 
                 for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
-                    assert metadata != null;
                     final int columnType = metadata.getColumnType(i);
                     if (ColumnType.isSymbol(columnType)) {
                         SymbolMapReader symbolMapReader = (SymbolMapReader) frameCursor.getSymbolTable(i);
