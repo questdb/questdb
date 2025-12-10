@@ -42,7 +42,7 @@ public class TrimStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testNotTrimSpace() throws SqlException {
         call("a b c").andAssert("a b c");
-        call("kkk").andAssert("kkk");
+        call("zzz").andAssert("zzz");
         call("()  /  {}").andAssert("()  /  {}");
     }
 

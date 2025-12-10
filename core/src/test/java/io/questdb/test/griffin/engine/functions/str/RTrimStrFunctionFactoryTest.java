@@ -43,7 +43,7 @@ public class RTrimStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testNoRTrimSpace() throws SqlException {
         call("     abc").andAssert("     abc");
         call("a b c").andAssert("a b c");
-        call("kkk").andAssert("kkk");
+        call("zzz").andAssert("zzz");
         call("()  /  {}").andAssert("()  /  {}");
     }
 
