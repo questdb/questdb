@@ -452,7 +452,9 @@ struct extent_hooks_s {
 #  define sallocx je_sallocx
 #  define sdallocx je_sdallocx
 #  define xallocx je_xallocx
+#  define memalign je_memalign
 #  define valloc je_valloc
+#  define pvalloc je_pvalloc
 #  define malloc_size je_malloc_size
 #endif
 
