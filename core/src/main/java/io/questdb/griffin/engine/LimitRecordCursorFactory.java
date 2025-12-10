@@ -103,7 +103,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        // cursor has to be open to calculate the limit details.
+        // cursor must be open to calculate the limit details.
         if (cursor.base != null && loFunc != null && loFunc.getLong(null) != Numbers.LONG_NULL) {
             cursor.countLimit();
             sink.meta("skip-over-rows").val(cursor.skippedRows);
@@ -143,8 +143,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private long rowCount;
         private long rowsToSkip;
         private long size;
-        // number of rows cursor will skip, it is used to display correct
-        // query execution plan only
+        // number of rows the cursor will skip, only used to display correct query execution plan
         private long skippedRows;
 
         public LimitRecordCursor(Function loFunction, Function hiFunction, int argPos) {
@@ -262,13 +261,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             rowsToSkip = -1;
             skipRows(skippedRows);
             /*
-             We now set skipToRows back to -1.
-             The reason is that we need it to be -1 before skipRows in order
-             to function correctly.
-             In toTop(), we skipRows forward in the cursor which is fine.
+             Now set skipToRows back to -1.
+             skipRows() needed it to be -1 to function correctly.
+             In toTop(), we skipRows() in the cursor, which is fine.
              But in countLimit(), we have to do the same thing.
-             If skipRows == 0, then instead of taking the correct count, it returns a 0
-             count and the wrong answer.
+             If skipRows == 0, instead of taking the correct count,
+             it will set up to return 0 rows and the wrong answer.
              Example query that will break without this:
              (SELECT timestamp FROM trades LIMIT 1)
              UNION ALL
