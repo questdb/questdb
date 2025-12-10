@@ -24,29 +24,33 @@
 
 package io.questdb.cairo.view;
 
+import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.concurrent.locks.ReadWriteLock;
 
 /**
  * View state serves the purpose of keeping track of invalidated views.
  */
 public class ViewState {
     private final StringSink invalidationReason = new StringSink();
+    private final ReadWriteLock lock = new SimpleReadWriteLock();
     private final ViewDefinition viewDefinition;
-    private volatile boolean dropped;
-    private volatile boolean invalid;
-    private volatile long updateTimestamp;
+    private boolean invalid;
+    private long updateTimestamp;
 
     public ViewState(@NotNull ViewDefinition viewDefinition, long updateTimestamp) {
         this.viewDefinition = viewDefinition;
         this.updateTimestamp = updateTimestamp;
     }
 
-    public synchronized CharSequence getInvalidationReason(MutableUtf16Sink sink) {
+    public Utf16Sink getInvalidationReason(MutableUtf16Sink sink) {
         sink.clear();
-        return !invalidationReason.isEmpty() ? (MutableUtf16Sink) sink.put(invalidationReason) : null;
+        return sink.put(invalidationReason);
     }
 
     public long getUpdateTimestamp() {
@@ -57,19 +61,27 @@ public class ViewState {
         return viewDefinition;
     }
 
-    public boolean isDropped() {
-        return dropped;
-    }
-
     public boolean isInvalid() {
         return invalid;
     }
 
-    public void markAsDropped() {
-        dropped = true;
+    public void lockForRead() {
+        lock.readLock().lock();
     }
 
-    public synchronized void updateState(boolean invalid, @Nullable CharSequence invalidationReason, long updateTimestamp) {
+    public void lockForWrite() {
+        lock.writeLock().lock();
+    }
+
+    public void unlockAfterRead() {
+        lock.readLock().unlock();
+    }
+
+    public void unlockAfterWrite() {
+        lock.writeLock().unlock();
+    }
+
+    public void updateState(boolean invalid, @Nullable CharSequence invalidationReason, long updateTimestamp) {
         this.invalid = invalid;
 
         this.invalidationReason.clear();

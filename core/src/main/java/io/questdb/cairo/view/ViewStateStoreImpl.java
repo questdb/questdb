@@ -77,10 +77,7 @@ public class ViewStateStoreImpl implements ViewStateStore {
 
     @Override
     public void removeViewState(TableToken viewToken) {
-        final ViewState state = stateByTableDirName.remove(viewToken.getDirName());
-        if (state != null) {
-            state.markAsDropped();
-        }
+        stateByTableDirName.remove(viewToken.getDirName());
     }
 
     @Override

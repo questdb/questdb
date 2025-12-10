@@ -201,28 +201,31 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     private boolean updateViewState(TableToken viewToken, boolean invalid, CharSequence invalidationReason, long updateTimestamp) {
         final ViewDefinition viewDefinition = viewGraph.getViewDefinition(viewToken);
         if (viewDefinition == null) {
-            LOG.error().$("view definition is missing, probably dropped concurrently [token=").$(viewToken).I$();
+            LOG.info().$("view definition is missing, probably dropped concurrently [token=").$(viewToken).I$();
             return false;
         }
 
-        final ViewState state = stateStore.getViewState(viewToken);
-        if (state == null) {
-            LOG.error().$("view state is missing [token=").$(viewToken).I$();
+        final ViewState viewState = stateStore.getViewState(viewToken);
+        if (viewState == null) {
+            LOG.info().$("view state is missing, probably dropped concurrently [token=").$(viewToken).I$();
             return false;
         }
-        if (state.isDropped()) {
-            return false;
+
+        try {
+            viewState.lockForWrite();
+            if (viewState.isInvalid() == invalid) {
+                // there is no state change, just return
+                return false;
+            }
+            LOG.info().$("updating view state [view=").$safe(viewToken.getTableName())
+                    .$(", invalid=").$(invalid)
+                    .$(", reason=").$safe(invalidationReason)
+                    .$(", updateTimestamp=").$(updateTimestamp)
+                    .I$();
+            viewState.updateState(invalid, invalidationReason, updateTimestamp);
+            return true;
+        } finally {
+            viewState.unlockAfterWrite();
         }
-        if (state.isInvalid() == invalid) {
-            // there is no state change, just return
-            return false;
-        }
-        LOG.info().$("updating view state [view=").$safe(viewToken.getTableName())
-                .$(", invalid=").$(invalid)
-                .$(", reason=").$safe(invalidationReason)
-                .$(", updateTimestamp=").$(updateTimestamp)
-                .I$();
-        state.updateState(invalid, invalidationReason, updateTimestamp);
-        return true;
     }
 }

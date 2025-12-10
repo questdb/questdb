@@ -333,10 +333,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             final ViewState state1 = getViewState(VIEW1);
             final ViewState state2 = getViewState(VIEW2);
 
-            assertNotNull(state1);
-            assertFalse(state1.isInvalid());
-            assertNotNull(state2);
-            assertFalse(state2.isInvalid());
+            assertViewState(VALID, state1);
+            assertViewState(VALID, state2);
 
             final ViewDefinition definition1 = getViewDefinition(VIEW1);
             final ViewDefinition definition2 = getViewDefinition(VIEW2);
@@ -393,10 +391,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             drainWalQueue();
             drainViewQueue();
 
-            assertNotNull(state1);
-            assertTrue(state1.isInvalid());
-            assertNotNull(state2);
-            assertFalse(state2.isInvalid());
+            assertViewState(INVALID, state1);
+            assertViewState(VALID, state2);
 
             assertExecRequest(
                     httpClient,
@@ -433,10 +429,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             final ViewState state1 = getViewState(VIEW1);
             final ViewState state2 = getViewState(VIEW2);
 
-            assertNotNull(state1);
-            assertTrue(state1.isInvalid());
-            assertNotNull(state2);
-            assertFalse(state2.isInvalid());
+            assertViewState(INVALID, state1);
+            assertViewState(VALID, state2);
 
             final ViewDefinition definition1 = getViewDefinition(VIEW1);
             final ViewDefinition definition2 = getViewDefinition(VIEW2);

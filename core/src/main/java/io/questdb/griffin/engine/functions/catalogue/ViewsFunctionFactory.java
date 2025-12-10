@@ -130,7 +130,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                         }
 
                         final ViewState viewState = engine.getViewStateStore().getViewState(viewToken);
-                        if (viewState == null || viewState.isDropped()) {
+                        if (viewState == null) {
                             continue; // view was dropped concurrently or views are disabled
                         }
 
@@ -165,13 +165,14 @@ public class ViewsFunctionFactory implements FunctionFactory {
             }
 
             private static class ViewsRecord implements Record {
-                private final StringSink tmpSink = new StringSink();
+                private final StringSink invalidationReasonSink = new StringSink();
+                private boolean invalid;
+                private long lastUpdatedTimestamp;
                 private ViewDefinition viewDefinition;
-                private ViewState viewState;
 
                 @Override
                 public long getLong(int col) {
-                    return col == COLUMN_VIEW_STATUS_UPDATE_TIME ? viewState.getUpdateTimestamp() : 0;
+                    return col == COLUMN_VIEW_STATUS_UPDATE_TIME ? lastUpdatedTimestamp : 0;
                 }
 
                 @Override
@@ -180,8 +181,9 @@ public class ViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_VIEW_NAME -> viewDefinition.getViewToken().getTableName();
                         case COLUMN_VIEW_SQL -> viewDefinition.getViewSql();
                         case COLUMN_TABLE_DIR_NAME -> viewDefinition.getViewToken().getDirName();
-                        case COLUMN_VIEW_STATUS -> getViewStatus();
-                        case COLUMN_INVALIDATION_REASON -> viewState.getInvalidationReason(tmpSink);
+                        case COLUMN_VIEW_STATUS -> invalid ? "invalid" : "valid";
+                        case COLUMN_INVALIDATION_REASON ->
+                                invalidationReasonSink.isEmpty() ? null : invalidationReasonSink;
                         default -> null;
                     };
                 }
@@ -196,16 +198,17 @@ public class ViewsFunctionFactory implements FunctionFactory {
                     return TableUtils.lengthOf(getStrA(col));
                 }
 
-                public void of(
-                        ViewDefinition viewDefinition,
-                        ViewState viewState
-                ) {
+                public void of(ViewDefinition viewDefinition, ViewState viewState) {
                     this.viewDefinition = viewDefinition;
-                    this.viewState = viewState;
-                }
 
-                private String getViewStatus() {
-                    return viewState.isInvalid() ? "invalid" : "valid";
+                    try {
+                        viewState.lockForRead();
+                        lastUpdatedTimestamp = viewState.getUpdateTimestamp();
+                        invalid = viewState.isInvalid();
+                        viewState.getInvalidationReason(invalidationReasonSink);
+                    } finally {
+                        viewState.unlockAfterRead();
+                    }
                 }
             }
         }

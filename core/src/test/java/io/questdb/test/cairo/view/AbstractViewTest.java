@@ -126,12 +126,17 @@ class AbstractViewTest extends AbstractCairoTest {
         final ViewState viewState = engine.getViewStateStore().getViewState(viewToken);
         assertNotNull(viewState);
 
-        if (invalidationReason != null) {
-            assertTrue(viewState.isInvalid());
-            assertEquals(invalidationReason, viewState.getInvalidationReason(sink).toString());
-        } else {
-            assertFalse(viewState.isInvalid());
-            assertNull(viewState.getInvalidationReason(sink));
+        try {
+            viewState.lockForRead();
+            if (invalidationReason != null) {
+                assertTrue(viewState.isInvalid());
+                assertEquals(invalidationReason, viewState.getInvalidationReason(sink).toString());
+            } else {
+                assertFalse(viewState.isInvalid());
+                assertTrue(viewState.getInvalidationReason(sink).toString().isEmpty());
+            }
+        } finally {
+            viewState.unlockAfterRead();
         }
     }
 
