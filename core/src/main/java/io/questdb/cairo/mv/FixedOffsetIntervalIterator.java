@@ -47,7 +47,7 @@ public class FixedOffsetIntervalIterator extends SampleByIntervalIterator {
     }
 
     @Override
-    public int getStep() {
+    public long getStep() {
         return step;
     }
 
@@ -67,7 +67,7 @@ public class FixedOffsetIntervalIterator extends SampleByIntervalIterator {
             @Nullable LongList intervals,
             long minTs,
             long maxTs,
-            int step
+            long step
     ) {
         super.of(sampler, intervals);
 

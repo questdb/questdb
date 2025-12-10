@@ -65,7 +65,7 @@ public class SimpleTimestampSampler implements TimestampSampler {
     }
 
     @Override
-    public long nextTimestamp(long timestamp, int numSteps) {
+    public long nextTimestamp(long timestamp, long numSteps) {
         try {
             return Math.addExact(timestamp, Math.multiplyExact(numSteps, bucket));
         } catch (ArithmeticException e) {
