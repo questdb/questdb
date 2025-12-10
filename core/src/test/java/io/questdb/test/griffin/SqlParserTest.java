@@ -980,6 +980,74 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testAlterViewSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            engine.execute("create view v1 as select 42");
+            drainWalAndViewQueues();
+
+            assertExceptionNoLeakCheck(
+                    "alter",
+                    5,
+                    "'table' or 'materialized' or 'view' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view",
+                    10,
+                    "view name expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1",
+                    13,
+                    "'as' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as",
+                    16,
+                    "'(' or 'with' or 'select' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as (",
+                    18,
+                    "'with' or 'select' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as select",
+                    23,
+                    "[distinct] column expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as (select",
+                    24,
+                    "[distinct] column expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as (select 42",
+                    27,
+                    "')' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as bla",
+                    17,
+                    "table does not exist [table=bla]"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter view v1 as select * from bla",
+                    31,
+                    "table does not exist [table=bla]"
+            );
+        });
+    }
+
+    @Test
     public void testAmbiguousColumn() throws Exception {
         assertSyntaxError(
                 "orders join customers on customerId = customerId", 25, "Ambiguous",
@@ -7150,7 +7218,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         with\s
                             starts as ((telemetry_users where event = 100 order by created) timestamp(created)),
                             stops as ((telemetry_users where event = 101 order by created) timestamp(created))
-                        
+                                                
                         select * from (select a.created ts_stop, a.id, b.created ts_start, b.id from stops a lt join starts b on (id)) where id <> '0x05ab1e873d165b00000005743f2c17' and ts_stop - ts_start > 10000000000
                         """,
                 modelOf("telemetry_users")
@@ -7169,7 +7237,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         with\s
                             starts as ((telemetry_users where event = 100 order by created) timestamp(created)),
                             stops as ((telemetry_users where event = 101 order by created) timestamp(created))
-                        
+                                                
                         select distinct id from (select a.created ts_stop, a.id, b.created ts_start, b.id \
                         from stops a \
                         lt join starts b on (id)) \

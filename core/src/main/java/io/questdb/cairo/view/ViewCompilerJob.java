@@ -34,9 +34,9 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -127,12 +127,6 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         }
     }
 
-    private RecordCursorFactory generateFactory(SqlCompiler compiler, ExecutionModel model) throws SqlException {
-        final QueryModel queryModel = model.getQueryModel();
-        assert queryModel != null;
-        return compiler.generateSelectWithRetries(queryModel, null, compilerExecutionContext, false);
-    }
-
     private void invalidate(TableToken tableToken, CharSequence invalidationReason, long updateTimestamp) {
         invalidateDependentViews(tableToken, invalidationReason, updateTimestamp);
         if (tableToken.isView()) {
@@ -164,17 +158,15 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         return updateViewState(tableToken, false, null, updateTimestamp);
     }
 
+    // checks for column type changes in underlying tables, and updates view metadata
+    // column count and column names expected to be the same because the view query can be changed with ALTER VIEW only
     private void syncViewMetadata(TableToken viewToken, SqlCompiler compiler, ExecutionModel executionModel) throws SqlException {
         try (
-                RecordCursorFactory factory = generateFactory(compiler, executionModel);
+                RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, compilerExecutionContext);
                 TableMetadata currentMetadata = engine.getTableMetadata(viewToken)
         ) {
             final RecordMetadata newMetadata = factory.getMetadata();
             final int columnCount = newMetadata.getColumnCount();
-            // todo: We expect column count and column names to be the same because currently the view query cannot be updated.
-            //  When ALTER VIEW viewName AS (new query) is implemented, we will need something more serious here, such
-            //  as TableWriter.replaceMetadata(newMetadata), which could be called only for views or empty tables/mat views.
-            //  Alternatively, we can run DROP COLUMN col1, col2..., then ADD COLUMN newCol1, newCol2...
             assert columnCount == currentMetadata.getColumnCount();
             final AlterOperationBuilder alterOperationBuilder = new AlterOperationBuilder();
             boolean metadataChanged = false;
@@ -216,6 +208,9 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         final ViewState state = stateStore.getViewState(viewToken);
         if (state == null) {
             LOG.error().$("view state is missing [token=").$(viewToken).I$();
+            return false;
+        }
+        if (state.isDropped()) {
             return false;
         }
         if (state.isInvalid() == invalid) {

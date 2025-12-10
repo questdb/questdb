@@ -1,0 +1,105 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo.view;
+
+import org.junit.Test;
+
+public class AlterViewTest extends AbstractViewTest {
+
+    @Test
+    public void testAlterView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+
+            final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 5";
+            createView(VIEW1, query1, TABLE1);
+
+            assertQueryAndPlan(
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
+                    VIEW1,
+                    """
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              keys: [ts,k]
+                              values: [max(v)]
+                              filter: 5<v
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
+                            """,
+                    VIEW1
+            );
+
+            assertViewMetadata("{" +
+                    "\"columnCount\":3," +
+                    "\"columns\":[" +
+                    "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                    "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
+                    "{\"index\":2,\"name\":\"v_max\",\"type\":\"LONG\"}" +
+                    "]," +
+                    "\"timestampIndex\":-1" +
+                    "}");
+
+            final String query2 = "select ts, k, min(v) as v_min from " + TABLE1 + " where v > 6";
+            alterView(VIEW1, query2, TABLE1);
+
+            assertQueryAndPlan(
+                    """
+                            ts\tk\tv_min
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
+                    VIEW1,
+                    """
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              keys: [ts,k]
+                              values: [min(v)]
+                              filter: 6<v
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
+                            """,
+                    VIEW1
+            );
+
+            assertViewMetadata("{" +
+                    "\"columnCount\":3," +
+                    "\"columns\":[" +
+                    "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                    "{\"index\":1,\"name\":\"k\",\"type\":\"SYMBOL\"}," +
+                    "{\"index\":2,\"name\":\"v_min\",\"type\":\"LONG\"}" +
+                    "]," +
+                    "\"timestampIndex\":-1" +
+                    "}");
+        });
+    }
+}

@@ -576,7 +576,6 @@ public final class TableUtils {
         try (MemoryMARW mem = memory) {
             mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             mem.jumpTo(0);
-            final int count = structure.getColumnCount();
             path.trimTo(rootLen);
             writeMetadata(structure, tableVersion, tableId, mem);
             mem.sync(false);
@@ -584,7 +583,7 @@ public final class TableUtils {
             int symbolMapCount = 0;
             if (!structure.isView()) {
                 // create symbol maps
-                for (int i = 0; i < count; i++) {
+                for (int i = 0, n = structure.getColumnCount(); i < n; i++) {
                     if (ColumnType.isSymbol(structure.getColumnType(i))) {
                         createSymbolMapFiles(
                                 ff,

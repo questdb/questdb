@@ -143,6 +143,14 @@ class AbstractViewTest extends AbstractCairoTest {
         return engine.getViewGraph().getViewDefinition(viewToken);
     }
 
+    void alterView(String viewName, String viewQuery, String... expectedDependencies) throws SqlException {
+        execute("ALTER VIEW " + viewName + " AS (" + viewQuery + ")");
+        drainWalAndViewQueues();
+        assertViewDefinition(viewName, viewQuery, expectedDependencies);
+        assertViewDefinitionFile(viewName, viewQuery);
+        assertViewState(viewName);
+    }
+
     void assertQueryAndPlan(String expected, String query, String expectedPlan, String... expectedReferencedViews) throws Exception {
         assertQueryAndPlan(expected, query, null, true, true, expectedPlan, expectedReferencedViews);
     }

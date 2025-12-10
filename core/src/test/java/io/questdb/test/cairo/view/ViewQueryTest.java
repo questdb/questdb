@@ -29,6 +29,20 @@ import org.junit.Test;
 public class ViewQueryTest extends AbstractViewTest {
 
     @Test
+    public void testCreateConstantView() throws Exception {
+        final String query1 = "select 42 as col";
+        createView(VIEW1, query1);
+
+        assertQueryNoLeakCheck(
+                """
+                        col
+                        42
+                        """,
+                VIEW1
+        );
+    }
+
+    @Test
     public void testCreateViewAndSelectWithDeclare() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);

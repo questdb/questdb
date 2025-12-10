@@ -29,6 +29,84 @@ import org.junit.Test;
 public class ViewsFunctionTest extends AbstractViewTest {
 
     @Test
+    public void testShowColumnsView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, k, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create view test as (" + query + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
+                            k\tSYMBOL\tfalse\t0\tfalse\t128\t0\tfalse\tfalse
+                            doubleV\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            avg\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            """,
+                    "show columns from test",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testShowCreateView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create view test as (" + query + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            ddl
+                            CREATE VIEW 'test' AS (\s
+                            select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                            );
+                            """,
+                    "show create view test",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testShowCreateViewFail() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create view test as (" + query + ")");
+
+            assertExceptionNoLeakCheck(
+                    "show create test",
+                    12,
+                    "expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW'"
+            );
+        });
+    }
+
+    @Test
+    public void testShowCreateViewFail2() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            assertExceptionNoLeakCheck(
+                    "show create view " + TABLE1,
+                    17,
+                    "view name expected, got table name"
+            );
+        });
+    }
+
+    @Test
+    public void testShowCreateViewFail3() throws Exception {
+        assertException(
+                "show create view 'test';",
+                17,
+                "view does not exist [view=test]"
+        );
+    }
+
+    @Test
     public void testViewsConsistentWithMatViewsAndTablesCommands() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(1750345200000000L);
@@ -51,72 +129,102 @@ public class ViewsFunctionTest extends AbstractViewTest {
             assertQueryAndPlan(
                     """
                             view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time
-                            view2\tview1 where v_max > 6\tview2~4\t\tvalid\t2025-06-19T15:00:00.000000Z
                             view1\tselect ts, k, max(v) as v_max from table1 where v > 4\tview1~3\t\tvalid\t2025-06-19T15:00:00.000000Z
+                            view2\tview1 where v_max > 6\tview2~4\t\tvalid\t2025-06-19T15:00:00.000000Z
                             """,
-                    "views()",
+                    "views() order by 1",
                     null,
-                    false,
+                    true,
                     false,
                     """
                             QUERY PLAN
-                            views()
+                            Sort
+                              keys: [view_name]
+                                views()
                             """
             );
 
             assertQueryAndPlan(
                     """
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\trefresh_limit\trefresh_limit_unit\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit
-                            view4\timmediate\ttable2\t2025-06-19T15:00:00.000000Z\t2025-06-19T15:00:00.000000Z\tselect ts, avg(v) as v_avg from table2 sample by 15m\tview4~6\t\tvalid\t\t9\t9\t0\t\t\t\t0\t\t0\t\t0\t
                             view3\timmediate\ttable1\t2025-06-19T15:00:00.000000Z\t2025-06-19T15:00:00.000000Z\tselect ts, k, max(v) as v_max from table1 sample by 1m\tview3~5\t\tvalid\t\t9\t9\t0\t\t\t\t0\t\t0\t\t0\t
+                            view4\timmediate\ttable2\t2025-06-19T15:00:00.000000Z\t2025-06-19T15:00:00.000000Z\tselect ts, avg(v) as v_avg from table2 sample by 15m\tview4~6\t\tvalid\t\t9\t9\t0\t\t\t\t0\t\t0\t\t0\t
                             """,
-                    "materialized_views()",
+                    "materialized_views() order by 1",
                     null,
-                    false,
+                    true,
                     false,
                     """
                             QUERY PLAN
-                            materialized_views()
+                            Sort
+                              keys: [view_name]
+                                materialized_views()
                             """
             );
 
             assertQueryAndPlan(
                     """
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
-                            6\tview4\tts\tDAY\t1000\t-1\ttrue\tview4~6\tfalse\t0\tHOUR\tM
-                            5\tview3\tts\tDAY\t1000\t-1\ttrue\tview3~5\tfalse\t0\tHOUR\tM
-                            4\tview2\t\tN/A\t-1\t-1\ttrue\tview2~4\tfalse\t0\tHOUR\tV
-                            3\tview1\t\tN/A\t-1\t-1\ttrue\tview1~3\tfalse\t0\tHOUR\tV
-                            2\ttable2\tts\tDAY\t1000\t300000000\ttrue\ttable2~2\tfalse\t0\tHOUR\tT
                             1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT
+                            2\ttable2\tts\tDAY\t1000\t300000000\ttrue\ttable2~2\tfalse\t0\tHOUR\tT
+                            3\tview1\t\tN/A\t-1\t-1\ttrue\tview1~3\tfalse\t0\tHOUR\tV
+                            4\tview2\t\tN/A\t-1\t-1\ttrue\tview2~4\tfalse\t0\tHOUR\tV
+                            5\tview3\tts\tDAY\t1000\t-1\ttrue\tview3~5\tfalse\t0\tHOUR\tM
+                            6\tview4\tts\tDAY\t1000\t-1\ttrue\tview4~6\tfalse\t0\tHOUR\tM
                             """,
-                    "tables()",
+                    "tables() order by 1",
                     null,
-                    false,
+                    true,
                     false,
                     """
                             QUERY PLAN
-                            tables()
+                            Sort
+                              keys: [id]
+                                tables()
+                            """
+            );
+
+            assertQueryAndPlan(
+                    """
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
+                            table1\tfalse\t9\t0\t9\t\t\t0
+                            table2\tfalse\t9\t0\t9\t\t\t0
+                            view1\tfalse\t0\t0\t0\t\t\t0
+                            view2\tfalse\t0\t0\t0\t\t\t0
+                            view3\tfalse\t1\t0\t1\t\t\t0
+                            view4\tfalse\t1\t0\t1\t\t\t0
+                            """,
+                    "wal_tables() order by 1",
+                    null,
+                    true,
+                    false,
+                    """
+                            QUERY PLAN
+                            Sort
+                              keys: [name]
+                                wal_tables()
                             """
             );
 
             assertQueryAndPlan(
                     """
                             table_name
-                            view4
-                            view3
-                            view2
-                            view1
-                            table2
                             table1
+                            table2
+                            view1
+                            view2
+                            view3
+                            view4
                             """,
-                    "all_tables()",
+                    "all_tables() order by 1",
                     null,
-                    false,
+                    true,
                     false,
                     """
                             QUERY PLAN
-                            all_tables()
+                            Sort
+                              keys: [table_name]
+                                all_tables()
                             """
             );
         });
@@ -132,13 +240,15 @@ public class ViewsFunctionTest extends AbstractViewTest {
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n",
-                    "views()",
+                    "views() order by 1",
                     null,
-                    false,
+                    true,
                     false,
                     """
                             QUERY PLAN
-                            views()
+                            Sort
+                              keys: [view_name]
+                                views()
                             """
             );
 
@@ -157,18 +267,20 @@ public class ViewsFunctionTest extends AbstractViewTest {
             assertQueryAndPlan(
                     """
                             view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time
-                            view2\tview1 where v_max > 6\tview2~4\t\tvalid\t2025-06-19T15:00:00.000000Z
                             view1\tselect ts, k, max(v) as v_max from table1 where v > 4\tview1~3\t\tvalid\t2025-06-19T15:00:00.000000Z
-                            view4\tselect date_trunc('hour', ts), avg(v) as v_avg from table2\tview4~6\t\tvalid\t2025-06-19T15:00:00.000000Z
+                            view2\tview1 where v_max > 6\tview2~4\t\tvalid\t2025-06-19T15:00:00.000000Z
                             view3\tview2 where v_max > 7\tview3~5\t\tvalid\t2025-06-19T15:00:00.000000Z
+                            view4\tselect date_trunc('hour', ts), avg(v) as v_avg from table2\tview4~6\t\tvalid\t2025-06-19T15:00:00.000000Z
                             """,
-                    "views()",
+                    "views() order by 1",
                     null,
-                    false,
+                    true,
                     false,
                     """
                             QUERY PLAN
-                            views()
+                            Sort
+                              keys: [view_name]
+                                views()
                             """
             );
 
@@ -181,13 +293,15 @@ public class ViewsFunctionTest extends AbstractViewTest {
                             view1\tselect ts, k, max(v) as v_max from table1 where v > 4\tview1~3\t\tvalid\t2025-06-19T15:00:00.000000Z
                             view3\tview2 where v_max > 7\tview3~5\t\tvalid\t2025-06-19T15:00:00.000000Z
                             """,
-                    "views()",
+                    "views() order by 1",
                     null,
-                    false,
+                    true,
                     false,
                     """
                             QUERY PLAN
-                            views()
+                            Sort
+                              keys: [view_name]
+                                views()
                             """
             );
 
@@ -196,13 +310,15 @@ public class ViewsFunctionTest extends AbstractViewTest {
 
             assertQueryAndPlan(
                     "view_name\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tview_status_update_time\n",
-                    "views()",
+                    "views() order by 1",
                     null,
-                    false,
+                    true,
                     false,
                     """
                             QUERY PLAN
-                            views()
+                            Sort
+                              keys: [view_name]
+                                views()
                             """
             );
         });

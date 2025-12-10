@@ -33,8 +33,10 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
+import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
@@ -544,6 +546,12 @@ public class SqlUtil {
             }
         }
         return null;
+    }
+
+    public static RecordCursorFactory generateFactory(SqlCompiler compiler, ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
+        final QueryModel queryModel = model.getQueryModel();
+        assert queryModel != null;
+        return compiler.generateSelectWithRetries(queryModel, null, executionContext, false);
     }
 
     public static byte implicitCastAsByte(long value, int fromType) {
@@ -1253,23 +1261,6 @@ public class SqlUtil {
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
     }
 
-    private static int findEndOfDigitsPos(CharSequence tok, int tokLen, int tokPosition) throws SqlException {
-        int k = -1;
-        // look for end of digits
-        for (int i = 0; i < tokLen; i++) {
-            char c = tok.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1) {
-            throw SqlException.$(tokPosition + tokLen, "expected interval qualifier in ").put(tok);
-        }
-        return k;
-    }
-
     private static void addDependency(@NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap, String tableName, String columnName) {
         LowerCaseCharSequenceHashSet columns = depMap.get(tableName);
         if (columns == null) {
@@ -1329,6 +1320,23 @@ public class SqlUtil {
                 collectColumnReferencesFromExpression(joinColumn, model, depMap);
             }
         }
+    }
+
+    private static int findEndOfDigitsPos(CharSequence tok, int tokLen, int tokPosition) throws SqlException {
+        int k = -1;
+        // look for end of digits
+        for (int i = 0; i < tokLen; i++) {
+            char c = tok.charAt(i);
+            if (c < '0' || c > '9') {
+                k = i;
+                break;
+            }
+        }
+
+        if (k == -1) {
+            throw SqlException.$(tokPosition + tokLen, "expected interval qualifier in ").put(tok);
+        }
+        return k;
     }
 
     static CharSequence createColumnAlias(

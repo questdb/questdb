@@ -1095,7 +1095,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view foobar;",
                     24,
-                    "table does not exist [table=foobar]"
+                    "materialized view does not exist [view=foobar]"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h",

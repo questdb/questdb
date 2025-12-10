@@ -63,6 +63,16 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
+    public void addViewColumn(CharSequence columnName, int columnType) {
+        metadata.addViewColumn(columnName, columnType);
+    }
+
+    @Override
+    public void alterView(SecurityContext securityContext) {
+        metadata.alterView();
+    }
+
+    @Override
     public void changeColumnType(
             CharSequence columnName,
             int columnType,
@@ -120,6 +130,11 @@ public class SequencerMetadataService implements MetadataServiceStub {
     @Override
     public void removeColumn(@NotNull CharSequence columnName) {
         metadata.removeColumn(columnName);
+    }
+
+    @Override
+    public void removeViewColumn(@NotNull CharSequence columnName) {
+        metadata.removeViewColumn(columnName);
     }
 
     @Override

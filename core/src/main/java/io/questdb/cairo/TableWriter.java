@@ -144,9 +144,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -761,6 +761,73 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void addPhysicallyWrittenRows(long rows) {
         physicallyWrittenRowsSinceLastCommit.addAndGet(rows);
         metrics.tableWriterMetrics().addPhysicallyWrittenRows(rows);
+    }
+
+    @Override
+    public void addViewColumn(
+            CharSequence columnName,
+            int columnType
+    ) {
+        assert txWriter.getLagRowCount() == 0;
+
+        checkDistressed();
+        checkColumnName(columnName);
+
+        if (metadata.getColumnIndexQuiet(columnName) != -1) {
+            throw CairoException.duplicateColumn(columnName);
+        }
+
+        long columnNameTxn = getTxn();
+        LOG.info()
+                .$("adding column '").$safe(columnName)
+                .$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn)
+                .$(" to ").$substr(pathRootSize, path)
+                .$();
+
+        // extend columnTop list to make sure row cancel can work
+        // need for setting correct top is hard to test without being able to read from table
+        int columnIndex = columnCount;
+
+        addViewColumnToMeta(columnName, columnType, metadata);
+
+        // Set txn number in the column version file to mark the transaction where the column is added
+        columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, txWriter.getLastPartitionTimestamp());
+
+        // create column files
+        if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
+            try {
+                openNewColumnFiles(columnName, columnType, false, 0);
+            } catch (CairoException e) {
+                runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, e);
+            }
+        }
+
+        clearTodoAndCommitMetaStructureVersion();
+
+        try {
+            if (!Os.isWindows()) {
+                try {
+                    ff.fsyncAndClose(openRO(ff, path.$(), LOG));
+                } catch (CairoException e) {
+                    LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
+                            .$(", msg=").$safe(e.getFlyweightMessage())
+                            .$(", errno=").$(e.getErrno())
+                            .I$();
+                }
+            }
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+        } catch (CairoError err) {
+            throw err;
+        } catch (Throwable th) {
+            throwDistressException(th);
+        }
+    }
+
+    @Override
+    public void alterView(SecurityContext securityContext) {
     }
 
     public long apply(AbstractOperation operation, long seqTxn) {
@@ -2591,6 +2658,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean contextAllowsAnyStructureChanges) {
         if (cmd.getTableId() == getMetadata().getTableId()) {
+            // no need to handle the ALTER VIEW case, it should never go async 
             switch (cmd.getType()) {
                 case CMD_ALTER_TABLE:
                     processAsyncWriterCommand(alterOp, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
@@ -2602,7 +2670,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     LOG.error().$("unknown TableWriterTask type, ignored: ").$(cmd.getType()).$();
                     // Don't block the queue even if the command is unknown
                     commandSubSeq.done(cursor);
-                    break;
             }
         } else {
             LOG.info()
@@ -2770,6 +2837,60 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             commitRemovePartitionOperation();
         }
         return dropped;
+    }
+
+    @Override
+    public void removeViewColumn(@NotNull CharSequence name) {
+        assert txWriter.getLagRowCount() == 0;
+
+        checkDistressed();
+        checkColumnName(name);
+
+        final int index = getColumnIndex(name);
+        final int type = metadata.getColumnType(index);
+        final boolean isIndexed = metadata.isIndexed(index);
+        String columnName = metadata.getColumnName(index);
+
+        LOG.info().$("removing [column=").$safe(name).$(", path=").$substr(pathRootSize, path).I$();
+
+        final int timestampIndex = metadata.getTimestampIndex();
+        boolean timestamp = (index == timestampIndex);
+
+        metadata.removeColumn(index);
+        if (timestamp) {
+            metadata.clearTimestampIndex();
+        }
+        rewriteAndSwapMetadata(metadata);
+
+        try {
+            // remove column objects
+            freeColumnMemory(index);
+
+            // remove symbol map writer or entry for such
+            removeSymbolMapWriter(index);
+
+            // reset timestamp limits
+            if (timestamp) {
+                txWriter.resetTimestamp();
+                timestampSetter = value -> {
+                };
+            }
+
+            // remove column files
+            removeColumnFiles(index, columnName, type, isIndexed);
+            clearTodoAndCommitMetaStructureVersion();
+
+            finishColumnPurge();
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+            LOG.info().$("REMOVED column '").$safe(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
+        } catch (CairoError err) {
+            throw err;
+        } catch (Throwable th) {
+            throwDistressException(th);
+        }
     }
 
     @Override
@@ -3311,6 +3432,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isIndexed) {
             populateDenseIndexerList();
         }
+
+        // increment column count
+        columnCount++;
+    }
+
+    private void addViewColumnToMeta(
+            CharSequence columnName,
+            int columnType,
+            TableWriterMetadata metadata
+    ) {
+        metadata.addColumn(
+                columnName,
+                columnType,
+                false,
+                0,
+                metadata.getColumnCount(),
+                0,
+                false,
+                -1,
+                false
+        );
+
+        rewriteAndSwapMetadata(metadata);
+
+        // add column objects
+        configureColumn(columnType, false, columnCount);
 
         // increment column count
         columnCount++;

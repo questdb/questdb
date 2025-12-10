@@ -31,6 +31,7 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -47,7 +48,6 @@ import io.questdb.std.str.DirectString;
 import io.questdb.tasks.TableWriterTask;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
-    public final static String CMD_NAME = "ALTER TABLE";
     public final static short DO_NOTHING = 0;
     public final static short ADD_COLUMN = DO_NOTHING + 1; // 1
     public final static short DROP_PARTITION = ADD_COLUMN + 1; // 2
@@ -74,6 +74,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
+    public final static short ALTER_VIEW = SET_MAT_VIEW_REFRESH + 1; // 26
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -229,6 +230,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case SET_MAT_VIEW_REFRESH:
                     setMatViewRefresh(svc);
                     break;
+                case ALTER_VIEW:
+                    alterView(svc);
+                    break;
                 default:
                     LOG.error()
                             .$("invalid alter table command [code=").$(command)
@@ -335,7 +339,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public boolean isStructural() {
         return switch (command) {
             case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, RENAME_TABLE, SET_DEDUP_DISABLE, SET_DEDUP_ENABLE,
-                 CHANGE_COLUMN_TYPE -> true;
+                 CHANGE_COLUMN_TYPE, ALTER_VIEW -> true;
             default -> false;
         };
     }
@@ -360,12 +364,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     public AlterOperation of(
+            int cmdType,
             short command,
             TableToken tableToken,
             int tableId,
             int tableNamePosition
     ) {
-        init(TableWriterTask.CMD_ALTER_TABLE, CMD_NAME, tableToken, tableId, -1, tableNamePosition);
+        init(cmdType, TableWriterTask.getCommandName(cmdType), tableToken, tableId, -1, tableNamePosition);
         this.command = command;
         this.activeExtraStrInfo = this.extraStrInfo;
         return this;
@@ -384,7 +389,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             int indexValueBlockCapacity,
             boolean dedupKey
     ) {
-        of(AlterOperation.ADD_COLUMN, tableToken, tableId, tableNamePosition);
+        of(TableWriterTask.CMD_ALTER_TABLE, AlterOperation.ADD_COLUMN, tableToken, tableId, tableNamePosition);
         assert columnName != null && !columnName.isEmpty();
         extraStrInfo.strings.add(Chars.toString(columnName));
         extraInfo.add(columnType);
@@ -396,7 +401,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     public void ofRenameTable(TableToken fromTableToken, CharSequence toTableName) {
-        of(AlterOperation.RENAME_TABLE, fromTableToken, fromTableToken.getTableId(), 0);
+        of(TableWriterTask.CMD_ALTER_TABLE, AlterOperation.RENAME_TABLE, fromTableToken, fromTableToken.getTableId(), 0);
         assert toTableName != null && !toTableName.isEmpty();
         extraStrInfo.strings.add(fromTableToken.getTableName());
         extraStrInfo.strings.add(toTableName);
@@ -442,6 +447,26 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     @Override
     public void startAsync() {
+    }
+
+    private void alterView(MetadataService svc) {
+        final TableRecordMetadata metadata = svc.getMetadata();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            CharSequence columnName = metadata.getColumnName(i);
+            int columnType = metadata.getColumnType(i);
+            if (columnType > 0) {
+                svc.removeViewColumn(columnName);
+            }
+        }
+
+        int lParam = 0;
+        for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
+            CharSequence columnName = activeExtraStrInfo.getStrA(i);
+            int type = (int) extraInfo.get(lParam++);
+            svc.addViewColumn(columnName, type);
+        }
+
+        svc.alterView(securityContext);
     }
 
     private void applyAddColumn(MetadataService svc) {

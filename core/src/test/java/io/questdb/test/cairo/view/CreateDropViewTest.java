@@ -39,20 +39,6 @@ import static org.junit.Assert.assertNull;
 public class CreateDropViewTest extends AbstractViewTest {
 
     @Test
-    public void testCreateConstantView() throws Exception {
-        final String query1 = "select 42 as col";
-        createView(VIEW1, query1);
-
-        assertQueryNoLeakCheck(
-                """
-                        col
-                        42
-                        """,
-                VIEW1
-        );
-    }
-
-    @Test
     public void testCreateDropConcurrent() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -368,62 +354,5 @@ public class CreateDropViewTest extends AbstractViewTest {
             drainWalQueue();
             assertNull(getViewDefinition(VIEW2));
         });
-    }
-
-    @Test
-    public void testShowCreateView() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(TABLE1);
-            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
-            execute("create view test as (" + query + ")");
-            assertQueryNoLeakCheck(
-                    """
-                            ddl
-                            CREATE VIEW 'test' AS (\s
-                            select ts, v+v doubleV, avg(v) from table1 sample by 30s
-                            );
-                            """,
-                    "show create view test",
-                    null,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testShowCreateViewFail() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(TABLE1);
-
-            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
-            execute("create view test as (" + query + ")");
-
-            assertExceptionNoLeakCheck(
-                    "show create test",
-                    12,
-                    "expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW'"
-            );
-        });
-    }
-
-    @Test
-    public void testShowCreateViewFail2() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(TABLE1);
-            assertExceptionNoLeakCheck(
-                    "show create view " + TABLE1,
-                    17,
-                    "view name expected, got table name"
-            );
-        });
-    }
-
-    @Test
-    public void testShowCreateViewFail3() throws Exception {
-        assertException(
-                "show create view 'test';",
-                17,
-                "view does not exist [view=test]"
-        );
     }
 }

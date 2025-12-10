@@ -34,6 +34,7 @@ import io.questdb.std.ReadOnlyObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 
 /**
@@ -41,6 +42,8 @@ import java.util.function.Function;
  * This object is always in-use, even when views are disabled or the node is a read-only replica.
  */
 public class ViewGraph implements Mutable {
+    private static final BiConsumer<ObjList<TableToken>, TableToken> ADD = ObjList::add;
+    private static final BiConsumer<ObjList<TableToken>, TableToken> REMOVE = ObjList::remove;
     private final Function<CharSequence, ViewDependencyList> createDependencyList;
     private final ConcurrentHashMap<ViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<ViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
@@ -49,21 +52,11 @@ public class ViewGraph implements Mutable {
         createDependencyList = name -> new ViewDependencyList();
     }
 
-    public boolean addView(ViewDefinition viewDefinition) {
+    public synchronized boolean addView(ViewDefinition viewDefinition) {
         final TableToken viewToken = viewDefinition.getViewToken();
         final ViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(viewToken.getDirName(), viewDefinition);
 
-        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = viewDefinition.getDependencies();
-        final ObjList<CharSequence> tableNames = dependencies.keys();
-        for (int i = 0, n = tableNames.size(); i < n; i++) {
-            final ViewDependencyList list = getOrCreateDependentViews(tableNames.getQuick(i));
-            final ObjList<TableToken> dependentViews = list.lockForWrite();
-            try {
-                dependentViews.add(viewToken);
-            } finally {
-                list.unlockAfterWrite();
-            }
-        }
+        updateDependencies(viewToken, viewDefinition, ADD);
 
         // WAL table directories are unique, so we don't expect previous value
         return prevDefinition == null;
@@ -101,27 +94,47 @@ public class ViewGraph implements Mutable {
         }
     }
 
-    public void removeView(TableToken viewToken) {
+    public synchronized void removeView(TableToken viewToken) {
         final ViewDefinition viewDefinition = definitionsByTableDirName.remove(viewToken.getDirName());
         if (viewDefinition == null) {
+            // view has been dropped concurrently
             return;
         }
 
+        updateDependencies(viewToken, viewDefinition, REMOVE);
+    }
+
+    public synchronized boolean updateView(ViewDefinition viewDefinition) {
+        final TableToken viewToken = viewDefinition.getViewToken();
+        final ViewDefinition prevDefinition = definitionsByTableDirName.get(viewToken.getDirName());
+        if (prevDefinition == null) {
+            // view has been dropped concurrently
+            return false;
+        }
+
+        definitionsByTableDirName.put(viewToken.getDirName(), viewDefinition);
+
+        updateDependencies(viewToken, prevDefinition, REMOVE);
+        updateDependencies(viewToken, viewDefinition, ADD);
+        return true;
+    }
+
+    @NotNull
+    private ViewDependencyList getOrCreateDependentViews(CharSequence tableName) {
+        return dependentViewsByTableName.computeIfAbsent(tableName, createDependencyList);
+    }
+
+    private void updateDependencies(TableToken viewToken, ViewDefinition viewDefinition, BiConsumer<ObjList<TableToken>, TableToken> operation) {
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = viewDefinition.getDependencies();
         final ObjList<CharSequence> tableNames = dependencies.keys();
         for (int i = 0, n = tableNames.size(); i < n; i++) {
             final ViewDependencyList list = getOrCreateDependentViews(tableNames.getQuick(i));
             final ObjList<TableToken> dependentViews = list.lockForWrite();
             try {
-                dependentViews.remove(viewToken);
+                operation.accept(dependentViews, viewToken);
             } finally {
                 list.unlockAfterWrite();
             }
         }
-    }
-
-    @NotNull
-    private ViewDependencyList getOrCreateDependentViews(CharSequence tableName) {
-        return dependentViewsByTableName.computeIfAbsent(tableName, createDependencyList);
     }
 }

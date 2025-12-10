@@ -104,6 +104,10 @@ public interface MetadataService {
 
     void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);
 
+    void addViewColumn(CharSequence columnName, int columnType);
+
+    void alterView(SecurityContext securityContext);
+
     AttachDetachStatus attachPartition(long partitionTimestamp);
 
     void changeCacheFlag(int columnIndex, boolean isCacheOn);
@@ -161,6 +165,8 @@ public interface MetadataService {
     void removeColumn(@NotNull CharSequence columnName);
 
     boolean removePartition(long partitionTimestamp);
+
+    void removeViewColumn(@NotNull CharSequence columnName);
 
     default void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
         renameColumn(columnName, newName, null);

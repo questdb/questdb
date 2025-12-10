@@ -1901,46 +1901,44 @@ public class SqlParser {
         ));
 
         tok = tok(lexer, "'as'");
-
-        boolean enclosedInParentheses;
-        if (isAsKeyword(tok)) {
-            int startOfQuery = lexer.getPosition();
-            tok = tok(lexer, "'(' or 'with' or 'select'");
-            enclosedInParentheses = Chars.equals(tok, '(');
-            if (enclosedInParentheses) {
-                startOfQuery = lexer.getPosition();
-                tok = tok(lexer, "'with' or 'select'");
-            }
-
-            // Parse SELECT for the sake of basic SQL validation.
-            // It'll be compiled and optimized later, at the execution phase.
-            if (isWithKeyword(tok)) {
-                parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
-                // CTEs require SELECT to be specified
-                expectTok(lexer, "select");
-            }
-            lexer.unparseLast();
-            final QueryModel queryModel = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
-            final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
-
-            final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
-            tableOpBuilder.setSelectText(viewSql, startOfQuery);
-            tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
-
-            SqlUtil.collectTableAndColumnReferences(queryModel, createViewOperationBuilder.getDependencies());
-
-            if (enclosedInParentheses) {
-                expectTok(lexer, ')');
-            } else {
-                // We expect nothing more when there are no parentheses.
-                tok = optTok(lexer);
-                if (tok != null && !Chars.equals(tok, ';')) {
-                    throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
-                }
-                return vOpBuilder;
-            }
-        } else {
+        if (!isAsKeyword(tok)) {
             throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+        }
+
+        int startOfQuery = lexer.getPosition();
+        tok = tok(lexer, "'(' or 'with' or 'select'");
+        boolean enclosedInParentheses = Chars.equals(tok, '(');
+        if (enclosedInParentheses) {
+            startOfQuery = lexer.getPosition();
+            tok = tok(lexer, "'with' or 'select'");
+        }
+
+        // Parse SELECT for the sake of basic SQL validation.
+        // It'll be compiled and optimized later, at the execution phase.
+        if (isWithKeyword(tok)) {
+            parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
+            // CTEs require SELECT to be specified
+            expectTok(lexer, "select");
+        }
+        lexer.unparseLast();
+        final QueryModel queryModel = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
+        final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
+
+        final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
+        tableOpBuilder.setSelectText(viewSql, startOfQuery);
+        tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
+
+        SqlUtil.collectTableAndColumnReferences(queryModel, vOpBuilder.getDependencies());
+
+        if (enclosedInParentheses) {
+            expectTok(lexer, ')');
+        } else {
+            // We expect nothing more when there are no parentheses.
+            tok = optTok(lexer);
+            if (tok != null && !Chars.equals(tok, ';')) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+            return vOpBuilder;
         }
 
         tok = optTok(lexer);
@@ -4412,6 +4410,7 @@ public class SqlParser {
         queryColumnPool.clear();
         expressionNodePool.clear();
         windowColumnPool.clear();
+        createViewOperationBuilder.clear();
         createMatViewOperationBuilder.clear();
         createTableOperationBuilder.clear();
         createTableColumnModelPool.clear();
@@ -4530,6 +4529,38 @@ public class SqlParser {
             this.subQueryMode = false;
         }
         return model;
+    }
+
+    String parseViewSql(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
+        int startOfQuery = lexer.getPosition();
+        CharSequence tok = tok(lexer, "'(' or 'with' or 'select'");
+        boolean enclosedInParentheses = Chars.equals(tok, '(');
+        if (enclosedInParentheses) {
+            startOfQuery = lexer.getPosition();
+            tok = tok(lexer, "'with' or 'select'");
+        }
+
+        // Parse SELECT for the sake of basic SQL validation.
+        // It'll be compiled and optimized later, at the execution phase.
+        if (isWithKeyword(tok)) {
+            parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
+            // CTEs require SELECT to be specified
+            expectTok(lexer, "select");
+        }
+        lexer.unparseLast();
+        parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
+        final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
+
+        final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
+
+        if (enclosedInParentheses) {
+            expectTok(lexer, ')');
+        }
+        tok = optTok(lexer);
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+        return viewSql;
     }
 
     public interface ReplacingVisitor {

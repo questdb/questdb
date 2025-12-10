@@ -32,6 +32,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.ops.AlterOperation.*;
+import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 
 public class AlterOperationBuilder implements Mutable {
     private final LongList extraInfo = new LongList();
@@ -57,7 +58,7 @@ public class AlterOperationBuilder implements Mutable {
             int indexValueBlockCapacity,
             boolean dedupKey
     ) {
-        assert columnName != null && columnName.length() > 0;
+        assert columnName != null && !columnName.isEmpty();
         extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
@@ -74,8 +75,21 @@ public class AlterOperationBuilder implements Mutable {
         }
     }
 
+    public void addViewColumnToList(
+            CharSequence columnName,
+            int type
+    ) {
+        assert columnName != null && !columnName.isEmpty();
+        extraStrInfo.add(columnName);
+        extraInfo.add(type);
+    }
+
     public AlterOperation build() {
-        return op.of(command, tableToken, tableId, tableNamePosition);
+        return build(CMD_ALTER_TABLE);
+    }
+
+    public AlterOperation build(int cmdType) {
+        return op.of(cmdType, command, tableToken, tableId, tableNamePosition);
     }
 
     @Override
@@ -102,7 +116,7 @@ public class AlterOperationBuilder implements Mutable {
     }
 
     public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity) {
-        assert columnName != null && columnName.length() > 0;
+        assert columnName != null && !columnName.isEmpty();
         extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
@@ -119,6 +133,14 @@ public class AlterOperationBuilder implements Mutable {
         this.tableId = tableId;
         this.extraStrInfo.add(columnName);
         this.extraInfo.add(indexValueBlockSize);
+    }
+
+    public AlterOperationBuilder ofAlterView(int viewNamePosition, TableToken viewToken, int tableId) {
+        this.command = ALTER_VIEW;
+        this.tableNamePosition = viewNamePosition;
+        this.tableToken = viewToken;
+        this.tableId = tableId;
+        return this;
     }
 
     public AlterOperationBuilder ofAttachPartition(int tableNamePosition, TableToken tableToken, int tableId) {
@@ -178,7 +200,7 @@ public class AlterOperationBuilder implements Mutable {
     }
 
     public AlterOperationBuilder ofDropColumn(CharSequence columnName) {
-        assert columnName != null && columnName.length() > 0;
+        assert columnName != null && !columnName.isEmpty();
         this.extraStrInfo.add(columnName);
         return this;
     }
@@ -217,7 +239,7 @@ public class AlterOperationBuilder implements Mutable {
     }
 
     public void ofRemoveCacheSymbol(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
-        assert columnName != null && columnName.length() > 0;
+        assert columnName != null && !columnName.isEmpty();
         this.command = REMOVE_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
