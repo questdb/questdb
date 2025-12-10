@@ -57,8 +57,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void changePageFrameMinMaxRows(int minRows, int maxRows) {
-
+    public void changePageFrameSizes(int minRows, int maxRows) {
     }
 
     @Override

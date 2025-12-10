@@ -33,6 +33,7 @@ import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.client.Response;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -123,11 +124,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Test
     public void testBasics() throws Exception {
         getExportTester()
-                .run((engine, sqlExecutionContext) -> testHttpClient.assertGetParquet(
-                        "/exp",
-                        "PAR1\u0015\u0000\u0015",
-                        "generate_series(0, '1970-01-02', '1m');"
-                ));
+                .run((engine, sqlExecutionContext) ->
+                        testHttpClient.assertGetParquet("/exp", 44690, params, "generate_series(0, '1970-01-02', '1m');"));
     }
 
     @Test
@@ -161,6 +159,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 try (var respHeaders = req.send()) {
                                     respHeaders.await();
                                     TestUtils.assertEquals("200", respHeaders.getStatusCode());
+                                    Response response = respHeaders.getResponse();
+                                    while (response.recv() != null) {
+                                    }
                                 }
                                 successCount.incrementAndGet();
                             } catch (Exception e) {
@@ -216,6 +217,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 try (var respHeaders = req.send()) {
                                     respHeaders.await();
                                     TestUtils.assertEquals("200", respHeaders.getStatusCode());
+                                    Response response = respHeaders.getResponse();
+                                    while (response.recv() != null) {
+                                    }
                                 }
                                 successCount.incrementAndGet();
                             } catch (Exception e) {
@@ -328,6 +332,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 try (var respHeaders = req.send()) {
                                     respHeaders.await();
                                     TestUtils.assertEquals("200", respHeaders.getStatusCode());
+                                    Response response = respHeaders.getResponse();
+                                    while (response.recv() != null) {
+                                    }
                                 }
                                 successCount.incrementAndGet();
                             } catch (Exception e) {
@@ -1399,7 +1406,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     testHttpClient.assertGetParquet("/exp", 6619, params, "SELECT * FROM row_group_valid_test");
 
                     params.put("row_group_size", "5000");
-                    testHttpClient.assertGetParquet("/exp", 6619, params, "SELECT * FROM row_group_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 5486, params, "SELECT * FROM row_group_valid_test");
                 });
     }
 
@@ -1527,9 +1534,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-//                .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
-//                .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
-//                .withSendBufferSize(Math.max(1024, rnd.nextInt(4099)))
+                .withForceRecvFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                .withForceSendFragmentationChunkSize(Math.max(1, rnd.nextInt(1024)))
+                .withSendBufferSize(Math.max(1024, rnd.nextInt(4099)))
                 .withCopyExportRoot(root + "/export")
                 .withCopyInputRoot(root + "/export");
     }

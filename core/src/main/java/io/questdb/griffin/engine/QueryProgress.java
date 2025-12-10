@@ -412,6 +412,34 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
     }
 
+    private void unregisterAndCleanup(@Nullable Throwable th) {
+        // When execution context is null, the cursor has never been opened.
+        // Otherwise, cursor open attempt has been made, but may not have fully succeeded.
+        // In this case we must be certain that we still track the reader leak
+        if (executionContext != null) {
+            try {
+                String sqlText = queryTrace.queryText;
+                if (th == null) {
+                    logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryTrace);
+                } else {
+                    logError(th, sqlId, sqlText, executionContext, beginNanos, readers);
+                }
+            } finally {
+                // Unregister must follow the base cursor close call to avoid concurrent access
+                // to cleaned up circuit breaker.
+                registry.unregister(sqlId, executionContext);
+                if (executionContext.getCairoEngine().getConfiguration().freeLeakedReaders()) {
+                    Misc.freeObjListAndClear(readers);
+                } else {
+                    // just clearing readers should fail leak test
+                    readers.clear();
+                }
+                // make sure we never double-unregister queries
+                executionContext = null;
+            }
+        }
+    }
+
     @Override
     protected void _close() {
         cursor.close();
@@ -501,31 +529,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                         .$(", error=").$(th0)
                         .I$();
             } finally {
-                // When execution context is null, the cursor has never been opened.
-                // Otherwise, cursor open attempt has been made, but may not have fully succeeded.
-                // In this case we must be certain that we still track the reader leak
-                if (executionContext != null) {
-                    try {
-                        String sqlText = queryTrace.queryText;
-                        if (th == null) {
-                            logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryTrace);
-                        } else {
-                            logError(th, sqlId, sqlText, executionContext, beginNanos, readers);
-                        }
-                    } finally {
-                        // Unregister must follow the base cursor close call to avoid concurrent access
-                        // to cleaned up circuit breaker.
-                        registry.unregister(sqlId, executionContext);
-                        if (executionContext.getCairoEngine().getConfiguration().freeLeakedReaders()) {
-                            Misc.freeObjListAndClear(readers);
-                        } else {
-                            // just clearing readers should fail leak test
-                            readers.clear();
-                        }
-                        // make sure we never double-unregister queries
-                        executionContext = null;
-                    }
-                }
+                unregisterAndCleanup(th);
             }
         }
     }
@@ -629,31 +633,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                         .$(", error=").$(th0)
                         .I$();
             } finally {
-                // When execution context is null, the cursor has never been opened.
-                // Otherwise, cursor open attempt has been made, but may not have fully succeeded.
-                // In this case we must be certain that we still track the reader leak
-                if (executionContext != null) {
-                    try {
-                        String sqlText = queryTrace.queryText;
-                        if (th == null) {
-                            logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryTrace);
-                        } else {
-                            logError(th, sqlId, sqlText, executionContext, beginNanos, readers);
-                        }
-                    } finally {
-                        // Unregister must follow the base cursor close call to avoid concurrent access
-                        // to cleaned up circuit breaker.
-                        registry.unregister(sqlId, executionContext);
-                        if (executionContext.getCairoEngine().getConfiguration().freeLeakedReaders()) {
-                            Misc.freeObjListAndClear(readers);
-                        } else {
-                            // just clearing readers should fail leak test
-                            readers.clear();
-                        }
-                        // make sure we never double-unregister queries
-                        executionContext = null;
-                    }
-                }
+                unregisterAndCleanup(th);
             }
         }
     }

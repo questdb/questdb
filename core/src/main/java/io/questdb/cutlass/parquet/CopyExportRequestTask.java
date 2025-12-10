@@ -305,16 +305,16 @@ public class CopyExportRequestTask implements Mutable {
 
         public void finishExport() throws Exception {
             if (exportFinished) {
-                closeWriter();
+                clear();
                 return;
             }
             long buffer = finishStreamingParquetWrite(streamWriter);
             exportFinished = true;
-            long dataPtr = buffer + Long.BYTES;
-            long dataSize = Unsafe.getUnsafe().getLong(buffer);
+            streamExportCurrentPtr = buffer + Long.BYTES;
+            streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
             assert writeCallback != null;
-            writeCallback.onWrite(dataPtr, dataSize);
-            closeWriter();
+            writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+            clear();
             streamWriter = -1;
         }
 
@@ -341,8 +341,10 @@ public class CopyExportRequestTask implements Mutable {
             if (streamExportCurrentPtr != 0) {
                 assert writeCallback != null;
                 writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
-                totalRows += currentFrameRowCount;
-                entry.setStreamingSendRowCount(totalRows);
+                if (!exportFinished) {
+                    totalRows += currentFrameRowCount;
+                    entry.setStreamingSendRowCount(totalRows);
+                }
                 streamExportCurrentPtr = 0;
                 streamExportCurrentSize = 0;
                 return true;

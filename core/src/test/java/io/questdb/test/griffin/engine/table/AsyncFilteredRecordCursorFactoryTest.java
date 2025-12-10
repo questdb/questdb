@@ -1125,6 +1125,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void changePageFrameSizes(int minRows, int maxRows) {
+            sqlExecutionContext.changePageFrameSizes(minRows, maxRows);
+        }
+
+        @Override
         public void clearWindowContext() {
             sqlExecutionContext.clearWindowContext();
         }
@@ -1239,6 +1244,16 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public int getNowTimestampType() {
             return sqlExecutionContext.getNowTimestampType();
+        }
+
+        @Override
+        public int getPageFrameMaxRows() {
+            return sqlExecutionContext.getPageFrameMaxRows();
+        }
+
+        @Override
+        public int getPageFrameMinRows() {
+            return sqlExecutionContext.getPageFrameMinRows();
         }
 
         @Override

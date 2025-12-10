@@ -194,7 +194,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                             // native partition - convert to parquet
                             numOfFiles++;
                             if (emptyPartition) {
-                                PartitionEncoder.populateEmptyPartition(reader, partitionDescriptor, partitionIndex);
+                                PartitionEncoder.populateEmptyPartition(reader, partitionDescriptor);
                             } else {
                                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
                             }

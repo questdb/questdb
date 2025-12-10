@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.CopyDataProgressReporter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -52,7 +51,7 @@ import static io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
 public class HTTPSerialParquetExporter {
     private static final Log LOG = LogFactory.getLog(HTTPSerialParquetExporter.class);
     protected final CopyExportContext copyExportContext;
-    protected final ProgressReporter insertSelectReporter = new ProgressReporter();
+    protected final ExportProgressReporter insertSelectReporter = new ExportProgressReporter();
     protected final SqlExecutionContextImpl sqlExecutionContext;
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected CopyExportRequestTask task;
@@ -76,6 +75,7 @@ public class HTTPSerialParquetExporter {
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
         CreateTableOperation createOp = null;
         sqlExecutionContext.setNowAndFixClock(task.getNow(), task.getNowTimestampType());
+        sqlExecutionContext.changePageFrameSizes(task.getRowGroupSize(), task.getRowGroupSize());
 
         try {
             createOp = task.getCreateOp();
@@ -103,6 +103,7 @@ public class HTTPSerialParquetExporter {
                     CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
                     factory = cc.getRecordCursorFactory();
                     assert factory.supportsPageFrameCursor(); // simple temp table must support page frame cursor
+                    sqlExecutionContext.changePageFrameSizes(task.getRowGroupSize(), task.getRowGroupSize());
                     PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
                     task.setUpStreamPartitionParquetExporter(factory, pageFrameCursor, factory.getMetadata(), descending);
                     factory = null; // transfer ownership to the task
@@ -235,43 +236,5 @@ public class HTTPSerialParquetExporter {
         LOG.info().$("stream export completed [id=").$hexPadded(task.getCopyID())
                 .$(", totalRows=").$(exporter.getTotalRows())
                 .$(']').$();
-    }
-
-    static class ProgressReporter implements CopyDataProgressReporter {
-        private final StringSink copyIdHex = new StringSink();
-        private SqlExecutionCircuitBreaker circuitBreaker;
-        private CopyExportContext.ExportTaskEntry entry;
-        private CharSequence tableName;
-
-        public void of(SqlExecutionCircuitBreaker circuitBreaker, CopyExportContext.ExportTaskEntry entry, long copyId, CharSequence name) {
-            this.circuitBreaker = circuitBreaker;
-            this.entry = entry;
-            this.copyIdHex.clear();
-            Numbers.appendHex(copyIdHex, copyId, true);
-            this.tableName = name;
-        }
-
-        @Override
-        public void onProgress(Stage stage, long rows) {
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-            switch (stage) {
-                case Start:
-                    entry.setTotalRowCount(rows);
-                    break;
-                case Inserting:
-                    entry.setPopulatedRowCount(rows);
-                    LOG.info().$("populating temporary table progress [id=")
-                            .$(copyIdHex)
-                            .$(", table=")
-                            .$(tableName)
-                            .$(", rows=")
-                            .$(rows).$(']')
-                            .$();
-                    break;
-                case Finish:
-                    entry.setPopulatedRowCount(rows);
-                    break;
-            }
-        }
     }
 }

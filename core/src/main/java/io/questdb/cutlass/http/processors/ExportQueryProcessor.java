@@ -628,6 +628,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 var copyExportContext = engine.getCopyExportContext();
                 entry = copyExportContext.getEntry(state.copyID);
                 if (state.serialExporterInit) {
+                    serialParquetExporter.of(state.task);
                     serialParquetExporter.process();
                     return;
                 }
