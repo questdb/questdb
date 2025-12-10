@@ -278,57 +278,37 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void countLimit() {
-            if (lo < 0 && hiFunction == null) {
-                // last N rows
+            if (hiFunction == null) {
                 countRows();
-
-                // lo is negative, -5 for example
-                // if we have 12 records, we need to skip 12-5 = 7
-                // if we have 4 records, return all of them
-                if (rowCount > -lo) {
-                    skipRows(rowCount + lo);
+                if (lo >= 0) {
+                    // we must take the first `lo` rows
+                    limit = Math.min(rowCount, lo);
+                    size = limit;
                 } else {
-                    base.toTop();
+                    // we must take the last `lo` rows
+                    // Example: lo == -5
+                    // If we have 12 rows, we must skip 12-5 = 7 rows.
+                    // If we have 4 rows, we must skip nothing.
+                    if (rowCount > -lo) {
+                        skipRows(rowCount + lo);
+                    } else {
+                        base.toTop();
+                    }
+                    // set limit to return remaining rows
+                    limit = Math.min(rowCount, -lo);
+                    size = limit;
                 }
-                // set limit to return remaining rows
-                limit = Math.min(rowCount, -lo);
-                size = limit;
-            } else if (lo > -1 && hiFunction == null) {
-                // first N rows
-                countRows();
-                limit = Math.min(rowCount, lo);
-                size = limit;
             } else {
-                // at this stage we have 'hi'
-                if (lo < 0) {
-                    // right, here we are looking for something like
-                    // -10,-5 five rows away from tail
-
-                    if (lo < hi) {
-                        countRows();
-                        // when count < -hi we have empty cursor
-                        if (rowCount >= -hi) {
-                            if (rowCount < -lo) {
-                                base.toTop();
-                                // if we asked for -9,-4 but there are 7 records in cursor
-                                // we would first ignore last 4 and return first 3
-                                limit = rowCount + hi;
-                            } else {
-                                skipRows(rowCount + lo);
-                                limit = Math.min(rowCount, -lo + hi);
-                            }
-                            size = limit;
-                        } else {
-                            limit = size = 0;
+                // We have both `lo` and `hi`
+                if (lo >= 0) {
+                    countRows();
+                    if (hi >= 0) {
+                        limit = Math.max(0, Math.min(rowCount, hi) - lo);
+                        size = limit;
+                        if (lo > 0 && limit > 0) {
+                            skipRows(lo);
                         }
                     } else {
-                        // this is invalid bottom range, for example -3, -10
-                        limit = 0;
-                        size = 0;
-                    }
-                } else {
-                    if (hi < 0) {
-                        countRows();
                         limit = Math.max(rowCount - lo + hi, 0);
                         size = limit;
 
@@ -337,14 +317,30 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         } else {
                             base.toTop();
                         }
-                    } else {
-                        countRows();
-                        limit = Math.max(0, Math.min(rowCount, hi) - lo);
-                        size = limit;
-                        if (lo > 0 && limit > 0) {
-                            skipRows(lo);
-                        }
                     }
+                } else if (lo < hi) {
+                    // Both lo and hi are negative (we don't allow the negative, positive combination).
+                    countRows();
+                    // when count < -hi, we have an empty cursor
+                    if (rowCount >= -hi) {
+                        if (rowCount < -lo) {
+                            base.toTop();
+                            // if we asked for -9,-4 but there are 7 records in the cursor,
+                            // we would first ignore last 4 and return first 3
+                            limit = rowCount + hi;
+                        } else {
+                            skipRows(rowCount + lo);
+                            limit = Math.min(rowCount, -lo + hi);
+                        }
+                        size = limit;
+                    } else {
+                        limit = size = 0;
+                    }
+                } else {
+                    // Since the code in of() already ensured lo <= hi, coming here means lo == hi
+                    assert lo == hi : "lo != hi";
+                    limit = 0;
+                    size = 0;
                 }
             }
         }
