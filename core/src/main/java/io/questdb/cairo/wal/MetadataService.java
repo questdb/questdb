@@ -106,8 +106,6 @@ public interface MetadataService {
 
     void addViewColumn(CharSequence columnName, int columnType);
 
-    void alterView(SecurityContext securityContext);
-
     AttachDetachStatus attachPartition(long partitionTimestamp);
 
     void changeCacheFlag(int columnIndex, boolean isCacheOn);
@@ -147,6 +145,8 @@ public interface MetadataService {
      * to the table metadata always return false.
      */
     boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
+
+    void finalizeAlterView(SecurityContext securityContext);
 
     void forceRemovePartitions(LongList partitionTimestamps);
 

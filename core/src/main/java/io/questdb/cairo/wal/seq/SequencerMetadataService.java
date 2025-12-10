@@ -68,11 +68,6 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public void alterView(SecurityContext securityContext) {
-        metadata.alterView();
-    }
-
-    @Override
     public void changeColumnType(
             CharSequence columnName,
             int columnType,
@@ -111,6 +106,11 @@ public class SequencerMetadataService implements MetadataServiceStub {
     @Override
     public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
         return metadata.enableDeduplicationWithUpsertKeys();
+    }
+
+    @Override
+    public void finalizeAlterView(SecurityContext securityContext) {
+        metadata.alterView();
     }
 
     public TableRecordMetadata getMetadata() {

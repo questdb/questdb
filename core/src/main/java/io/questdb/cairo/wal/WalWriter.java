@@ -1979,11 +1979,6 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void alterView(SecurityContext securityContext) {
-            structureVersion++;
-        }
-
-        @Override
         public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
             int columnIndex = validateExistingColumnName(columnName, "cannot change type");
             validateNewColumnType(newType);
@@ -2013,6 +2008,11 @@ public class WalWriter implements TableWriterAPI {
             }
             structureVersion++;
             return isSubsetOfOldKeys;
+        }
+
+        @Override
+        public void finalizeAlterView(SecurityContext securityContext) {
+            structureVersion++;
         }
 
         @Override
@@ -2238,11 +2238,6 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void alterView(SecurityContext securityContext) {
-            metadata.alterView();
-        }
-
-        @Override
         public void changeColumnType(
                 CharSequence columnNameSeq,
                 int newType,
@@ -2329,6 +2324,11 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
             return metadata.enableDeduplicationWithUpsertKeys();
+        }
+
+        @Override
+        public void finalizeAlterView(SecurityContext securityContext) {
+            metadata.alterView();
         }
 
         @Override

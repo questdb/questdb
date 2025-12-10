@@ -100,6 +100,42 @@ public class AlterViewTest extends AbstractViewTest {
                     "]," +
                     "\"timestampIndex\":-1" +
                     "}");
+
+            final String query3 = "select t1.ts, t2.v from " + TABLE1 + " t1 join " + TABLE2 + " t2 on k where t2.ts > '1970-01-01T00:01:00'";
+            alterView(VIEW1, query3, TABLE1, TABLE2);
+
+            assertQueryAndPlan(
+                    """
+                            ts\tv
+                            1970-01-01T00:01:10.000000Z\t7
+                            1970-01-01T00:01:20.000000Z\t8
+                            """,
+                    VIEW1, "ts", false, false,
+                    """
+                            QUERY PLAN
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: t2.k=t1.k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table1
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: table2
+                                              intervals: [("1970-01-01T00:01:00.000001Z","MAX")]
+                            """,
+                    VIEW1
+            );
+
+            assertViewMetadata("{" +
+                    "\"columnCount\":2," +
+                    "\"columns\":[" +
+                    "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
+                    "{\"index\":1,\"name\":\"v\",\"type\":\"LONG\"}" +
+                    "]," +
+                    "\"timestampIndex\":-1" +
+                    "}");
         });
     }
 }

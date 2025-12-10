@@ -801,33 +801,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, e);
             }
         }
-
-        clearTodoAndCommitMetaStructureVersion();
-
-        try {
-            if (!Os.isWindows()) {
-                try {
-                    ff.fsyncAndClose(openRO(ff, path.$(), LOG));
-                } catch (CairoException e) {
-                    LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
-                            .$(", msg=").$safe(e.getFlyweightMessage())
-                            .$(", errno=").$(e.getErrno())
-                            .I$();
-                }
-            }
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
-        } catch (CairoError err) {
-            throw err;
-        } catch (Throwable th) {
-            throwDistressException(th);
-        }
-    }
-
-    @Override
-    public void alterView(SecurityContext securityContext) {
     }
 
     public long apply(AbstractOperation operation, long seqTxn) {
@@ -2227,6 +2200,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public void finalizeAlterView(SecurityContext securityContext) {
+        rewriteAndSwapMetadata(metadata);
+
+        clearTodoAndCommitMetaStructureVersion();
+
+        try {
+            if (!Os.isWindows()) {
+                try {
+                    ff.fsyncAndClose(openRO(ff, path.$(), LOG));
+                } catch (CairoException e) {
+                    LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
+                            .$(", msg=").$safe(e.getFlyweightMessage())
+                            .$(", errno=").$(e.getErrno())
+                            .I$();
+                }
+            }
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+        } catch (CairoError err) {
+            throw err;
+        } catch (Throwable th) {
+            throwDistressException(th);
+        }
+    }
+
+    @Override
     public void forceRemovePartitions(LongList partitionTimestamps) {
         long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
         long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
@@ -2860,7 +2861,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (timestamp) {
             metadata.clearTimestampIndex();
         }
-        rewriteAndSwapMetadata(metadata);
 
         try {
             // remove column objects
@@ -2878,13 +2878,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // remove column files
             removeColumnFiles(index, columnName, type, isIndexed);
-            clearTodoAndCommitMetaStructureVersion();
 
             finishColumnPurge();
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
             LOG.info().$("REMOVED column '").$safe(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
         } catch (CairoError err) {
             throw err;
@@ -3454,7 +3449,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 false
         );
 
-        rewriteAndSwapMetadata(metadata);
+        // maintain the sparse list of symbol writers
+        symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
 
         // add column objects
         configureColumn(columnType, false, columnCount);

@@ -466,7 +466,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             svc.addViewColumn(columnName, type);
         }
 
-        svc.alterView(securityContext);
+        svc.finalizeAlterView(securityContext);
     }
 
     private void applyAddColumn(MetadataService svc) {

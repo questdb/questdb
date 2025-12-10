@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
@@ -167,6 +168,7 @@ public class SqlUtil {
     }
 
     public static void collectTableAndColumnReferences(
+            @NotNull CairoEngine engine,
             @NotNull QueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
@@ -177,26 +179,26 @@ public class SqlUtil {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 if (column != null && column.getAst() != null) {
-                    collectColumnReferencesFromExpression(column.getAst(), m, depMap);
+                    collectColumnReferencesFromExpression(engine, column.getAst(), m, depMap);
                 }
             }
 
             // Process WHERE clause
             final ExpressionNode whereClause = m.getWhereClause();
             if (whereClause != null) {
-                collectColumnReferencesFromExpression(whereClause, m, depMap);
+                collectColumnReferencesFromExpression(engine, whereClause, m, depMap);
             }
 
             // Process JOIN conditions
             final ObjList<ExpressionNode> joinColumns = m.getJoinColumns();
-            collectColumnReferencesFromJoinColumns(joinColumns, m, depMap);
+            collectColumnReferencesFromJoinColumns(engine, joinColumns, m, depMap);
 
             // Process GROUP BY
             final ObjList<ExpressionNode> groupBy = m.getGroupBy();
             for (int i = 0, n = groupBy.size(); i < n; i++) {
                 final ExpressionNode groupByExpr = groupBy.getQuick(i);
                 if (groupByExpr != null) {
-                    collectColumnReferencesFromExpression(groupByExpr, m, depMap);
+                    collectColumnReferencesFromExpression(engine, groupByExpr, m, depMap);
                 }
             }
 
@@ -205,7 +207,7 @@ public class SqlUtil {
             for (int i = 0, n = orderBy.size(); i < n; i++) {
                 final ExpressionNode orderByExpr = orderBy.getQuick(i);
                 if (orderByExpr != null) {
-                    collectColumnReferencesFromExpression(orderByExpr, m, depMap);
+                    collectColumnReferencesFromExpression(engine, orderByExpr, m, depMap);
                 }
             }
 
@@ -232,15 +234,15 @@ public class SqlUtil {
             for (int i = 0, n = joinModels.size(); i < n; i++) {
                 final QueryModel joinModel = joinModels.getQuick(i);
                 if (joinModel != m) {
-                    collectColumnReferencesFromJoinColumns(joinModel.getJoinColumns(), m, depMap);
-                    collectTableAndColumnReferences(joinModel, depMap);
+                    collectColumnReferencesFromJoinColumns(engine, joinModel.getJoinColumns(), m, depMap);
+                    collectTableAndColumnReferences(engine, joinModel, depMap);
                 }
             }
 
             // Process union models
             final QueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
-                collectTableAndColumnReferences(unionModel, depMap);
+                collectTableAndColumnReferences(engine, unionModel, depMap);
             }
 
             m = m.getNestedModel();
@@ -1271,6 +1273,7 @@ public class SqlUtil {
     }
 
     private static void collectColumnReferencesFromExpression(
+            @NotNull CairoEngine engine,
             @NotNull ExpressionNode expr,
             @NotNull QueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
@@ -1284,11 +1287,13 @@ public class SqlUtil {
                     // This is a qualified column reference: table.column
                     String tableName = unquote(token.subSequence(0, dot)).toString();
                     String columnName = unquote(token.subSequence(dot + 1, token.length())).toString();
-                    addDependency(depMap, tableName, columnName);
+                    if (engine.getTableTokenIfExists(tableName) != null) {
+                        addDependency(depMap, tableName, columnName);
+                    }
                 } else {
                     final QueryModel nestedModel = model.getNestedModel();
                     final CharSequence tableName = nestedModel != null ? nestedModel.getTableName() : model.getTableName();
-                    if (tableName != null) {
+                    if (tableName != null && engine.getTableTokenIfExists(tableName) != null) {
                         addDependency(depMap, tableName.toString(), expr.token.toString());
                     }
                 }
@@ -1297,19 +1302,20 @@ public class SqlUtil {
 
         // Recursively process function arguments and operators
         for (int i = 0, n = expr.args.size(); i < n; i++) {
-            collectColumnReferencesFromExpression(expr.args.getQuick(i), model, depMap);
+            collectColumnReferencesFromExpression(engine, expr.args.getQuick(i), model, depMap);
         }
 
         // Process left and right hand sides for operators
         if (expr.lhs != null) {
-            collectColumnReferencesFromExpression(expr.lhs, model, depMap);
+            collectColumnReferencesFromExpression(engine, expr.lhs, model, depMap);
         }
         if (expr.rhs != null) {
-            collectColumnReferencesFromExpression(expr.rhs, model, depMap);
+            collectColumnReferencesFromExpression(engine, expr.rhs, model, depMap);
         }
     }
 
     private static void collectColumnReferencesFromJoinColumns(
+            @NotNull CairoEngine engine,
             @NotNull ObjList<ExpressionNode> joinColumns,
             @NotNull QueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
@@ -1317,7 +1323,7 @@ public class SqlUtil {
         for (int i = 0, n = joinColumns.size(); i < n; i++) {
             final ExpressionNode joinColumn = joinColumns.getQuick(i);
             if (joinColumn != null) {
-                collectColumnReferencesFromExpression(joinColumn, model, depMap);
+                collectColumnReferencesFromExpression(engine, joinColumn, model, depMap);
             }
         }
     }

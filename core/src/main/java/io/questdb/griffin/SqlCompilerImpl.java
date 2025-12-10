@@ -2359,7 +2359,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final ViewDefinition viewDefinition = new ViewDefinition();
         viewDefinition.init(viewToken, Chars.toString(viewSql));
-        SqlUtil.collectTableAndColumnReferences(executionModel.getQueryModel(), viewDefinition.getDependencies());
+        SqlUtil.collectTableAndColumnReferences(engine, executionModel.getQueryModel(), viewDefinition.getDependencies());
 
         try (BlockFileWriter viewDefinitionWriter = blockFileWriter) {
             Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(viewToken);
