@@ -148,6 +148,16 @@ function export_java {
 }
 
 function export_jemalloc() {
+    local arch=$(uname -m)
+
+    # Auto-enable jemalloc on Linux x86_64 for open source edition with bundled JRE
+    # if QDB_JEMALLOC is not explicitly set
+    if [[ -z "${QDB_JEMALLOC+x}" ]]; then
+        if [[ "$QDB_OS" == "Linux" && "$arch" == "x86_64" && "$JAVA_MAIN" == *"io.questdb"* && "$QDB_PACKAGE" == "withjre" ]]; then
+            QDB_JEMALLOC="true"
+        fi
+    fi
+
     if [[ "$QDB_JEMALLOC" = "true" ]]; then
       if [[ "$QDB_OS" != "Linux" ]]; then
           echo "Error: QDB_JEMALLOC is enabled but jemalloc is only supported on Linux (detected OS: $QDB_OS)"
