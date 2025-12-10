@@ -2062,7 +2062,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                                 N, 0.9f, 1
                         )
                 ) {
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter, true);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();

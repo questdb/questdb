@@ -40,7 +40,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_SQL_COPIER_COLUMN_THRESHOLD, 50);
+        node1.setProperty(PropertyKey.CAIRO_SQL_COPIER_CHUNKED, false);
     }
 
     @Test
