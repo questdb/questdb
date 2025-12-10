@@ -141,8 +141,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private long limit;
         private long lo;
         private long rowCount;
+        private long rowsToSkip;
         private long size;
-        private long skipToRows;
         // number of rows cursor will skip, it is used to display correct
         // query execution plan only
         private long skippedRows;
@@ -259,7 +259,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         public void toTop() {
             base.toTop();
             limit = countedLimit;
-            skipToRows = -1;
+            rowsToSkip = -1;
             skipRows(skippedRows);
             /*
              We now set skipToRows back to -1.
@@ -276,7 +276,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
              In the above example, the query acts like LIMIT 1 in both branches.
              */
-            skipToRows = -1;
+            rowsToSkip = -1;
         }
 
         private void countLimit() {
@@ -379,15 +379,15 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void skipRows(long rowCount) {
-            if (skipToRows == -1) {
-                skipToRows = Math.max(0, rowCount);
-                counter.set(skipToRows);
-                skippedRows = skipToRows;
+            if (rowsToSkip == -1) {
+                rowsToSkip = Math.max(0, rowCount);
+                counter.set(rowsToSkip);
+                skippedRows = rowsToSkip;
                 base.toTop();
             }
-            if (skipToRows > 0) {
+            if (rowsToSkip > 0) {
                 base.skipRows(counter);
-                skipToRows = 0;
+                rowsToSkip = 0;
                 counter.clear();
             }
         }
