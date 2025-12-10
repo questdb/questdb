@@ -129,12 +129,10 @@ public class BytecodeAssembler {
         putByte(0x98);
     }
 
-    // todo
     public void defineClass(int thisClassIndex) {
         defineClass(thisClassIndex, objectClassIndex);
     }
 
-    // todo
     public void defineClass(int thisClassIndex, int superclassIndex) {
         // access flags
         putShort(ACC_PUBLIC);
@@ -197,12 +195,10 @@ public class BytecodeAssembler {
         putByte(0x5b);
     }
 
-    // todo
     public void endMethod() {
         putInt(codeAttributeStart - 4, position() - codeAttributeStart);
     }
 
-    // todo
     public void endMethodCode() {
         int len = position() - codeStart;
         if (len > 64 * 1024) {
