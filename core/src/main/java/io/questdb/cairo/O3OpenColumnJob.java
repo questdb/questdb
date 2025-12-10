@@ -288,16 +288,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (srcDataTop > 0) {
                 // Size of data actually in the aux (fixed) file,
                 // THIS IS N+1 size, it used to be N offset, e.g. this used to be pointing at
-                // the last row of the aux vector (column)
+                // the last row of the aux vector (column).
                 final long oldAuxSize = columnTypeDriver.getAuxVectorSize(auxRowCount);
                 // Size of data in the aux (fixed) file if it didn't have column top.
-                // this size DOES NOT INCLUDE N+1, so it is N here
+                // this size DOES NOT INCLUDE N+1, so it is N here.
                 final long wouldBeAuxSize = columnTypeDriver.getAuxVectorSize(srcDataMax);
 
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
-                    // This value may be lower than auxRowCount.
-                    // We use it when copying non-column top column data.
-                    final long copyAuxRowCount = Math.max(0L, srcDataMax - srcDataTop);
                     // Extend the existing column down, we will be discarding it anyway.
                     // Materialize nulls at the end of the column and add non-null data to merge.
                     // Do all of this beyond existing written data, using column as a buffer.
@@ -318,6 +315,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // in the variable len file. Each null value takes 4 bytes for string
                     final long reservedBytesForColTopNulls = srcDataTop * columnTypeDriver.getDataVectorMinEntrySize();
                     srcDataSize += reservedBytesForColTopNulls;
+                    // This value may be lower than auxRowCount.
+                    // We use it when copying non-column top column data.
+                    final long copyAuxRowCount = Math.max(0L, srcDataMax - srcDataTop);
                     if (copyAuxRowCount > 0) {
                         srcDataSize += columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, copyAuxRowCount - 1);
                     }
@@ -2477,8 +2477,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     TableUtils.setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
-                    if (srcDataMax > srcDataTop) {
-                        Vect.memcpy(srcDataFixAddr + wouldBeDataBytes, srcDataFixAddr, srcDataMax - srcDataTop << shl);
+                    // This value may be lower than srcDataActualBytes.
+                    final long srcCopyActualBytes = Math.max(0L, srcDataMax - srcDataTop) << shl;
+                    if (srcCopyActualBytes > 0) {
+                        Vect.memcpy(srcDataFixAddr + wouldBeDataBytes, srcDataFixAddr, srcCopyActualBytes);
                     }
                     srcDataTop = 0;
                     srcDataFixOffset = srcDataActualBytes;
