@@ -216,12 +216,18 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 hiFunction.init(base, executionContext);
             }
             lo = loFunction.getLong(null);
-            hi = hiFunction != null ? hiFunction.getLong(null) : -1;
-            // swap lo and hi if lo > hi
-            if (hi != -1 && hi < lo && Numbers.sameSign(lo, hi)) {
-                final long l = hi;
-                hi = lo;
-                lo = l;
+            if (hiFunction == null) {
+                hi = Long.MIN_VALUE;
+            } else {
+                hi = hiFunction.getLong(null);
+                if (lo < 0 && hi > 0) {
+                    throw SqlException.$(argPos, "LIMIT <negative>, <positive> is not allowed");
+                }
+                if (lo > hi && Numbers.sameSign(lo, hi)) {
+                    final long l = hi;
+                    hi = lo;
+                    lo = l;
+                }
             }
 
             rowCount = -1;
