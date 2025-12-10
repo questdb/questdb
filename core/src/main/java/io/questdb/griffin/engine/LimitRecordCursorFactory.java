@@ -160,7 +160,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 return;
             }
 
-            countLimitIfNotCounted();
+            ensureLimitCounted();
 
             while (limit > 0 && base.hasNext()) {
                 limit--;
@@ -190,7 +190,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            countLimitIfNotCounted();
+            ensureLimitCounted();
             if (limit <= 0) {
                 return false;
             }
@@ -250,7 +250,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public long size() {
-            countLimitIfNotCounted();
+            ensureLimitCounted();
             return size;
         }
 
@@ -349,14 +349,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        private void countLimitIfNotCounted() {
-            if (!isLimitCounted) {
-                countLimit();
-                countedLimit = limit;
-                isLimitCounted = true;
-            }
-        }
-
         private void countRows() {
             if (rowCount == -1) {
                 rowCount = base.size();
@@ -373,6 +365,14 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 rowCount = counter.get();
                 areRowsCounted = true;
                 counter.clear();
+            }
+        }
+
+        private void ensureLimitCounted() {
+            if (!isLimitCounted) {
+                countLimit();
+                countedLimit = limit;
+                isLimitCounted = true;
             }
         }
 
