@@ -194,14 +194,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     public static boolean isOpenColumnModeForAppend(int openColumnMode) {
-        switch (openColumnMode) {
-            case OPEN_MID_PARTITION_FOR_APPEND:
-            case OPEN_LAST_PARTITION_FOR_APPEND:
-            case OPEN_NEW_PARTITION_FOR_APPEND:
-                return true;
-            default:
-                return false;
-        }
+        return switch (openColumnMode) {
+            case OPEN_MID_PARTITION_FOR_APPEND, OPEN_LAST_PARTITION_FOR_APPEND, OPEN_NEW_PARTITION_FOR_APPEND -> true;
+            default -> false;
+        };
     }
 
     public static void mergeVarColumn(
@@ -273,8 +269,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         try {
             pathToNewPartition.trimTo(pplen);
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-            // srcDataMax is the row count in the existing column data
-            final long auxRowCount = srcDataMax - srcDataTop;
+            // srcDataMax is the row count in the existing column data.
+            // Use Math.max as a defensive guard against srcDataTop > srcDataMax edge cases.
+            final long auxRowCount = Math.max(0L, srcDataMax - srcDataTop);
             if (srcDataTop > 0 && tableWriter.isCommitReplaceMode()) {
                 // Adjust source data indexes for what we need for the range replace merge.
                 long dataMax = 0;
@@ -2440,7 +2437,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
         try {
             // Size of data actually in the file.
-            final long srcDataActualBytes = (srcDataMax - srcDataTop) << shl;
+            // Use Math.max as a defensive guard against srcDataTop > srcDataMax edge cases.
+            final long srcDataActualBytes = Math.max(0L, srcDataMax - srcDataTop) << shl;
             if (srcDataTop > 0 && tableWriter.isCommitReplaceMode()) {
                 // Adjust source data indexes for what we need for the range replace merge.
                 long dataMax = 0;
