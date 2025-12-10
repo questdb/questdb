@@ -65,6 +65,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private MemoryMR transitionMeta;
     private int ttlHoursOrMonths;
     private boolean walEnabled;
+    private int writerColumnCount;
 
     public TableReaderMetadata(CairoConfiguration configuration, TableToken tableToken) {
         try {
@@ -203,6 +204,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return ttlHoursOrMonths;
     }
 
+    public int getWriterColumnCount() {
+        return writerColumnCount;
+    }
+
     @Override
     public boolean isIndexed(int columnIndex) {
         return getColumnMetadata(columnIndex).isSymbolIndexFlag();
@@ -289,6 +294,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     public void readFromMem(MemoryR mem) {
         int columnCount = mem.getInt(TableUtils.META_OFFSET_COUNT);
+        this.writerColumnCount = columnCount;
         int timestampIndex = mem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.partitionBy = mem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
         this.tableId = mem.getInt(TableUtils.META_OFFSET_TABLE_ID);
