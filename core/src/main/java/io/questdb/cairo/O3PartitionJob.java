@@ -910,7 +910,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
                         }
                     } else {
-                        // Replacing data with no O3 data, e.g. effectively deleting a part of the partition
+                        // Replacing data with no O3 data, e.g. effectively deleting a part of the partition.
 
                         // O3 data is supposed to be merged into the middle of an existing partition
                         // but there is no O3 data, it's a replacing commit with no new rows, just the range.
