@@ -115,7 +115,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         }
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final ExecutionModel executionModel = compiler.testCompileModel(viewDefinition.getViewSql(), compilerExecutionContext);
+            final ExecutionModel executionModel = compiler.generateExecutionModel(viewDefinition.getViewSql(), compilerExecutionContext);
             if (reset(viewToken, updateTimestamp)) {
                 // view went from invalid to valid state, we should sync view metadata
                 syncViewMetadata(viewToken, compiler, executionModel);

@@ -291,7 +291,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     sink.clear();
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         for (String frameType : frameTypes) {
-                            ExecutionModel model = compiler.testCompileModel(
+                            ExecutionModel model = compiler.generateExecutionModel(
                                     "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 10 following) from xyz".replace("#FRAME", frameType),
                                     sqlExecutionContext
                             );
@@ -11914,7 +11914,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             b.append('f').append(i);
         }
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            QueryModel st = (QueryModel) compiler.testCompileModel(b, sqlExecutionContext);
+            QueryModel st = (QueryModel) compiler.generateExecutionModel(b, sqlExecutionContext);
             Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
         }
     }
@@ -12504,7 +12504,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 () -> {
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         for (String frameType : frameTypes) {
-                            ExecutionModel model = compiler.testCompileModel(query.replace("#FRAME", frameType), sqlExecutionContext);
+                            ExecutionModel model = compiler.generateExecutionModel(query.replace("#FRAME", frameType), sqlExecutionContext);
                             Assert.assertEquals(ExecutionModel.QUERY, model.getModelType());
                             sink.clear();
                             ((Sinkable) model).toSink(sink);

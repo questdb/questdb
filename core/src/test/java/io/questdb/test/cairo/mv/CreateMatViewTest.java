@@ -2681,7 +2681,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 for (DdlSerializationTest test : tests) {
                     sink.clear();
-                    final ExecutionModel model = compiler.testCompileModel(test.ddl, sqlExecutionContext);
+                    final ExecutionModel model = compiler.generateExecutionModel(test.ddl, sqlExecutionContext);
                     assertEquals(ExecutionModel.CREATE_MAT_VIEW, model.getModelType());
                     ((Sinkable) model).toSink(sink);
                     TestUtils.assertEquals(

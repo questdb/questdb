@@ -521,6 +521,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
+    public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
+        clear();
+        lexer.of(sqlText);
+        return compileExecutionModel(executionContext, false);
+    }
+
+    @Override
     public RecordCursorFactory generateSelectWithRetries(
             @Transient QueryModel initialQueryModel,
             @Nullable @Transient InsertModel insertModel,
@@ -579,13 +586,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     public void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
-    }
-
-    @Override
-    public ExecutionModel testCompileModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
-        clear();
-        lexer.of(sqlText);
-        return compileExecutionModel(executionContext, false);
     }
 
     @TestOnly
@@ -2342,7 +2342,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final ExecutionModel executionModel;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            executionModel = compiler.testCompileModel(viewSql, executionContext);
+            executionModel = compiler.generateExecutionModel(viewSql, executionContext);
             try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext)) {
                 final RecordMetadata newMetadata = factory.getMetadata();
                 for (int i = 0, n = newMetadata.getColumnCount(); i < n; i++) {
@@ -3621,7 +3621,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.testCompileModel(viewDefinition.getViewSql(), compileViewContext);
+            compiler.generateExecutionModel(viewDefinition.getViewSql(), compileViewContext);
         } catch (SqlException | CairoException e) {
             // position would be reported from the view SQL, so we are overriding it with 14 which
             // points to the name of the view in 'COMPILE VIEW viewName'

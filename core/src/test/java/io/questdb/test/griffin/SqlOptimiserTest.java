@@ -5718,7 +5718,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     protected QueryModel compileModel(String query) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
+            ExecutionModel model = compiler.generateExecutionModel(query, sqlExecutionContext);
             assertEquals(ExecutionModel.QUERY, model.getModelType());
             return (QueryModel) model;
         }
