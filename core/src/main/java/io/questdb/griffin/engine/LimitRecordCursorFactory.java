@@ -106,7 +106,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         // cursor must be open to calculate the limit details.
         if (cursor.base != null && loFunc != null && loFunc.getLong(null) != Numbers.LONG_NULL) {
             cursor.ensureSizeResolved();
-            sink.meta("skip-over-rows").val(cursor.skippedRows);
+            sink.meta("skip-over-rows").val(cursor.baseRowsToSkip);
             sink.meta("limit").val(cursor.size);
         }
         sink.child(base);
@@ -135,15 +135,14 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private boolean areRowsCounted;
         private RecordCursor base;
         private long baseRowCount;
+        private long baseRowsToSkip;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long hi;
         private boolean isSizeResolved;
         private long lo;
+        private long pendingBaseRowsToSkip;
         private long remaining;
-        private long rowsToSkip;
         private long size;
-        // number of rows the cursor will skip, only used to display correct query execution plan
-        private long skippedRows;
 
         public LimitRecordCursor(Function leftFunction, Function rightFunction, int argPos) {
             this.leftFunction = leftFunction;
@@ -153,8 +152,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (areRowsCounted && remaining > 0) {
-                counter.add(size);
+            if (isSizeResolved) {
+                counter.add(remaining);
                 remaining = 0;
                 return;
             }
@@ -237,8 +236,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
             baseRowCount = -1;
             size = -1;
-            rowsToSkip = -1;
-            skippedRows = 0;
+            pendingBaseRowsToSkip = -1;
+            baseRowsToSkip = 0;
             isSizeResolved = false;
             areRowsCounted = false;
             counter.clear();
@@ -264,10 +263,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         public void toTop() {
             base.toTop();
             remaining = size;
-            rowsToSkip = -1;
-            skipRows(skippedRows);
+            pendingBaseRowsToSkip = -1;
+            skipBaseRows(baseRowsToSkip);
             /*
-             Now set rowsToSkip back to -1.
+             Now set pendingBaseRowsToSkip back to -1.
              skipRows() needs it at -1 to function correctly.
              In toTop(), we skipRows() in the base cursor, which is fine.
              But in resolveSize(), we have to do the same thing.
@@ -280,7 +279,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
              In the above example, the query acts like LIMIT 1 in both branches.
              */
-            rowsToSkip = -1;
+            pendingBaseRowsToSkip = -1;
         }
 
         private void ensureRowsCounted() {
@@ -381,16 +380,16 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             isSizeResolved = true;
         }
 
-        private void skipRows(long rowCount) {
-            if (rowsToSkip == -1) {
-                rowsToSkip = Math.max(0, rowCount);
-                counter.set(rowsToSkip);
-                skippedRows = rowsToSkip;
+        private void skipBaseRows(long rowCount) {
+            if (pendingBaseRowsToSkip == -1) {
+                baseRowsToSkip = Math.max(0, rowCount);
+                counter.set(baseRowsToSkip);
+                pendingBaseRowsToSkip = baseRowsToSkip;
                 base.toTop();
             }
-            if (rowsToSkip > 0) {
+            if (pendingBaseRowsToSkip > 0) {
                 base.skipRows(counter);
-                rowsToSkip = 0;
+                pendingBaseRowsToSkip = 0;
                 counter.clear();
             }
         }
