@@ -44,24 +44,244 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableAsSelectWithManyColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create source table with 200 columns
+            buildCreateTableSql(sink, "src", 200);
+            execute(sink);
+
+            // Insert test data
+            sink.clear();
+            sink.put("insert into src values (0");
+            for (int col = 0; col < 200; col++) {
+                sink.put(", ").put(col);
+            }
+            sink.put(")");
+            execute(sink);
+
+            // Create table using SELECT from source
+            execute("create table dst as (select * from src)");
+
+            // Verify
+            assertSql("count\n1\n", "select count(*) from dst");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectWithManyColumnsAndRows() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create source table with 100 columns using long_sequence
+            sink.clear();
+            sink.put("create table src as (select cast(x * 1000000 as timestamp) as ts");
+            for (int col = 0; col < 100; col++) {
+                sink.put(", cast((x * 100 + ").put(col).put(") % 10000 as int) as col").put(col);
+            }
+            sink.put(" from long_sequence(100)) timestamp(ts) partition by DAY");
+            execute(sink);
+
+            // Create table using SELECT from source
+            execute("create table dst as (select * from src)");
+
+            // Verify
+            assertSql("count\n100\n", "select count(*) from dst");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectWithMixedTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create source table with many columns of various types
+            sink.clear();
+            sink.put("create table src (ts timestamp");
+            for (int i = 0; i < 30; i++) {
+                sink.put(", int_col").put(i).put(" int");
+                sink.put(", long_col").put(i).put(" long");
+                sink.put(", double_col").put(i).put(" double");
+            }
+            sink.put(") timestamp(ts) partition by DAY");
+            execute(sink);
+
+            // Insert test data
+            sink.clear();
+            sink.put("insert into src values (0");
+            for (int i = 0; i < 30; i++) {
+                sink.put(", ").put(i);       // int
+                sink.put(", ").put(i * 100L); // long
+                sink.put(", ").put(i * 1.5);  // double
+            }
+            sink.put(")");
+            execute(sink);
+
+            // Create table using SELECT from source
+            execute("create table dst as (select * from src)");
+
+            // Verify
+            assertSql("count\n1\n", "select count(*) from dst");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create source table with 100 columns
+            buildCreateTableSql(sink, "src", 100);
+            execute(sink);
+
+            // Insert rows with null values
+            sink.clear();
+            sink.put("insert into src values (0");
+            for (int col = 0; col < 100; col++) {
+                sink.put(", null");
+            }
+            sink.put(")");
+            execute(sink);
+
+            sink.clear();
+            sink.put("insert into src values (1000000");
+            for (int col = 0; col < 100; col++) {
+                sink.put(", ").put(col);
+            }
+            sink.put(")");
+            execute(sink);
+
+            // Create table using SELECT from source
+            execute("create table dst as (select * from src)");
+
+            // Verify
+            assertSql("count\n2\n", "select count(*) from dst");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectWithPartitionAndFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create source table with many columns using long_sequence
+            // Space rows across different days (86400000000 microseconds = 1 day)
+            sink.clear();
+            sink.put("create table src as (select cast((x - 1) * 86400000000L as timestamp) as ts");
+            for (int col = 0; col < 50; col++) {
+                sink.put(", cast((x - 1) * 100 + ").put(col).put(" as int) as col").put(col);
+            }
+            sink.put(" from long_sequence(20)) timestamp(ts) partition by DAY");
+            execute(sink);
+
+            // Create table using SELECT with WHERE clause
+            execute("create table dst as (select * from src where col0 >= 500)");
+
+            // Verify - should have rows 5-19 (15 rows total)
+            assertSql("count\n15\n", "select count(*) from dst");
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectWithStringsAndSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create source table with string and symbol columns using long_sequence
+            sink.clear();
+            sink.put("create table src as (select cast((x - 1) * 1000000 as timestamp) as ts");
+            for (int i = 0; i < 50; i++) {
+                sink.put(", concat('str', x - 1, '_', ").put(i).put(") as str_col").put(i);
+                sink.put(", cast(concat('sym', (x - 1) % 5) as symbol) as sym_col").put(i);
+            }
+            sink.put(" from long_sequence(10)) timestamp(ts) partition by DAY");
+            execute(sink);
+
+            // Create table using SELECT from source
+            execute("create table dst as (select * from src)");
+
+            // Verify
+            assertSql("count\n10\n", "select count(*) from dst");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectWithTypeWidening() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create source table with narrower types
+            sink.clear();
+            sink.put("create table src (ts timestamp");
+            for (int i = 0; i < 50; i++) {
+                sink.put(", byte_col").put(i).put(" byte");
+                sink.put(", short_col").put(i).put(" short");
+            }
+            sink.put(") timestamp(ts) partition by DAY");
+            execute(sink);
+
+            // Insert test data
+            sink.clear();
+            sink.put("insert into src values (0");
+            for (int i = 0; i < 50; i++) {
+                sink.put(", ").put(i % 127);       // byte
+                sink.put(", ").put(i * 100);       // short
+            }
+            sink.put(")");
+            execute(sink);
+
+            // Create table with wider types using CAST
+            sink.clear();
+            sink.put("create table dst as (select ts");
+            for (int i = 0; i < 50; i++) {
+                sink.put(", cast(byte_col").put(i).put(" as long) as long_from_byte").put(i);
+                sink.put(", cast(short_col").put(i).put(" as long) as long_from_short").put(i);
+            }
+            sink.put(" from src)");
+            execute(sink);
+
+            // Verify data was copied correctly
+            assertSql("count\n1\n", "select count(*) from dst");
+
+            // Spot check some values
+            assertSql("long_from_byte0\tlong_from_byte25\tlong_from_short0\tlong_from_short25\n" +
+                    "0\t25\t0\t2500\n",
+                    "select long_from_byte0, long_from_byte25, long_from_short0, long_from_short25 from dst");
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectVeryWideTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Test with 500 columns to stress the loop-based implementation
+            buildCreateTableSqlWithTypes(sink, "src", 500, "c", i -> "int");
+            execute(sink);
+
+            // Insert a row
+            sink.clear();
+            sink.put("insert into src values (0");
+            for (int i = 0; i < 500; i++) {
+                sink.put(", ").put(i);
+            }
+            sink.put(")");
+            execute(sink);
+
+            // Create table using SELECT from source
+            execute("create table dst as (select * from src)");
+
+            // Verify
+            assertSql("count\n1\n", "select count(*) from dst");
+            assertSql("c0\tc250\tc499\n0\t250\t499\n", "select c0, c250, c499 from dst");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
+        });
+    }
+
+    @Test
     public void testBatchInsertWithManyColumns() throws Exception {
         assertMemoryLeak(() -> {
-            buildCreateTableSql(sink, "src", 200);
+            // Create source table with 200 columns using long_sequence
+            sink.clear();
+            sink.put("create table src as (select cast((x - 1) * 1000 as timestamp) as ts");
+            for (int col = 0; col < 200; col++) {
+                sink.put(", cast((x - 1 + ").put(col).put(") % 1000 as int) as col").put(col);
+            }
+            sink.put(" from long_sequence(1000)) timestamp(ts) partition by DAY");
             execute(sink);
 
             buildCreateTableSql(sink, "dst", 200);
             execute(sink);
-
-            // Insert 1000 rows
-            for (int row = 0; row < 1000; row++) {
-                sink.clear();
-                sink.put("insert into src values (").put(row * 1000L);
-                for (int col = 0; col < 200; col++) {
-                    sink.put(", ").put((row + col) % 1000);
-                }
-                sink.put(")");
-                execute(sink);
-            }
 
             // Batch copy
             execute("insert into dst select * from src");
@@ -245,13 +465,13 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectWithWhere() throws Exception {
         assertMemoryLeak(() -> {
-            // Create table with 'id' column + 50 regular columns
+            // Create source table with 'id' column + 50 regular columns using long_sequence
             sink.clear();
-            sink.put("create table src (ts timestamp, id int");
+            sink.put("create table src as (select cast((x - 1) * 1000000 as timestamp) as ts, cast(x - 1 as int) as id");
             for (int i = 0; i < 50; i++) {
-                sink.put(", col").put(i).put(" int");
+                sink.put(", cast((x - 1) * 100 + ").put(i).put(" as int) as col").put(i);
             }
-            sink.put(") timestamp(ts) partition by DAY");
+            sink.put(" from long_sequence(10)) timestamp(ts) partition by DAY");
             execute(sink);
 
             sink.clear();
@@ -261,17 +481,6 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             }
             sink.put(") timestamp(ts) partition by DAY");
             execute(sink);
-
-            // Insert 10 rows
-            for (int row = 0; row < 10; row++) {
-                sink.clear();
-                sink.put("insert into src values (").put(row * 1000000L).put(", ").put(row);
-                for (int col = 0; col < 50; col++) {
-                    sink.put(", ").put(row * 100 + col);
-                }
-                sink.put(")");
-                execute(sink);
-            }
 
             // Insert only rows where id > 5
             execute("insert into dst select * from src where id > 5");
