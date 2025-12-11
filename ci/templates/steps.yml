@@ -189,7 +189,6 @@ steps:
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
       LD_PRELOAD: $(Build.SourcesDirectory)/core/src/main/bin/linux-x86-64/libjemalloc.so
-      MALLOC_CONF: stats_print:true
     timeoutInMinutes: 55
     condition: |
       and(
