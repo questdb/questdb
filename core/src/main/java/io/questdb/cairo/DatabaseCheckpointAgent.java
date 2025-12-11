@@ -80,8 +80,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final ObjList<TxnScoreboard> scoreboards = new ObjList<>();
     private final AtomicLong startedAtTimestamp = new AtomicLong(Numbers.LONG_NULL); // Numbers.LONG_NULL means no ongoing checkpoint
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
-    private SimpleWaitingLock walPurgeJobRunLock = null;
+    private boolean closed = false;
     private volatile boolean ownsWalPurgeJobRunLock = false;
+    private SimpleWaitingLock walPurgeJobRunLock = null;
 
     DatabaseCheckpointAgent(CairoEngine engine) {
         this.engine = engine;
@@ -112,6 +113,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             Misc.free(tableNameRegistryStore);
             Misc.freeObjList(scoreboards);
         } finally {
+            closed = true;
             lock.unlock();
         }
     }
@@ -355,8 +357,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         log.$(", table=").$(tableToken);
                     }
                     log.I$();
-                    if (e instanceof CairoException && tableToken != null) {
-                        CairoException ex = (CairoException) e;
+                    if (e instanceof CairoException ex && tableToken != null) {
                         // Copy exception message in case the exception instance is re-used
                         StringSink ss = Misc.getThreadLocalSink();
                         ss.put(ex.getFlyweightMessage());
@@ -427,6 +428,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     void checkpointRelease() throws SqlException {
         if (!lock.tryLock()) {
             throw SqlException.position(0).put("Another checkpoint command is in progress");
+        }
+        if (closed) {
+            // The checkpoint agent is already closed.
+            // This can happen if the server is shutting down and simultaneously a backup is finishing (this is a
+            // non-blocking operation for the server).
+            return;
         }
         try {
             releaseScoreboardTxns(true);
