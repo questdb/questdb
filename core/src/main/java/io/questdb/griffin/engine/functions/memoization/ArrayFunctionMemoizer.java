@@ -58,7 +58,11 @@ public final class ArrayFunctionMemoizer extends ArrayFunction implements Memoiz
     public ArrayView getArray(Record rec) {
         if (!validValue) {
             ArrayView view = fn.getArray(rec);
-            derivedArray.of(view);
+            if (view == null) {
+                derivedArray.ofNull();
+            } else {
+                derivedArray.of(view);
+            }
             validValue = true;
         }
         return derivedArray;

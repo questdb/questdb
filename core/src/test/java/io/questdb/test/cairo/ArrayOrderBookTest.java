@@ -134,7 +134,7 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     sql,
                     """
                             VirtualRecord
-                              functions: [memoize(round(asks[1,1]+bids[1,1]/2,-2)),asks[1]-mid_price*asks[2],mid_price-bids[1]*bids[2]]
+                              functions: [memoize(round(asks[1,1]+bids[1,1]/2,2)),asks[1]-mid_price*asks[2],mid_price-bids[1]*bids[2]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: order_book
