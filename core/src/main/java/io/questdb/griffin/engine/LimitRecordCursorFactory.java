@@ -270,7 +270,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
              Now set rowsToSkip back to -1.
              skipRows() needs it at -1 to function correctly.
              In toTop(), we skipRows() in the base cursor, which is fine.
-             But in resolveLimitRange(), we have to do the same thing.
+             But in resolveSize(), we have to do the same thing.
              If rowsToSkip == 0, instead of taking the correct count,
              it will set up to return 0 rows and the wrong answer.
              Example query that will break without this:
@@ -283,7 +283,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             rowsToSkip = -1;
         }
 
-        private void countRows() {
+        private void ensureRowsCounted() {
             if (baseRowCount == -1) {
                 baseRowCount = base.size();
                 if (baseRowCount > -1) {
@@ -318,14 +318,15 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             } else if (rightFunction == null) {
                 // There's only one LIMIT argument, could be positive or negative.
                 // We must first get the actual row count to resolve the LIMIT range.
-                countRows();
+                ensureRowsCounted();
                 if (lo == 0) {
                     // arg is positive, it's the upper bound (hi) and specifies how many rows to take from the start
                     size = Math.min(baseRowCount, hi);
                 } else {
                     // arg is negative, it's the lower bound (lo) and specifies how many rows to take from the end
                     long takeFromBack = -lo;
-                    if (takeFromBack < baseRowCount) {
+                    // edge case: lo == Long.MIN_VALUE == -lo
+                    if (takeFromBack != Long.MIN_VALUE && takeFromBack < baseRowCount) {
                         skipRows(baseRowCount - takeFromBack);
                         size = takeFromBack;
                     } else {
@@ -336,7 +337,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             } else {
                 // There are two LIMIT arguments, and they aren't equal.
                 // We must first get the actual row count to resolve the LIMIT range.
-                countRows();
+                ensureRowsCounted();
                 if (lo >= 0) {
                     // There are two LIMIT arguments, and the left one is non-negative.
                     if (hi >= 0) {
