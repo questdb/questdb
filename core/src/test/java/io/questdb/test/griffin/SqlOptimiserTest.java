@@ -505,7 +505,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query
             );
 
-            final String query2 = "select a_alias + 1, a_alias + 2 from (select a + 1 a_alias, b b1 from x) order by  b1";
+            final String query2 = "select a_alias + 1, a_alias + 2 from (select a + 1 a_alias, b + 1 b1 from x) order by  b1";
             assertPlanNoLeakCheck(
                     query2,
                     """
@@ -515,11 +515,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     VirtualRecord
                                       functions: [a_alias+1,a_alias+2,b1]
                                         VirtualRecord
-                                          functions: [memoize(a+1),b1]
-                                            SelectedRecord
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
+                                          functions: [memoize(a+1),b+1]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """
             );
             assertSql(
