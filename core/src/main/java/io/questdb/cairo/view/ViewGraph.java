@@ -83,11 +83,6 @@ public class ViewGraph implements Mutable {
         return definitionsByTableDirName.get(viewToken.getDirName());
     }
 
-    // todo: this is not threadsafe!
-    //  used by ViewsFunctionFactory only.
-    //  this code was copied from MatViewGraph, so same issue for MatViewsFunctionFactory.
-    //  we also do not seem to worry about a similar issue in TableNameRegistry.getTableTokens(...)
-    //  fix would require the use of a r/w lock most likely.
     public void getViews(ObjList<TableToken> sink) {
         for (ViewDefinition viewDefinition : definitionsByTableDirName.values()) {
             sink.add(viewDefinition.getViewToken());
