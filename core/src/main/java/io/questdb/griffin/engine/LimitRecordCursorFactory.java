@@ -134,12 +134,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private final Function rightFunction;
         private boolean areRowsCounted;
         private RecordCursor base;
+        private long baseRowCount;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long hi;
         private boolean isSizeResolved;
         private long lo;
         private long remaining;
-        private long rowCount;
         private long rowsToSkip;
         private long size;
         // number of rows the cursor will skip, only used to display correct query execution plan
@@ -235,7 +235,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
-            rowCount = -1;
+            baseRowCount = -1;
             size = -1;
             rowsToSkip = -1;
             skippedRows = 0;
@@ -284,19 +284,19 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void countRows() {
-            if (rowCount == -1) {
-                rowCount = base.size();
-                if (rowCount > -1) {
+            if (baseRowCount == -1) {
+                baseRowCount = base.size();
+                if (baseRowCount > -1) {
                     areRowsCounted = true;
                     return;
                 }
-                rowCount = 0;
+                baseRowCount = 0;
             }
 
             if (!areRowsCounted) {
                 base.calculateSize(circuitBreaker, counter);
                 base.toTop();
-                rowCount = counter.get();
+                baseRowCount = counter.get();
                 areRowsCounted = true;
                 counter.clear();
             }
@@ -321,16 +321,16 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 countRows();
                 if (lo == 0) {
                     // arg is positive, it's the upper bound (hi) and specifies how many rows to take from the start
-                    size = Math.min(rowCount, hi);
+                    size = Math.min(baseRowCount, hi);
                 } else {
                     // arg is negative, it's the lower bound (lo) and specifies how many rows to take from the end
                     long takeFromBack = -lo;
-                    if (takeFromBack < rowCount) {
-                        skipRows(rowCount - takeFromBack);
+                    if (takeFromBack < baseRowCount) {
+                        skipRows(baseRowCount - takeFromBack);
                         size = takeFromBack;
                     } else {
                         base.toTop();
-                        size = rowCount;
+                        size = baseRowCount;
                     }
                 }
             } else {
@@ -345,7 +345,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         // Therefore, we have lo < hi.
                         // They denote a range counting from start, 0-based.
                         // Lower bound is inclusive, upper bound is exclusive.
-                        size = Math.max(0, Math.min(rowCount, hi) - lo);
+                        size = Math.max(0, Math.min(baseRowCount, hi) - lo);
                         if (lo > 0 && size > 0) {
                             skipRows(lo);
                         }
@@ -353,7 +353,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         // Mixed-sign arguments, like `LIMIT 2, -2` or `LIMIT 0, -2`.
                         // Left is lower bound (inclusive) counting from start, zero-based.
                         // Right is upper bound (exclusive) counting from end. Last row is numbered -1.
-                        size = Math.max(rowCount - lo + hi, 0);
+                        size = Math.max(baseRowCount - lo + hi, 0);
                         if (lo > 0 && size > 0) {
                             skipRows(lo);
                         } else {
@@ -368,8 +368,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     // Therefore, we have lo < hi.
                     // They denote a range counting from the end. Last row is numbered -1.
                     // Lower bound is inclusive, upper bound is exclusive.
-                    long start = rowCount + lo;
-                    long end = rowCount + hi;
+                    long start = baseRowCount + lo;
+                    long end = baseRowCount + hi;
                     if (end < 0) {
                         size = 0;
                     } else if (start < 0) {
@@ -377,7 +377,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         size = end;
                     } else {
                         skipRows(start);
-                        size = Math.min(rowCount, end - start);
+                        size = Math.min(baseRowCount, end - start);
                     }
                 }
             }
