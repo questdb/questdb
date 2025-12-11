@@ -136,7 +136,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private RecordCursor base;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long hi;
-        private boolean isLimitResolved;
+        private boolean isSizeResolved;
         private long lo;
         private long remaining;
         private long resolvedLimit;
@@ -238,16 +238,17 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
             rowCount = -1;
             size = -1;
+            resolvedLimit = -1;
             rowsToSkip = -1;
             skippedRows = 0;
-            isLimitResolved = false;
+            isSizeResolved = false;
             areRowsCounted = false;
             counter.clear();
         }
 
         @Override
         public long preComputedStateSize() {
-            return RecordCursor.fromBool(areRowsCounted) + RecordCursor.fromBool(isLimitResolved) + base.preComputedStateSize();
+            return RecordCursor.fromBool(areRowsCounted) + RecordCursor.fromBool(isSizeResolved) + base.preComputedStateSize();
         }
 
         @Override
@@ -304,10 +305,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void ensureLimitResolved() {
-            if (!isLimitResolved) {
+            if (!isSizeResolved) {
                 resolveLimit();
                 remaining = resolvedLimit;
-                isLimitResolved = true;
+                isSizeResolved = true;
             }
         }
 
