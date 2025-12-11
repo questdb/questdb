@@ -222,6 +222,65 @@ public class ViewQueryTest extends AbstractViewTest {
     }
 
     @Test
+    public void testSelectFromViewWithDeclare() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 5";
+            createView(VIEW1, query1, TABLE1);
+
+            String query = VIEW1;
+            assertQueryAndPlan(
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
+                    query,
+                    """
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              keys: [ts,k]
+                              values: [max(v)]
+                              filter: 5<v
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
+                            """,
+                    VIEW1
+            );
+
+            query = "DECLARE @x := 1, @y := 2 select ts, @x as one, @y * v_max from " + VIEW1 + " where v_max > 6";
+            assertQueryAndPlan(
+                    """
+                            ts\tone\tcolumn
+                            1970-01-01T00:01:10.000000Z\t1\t14
+                            1970-01-01T00:01:20.000000Z\t1\t16
+                            """,
+                    query,
+                    null,
+                    true,
+                    false,
+                    """
+                            QUERY PLAN
+                            VirtualRecord
+                              functions: [ts,1,2*v_max]
+                                Filter filter: 6<v_max
+                                    Async Group By workers: 1
+                                      keys: [ts,k]
+                                      values: [max(v)]
+                                      filter: 5<v
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: table1
+                            """,
+                    VIEW1
+            );
+        });
+    }
+
+    @Test
     public void testSelectViewFields() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -333,65 +392,6 @@ public class ViewQueryTest extends AbstractViewTest {
     }
 
     @Test
-    public void testSelectWithDeclare() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(TABLE1);
-
-            final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 5";
-            createView(VIEW1, query1, TABLE1);
-
-            String query = VIEW1;
-            assertQueryAndPlan(
-                    """
-                            ts\tk\tv_max
-                            1970-01-01T00:01:00.000000Z\tk6\t6
-                            1970-01-01T00:01:10.000000Z\tk7\t7
-                            1970-01-01T00:01:20.000000Z\tk8\t8
-                            """,
-                    query,
-                    """
-                            QUERY PLAN
-                            Async Group By workers: 1
-                              keys: [ts,k]
-                              values: [max(v)]
-                              filter: 5<v
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: table1
-                            """,
-                    VIEW1
-            );
-
-            query = "DECLARE @x := 1, @y := 2 select ts, @x as one, @y * v_max from " + VIEW1 + " where v_max > 6";
-            assertQueryAndPlan(
-                    """
-                            ts\tone\tcolumn
-                            1970-01-01T00:01:10.000000Z\t1\t14
-                            1970-01-01T00:01:20.000000Z\t1\t16
-                            """,
-                    query,
-                    null,
-                    true,
-                    false,
-                    """
-                            QUERY PLAN
-                            VirtualRecord
-                              functions: [ts,1,2*v_max]
-                                Filter filter: 6<v_max
-                                    Async Group By workers: 1
-                                      keys: [ts,k]
-                                      values: [max(v)]
-                                      filter: 5<v
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: table1
-                            """,
-                    VIEW1
-            );
-        });
-    }
-
-    @Test
     public void testSpecifyTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -421,6 +421,95 @@ public class ViewQueryTest extends AbstractViewTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: table1
+                            """,
+                    VIEW1
+            );
+        });
+    }
+
+    @Test
+    public void testViewFilterPushedDownToTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 5";
+            createView(VIEW1, query1, TABLE1);
+
+            assertQueryAndPlan(
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:10.000000Z\tk7\t7
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
+                    VIEW1,
+                    """
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              keys: [ts,k]
+                              values: [max(v)]
+                              filter: 5<v
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
+                            """,
+                    VIEW1
+            );
+
+            assertQueryAndPlan(
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            """,
+                    VIEW1 + " where k = 'k6'",
+                    """
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              keys: [ts,k]
+                              values: [max(v)]
+                              filter: (5<v and k='k6')
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
+                            """,
+                    VIEW1
+            );
+
+            assertQueryAndPlan(
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:01:00.000000Z\tk6\t6
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
+                    VIEW1 + " where k in ('k6', 'k8')",
+                    """
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              keys: [ts,k]
+                              values: [max(v)]
+                              filter: (5<v and k in [k6,k8])
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
+                            """,
+                    VIEW1
+            );
+
+            assertQueryAndPlan(
+                    """
+                            ts\tk\tv_max
+                            1970-01-01T00:01:20.000000Z\tk8\t8
+                            """,
+                    "(" + VIEW1 + " where k in ('k6', 'k8')) where k = 'k8'",
+                    """
+                            QUERY PLAN
+                            Async Group By workers: 1
+                              keys: [ts,k]
+                              values: [max(v)]
+                              filter: (5<v and k in [k6,k8] and k='k8')
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
                             """,
                     VIEW1
             );
