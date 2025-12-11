@@ -93,7 +93,7 @@ public class ViewQueryTest extends AbstractViewTest {
                                   functions: [ts,v_max]
                                     Filter filter: 6<v_max
                                         Async Group By workers: 1
-                                          keys: [ts,k]
+                                          keys: [ts]
                                           values: [max(v)]
                                           filter: 5<v
                                             PageFrame
@@ -703,6 +703,62 @@ public class ViewQueryTest extends AbstractViewTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: table1
+                            """,
+                    VIEW1
+            );
+        });
+    }
+
+    @Test
+    public void testViewWithDeclare() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query1 = "DECLARE @x := 6 select ts, v from " + TABLE1 + " where v = @x";
+            execute("CREATE VIEW " + VIEW1 + " AS (" + query1 + ")");
+            drainWalAndViewQueues();
+            assertViewDefinition(VIEW1, query1, TABLE1);
+            assertViewDefinitionFile(VIEW1, query1);
+            assertViewState(VIEW1);
+
+            String query = VIEW1;
+            assertQueryAndPlan(
+                    """
+                            ts\tv
+                            1970-01-01T00:01:00.000000Z\t6
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    false,
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: v=6
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
+                            """,
+                    VIEW1
+            );
+
+            query = "DECLARE @x := 5 " + VIEW1;
+            assertQueryAndPlan(
+                    """
+                            ts\tv
+                            1970-01-01T00:00:50.000000Z\t5
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    false,
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: v=5
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: table1
                             """,
                     VIEW1
             );

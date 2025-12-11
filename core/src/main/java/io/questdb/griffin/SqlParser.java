@@ -127,7 +127,6 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCaseRef = this::rewriteCase;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
-    private final LowerCaseCharSequenceObjHashMap<ExpressionNode> viewDecl = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjectPool<GenericLexer> viewLexers;
     private final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
     };
@@ -464,16 +463,21 @@ public class SqlParser {
         }
         recordedViews.add(viewDefinition);
 
-        final QueryModel viewModel = compileViewQuery(viewDefinition, viewPosition);
+        final QueryModel viewModel = compileViewQuery(viewDefinition, viewPosition, model.getDecls());
+        viewModel.copyDeclsFrom(model);
         model.setNestedModel(viewModel);
         model.setNestedModelIsSubQuery(true);
     }
 
-    private QueryModel compileViewQuery(ViewDefinition viewDefinition, int viewPosition) throws SqlException {
+    private QueryModel compileViewQuery(
+            ViewDefinition viewDefinition,
+            int viewPosition,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
         final GenericLexer viewLexer = viewLexers.next();
         viewLexer.of(viewDefinition.getViewSql());
 
-        final QueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, viewDecl);
+        final QueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, decls);
         viewModel.setViewNameExpr(literal(viewDefinition.getViewToken().getTableName(), viewPosition));
         return viewModel;
     }
@@ -2096,9 +2100,6 @@ public class SqlParser {
         QueryModel model = queryModelPool.next();
         model.setModelPosition(modelPosition);
 
-        // copy decls so nested nodes can use them
-        model.copyDeclsFrom(decls);
-
         if (parentWithClauses != null) {
             model.getWithClauses().putAll(parentWithClauses);
         }
@@ -2110,6 +2111,10 @@ public class SqlParser {
             parseDeclare(lexer, model, sqlParserCallback);
             tok = tok(lexer, "'select', 'with', or table name expected");
         }
+
+        // merge decls passed from outside into the queries declares,
+        // values declared in the query could be overwritten with a value supplied from outside
+        model.copyDeclsFrom(decls);
 
         // [with]
         if (isWithKeyword(tok)) {
