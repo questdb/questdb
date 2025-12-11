@@ -105,9 +105,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         // cursor must be open to calculate the limit details.
         if (cursor.base != null && loFunc != null && loFunc.getLong(null) != Numbers.LONG_NULL) {
-            cursor.resolveLimitRange();
+            cursor.resolveLimit();
             sink.meta("skip-over-rows").val(cursor.skippedRows);
-            sink.meta("limit").val(cursor.limit);
+            sink.meta("limit").val(cursor.resolvedLimit);
         }
         sink.child(base);
     }
@@ -135,11 +135,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private boolean areRowsCounted;
         private RecordCursor base;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private long countedLimit;
         private long hi;
-        private boolean isLimitCounted;
-        private long limit;
+        private boolean isLimitResolved;
         private long lo;
+        private long remaining;
+        private long resolvedLimit;
         private long rowCount;
         private long rowsToSkip;
         private long size;
@@ -154,16 +154,16 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (areRowsCounted && limit > 0) {
+            if (areRowsCounted && remaining > 0) {
                 counter.add(size);
-                limit = 0;
+                remaining = 0;
                 return;
             }
 
-            ensureLimitCounted();
+            ensureLimitResolved();
 
-            while (limit > 0 && base.hasNext()) {
-                limit--;
+            while (remaining > 0 && base.hasNext()) {
+                remaining--;
                 counter.inc();
             }
         }
@@ -190,12 +190,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            ensureLimitCounted();
-            if (limit <= 0) {
+            ensureLimitResolved();
+            if (remaining <= 0) {
                 return false;
             }
             if (base.hasNext()) {
-                limit--;
+                remaining--;
                 return true;
             }
             return false;
@@ -240,14 +240,14 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             size = -1;
             rowsToSkip = -1;
             skippedRows = 0;
-            isLimitCounted = false;
+            isLimitResolved = false;
             areRowsCounted = false;
             counter.clear();
         }
 
         @Override
         public long preComputedStateSize() {
-            return RecordCursor.fromBool(areRowsCounted) + RecordCursor.fromBool(isLimitCounted) + base.preComputedStateSize();
+            return RecordCursor.fromBool(areRowsCounted) + RecordCursor.fromBool(isLimitResolved) + base.preComputedStateSize();
         }
 
         @Override
@@ -257,21 +257,21 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public long size() {
-            ensureLimitCounted();
+            ensureLimitResolved();
             return size;
         }
 
         @Override
         public void toTop() {
             base.toTop();
-            limit = countedLimit;
+            remaining = resolvedLimit;
             rowsToSkip = -1;
             skipRows(skippedRows);
             /*
              Now set rowsToSkip back to -1.
              skipRows() needs it at -1 to function correctly.
-             In toTop(), we skipRows() in the cursor, which is fine.
-             But in countLimit(), we have to do the same thing.
+             In toTop(), we skipRows() in the base cursor, which is fine.
+             But in resolveLimitRange(), we have to do the same thing.
              If rowsToSkip == 0, instead of taking the correct count,
              it will set up to return 0 rows and the wrong answer.
              Example query that will break without this:
@@ -303,35 +303,35 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        private void ensureLimitCounted() {
-            if (!isLimitCounted) {
-                resolveLimitRange();
-                countedLimit = limit;
-                isLimitCounted = true;
+        private void ensureLimitResolved() {
+            if (!isLimitResolved) {
+                resolveLimit();
+                remaining = resolvedLimit;
+                isLimitResolved = true;
             }
         }
 
-        private void resolveLimitRange() {
+        private void resolveLimit() {
             if (lo == hi) {
                 // There's either a single zero argument (LIMIT 0) or two equal arguments (LIMIT n, n).
                 // In both cases the result is an empty cursor.
-                limit = 0;
+                resolvedLimit = 0;
             } else if (rightFunction == null) {
                 // There's only one LIMIT argument, could be positive or negative.
                 // We must first get the actual row count to resolve the LIMIT range.
                 countRows();
                 if (lo == 0) {
                     // arg is positive, it's the upper bound (hi) and specifies how many rows to take from the start
-                    limit = Math.min(rowCount, hi);
+                    resolvedLimit = Math.min(rowCount, hi);
                 } else {
                     // arg is negative, it's the lower bound (lo) and specifies how many rows to take from the end
                     long takeFromBack = -lo;
                     if (takeFromBack < rowCount) {
                         skipRows(rowCount - takeFromBack);
-                        limit = takeFromBack;
+                        resolvedLimit = takeFromBack;
                     } else {
                         base.toTop();
-                        limit = rowCount;
+                        resolvedLimit = rowCount;
                     }
                 }
             } else {
@@ -346,16 +346,16 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         // Therefore, we have lo < hi.
                         // They denote a range counting from start, 0-based.
                         // Lower bound is inclusive, upper bound is exclusive.
-                        limit = Math.max(0, Math.min(rowCount, hi) - lo);
-                        if (lo > 0 && limit > 0) {
+                        resolvedLimit = Math.max(0, Math.min(rowCount, hi) - lo);
+                        if (lo > 0 && resolvedLimit > 0) {
                             skipRows(lo);
                         }
                     } else {
                         // Mixed-sign arguments, like `LIMIT 2, -2` or `LIMIT 0, -2`.
                         // Left is lower bound (inclusive) counting from start, zero-based.
                         // Right is upper bound (exclusive) counting from end. Last row is numbered -1.
-                        limit = Math.max(rowCount - lo + hi, 0);
-                        if (lo > 0 && limit > 0) {
+                        resolvedLimit = Math.max(rowCount - lo + hi, 0);
+                        if (lo > 0 && resolvedLimit > 0) {
                             skipRows(lo);
                         } else {
                             base.toTop();
@@ -372,17 +372,17 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     long start = rowCount + lo;
                     long end = rowCount + hi;
                     if (end < 0) {
-                        limit = 0;
+                        resolvedLimit = 0;
                     } else if (start < 0) {
                         base.toTop();
-                        limit = end;
+                        resolvedLimit = end;
                     } else {
                         skipRows(start);
-                        limit = Math.min(rowCount, end - start);
+                        resolvedLimit = Math.min(rowCount, end - start);
                     }
                 }
             }
-            size = limit;
+            size = resolvedLimit;
         }
 
         private void skipRows(long rowCount) {
