@@ -32,7 +32,6 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -99,7 +98,6 @@ public class GroupByUtils {
             IntList projectionFunctionPositions,
             IntList projectionFunctionFlags,
             GenericRecordMetadata projectionMetadata,
-            PriorityMetadata outPriorityMetadata,
             ArrayColumnTypes outValueTypes,
             ArrayColumnTypes outKeyTypes,
             ListColumnFilter outColumnFilter,
@@ -180,7 +178,6 @@ public class GroupByUtils {
                     }
                 }
                 projectionMetadata.add(m);
-                outPriorityMetadata.add(m);
             }
 
             // There are two iterations over the model's columns. The first iterations create value
@@ -208,11 +205,10 @@ public class GroupByUtils {
                         throw SqlException.invalidColumn(node.position, node.token);
                     }
 
-                    if (func instanceof GroupByFunction) {
+                    if (func instanceof GroupByFunction groupByFunc) {
                         // configure map value columns for group-by functions
                         // some functions may need more than one column in values,
                         // so we have them do all the work
-                        GroupByFunction groupByFunc = (GroupByFunction) func;
 
                         // insert the function into our function list even before we validate it support a given
                         // fill type. it's to close the function properly when the validation fails
@@ -441,11 +437,10 @@ public class GroupByUtils {
                         executionContext
                 );
 
-                if (function instanceof GroupByFunction) {
+                if (function instanceof GroupByFunction func) {
                     // configure map value columns for group-by functions
                     // some functions may need more than one column in values,
                     // so we have them do all the work
-                    GroupByFunction func = (GroupByFunction) function;
                     workerGroupByFunctions.add(func);
                 } else {
                     // it's a key function; we don't need it

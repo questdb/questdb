@@ -29,14 +29,20 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.str.StringSink;
 
-public final class LongFunctionMemoizer extends LongFunction implements MemoizerFunction {
+public final class StrFunctionMemoizer extends StrFunction implements MemoizerFunction {
     private final Function fn;
-    private boolean validValue;
-    private long value;
+    private final StringSink sinkA = new StringSink();
+    private final StringSink sinkB = new StringSink();
+    // Either null or pointing to the corresponding sink
+    private CharSequence cachedStrA;
+    private CharSequence cachedStrB;
+    private boolean validAValue;
+    private boolean validBValue;
 
-    public LongFunctionMemoizer(Function fn) {
+    public StrFunctionMemoizer(Function fn) {
         this.fn = fn;
     }
 
@@ -46,17 +52,50 @@ public final class LongFunctionMemoizer extends LongFunction implements Memoizer
     }
 
     @Override
-    public long getLong(Record rec) {
-        if (!validValue) {
-            value = fn.getLong(rec);
-            validValue = true;
-        }
-        return value;
+    public String getName() {
+        return "memoize";
     }
 
     @Override
-    public String getName() {
-        return "memoize";
+    public CharSequence getStrA(final Record rec) {
+        if (!validAValue) {
+            CharSequence strA;
+            if (validBValue) {
+                strA = cachedStrB;
+            } else {
+                strA = fn.getStrA(rec);
+            }
+            if (strA == null) {
+                cachedStrA = null;
+            } else {
+                sinkA.clear();
+                sinkA.put(strA);
+                cachedStrA = sinkA;
+            }
+            validAValue = true;
+        }
+        return cachedStrA;
+    }
+
+    @Override
+    public CharSequence getStrB(final Record rec) {
+        if (!validBValue) {
+            CharSequence strB;
+            if (validAValue) {
+                strB = cachedStrA;
+            } else {
+                strB = fn.getStrB(rec);
+            }
+            if (strB == null) {
+                cachedStrB = null;
+            } else {
+                sinkB.clear();
+                sinkB.put(strB);
+                cachedStrB = sinkB;
+            }
+            validBValue = true;
+        }
+        return cachedStrB;
     }
 
     @Override
@@ -71,7 +110,8 @@ public final class LongFunctionMemoizer extends LongFunction implements Memoizer
 
     @Override
     public void memoize(Record record) {
-        validValue = false;
+        validAValue = false;
+        validBValue = false;
     }
 
     @Override

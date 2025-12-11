@@ -115,6 +115,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
+    private final LowerCaseCharSequenceIntHashMap columnAliasRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
@@ -169,6 +170,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
+    private boolean isCteModel;
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
@@ -176,7 +178,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
     private boolean isUpdateModel;
-    private boolean isCteModel;
     private ExpressionNode joinCriteria;
     private int joinKeywordPosition;
     private int joinType = JOIN_INNER;
@@ -488,6 +489,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         forceBackwardScan = false;
         hintsMap.clear();
         asOfJoinTolerance = null;
+        columnAliasRefCounts.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -707,7 +709,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(updateTableModel, that.updateTableModel)
                 && Objects.equals(updateTableToken, that.updateTableToken)
                 && Objects.equals(decls, that.decls)
-                && Objects.equals(asOfJoinTolerance, that.asOfJoinTolerance);
+                && Objects.equals(asOfJoinTolerance, that.asOfJoinTolerance)
+                && Objects.equals(columnAliasRefCounts, that.columnAliasRefCounts);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -944,6 +947,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return this;
     }
 
+    public int getRefCount(CharSequence alias) {
+        return columnAliasRefCounts.get(alias);
+    }
+
     public ExpressionNode getSampleBy() {
         return sampleBy;
     }
@@ -1081,12 +1088,28 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, modelType, updateTableModel,
-                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls, columnAliasRefCounts
         );
+    }
+
+    public void incrementColumnRefCount(CharSequence alias, int refCount) {
+        if (columnAliasIndexes.get(alias) > -1) {
+            int keyIndex = columnAliasRefCounts.keyIndex(alias);
+            if (keyIndex < 0) {
+                int old = columnAliasRefCounts.valueAt(keyIndex);
+                columnAliasRefCounts.putAt(keyIndex, alias, old + refCount);
+            } else {
+                columnAliasRefCounts.putAt(keyIndex, alias, refCount);
+            }
+        }
     }
 
     public boolean isArtificialStar() {
         return artificialStar;
+    }
+
+    public boolean isCteModel() {
+        return isCteModel;
     }
 
     public boolean isDistinct() {
@@ -1132,10 +1155,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isUpdate() {
         return isUpdateModel;
-    }
-
-    public boolean isCteModel() {
-        return isCteModel;
     }
 
     /**
@@ -1347,12 +1366,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.forceBackwardScan = forceBackwardScan;
     }
 
-    public void setIsUpdate(boolean isUpdate) {
-        this.isUpdateModel = isUpdate;
-    }
-
     public void setIsCteModel(boolean isCteModel) {
         this.isCteModel = isCteModel;
+    }
+
+    public void setIsUpdate(boolean isUpdate) {
+        this.isUpdateModel = isUpdate;
     }
 
     public void setJoinCriteria(ExpressionNode joinCriteria) {

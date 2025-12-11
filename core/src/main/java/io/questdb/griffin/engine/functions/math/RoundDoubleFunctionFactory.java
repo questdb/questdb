@@ -137,7 +137,8 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("round(").val(arg).val(',').val(scale).val(')');
+            int i = -scale;
+            sink.val("round(").val(arg).val(',').val(i).val(')');
         }
     }
 
@@ -167,9 +168,7 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            int i = -scale;
-            PlanSink planSink = sink.val("round(").val(arg).val(',').val(i);
-            planSink.val(')');
+            sink.val("round(").val(arg).val(',').val(scale).val(')');
         }
     }
 }

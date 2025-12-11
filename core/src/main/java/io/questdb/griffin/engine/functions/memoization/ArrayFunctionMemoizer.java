@@ -24,20 +24,29 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DerivedArrayView;
+import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.Misc;
 
-public final class LongFunctionMemoizer extends LongFunction implements MemoizerFunction {
+public final class ArrayFunctionMemoizer extends ArrayFunction implements MemoizerFunction {
+    private final DerivedArrayView derivedArray = new DerivedArrayView();
     private final Function fn;
     private boolean validValue;
-    private long value;
 
-    public LongFunctionMemoizer(Function fn) {
+    public ArrayFunctionMemoizer(Function fn) {
         this.fn = fn;
+    }
+
+    @Override
+    public void close() {
+        MemoizerFunction.super.close();
+        Misc.free(derivedArray);
     }
 
     @Override
@@ -46,12 +55,17 @@ public final class LongFunctionMemoizer extends LongFunction implements Memoizer
     }
 
     @Override
-    public long getLong(Record rec) {
+    public ArrayView getArray(Record rec) {
         if (!validValue) {
-            value = fn.getLong(rec);
+            ArrayView view = fn.getArray(rec);
+            if (view == null) {
+                derivedArray.ofNull();
+            } else {
+                derivedArray.of(view);
+            }
             validValue = true;
         }
-        return value;
+        return derivedArray;
     }
 
     @Override
