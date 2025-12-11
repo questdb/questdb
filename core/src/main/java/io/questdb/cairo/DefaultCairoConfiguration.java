@@ -1352,6 +1352,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewRefreshMissingWalFilesFatal() {
+        return false;
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return false;
     }

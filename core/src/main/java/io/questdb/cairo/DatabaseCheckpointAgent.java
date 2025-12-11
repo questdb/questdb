@@ -31,6 +31,8 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
+import io.questdb.cairo.mv.WalTxnRangeLoader;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -45,6 +47,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -150,10 +153,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
                 }
 
-                // Suspend the WalPurgeJob if it's not an incremental backup
-                // Incremental backups do not copy WAL files, only partitions, so it is ok to purge WALs
-                // during incremental backup
-                if (walPurgeJobRunLock != null && !isIncrementalBackup) {
+                // Suspend the WalPurgeJob to prevent WAL _event files from being deleted.
+                // This is needed for both incremental and non-incremental backups because
+                // mat view refresh intervals are loaded from _event files during checkpoint creation.
+                if (walPurgeJobRunLock != null) {
                     final long timeout = configuration.getCircuitBreakerConfiguration().getQueryTimeout();
                     while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
                         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
@@ -177,11 +180,17 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     try (
                             MemoryCMARW mem = Vm.getCMARWInstance();
                             BlockFileReader matViewFileReader = new BlockFileReader(configuration);
-                            BlockFileWriter matViewFileWriter = new BlockFileWriter(ff, configuration.getCommitMode())
+                            BlockFileWriter matViewFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+                            WalTxnRangeLoader walTxnRangeLoader = new WalTxnRangeLoader(configuration)
                     ) {
                         MatViewStateReader matViewStateReader = null;
+                        // Map to track base table seqTxns for mat view interval updates
+                        // Key: base table name, Value: seqTxn included in checkpoint
+                        final CharSequenceObjHashMap<Long> baseTableSeqTxns = new CharSequenceObjHashMap<>();
+                        // List of mat views that need their refresh intervals updated
+                        final ObjList<TableToken> matViewsToUpdate = new ObjList<>();
 
-                        // Copy metadata files for all tables.
+                        // Phase 1: Copy metadata files for all tables and record base table seqTxns
                         for (int t = 0, n = ordered.size(); t < n; t++) {
                             tableToken = ordered.get(t);
                             if (engine.isTableDropped(tableToken)) {
@@ -233,6 +242,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
                                             matViewFileWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
                                             MatViewState.append(matViewStateReader, matViewFileWriter);
+
+                                            // Mark this mat view for potential interval update in phase 2
+                                            matViewsToUpdate.add(tableToken);
 
                                             LOG.info().$("materialized view state included in the checkpoint [view=").$(tableToken).I$();
                                         } else {
@@ -302,6 +314,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // Add entry to table name registry copy.
                                         tableNameRegistryStore.logAddTable(tableToken);
 
+                                        // Record the seqTxn for this table (may be a base table for mat views)
+                                        baseTableSeqTxns.put(tableToken.getTableName(), seqTxn);
+
                                         // Fetch sequencer metadata and the last committed sequencer txn.
                                         // The metadata will be dumped to the checkpoint, and lastTxn is stored
                                         // separately to know which sequencer txn the metadata corresponds to.
@@ -331,6 +346,20 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     Misc.free(reader);
                                 }
                             }
+                        }
+
+                        // Update mat view states with missing refresh intervals
+                        // This is only needed for incremental backups when WAL base table _event files are
+                        // not copied to with the checkpoint.
+                        if (isIncrementalBackup) {
+                            updateMatViewRefreshIntervals(
+                                    checkpointRoot,
+                                    matViewsToUpdate,
+                                    baseTableSeqTxns,
+                                    matViewFileReader,
+                                    matViewFileWriter,
+                                    walTxnRangeLoader
+                            );
                         }
 
                         path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(TableUtils.CHECKPOINT_META_FILE_NAME);
@@ -376,6 +405,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 throw e;
             }
         } finally {
+            if (isIncrementalBackup && ownsWalPurgeJobRunLock) {
+                walPurgeJobRunLock.unlock();
+                ownsWalPurgeJobRunLock = false;
+            }
             lock.unlock();
         }
     }
@@ -396,6 +429,113 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         scoreboardTxns.clear();
         Misc.freeObjList(scoreboards);
         scoreboards.clear();
+    }
+
+    /**
+     * Updates mat view states in the checkpoint with missing refresh intervals.
+     * This ensures the checkpoint mat view state includes intervals up to the checkpoint base table txn,
+     * so that after restore the mat view can do an incremental refresh instead of a full refresh.
+     */
+    private void updateMatViewRefreshIntervals(
+            CharSequence checkpointRoot,
+            ObjList<TableToken> matViewsToUpdate,
+            CharSequenceObjHashMap<Long> baseTableSeqTxns,
+            BlockFileReader matViewFileReader,
+            BlockFileWriter matViewFileWriter,
+            WalTxnRangeLoader walTxnRangeLoader
+    ) {
+        final LongList intervals = new LongList();
+        MatViewStateReader matViewStateReader = null;
+
+        for (int m = 0, n = matViewsToUpdate.size(); m < n; m++) {
+            TableToken matViewToken = matViewsToUpdate.get(m);
+            final MatViewGraph matViewGraph = engine.getMatViewGraph();
+            final MatViewDefinition matViewDefinition = matViewGraph.getViewDefinition(matViewToken);
+            if (matViewDefinition == null) {
+                continue;
+            }
+
+            final String baseTableName = matViewDefinition.getBaseTableName();
+            final Long checkpointBaseSeqTxn = baseTableSeqTxns.get(baseTableName);
+            if (checkpointBaseSeqTxn == null) {
+                // Base table not in checkpoint (might be non-WAL or dropped)
+                continue;
+            }
+
+            // Re-read the mat view state from checkpoint
+            path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+            if (!ff.exists(path.$())) {
+                continue;
+            }
+
+            matViewFileReader.of(path.$());
+            if (matViewStateReader == null) {
+                matViewStateReader = new MatViewStateReader();
+            }
+            matViewStateReader.of(matViewFileReader, matViewToken);
+
+            // Skip invalid mat views - they will do a full refresh on restore anyway
+            if (matViewStateReader.isInvalid()) {
+                continue;
+            }
+
+            // Check if we need to update intervals
+            final long mvLastRefreshTxn = Math.max(
+                    matViewStateReader.getLastRefreshBaseTxn(),
+                    matViewStateReader.getRefreshIntervalsBaseTxn()
+            );
+
+            if (mvLastRefreshTxn >= checkpointBaseSeqTxn || mvLastRefreshTxn < 0) {
+                // Mat view is up to date with checkpoint base table txn, or never refreshed
+                continue;
+            }
+            // Load missing intervals from WAL transactions
+            try {
+                TableToken baseTableToken = engine.verifyTableName(baseTableName);
+                intervals.clear();
+                walTxnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, intervals, mvLastRefreshTxn, checkpointBaseSeqTxn);
+
+                if (intervals.size() > 0) {
+                    // Merge with existing intervals
+                    final int dividerIndex = intervals.size();
+                    intervals.addAll(matViewStateReader.getRefreshIntervals());
+                    IntervalUtils.unionInPlace(intervals, dividerIndex);
+
+                    // Cap the number of intervals
+                    final int cacheCapacity = configuration.getMatViewMaxRefreshIntervals() << 1;
+                    if (intervals.size() > cacheCapacity) {
+                        intervals.setQuick(cacheCapacity - 1, intervals.getQuick(intervals.size() - 1));
+                        intervals.setPos(cacheCapacity);
+                    }
+                }
+
+                // Rewrite the mat view state with updated intervals
+                path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+                matViewFileWriter.of(path.$());
+                MatViewState.append(
+                        matViewStateReader.getLastRefreshTimestampUs(),
+                        matViewStateReader.getLastRefreshBaseTxn(),
+                        matViewStateReader.isInvalid(),
+                        matViewStateReader.getInvalidationReason(),
+                        matViewStateReader.getLastPeriodHi(),
+                        intervals.size() > 0 ? intervals : matViewStateReader.getRefreshIntervals(),
+                        checkpointBaseSeqTxn,
+                        matViewFileWriter
+                );
+
+                LOG.info().$("updated materialized view state with missing refresh intervals [view=").$(matViewToken)
+                        .$(", fromTxn=").$(mvLastRefreshTxn)
+                        .$(", toTxn=").$(checkpointBaseSeqTxn)
+                        .$(", intervalCount=").$(intervals.size() / 2)
+                        .I$();
+            } catch (CairoException e) {
+                // Log warning but don't fail the checkpoint - the mat view will do a full refresh on restore
+                LOG.error().$("could not load missing refresh intervals for mat view [view=").$(matViewToken)
+                        .$(", baseTable=").$(baseTableName)
+                        .$(", error=").$(e.getFlyweightMessage())
+                        .I$();
+            }
+        }
     }
 
     void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isLegacy, boolean incrementalBackup) throws SqlException {

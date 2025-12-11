@@ -427,28 +427,29 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
             };
 
-            engine.setWalPurgeJobRunLock(lock);
-            Assert.assertFalse(lock.isLocked());
-            execute("checkpoint create");
-            Assert.assertTrue(lock.isLocked());
             try {
-                assertExceptionNoLeakCheck("checkpoint create");
-            } catch (SqlException ex) {
+                engine.setWalPurgeJobRunLock(lock);
+                Assert.assertFalse(lock.isLocked());
+                execute("checkpoint create");
                 Assert.assertTrue(lock.isLocked());
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for CHECKPOINT RELEASE to be called"));
+                try {
+                    assertExceptionNoLeakCheck("checkpoint create");
+                } catch (SqlException ex) {
+                    Assert.assertTrue(lock.isLocked());
+                    Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for CHECKPOINT RELEASE to be called"));
+                }
+                execute("checkpoint release");
+                Assert.assertFalse(lock.isLocked());
+
+                //DB is empty
+                execute("checkpoint release");
+                Assert.assertFalse(lock.isLocked());
+
+                execute("checkpoint release");
+                Assert.assertFalse(lock.isLocked());
+            } finally {
+                engine.setWalPurgeJobRunLock(null);
             }
-            execute("checkpoint release");
-            Assert.assertFalse(lock.isLocked());
-
-
-            //DB is empty
-            execute("checkpoint release");
-            Assert.assertFalse(lock.isLocked());
-            lock.lock();
-            execute("checkpoint release");
-            Assert.assertFalse(lock.isLocked());
-
-            engine.setWalPurgeJobRunLock(null);
         });
     }
 
@@ -594,7 +595,6 @@ public class CheckpointTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointRestoresMatViewMetaFiles() throws Exception {
-        final String restartedId = "id2";
         assertMemoryLeak(() -> {
             testCheckpointCreateCheckTableMetadataFiles(
                     "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL",
@@ -870,21 +870,97 @@ public class CheckpointTest extends AbstractCairoTest {
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
 
-            execute("checkpoint create");
-
-            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
-            FilesFacade ff = configuration.getFilesFacade();
-            ff.removeQuiet(path.concat(TableUtils.CHECKPOINT_META_FILE_NAME).$());
-
-            engine.clear();
-            createTriggerFile();
+            SimpleWaitingLock lock = new SimpleWaitingLock();
             try {
-                engine.checkpointRecover();
-                Assert.fail("Exception expected");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "checkpoint metadata file does not exist");
+                engine.setWalPurgeJobRunLock(lock);
+                execute("checkpoint create");
+
+                Assert.assertTrue(lock.isLocked());
+
+                path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
+                FilesFacade ff = configuration.getFilesFacade();
+                ff.removeQuiet(path.concat(TableUtils.CHECKPOINT_META_FILE_NAME).$());
+
+                engine.clear();
+                createTriggerFile();
+                try {
+                    engine.checkpointRecover();
+                    Assert.fail("Exception expected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getMessage(), "checkpoint metadata file does not exist");
+                }
+                engine.checkpointRelease();
+
+                Assert.assertFalse(lock.isLocked());
+            } finally {
+                engine.setWalPurgeJobRunLock(null);
             }
-            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testIncrementalCheckpointPrepareRefreshesMatViewIntervals() throws Exception {
+        assertMemoryLeak(() -> {
+
+            // Create base table and mat view
+            execute("create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            String viewSql = "select sym, last(price) as price, ts from base_price sample by 1h";
+            execute("create materialized view price_1h as (" + viewSql + ") partition by DAY");
+            drainWalQueue();
+
+            // Insert data into base table and refresh mat view
+            execute("insert into base_price values ('BTC', 100.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            TableToken baseTableToken = engine.verifyTableName("base_price");
+            TableToken matViewToken = engine.verifyTableName("price_1h");
+
+            // Insert more data without refreshing the mat view
+            execute("insert into base_price values ('BTC', 200.0, '2024-01-01T01:00:00.000000Z')");
+            execute("insert into base_price values ('BTC', 300.0, '2024-01-01T02:00:00.000000Z')");
+            drainWalQueue();
+
+            // Get the base table's seqTxn after additional inserts
+            long seqTxnAfterMoreInserts = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getSeqTxn();
+
+            SimpleWaitingLock lock = new SimpleWaitingLock();
+            try {
+                engine.setWalPurgeJobRunLock(lock);
+
+                // Create incremental checkpoint
+                engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), true);
+
+                // Check that WAL purge job lock is released after checkpoint is done, no need to keep it until checkpiont release
+                Assert.assertFalse(lock.isLocked());
+
+                // Read the mat view state from the checkpoint
+                try (
+                        Path checkpointPath = new Path();
+                        io.questdb.cairo.file.BlockFileReader reader = new io.questdb.cairo.file.BlockFileReader(configuration)
+                ) {
+                    checkpointPath.of(configuration.getCheckpointRoot())
+                            .concat(configuration.getDbDirectory())
+                            .concat(matViewToken)
+                            .concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+
+                    reader.of(checkpointPath.$());
+                    io.questdb.cairo.mv.MatViewStateReader stateReader = new io.questdb.cairo.mv.MatViewStateReader();
+                    stateReader.of(reader, matViewToken);
+
+                    // Verify that the checkpoint mat view state has updated refreshIntervalsBaseTxn
+                    // It should match the base table's seqTxn at checkpoint time
+                    Assert.assertEquals("Checkpoint mat view state should have refreshIntervalsBaseTxn updated to checkpoint base table txn",
+                            seqTxnAfterMoreInserts, stateReader.getRefreshIntervalsBaseTxn());
+
+                    // Verify that refresh intervals were loaded (should not be empty since we have unrefreshed data)
+                    Assert.assertTrue("Checkpoint mat view state should have refresh intervals",
+                            stateReader.getRefreshIntervals().size() > 0);
+                }
+
+                execute("checkpoint release");
+            } finally {
+                engine.setWalPurgeJobRunLock(null);
+            }
         });
     }
 

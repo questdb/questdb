@@ -743,6 +743,8 @@ public interface CairoConfiguration {
 
     boolean isMatViewParallelSqlEnabled();
 
+    boolean isMatViewRefreshMissingWalFilesFatal();
+
     boolean isMultiKeyDedupEnabled();
 
     boolean isO3QuickSortEnabled();

@@ -605,7 +605,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled"),
     CAIRO_FILE_ASYNC_MUNMAP_ENABLED("cairo.file.async.munmap.enabled"),
     CAIRO_RMDIR_MAX_DEPTH("cairo.rmdir.max.depth"),
-    CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled");
+    CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled"),
+    DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL("debug.mat.view.refresh.missing.wal.files.fatal", false, true);
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

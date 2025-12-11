@@ -1452,11 +1452,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                 return viewState.getRefreshIntervals();
             } catch (CairoException ex) {
-//                LOG.critical().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
-//                        .$(", ex=").$safe(ex.getFlyweightMessage())
-//                        .$(", errno=").$(ex.getErrno())
-//                        .I$();
-//                throw ex;
+                if (configuration.isMatViewRefreshMissingWalFilesFatal()) {
+                    LOG.critical().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
+                            .$(", ex=").$safe(ex.getFlyweightMessage())
+                            .$(", errno=").$(ex.getErrno())
+                            .I$();
+                    throw ex;
+                }
                 LOG.error().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
                         .$(", ex=").$safe(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())

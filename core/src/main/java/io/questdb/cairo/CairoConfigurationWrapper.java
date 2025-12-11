@@ -1327,6 +1327,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewRefreshMissingWalFilesFatal() {
+        return getDelegate().isMatViewRefreshMissingWalFilesFatal();
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return getDelegate().isMultiKeyDedupEnabled();
     }

@@ -79,7 +79,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testBaseTableCanHaveColumnsAdded() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG, 341214560770050L, 1764958653161L);
+            Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0.2, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 1, true);
@@ -875,6 +875,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.0
         );
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, String.valueOf(rnd.nextBoolean()));
     }
 
     private Thread startRefreshJob(int workerId, AtomicBoolean stop, Rnd outsideRnd) {
