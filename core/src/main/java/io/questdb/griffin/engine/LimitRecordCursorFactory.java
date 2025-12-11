@@ -294,7 +294,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
             if (!areRowsCounted) {
                 base.calculateSize(circuitBreaker, counter);
-                base.toTop();
                 baseRowCount = counter.get();
                 areRowsCounted = true;
                 counter.clear();
@@ -305,79 +304,75 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (isSizeResolved) {
                 return;
             }
+            resolveSizeAndGotoTop();
+            remaining = size;
+            isSizeResolved = true;
+        }
+
+        private void resolveSizeAndGotoTop() {
             if (lo == hi) {
                 // There's either a single zero argument (LIMIT 0) or two equal arguments (LIMIT n, n).
                 // In both cases the result is an empty cursor.
                 size = 0;
-            } else if (rightFunction == null) {
+                return;
+            }
+            // We must first get the actual row count to resolve the LIMIT range.
+            ensureRowsCounted();
+            long startInclusive, endExclusive;
+            if (rightFunction == null) {
                 // There's only one LIMIT argument, could be positive or negative.
-                // We must first get the actual row count to resolve the LIMIT range.
-                ensureRowsCounted();
                 if (lo == 0) {
                     // arg is positive, it's the upper bound (hi) and specifies how many rows to take from the start
-                    size = Math.min(baseRowCount, hi);
+                    startInclusive = 0;
+                    endExclusive = hi;
                 } else {
                     // arg is negative, it's the lower bound (lo) and specifies how many rows to take from the end
-                    long takeFromBack = -lo;
-                    // edge case: lo == Long.MIN_VALUE == -lo
-                    if (takeFromBack != Long.MIN_VALUE && takeFromBack < baseRowCount) {
-                        skipRows(baseRowCount - takeFromBack);
-                        size = takeFromBack;
-                    } else {
-                        base.toTop();
-                        size = baseRowCount;
-                    }
-                }
-            } else {
-                // There are two LIMIT arguments, and they aren't equal.
-                // We must first get the actual row count to resolve the LIMIT range.
-                ensureRowsCounted();
-                if (lo >= 0) {
-                    // There are two LIMIT arguments, and the left one is non-negative.
-                    if (hi >= 0) {
-                        // Both arguments are non-negative.
-                        // The code in of() already ensured that lo <= hi for same-signed arguments.
-                        // Therefore, we have lo < hi.
-                        // They denote a range counting from start, 0-based.
-                        // Lower bound is inclusive, upper bound is exclusive.
-                        size = Math.max(0, Math.min(baseRowCount, hi) - lo);
-                        if (lo > 0 && size > 0) {
-                            skipRows(lo);
-                        }
-                    } else {
-                        // Mixed-sign arguments, like `LIMIT 2, -2` or `LIMIT 0, -2`.
-                        // Left is lower bound (inclusive) counting from start, zero-based.
-                        // Right is upper bound (exclusive) counting from end. Last row is numbered -1.
-                        size = Math.max(baseRowCount - lo + hi, 0);
-                        if (lo > 0 && size > 0) {
-                            skipRows(lo);
-                        } else {
-                            base.toTop();
-                        }
-                    }
-                } else {
-                    // There are two LIMIT arguments, and the left one is negative.
-                    // We already validated against the (negative, positive) combination.
-                    // Therefore, both arguments are negative.
-                    // The code in of() already ensured that lo <= hi for same-signed arguments.
-                    // Therefore, we have lo < hi.
-                    // They denote a range counting from the end. Last row is numbered -1.
-                    // Lower bound is inclusive, upper bound is exclusive.
-                    long start = baseRowCount + lo;
-                    long end = baseRowCount + hi;
-                    if (end < 0) {
-                        size = 0;
-                    } else if (start < 0) {
-                        base.toTop();
-                        size = end;
-                    } else {
-                        skipRows(start);
-                        size = Math.min(baseRowCount, end - start);
-                    }
+                    startInclusive = baseRowCount + lo;
+                    endExclusive = baseRowCount;
                 }
             }
-            remaining = size;
-            isSizeResolved = true;
+            // There are two LIMIT arguments, and they aren't equal.
+            else if (lo >= 0) {
+                // There are two LIMIT arguments, and the left one is non-negative.
+                if (hi >= 0) {
+                    // Both arguments are non-negative.
+                    // The code in of() already ensured that lo <= hi for same-signed arguments.
+                    // Therefore, we have lo < hi.
+                    // They denote a range counting from start, 0-based.
+                    // Lower bound is inclusive, upper bound is exclusive.
+                    startInclusive = lo;
+                    endExclusive = hi;
+                } else {
+                    // Mixed-sign arguments, like `LIMIT 2, -2` or `LIMIT 0, -2`.
+                    // Left arg is lower bound (inclusive) counting from start, 0-based.
+                    // Right arg is upper bound (exclusive) counting from end. Last row is numbered -1.
+                    // Whether left bound is greater than right bound depends on baseRowCount.
+                    startInclusive = lo;
+                    endExclusive = baseRowCount + hi;
+                }
+            } else {
+                // There are two LIMIT arguments, and the left one is negative.
+                // We already validated against the (negative, positive) combination.
+                // Therefore, both arguments are negative.
+                // The code in of() already ensured that lo <= hi for same-signed arguments.
+                // Therefore, we have lo < hi.
+                // They denote a range counting from the end. Last row is numbered -1.
+                // Lower bound is inclusive, upper bound is exclusive.
+                startInclusive = baseRowCount + lo;
+                endExclusive = baseRowCount + hi;
+            }
+            startInclusive = Math.max(0, startInclusive);
+            endExclusive = Math.min(baseRowCount, endExclusive);
+            if (startInclusive >= endExclusive) {
+                size = 0;
+                return;
+            }
+            size = endExclusive - startInclusive;
+            if (startInclusive == 0) {
+                base.toTop();
+            } else {
+                skipBaseRows(startInclusive);
+            }
         }
 
         private void skipBaseRows(long rowCount) {
