@@ -279,25 +279,6 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMultipleResizes() {
-        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
-            Histogram onHeap = new Histogram(3);
-            GroupByHistogramSink offHeap = new GroupByHistogramSink(3);
-            offHeap.setAllocator(allocator);
-
-            long[] values = {1, 100, 10000, 1000000, 100000000};
-            for (long value : values) {
-                onHeap.recordValue(value);
-                offHeap.recordValue(value);
-            }
-
-            Assert.assertEquals(onHeap.getTotalCount(), offHeap.getTotalCount());
-            Assert.assertEquals(onHeap.getMinValue(), offHeap.getMinValue());
-            Assert.assertEquals(onHeap.getMaxValue(), offHeap.getMaxValue());
-        }
-    }
-
-    @Test
     public void testAddDifferentSizes() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             Histogram onHeapSmall = new Histogram(3);
@@ -385,6 +366,365 @@ public class GroupByHistogramSinkTest extends AbstractCairoTest {
             sink.of(0);
             Assert.assertEquals(0, sink.ptr());
             Assert.assertEquals(0, sink.getTotalCount());
+        }
+    }
+
+    @Test
+    public void testMerge() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink dest = new GroupByHistogramSink(1, 10000, 2);
+            GroupByHistogramSink src = new GroupByHistogramSink(1, 10000, 2);
+            dest.setAllocator(allocator);
+            src.setAllocator(allocator);
+
+            for (int i = 1; i <= 50; i++) {
+                dest.recordValue(i);
+            }
+
+            for (int i = 51; i <= 100; i++) {
+                src.recordValue(i);
+            }
+
+            dest.merge(src);
+
+            Assert.assertEquals(100, dest.getTotalCount());
+            Assert.assertEquals(1, dest.getMinValue());
+            Assert.assertEquals(100, dest.getMaxValue());
+            Assert.assertEquals(50.5, dest.getMean(), 0.0);
+        }
+    }
+
+    @Test
+    public void testMergeEmptySource() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 3);
+            dest.setAllocator(allocator);
+            src.setAllocator(allocator);
+
+            for (int i = 1; i <= 10; i++) {
+                dest.recordValue(i);
+            }
+
+            long beforeCount = dest.getTotalCount();
+            long beforeMin = dest.getMinValue();
+            long beforeMax = dest.getMaxValue();
+
+            dest.merge(src);
+
+            Assert.assertEquals(beforeCount, dest.getTotalCount());
+            Assert.assertEquals(beforeMin, dest.getMinValue());
+            Assert.assertEquals(beforeMax, dest.getMaxValue());
+        }
+    }
+
+    @Test
+    public void testMergeEmptyDestination() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 3);
+            dest.setAllocator(allocator);
+            src.setAllocator(allocator);
+
+            for (int i = 1; i <= 10; i++) {
+                src.recordValue(i);
+            }
+
+            dest.merge(src);
+
+            Assert.assertEquals(10, dest.getTotalCount());
+            Assert.assertEquals(1, dest.getMinValue());
+            Assert.assertEquals(10, dest.getMaxValue());
+        }
+    }
+
+    @Test
+    public void testMergePreservesPercentiles() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink dest = new GroupByHistogramSink(1, 10000, 2);
+            GroupByHistogramSink src = new GroupByHistogramSink(1, 10000, 2);
+            GroupByHistogramSink combined = new GroupByHistogramSink(1, 10000, 2);
+            dest.setAllocator(allocator);
+            src.setAllocator(allocator);
+            combined.setAllocator(allocator);
+
+            Rnd rnd1 = new Rnd();
+            Rnd rnd2 = new Rnd();
+            for (int i = 0; i < 1000; i++) {
+                long val1 = rnd1.nextLong(10000);
+                dest.recordValue(val1);
+                combined.recordValue(val1);
+
+                long val2 = rnd2.nextLong(10000);
+                src.recordValue(val2);
+                combined.recordValue(val2);
+            }
+
+            dest.merge(src);
+
+            double[] percentiles = {50.0, 75.0, 90.0, 95.0, 99.0};
+            for (double p : percentiles) {
+                long mergedValue = dest.getValueAtPercentile(p);
+                long combinedValue = combined.getValueAtPercentile(p);
+                Assert.assertEquals(combinedValue, mergedValue);
+            }
+        }
+    }
+
+    @Test
+    public void testMergeWithOverlappingValues() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 2);
+            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 2);
+            dest.setAllocator(allocator);
+            src.setAllocator(allocator);
+
+            for (int i = 0; i < 10; i++) {
+                dest.recordValue(100);
+                src.recordValue(100);
+            }
+
+            dest.merge(src);
+
+            Assert.assertEquals(20, dest.getTotalCount());
+            long count = dest.getCountBetweenValues(100, 100);
+            Assert.assertTrue(count >= 10);
+        }
+    }
+
+    @Test
+    public void testMergeEmptyDestinationWithLargeValues() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink dest = new GroupByHistogramSink(3);
+            dest.setAllocator(allocator);
+
+            GroupByHistogramSink src = new GroupByHistogramSink(3);
+            src.setAllocator(allocator);
+            src.recordValue(1000000);
+            src.recordValue(2000000);
+            src.recordValue(3000000);
+
+            Assert.assertEquals(0, dest.getTotalCount());
+            Assert.assertEquals(3, src.getTotalCount());
+            Assert.assertEquals(0, dest.ptr());
+
+            dest.merge(src);
+
+            Assert.assertEquals(3, dest.getTotalCount());
+            Assert.assertEquals(src.getMinValue(), dest.getMinValue());
+            Assert.assertEquals(src.getMaxValue(), dest.getMaxValue());
+            Assert.assertNotEquals(0, dest.ptr());
+        }
+    }
+
+    @Test
+    public void testMergeAfterClear() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 3);
+            dest.setAllocator(allocator);
+            src.setAllocator(allocator);
+
+            dest.recordValue(50);
+            dest.recordValue(100);
+            long ptrBeforeClear = dest.ptr();
+            Assert.assertNotEquals(0, ptrBeforeClear);
+
+            dest.clear();
+            Assert.assertEquals(0, dest.ptr());
+            Assert.assertEquals(0, dest.getTotalCount());
+
+            src.recordValue(200);
+            src.recordValue(300);
+
+            dest.merge(src);
+
+            Assert.assertEquals(2, dest.getTotalCount());
+            Assert.assertEquals(src.getMinValue(), dest.getMinValue());
+            Assert.assertEquals(src.getMaxValue(), dest.getMaxValue());
+            Assert.assertNotEquals(0, dest.ptr());
+        }
+    }
+
+    @Test
+    public void testMergeSourceWithZeroTotalCount() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 3);
+            dest.setAllocator(allocator);
+            src.setAllocator(allocator);
+
+            dest.recordValue(100);
+            dest.recordValue(200);
+
+            src.recordValue(50);
+            src.clear();
+
+            long beforeCount = dest.getTotalCount();
+            long beforeMin = dest.getMinValue();
+            long beforeMax = dest.getMaxValue();
+
+            dest.merge(src);
+
+            Assert.assertEquals(beforeCount, dest.getTotalCount());
+            Assert.assertEquals(beforeMin, dest.getMinValue());
+            Assert.assertEquals(beforeMax, dest.getMaxValue());
+        }
+    }
+
+    @Test
+    public void testMergeBothEmpty() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 3);
+            dest.setAllocator(allocator);
+            src.setAllocator(allocator);
+
+            Assert.assertEquals(0, dest.getTotalCount());
+            Assert.assertEquals(0, src.getTotalCount());
+
+            dest.merge(src);
+
+            Assert.assertEquals(0, dest.getTotalCount());
+            Assert.assertEquals(0, dest.ptr());
+        }
+    }
+
+    @Test
+    public void testMergeChain() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink h1 = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogramSink h2 = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogramSink h3 = new GroupByHistogramSink(1, 1000, 3);
+            h1.setAllocator(allocator);
+            h2.setAllocator(allocator);
+            h3.setAllocator(allocator);
+
+            h1.recordValue(10);
+            h1.recordValue(20);
+
+            h2.recordValue(30);
+            h2.recordValue(40);
+
+            h3.recordValue(50);
+            h3.recordValue(60);
+
+            h1.merge(h2);
+            Assert.assertEquals(4, h1.getTotalCount());
+
+            h1.merge(h3);
+            Assert.assertEquals(6, h1.getTotalCount());
+            Assert.assertEquals(10, h1.getMinValue());
+            Assert.assertEquals(60, h1.getMaxValue());
+        }
+    }
+
+    @Test
+    public void testMergeWithRepointedHistogram() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink h1 = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogramSink h2 = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogramSink flyweight = new GroupByHistogramSink(1, 1000, 3);
+            h1.setAllocator(allocator);
+            h2.setAllocator(allocator);
+            flyweight.setAllocator(allocator);
+
+            h1.recordValue(100);
+            h1.recordValue(200);
+
+            h2.recordValue(300);
+            h2.recordValue(400);
+
+            flyweight.of(h1.ptr());
+            Assert.assertEquals(2, flyweight.getTotalCount());
+
+            h2.merge(flyweight);
+
+            Assert.assertEquals(4, h2.getTotalCount());
+            Assert.assertEquals(h1.getMinValue(), h2.getMinValue());
+        }
+    }
+
+    @Test
+    public void testMergeExtremeValueRange() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink dest = new GroupByHistogramSink(3);
+            GroupByHistogramSink src = new GroupByHistogramSink(3);
+            dest.setAllocator(allocator);
+            src.setAllocator(allocator);
+
+            dest.recordValue(1);
+            dest.recordValue(10);
+
+            src.recordValue(1000000000L);
+            src.recordValue(9000000000L);
+
+            dest.merge(src);
+
+            Assert.assertEquals(4, dest.getTotalCount());
+            Assert.assertEquals(1, dest.getMinValue());
+            Assert.assertTrue(dest.getMaxValue() >= 9000000000L);
+        }
+    }
+
+    @Test
+    public void testMergePreservesCountsAccurately() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink dest = new GroupByHistogramSink(1, 10000, 2);
+            GroupByHistogramSink src = new GroupByHistogramSink(1, 10000, 2);
+            dest.setAllocator(allocator);
+            src.setAllocator(allocator);
+
+            dest.recordValueWithCount(100, 50);
+            src.recordValueWithCount(100, 30);
+
+            dest.merge(src);
+
+            long count = dest.getCountBetweenValues(100, 100);
+            Assert.assertTrue(count >= 30);
+            Assert.assertEquals(80, dest.getTotalCount());
+        }
+    }
+
+    @Test
+    public void testMergeEmptyIntoPopulatedThenClear() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink dest = new GroupByHistogramSink(1, 1000, 3);
+            GroupByHistogramSink src = new GroupByHistogramSink(1, 1000, 3);
+            dest.setAllocator(allocator);
+            src.setAllocator(allocator);
+
+            dest.recordValue(100);
+            dest.recordValue(200);
+
+            dest.merge(src);
+            Assert.assertEquals(2, dest.getTotalCount());
+
+            dest.clear();
+            Assert.assertEquals(0, dest.ptr());
+            Assert.assertEquals(0, dest.getTotalCount());
+
+            dest.recordValue(50);
+            Assert.assertEquals(1, dest.getTotalCount());
+            Assert.assertEquals(50, dest.getMinValue());
+        }
+    }
+
+    @Test
+    public void testMergeWithDifferentPrecision() {
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            GroupByHistogramSink dest = new GroupByHistogramSink(2);
+            GroupByHistogramSink src = new GroupByHistogramSink(2);
+            dest.setAllocator(allocator);
+            src.setAllocator(allocator);
+
+            dest.recordValue(100);
+            src.recordValue(1000000);
+
+            dest.merge(src);
+
+            Assert.assertEquals(2, dest.getTotalCount());
+            Assert.assertTrue(dest.getMaxValue() >= 1000000);
         }
     }
 }

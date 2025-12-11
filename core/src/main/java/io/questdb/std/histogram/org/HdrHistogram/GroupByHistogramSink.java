@@ -83,6 +83,22 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         return this;
     }
 
+    public void merge(GroupByHistogramSink other) {
+        if (other.ptr == 0 || other.getTotalCount() == 0) {
+            return;
+        }
+
+        if (this.ptr == 0) {
+            ensureCapacity();
+        }
+
+        if (other.getMaxValue() > this.highestTrackableValue) {
+            resize(other.getMaxValue());
+        }
+
+        this.add(other);
+    }
+
     @Override
     public void clear() {
         ptr = 0;
@@ -240,7 +256,12 @@ public class GroupByHistogramSink extends AbstractHistogram implements Mutable {
         ptr = allocator.malloc(newCapacity);
         allocatedSize = newCapacity;
 
-        Vect.memset(ptr, newCapacity, 0);
+        Unsafe.getUnsafe().putLong(ptr, 0);
+        Unsafe.getUnsafe().putInt(ptr + normalizingIndexOffsetPosition, 0);
+        Unsafe.getUnsafe().putLong(ptr + maxValuePosition, 0);
+        Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, Long.MAX_VALUE);
+
+        Vect.memset(ptr + headerSize, countsArrayLength * 8L, 0);
     }
 
     private void shiftCounts(int oldNormalizedZeroIndex, int oldCountsArrayLength, int countsDelta) {
