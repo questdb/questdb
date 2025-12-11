@@ -860,11 +860,10 @@ public class FuzzRunner {
 
     @NotNull
     private ObjList<FuzzTransaction> createTransactions(Rnd rnd, String tableNameBase) throws SqlException, NumericException {
-        String tableNameNoWal = tableNameBase + "_nonwal";
-
         createInitialTableWal(tableNameBase, initialRowCount);
 
-        ObjList<FuzzTransaction> transactions = generateTransactions(tableNameBase, rnd);
+        final String tableNameNoWal = tableNameBase + "_nonwal";
+        final ObjList<FuzzTransaction> transactions = generateTransactions(tableNameBase, rnd);
         createInitialTableNonWal(tableNameNoWal, transactions);
 
         applyNonWal(transactions, tableNameNoWal, rnd);
@@ -1235,6 +1234,8 @@ public class FuzzRunner {
             assertCounts(tableNameWal, timestampColumnName);
             assertCounts(tableNameNoWal, timestampColumnName);
             assertStringColDensity(tableNameWal);
+            Assert.assertEquals("expected 0 errors in partition mutation control", 0, engine.getPartitionOverwriteControl().getErrorCount());
+
         } finally {
             Misc.freeObjListAndClear(transactions);
         }
@@ -1286,6 +1287,7 @@ public class FuzzRunner {
 
             applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, true, true);
             checkNoSuspendedTables(new ObjHashSet<>());
+            Assert.assertEquals("expected 0 errors in partition mutation control", 0, engine.getPartitionOverwriteControl().getErrorCount());
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 for (int i = 0; i < tableCount; i++) {
