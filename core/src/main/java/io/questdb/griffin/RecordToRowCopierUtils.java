@@ -668,7 +668,7 @@ public class RecordToRowCopierUtils {
                 }
 
                 // Generate bytecode for this column (same logic as single-method approach)
-                generateColumnCopyBytecode(asm, i, toColumnIndex, toColumnType, fromColumnType,
+                generateColumnCopyBytecode(asm, i, toColumnType, fromColumnType,
                         fromColumnTypeTag, toColumnTypeTag, toColumnWriterIndex, timestampTypeRef,
                         toColumnType_0, fromColumnType_0, parserFieldRef,
                         sGetDecimal128, sGetDecimal256,
@@ -729,7 +729,6 @@ public class RecordToRowCopierUtils {
     private static void generateColumnCopyBytecode(
             BytecodeAssembler asm,
             int i,
-            int toColumnIndex,
             int toColumnType,
             int fromColumnType,
             int fromColumnTypeTag,
@@ -1264,7 +1263,7 @@ public class RecordToRowCopierUtils {
                     case ColumnType.DATE:
                         asm.invokeInterface(rGetStrA);
                         asm.invokeStatic(implicitCastStrAsDate);
-                        asm.invokeInterface(wPutTimestamp, 3);
+                        asm.invokeInterface(wPutDate, 3);
                         break;
                     case ColumnType.TIMESTAMP:
                         asm.invokeInterface(rGetStrA);
@@ -2507,7 +2506,7 @@ public class RecordToRowCopierUtils {
                         case ColumnType.DATE:
                             asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsDate);
-                            asm.invokeInterface(wPutTimestamp, 3);
+                            asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.invokeInterface(rGetStrA);
