@@ -268,11 +268,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             rowsToSkip = -1;
             skipRows(skippedRows);
             /*
-             Now set skipToRows back to -1.
-             skipRows() needed it to be -1 to function correctly.
+             Now set rowsToSkip back to -1.
+             skipRows() needs it at -1 to function correctly.
              In toTop(), we skipRows() in the cursor, which is fine.
              But in countLimit(), we have to do the same thing.
-             If skipRows == 0, instead of taking the correct count,
+             If rowsToSkip == 0, instead of taking the correct count,
              it will set up to return 0 rows and the wrong answer.
              Example query that will break without this:
              (SELECT timestamp FROM trades LIMIT 1)
@@ -291,6 +291,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 limit = 0;
             } else if (rightFunction == null) {
                 // There's only one LIMIT argument, could be positive or negative.
+                // We must first get the actual row count to resolve the LIMIT range.
                 countRows();
                 if (lo == 0) {
                     // arg is positive, it's the upper bound (hi) and specifies how many rows to take from the start
@@ -313,7 +314,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (lo >= 0) {
                     // There are two LIMIT arguments, and the left one is non-negative.
                     if (hi >= 0) {
-                        // Both arguments are non-negative. They denote a range counting from start, 0-based.
+                        // Both arguments are non-negative.
+                        // The code in of() already ensured that lo <= hi for same-signed arguments.
+                        // Therefore, we have lo < hi.
+                        // They denote a range counting from start, 0-based.
                         // Lower bound is inclusive, upper bound is exclusive.
                         limit = Math.max(0, Math.min(rowCount, hi) - lo);
                         if (lo > 0 && limit > 0) {
@@ -334,6 +338,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     // There are two LIMIT arguments, and the left one is negative.
                     // We already validated against the (negative, positive) combination.
                     // Therefore, both arguments are negative.
+                    // The code in of() already ensured that lo <= hi for same-signed arguments.
+                    // Therefore, we have lo < hi.
                     // They denote a range counting from the end. Last row is numbered -1.
                     // Lower bound is inclusive, upper bound is exclusive.
                     long start = rowCount + lo;
