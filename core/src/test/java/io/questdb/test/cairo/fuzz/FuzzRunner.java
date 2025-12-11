@@ -40,7 +40,6 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -50,7 +49,6 @@ import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
@@ -79,7 +77,6 @@ import org.junit.Assert;
 import org.junit.Before;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -110,6 +107,7 @@ public class FuzzRunner {
     private double nullSetProb;
     private int parallelWalCount;
     private double partitionDropProb;
+    private double queryProb;
     private double replaceInsertProb;
     private double rollbackProb;
     private long s0;
@@ -160,22 +158,6 @@ public class FuzzRunner {
         final ObjList<Thread> applyThreads = new ObjList<>();
         final ObjList<Thread> threads = new ObjList<>();
 
-        final AtomicBoolean readerStopFlag = new AtomicBoolean();
-        final AtomicInteger readerErrors = new AtomicInteger();
-        final ReaderThread readerThread;
-        if (concurrentReads) {
-            readerThread = new ReaderThread(
-                    readerStopFlag,
-                    readerErrors,
-                    new Rnd(rnd.nextLong(), rnd.nextLong()),
-                    tableNameBase,
-                    tableCount,
-                    multiTable
-            );
-        } else {
-            readerThread = null;
-        }
-
         try {
             for (int i = 0; i < tableCount; i++) {
                 String tableName = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
@@ -203,10 +185,6 @@ public class FuzzRunner {
 
             for (int j = 0; j < threads.size(); j++) {
                 threads.get(j).start();
-            }
-
-            if (readerThread != null) {
-                readerThread.start();
             }
 
             if (waitApply) {
@@ -240,11 +218,6 @@ public class FuzzRunner {
                 TestUtils.unchecked(() -> threads.get(k).join());
             }
 
-            if (readerThread != null) {
-                readerStopFlag.set(true);
-                TestUtils.unchecked(() -> readerThread.join());
-            }
-
             done.incrementAndGet();
             Misc.freeObjList(writers);
         }
@@ -252,8 +225,6 @@ public class FuzzRunner {
         for (Throwable e : errors) {
             throw new RuntimeException(e);
         }
-
-        Assert.assertEquals("no table reader errors expected", 0, readerErrors.get());
 
         if (waitApply) {
             for (int i = 0; i < applyThreads.size(); i++) {
@@ -526,6 +497,7 @@ public class FuzzRunner {
                 setTtlProb,
                 replaceInsertProb,
                 symbolAccessValidationProb,
+                queryProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion()
@@ -639,6 +611,46 @@ public class FuzzRunner {
             double replaceInsertProb,
             double symbolAccessValidationProb
     ) {
+        setFuzzProbabilities(
+                cancelRowsProb,
+                notSetProb,
+                nullSetProb,
+                rollbackProb,
+                colAddProb,
+                colRemoveProb,
+                colRenameProb,
+                colTypeChangeProb,
+                dataAddProb,
+                equalTsRowsProb,
+                partitionDropProb,
+                truncateProb,
+                tableDropProb,
+                setTtlProb,
+                replaceInsertProb,
+                symbolAccessValidationProb,
+                0.0
+        );
+    }
+
+    public void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceInsertProb,
+            double symbolAccessValidationProb,
+            double queryProb
+    ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
@@ -655,6 +667,7 @@ public class FuzzRunner {
         this.setTtlProb = setTtlProb;
         this.replaceInsertProb = replaceInsertProb;
         this.symbolAccessValidationProb = symbolAccessValidationProb;
+        this.queryProb = queryProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -1297,6 +1310,7 @@ public class FuzzRunner {
                             rnd.nextDouble(),
                             0.0,
                             0.05,
+                            0.1 * rnd.nextDouble(),
                             0.1 * rnd.nextDouble()
                     );
                 }
@@ -1338,77 +1352,6 @@ public class FuzzRunner {
         } finally {
             for (int i = 0, n = fuzzTransactions.size(); i < n; i++) {
                 Misc.freeObjListAndClear(fuzzTransactions.get(i));
-            }
-        }
-    }
-
-    // Reads contents of WAL tables while we're applying them in parallel.
-    // That's to verify that the column files from intermediate txns are not corrupted.
-    private class ReaderThread extends Thread {
-        private final AtomicInteger errors;
-        private final boolean multiTable;
-        private final Rnd rnd;
-        private final StringSink sink = new StringSink();
-        private final SqlExecutionContext sqlExecutionContext;
-        private final AtomicBoolean stopFlag;
-        private final int tableCount;
-        private final String tableNameBase;
-
-        private ReaderThread(
-                AtomicBoolean stopFlag,
-                AtomicInteger errors,
-                Rnd rnd,
-                String tableNameBase,
-                int tableCount,
-                boolean multiTable
-        ) {
-            this.stopFlag = stopFlag;
-            this.errors = errors;
-            this.rnd = rnd;
-            this.tableNameBase = tableNameBase;
-            this.tableCount = tableCount;
-            this.multiTable = multiTable;
-            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                    .with(
-                            engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                            null,
-                            null,
-                            -1,
-                            null
-                    );
-        }
-
-        @Override
-        public void run() {
-            try {
-                while (!stopFlag.get()) {
-                    try {
-                        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            final String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, rnd.nextInt(tableCount)) : tableNameBase;
-                            final int limit = (rnd.nextBoolean() ? 1 : -1) * (1 + rnd.nextInt(1000));
-                            TestUtils.printSql(compiler, sqlExecutionContext, tableNameWal + " LIMIT " + limit, sink);
-                        }
-                        if (!stopFlag.get()) {
-                            Os.sleep(rnd.nextInt(50));
-                        }
-                    } catch (CairoException e) {
-                        if (e.isTableDoesNotExist()) {
-                            continue; // drop table transactions are BAU
-                        }
-                        throw e;
-                    } catch (SqlException e) {
-                        if (e.isTableDoesNotExist()) {
-                            continue;
-                        }
-                        throw e;
-                    } catch (TableReferenceOutOfDateException ignore) {
-                    }
-                }
-            } catch (Throwable th) {
-                errors.incrementAndGet();
-                th.printStackTrace();
-            } finally {
-                Path.clearThreadLocals();
             }
         }
     }
