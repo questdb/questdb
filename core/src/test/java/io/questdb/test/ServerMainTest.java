@@ -797,7 +797,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.parquet.export.copy.report.frequency.lines\tQDB_CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES\t500000\tdefault\tfalse\ttrue\n" +
                                     "cairo.resource.pool.tracing.enabled\tQDB_CAIRO_RESOURCE_POOL_TRACING_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.rmdir.max.depth\tQDB_CAIRO_RMDIR_MAX_DEPTH\t5\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.copier.chunked\tQDB_CAIRO_SQL_COPIER_CHUNKED\ttrue\tdefault\tfalse\tfalse\n"
+                                    "cairo.sql.copier.chunked\tQDB_CAIRO_SQL_COPIER_CHUNKED\ttrue\tdefault\tfalse\ttrue\n"
                     )
                             .split("\n");
 
