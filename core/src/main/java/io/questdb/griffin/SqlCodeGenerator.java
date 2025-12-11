@@ -147,6 +147,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
+import io.questdb.griffin.engine.functions.memoization.ArrayFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.CharFunctionMemoizer;
@@ -158,8 +159,11 @@ import io.questdb.griffin.engine.functions.memoization.IntFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.Long256FunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.ShortFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.StrFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.SymbolFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.VarcharFunctionMemoizer;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -5553,6 +5557,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case ColumnType.LONG256:
                                 functions.set(i, new Long256FunctionMemoizer(function));
+                                break;
+                            case ColumnType.ARRAY:
+                                functions.set(i, new ArrayFunctionMemoizer(function));
+                                break;
+                            case ColumnType.STRING:
+                                functions.set(i, new StrFunctionMemoizer(function));
+                                break;
+                            case ColumnType.VARCHAR:
+                                functions.set(i, new VarcharFunctionMemoizer(function));
+                                break;
+                            case ColumnType.SYMBOL:
+                                functions.set(i, new SymbolFunctionMemoizer(function));
                                 break;
                             // other types do not have memoization yet
                         }

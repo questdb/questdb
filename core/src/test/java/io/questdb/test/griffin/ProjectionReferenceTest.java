@@ -412,6 +412,44 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionInOrderByWithString() throws Exception {
+        execute("create table items (name string, value string)");
+        execute("insert into items values ('C', 'zebra'), ('A', 'apple'), ('B', 'banana')");
+
+        allowFunctionMemoization();
+
+        assertQuery(
+                """
+                        name\tvalue\tupper\tconcat
+                        A\tapple\tAPPLE\tAPPLE_UPPER
+                        B\tbanana\tBANANA\tBANANA_UPPER
+                        C\tzebra\tZEBRA\tZEBRA_UPPER
+                        """,
+                "select name, value, upper(value) as upper, upper || '_UPPER' as concat from items order by upper",
+                true
+        );
+    }
+
+    @Test
+    public void testProjectionInOrderByWithSymbol() throws Exception {
+        execute("create table items (name string, value symbol)");
+        execute("insert into items values ('C', 'zebra'), ('A', 'apple'), ('B', 'banana')");
+
+        allowFunctionMemoization();
+
+        assertQuery(
+                """
+                        name\tvalue\tupper\tconcat
+                        A\tapple\tAPPLE\tAPPLE_UPPER
+                        B\tbanana\tBANANA\tBANANA_UPPER
+                        C\tzebra\tZEBRA\tZEBRA_UPPER
+                        """,
+                "select name, value, upper(value)::symbol as upper, upper || '_UPPER' as concat from items order by upper",
+                true
+        );
+    }
+
+    @Test
     public void testProjectionInOrderByWithTimestamp() throws Exception {
         testProjectionInOrderByWith0(
                 """
@@ -421,6 +459,25 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         C\t1970-01-01T00:00:00.000030Z\t19.823333682561998
                         """,
                 "timestamp"
+        );
+    }
+
+    @Test
+    public void testProjectionInOrderByWithVarchar() throws Exception {
+        execute("create table items (name string, value varchar)");
+        execute("insert into items values ('C', 'zebra'), ('A', 'apple'), ('B', 'banana')");
+
+        allowFunctionMemoization();
+
+        assertQuery(
+                """
+                        name\tvalue\tupper\tconcat
+                        A\tapple\tAPPLE\tAPPLE_UPPER
+                        B\tbanana\tBANANA\tBANANA_UPPER
+                        C\tzebra\tZEBRA\tZEBRA_UPPER
+                        """,
+                "select name, value, upper(value) as upper, upper || '_UPPER' as concat from items order by upper",
+                true
         );
     }
 
@@ -479,6 +536,25 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 null,
                 null,
                 true,
+                true
+        );
+    }
+
+    @Test
+    public void testProjectionWithArray() throws Exception {
+        execute("create table items (name string, value double[][])");
+        execute("insert into items values ('C', ARRAY[[3.0, 6], [9.0, 12]]), ('A', ARRAY[[1.0, 2], [3.0, 4]]), ('B', ARRAY[[2.0, 4], [6.0, 8]])");
+
+        allowFunctionMemoization();
+
+        assertQuery(
+                """
+                        name	value	first_row	second_row_first_elem	first_elem	doubled
+                        A	[[1.0,2.0],[3.0,4.0]]	[1.0,2.0]	3.0	1.0	2.0
+                        B	[[2.0,4.0],[6.0,8.0]]	[2.0,4.0]	6.0	2.0	4.0
+                        C	[[3.0,6.0],[9.0,12.0]]	[3.0,6.0]	9.0	3.0	6.0
+                        """,
+                "select name, value, value[1] as first_row, value[2, 1] as second_row_first_elem, first_row[1] as first_elem, first_elem * 2 as doubled from items order by second_row_first_elem",
                 true
         );
     }
