@@ -367,12 +367,10 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long dstAddr,
             long dstAddrSize
     ) {
-        assert (srcHi - srcLo + 2) * 8 <= dstAddrSize;
         // +2 because
         // 1. srcHi is inclusive
         // 2. we copy 1 extra entry due to N+1 string aux vector structure
-
+        assert (srcHi - srcLo + 2) * 8 <= dstAddrSize;
         Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi + 1, dstAddr);
     }
 }
-
