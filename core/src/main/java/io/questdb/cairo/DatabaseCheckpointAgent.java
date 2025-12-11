@@ -41,6 +41,7 @@ import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
@@ -208,6 +209,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                 // For mat views, copy view definition and state before copying the underlying table.
                                 // This way, the state copy will never hold a txn number that is newer than what's
                                 // in the table copy (otherwise, such a situation may lead to lost view refresh data).
+                                long mvBaseTableTxn = -1;
                                 if (tableToken.isMatView()) {
                                     final MatViewGraph matViewGraph = engine.getMatViewGraph();
                                     final MatViewDefinition matViewDefinition = matViewGraph.getViewDefinition(tableToken);
@@ -216,13 +218,14 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         MatViewDefinition.append(matViewDefinition, matViewFileWriter);
                                         LOG.info().$("materialized view definition included in the checkpoint [view=").$(tableToken).I$();
                                         // the following call overwrites the path
-                                        final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
-                                        if (isMatViewStateExists) {
+                                        final boolean matViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
+                                        if (matViewStateExists) {
                                             matViewFileReader.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
                                             if (matViewStateReader == null) {
                                                 matViewStateReader = new MatViewStateReader();
                                             }
                                             matViewStateReader.of(matViewFileReader, tableToken);
+                                            mvBaseTableTxn = matViewStateReader.getLastRefreshBaseTxn();
                                             // restore the path
                                             path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
 
@@ -314,10 +317,13 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
                                     }
 
-                                    LOG.info().$("table included in the checkpoint [table=").$(tableToken)
+                                    LogRecord logRecord = LOG.info().$("table included in the checkpoint [table=").$(tableToken)
                                             .$(", txn=").$(txn)
-                                            .$(", seqTxn=").$(seqTxn)
-                                            .I$();
+                                            .$(", seqTxn=").$(seqTxn);
+                                    if (tableToken.isMatView()) {
+                                        logRecord.$(", mvBaseTableTxn=").$(mvBaseTableTxn);
+                                    }
+                                    logRecord.I$();
                                     break;
                                 } finally {
                                     Misc.free(reader);

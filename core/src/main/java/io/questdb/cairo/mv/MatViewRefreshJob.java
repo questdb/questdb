@@ -471,9 +471,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", fromTxn=").$(lastRefreshTxn)
                     .$(", toTxn=").$(refreshContext.toBaseTxn)
                     .$(", periodHi=").$ts(driver, refreshContext.periodHi)
-                    .$(", iteratorMinTs>=").$ts(driver, iteratorMinTs)
-                    .$(", iteratorMaxTs<").$ts(driver, iteratorMaxTs)
-                    .$(", iteratorStep=").$(step)
+                    .$(", iteratorMinTs=[").$ts(driver, iteratorMinTs)
+                    .$(", ").$ts(driver, iteratorMaxTs)
+                    .$("), iteratorStep=").$(step)
                     .I$();
 
             refreshContext.intervalIterator = intervalIterator;
@@ -1161,7 +1161,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         stateStore.notifyBaseRefreshed(refreshTask, minRefreshToTxn);
 
         if (refreshed) {
-            LOG.info().$("refreshed materialized views dependent on [baseTable=").$(baseTableToken).I$();
+            LOG.info().$("refreshed materialized views dependent on [baseTable=").$(baseTableToken)
+                    .$(", lastSeqTxn=").$(minRefreshToTxn).I$();
         }
         return refreshed;
     }
@@ -1451,6 +1452,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                 return viewState.getRefreshIntervals();
             } catch (CairoException ex) {
+//                LOG.critical().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
+//                        .$(", ex=").$safe(ex.getFlyweightMessage())
+//                        .$(", errno=").$(ex.getErrno())
+//                        .I$();
+//                throw ex;
                 LOG.error().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
                         .$(", ex=").$safe(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
