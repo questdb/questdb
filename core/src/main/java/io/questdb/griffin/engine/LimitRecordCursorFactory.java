@@ -285,8 +285,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void countLimit() {
-            if (rightFunction == null) {
-                // There's only one LIMIT argument, could be positive or negative
+            if (lo == hi) {
+                // There's either a single zero argument (LIMIT 0) or two equal arguments (LIMIT n, n).
+                // In both cases the result is an empty cursor.
+                limit = 0;
+            } else if (rightFunction == null) {
+                // There's only one LIMIT argument, could be positive or negative.
                 countRows();
                 if (lo == 0) {
                     // arg is positive, it's the upper bound (hi) and specifies how many rows to take from the start
@@ -302,9 +306,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         limit = rowCount;
                     }
                 }
-            } else if (lo == hi) {
-                // There are two LIMIT arguments, and they are equal. The result is an empty cursor.
-                limit = 0;
             } else {
                 // There are two LIMIT arguments, and they aren't equal.
                 // We must first get the actual row count to resolve the LIMIT range.
@@ -312,15 +313,16 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (lo >= 0) {
                     // There are two LIMIT arguments, and the left one is non-negative.
                     if (hi >= 0) {
-                        // Both arguments are non-negative. They denote a range counting from start, 1-based.
-                        // Lower bound is exclusive, upper bound is inclusive.
+                        // Both arguments are non-negative. They denote a range counting from start, 0-based.
+                        // Lower bound is inclusive, upper bound is exclusive.
                         limit = Math.max(0, Math.min(rowCount, hi) - lo);
                         if (lo > 0 && limit > 0) {
                             skipRows(lo);
                         }
                     } else {
-                        // Mixed-sign arguments, like `LIMIT 2, -2` or `LIMIT 0, -2`
-                        // Left is lower bound counting from start, right is upper bound counting from end
+                        // Mixed-sign arguments, like `LIMIT 2, -2` or `LIMIT 0, -2`.
+                        // Left is lower bound (inclusive) counting from start, zero-based.
+                        // Right is upper bound (exclusive) counting from end. Last row is numbered -1.
                         limit = Math.max(rowCount - lo + hi, 0);
                         if (lo > 0 && limit > 0) {
                             skipRows(lo);
@@ -328,10 +330,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                             base.toTop();
                         }
                     }
-                } else if (lo < hi) {
+                } else {
                     // There are two LIMIT arguments, and the left one is negative.
-                    // We already validated against the (negative, positive) combination, so both are negative.
-                    // They denote a range counting from end, 0-based.
+                    // We already validated against the (negative, positive) combination.
+                    // Therefore, both arguments are negative.
+                    // They denote a range counting from the end. Last row is numbered -1.
+                    // Lower bound is inclusive, upper bound is exclusive.
                     long start = rowCount + lo;
                     long end = rowCount + hi;
                     if (end < 0) {
