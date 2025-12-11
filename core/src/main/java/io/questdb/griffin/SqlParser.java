@@ -464,7 +464,7 @@ public class SqlParser {
         recordedViews.add(viewDefinition);
 
         final QueryModel viewModel = compileViewQuery(viewDefinition, viewPosition, model.getDecls());
-        viewModel.copyDeclsFrom(model);
+        viewModel.copyDeclsFrom(model, false);
         model.setNestedModel(viewModel);
         model.setNestedModelIsSubQuery(true);
     }
@@ -477,7 +477,7 @@ public class SqlParser {
         final GenericLexer viewLexer = viewLexers.next();
         viewLexer.of(viewDefinition.getViewSql());
 
-        final QueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, decls);
+        final QueryModel viewModel = parseAsSubQuery(viewLexer, null, false, viewSqlParserCallback, decls, true);
         viewModel.setViewNameExpr(literal(viewDefinition.getViewToken().getTableName(), viewPosition));
         return viewModel;
     }
@@ -796,7 +796,7 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        final QueryModel model = parseAsSubQuery(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls);
+        final QueryModel model = parseAsSubQuery(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls, false);
         expectTok(lexer, ')');
         return model;
     }
@@ -834,7 +834,7 @@ public class SqlParser {
 
         if (tok.length() == 1 && tok.charAt(0) == '(') {
             startOfSelect = lexer.getPosition();
-            parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
+            parseDml(lexer, startOfSelect, sqlParserCallback);
             final int endOfSelect = lexer.getPosition() - 1;
             selectText = lexer.getContent().subSequence(startOfSelect, endOfSelect);
             expectTok(lexer, ')');
@@ -1245,7 +1245,7 @@ public class SqlParser {
                 expectTok(lexer, "select");
             }
             lexer.unparseLast();
-            final QueryModel queryModel = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
+            final QueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
             final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
             tableNames.clear();
@@ -1649,7 +1649,7 @@ public class SqlParser {
         final int startOfSelect = lexer.getPosition();
         // Parse SELECT for the sake of basic SQL validation.
         // It'll be compiled and optimized later, at the execution phase.
-        final QueryModel selectModel = parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
+        final QueryModel selectModel = parseDml(lexer, startOfSelect, sqlParserCallback);
         final int endOfSelect = lexer.getPosition() - 1;
         final String selectText = Chars.toString(lexer.getContent(), startOfSelect, endOfSelect);
         createTableOperationBuilder.setSelectText(selectText, startOfSelect);
@@ -1925,7 +1925,7 @@ public class SqlParser {
             expectTok(lexer, "select");
         }
         lexer.unparseLast();
-        final QueryModel queryModel = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
+        final QueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
         final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
         final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
@@ -2002,11 +2002,20 @@ public class SqlParser {
 
     private QueryModel parseDml(
             GenericLexer lexer,
+            int modelPosition,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        return parseDml(lexer, null, modelPosition, true, sqlParserCallback, null, false);
+    }
+
+    private QueryModel parseDml(
+            GenericLexer lexer,
             @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
             int modelPosition,
             boolean useTopLevelWithClauses,
             SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean overrideDeclare
     ) throws SqlException {
         QueryModel model = null;
         QueryModel prevModel = null;
@@ -2015,7 +2024,7 @@ public class SqlParser {
             LowerCaseCharSequenceObjHashMap<WithClauseModel> parentWithClauses = prevModel != null ? prevModel.getWithClauses() : withClauses;
             LowerCaseCharSequenceObjHashMap<WithClauseModel> topWithClauses = useTopLevelWithClauses && model == null ? topLevelWithModel : null;
 
-            QueryModel unionModel = parseDml0(lexer, parentWithClauses, topWithClauses, modelPosition, sqlParserCallback, decls);
+            QueryModel unionModel = parseDml0(lexer, parentWithClauses, topWithClauses, modelPosition, sqlParserCallback, decls, overrideDeclare);
             if (prevModel == null) {
                 model = unionModel;
                 prevModel = model;
@@ -2094,7 +2103,8 @@ public class SqlParser {
             @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> topWithClauses,
             int modelPosition,
             SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean overrideDeclare
     ) throws SqlException {
         CharSequence tok;
         QueryModel model = queryModelPool.next();
@@ -2112,9 +2122,12 @@ public class SqlParser {
             tok = tok(lexer, "'select', 'with', or table name expected");
         }
 
-        // merge decls passed from outside into the queries declares,
-        // values declared in the query could be overwritten with a value supplied from outside
-        model.copyDeclsFrom(decls);
+        // Merge external declares with the query's own declares.
+        // When there is a naming conflict, overrideDeclare controls the behavior:
+        //   - true: external declares override the query's own declares
+        //   - false: query's own declares take precedence over the external ones
+        // Currently set to true at view boundaries only, allowing callers to parameterize views.
+        model.copyDeclsFrom(decls, overrideDeclare);
 
         // [with]
         if (isWithKeyword(tok)) {
@@ -2401,7 +2414,7 @@ public class SqlParser {
         CharSequence tok = expectTableNameOrSubQuery(lexer);
 
         // copy decls down
-        model.copyDeclsFrom(masterModel);
+        model.copyDeclsFrom(masterModel, false);
 
         QueryModel proposedNested = null;
         ExpressionNode variableExpr;
@@ -2832,7 +2845,7 @@ public class SqlParser {
         if (isSelectKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparseLast();
-            final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls);
+            final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, false);
             model.setQueryModel(queryModel);
             tok = optTok(lexer);
             // no more tokens or ';' should indicate end of statement
@@ -2882,7 +2895,7 @@ public class SqlParser {
     ) throws SqlException {
         QueryModel joinModel = queryModelPool.next();
 
-        joinModel.copyDeclsFrom(decls);
+        joinModel.copyDeclsFrom(decls, false);
 
         int errorPos = lexer.lastTokenPosition();
 
@@ -3119,7 +3132,7 @@ public class SqlParser {
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
         lexer.unparseLast();
-        final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls);
+        final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, false);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             model.recordViews(recordedViews);
@@ -4524,12 +4537,13 @@ public class SqlParser {
             @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
             boolean useTopLevelWithClauses,
             SqlParserCallback sqlParserCallback,
-            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean overrideDeclare
     ) throws SqlException {
         QueryModel model;
         this.subQueryMode = true;
         try {
-            model = parseDml(lexer, withClauses, lexer.getPosition(), useTopLevelWithClauses, sqlParserCallback, decls);
+            model = parseDml(lexer, withClauses, lexer.getPosition(), useTopLevelWithClauses, sqlParserCallback, decls, overrideDeclare);
         } finally {
             this.subQueryMode = false;
         }
@@ -4553,7 +4567,7 @@ public class SqlParser {
             expectTok(lexer, "select");
         }
         lexer.unparseLast();
-        parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
+        parseDml(lexer, lexer.getPosition(), sqlParserCallback);
         final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
         final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);

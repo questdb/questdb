@@ -573,13 +573,21 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    public void copyDeclsFrom(QueryModel model) {
-        copyDeclsFrom(model.getDecls());
+    public void copyDeclsFrom(QueryModel model, boolean overrideDeclares) {
+        copyDeclsFrom(model.getDecls(), overrideDeclares);
     }
 
-    public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) {
+    public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) {
         if (decls != null && decls.size() > 0) {
-            this.decls.putAll(decls);
+            if (overrideDeclares) {
+                this.decls.putAll(decls);
+            } else {
+                final ObjList<CharSequence> keys = decls.keys();
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    final CharSequence key = keys.getQuick(i);
+                    this.decls.putIfAbsent(key, decls.get(key));
+                }
+            }
         }
     }
 
