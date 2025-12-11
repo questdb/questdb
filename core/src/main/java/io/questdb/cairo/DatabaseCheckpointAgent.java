@@ -32,7 +32,6 @@ import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.WalTxnRangeLoader;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -41,13 +40,14 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.SimpleWaitingLock;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -83,7 +83,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final ObjList<TxnScoreboard> scoreboards = new ObjList<>();
     private final AtomicLong startedAtTimestamp = new AtomicLong(Numbers.LONG_NULL); // Numbers.LONG_NULL means no ongoing checkpoint
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
-    private boolean closed = false;
     private volatile boolean ownsWalPurgeJobRunLock = false;
     private SimpleWaitingLock walPurgeJobRunLock = null;
 
@@ -116,7 +115,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             Misc.free(tableNameRegistryStore);
             Misc.freeObjList(scoreboards);
         } finally {
-            closed = true;
             lock.unlock();
         }
     }
@@ -568,12 +566,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     void checkpointRelease() throws SqlException {
         if (!lock.tryLock()) {
             throw SqlException.position(0).put("Another checkpoint command is in progress");
-        }
-        if (closed) {
-            // The checkpoint agent is already closed.
-            // This can happen if the server is shutting down and simultaneously a backup is finishing (this is a
-            // non-blocking operation for the server).
-            return;
         }
         try {
             releaseScoreboardTxns(true);
