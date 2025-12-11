@@ -139,8 +139,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long hi;
         private boolean isSizeResolved;
+        private boolean isToTopInProgress;
         private long lo;
-        private long pendingBaseRowsToSkip;
         private long remaining;
         private long size;
 
@@ -236,7 +236,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
             baseRowCount = -1;
             size = -1;
-            pendingBaseRowsToSkip = -1;
+            isToTopInProgress = false;
             baseRowsToSkip = 0;
             isSizeResolved = false;
             areRowsCounted = false;
@@ -261,25 +261,19 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void toTop() {
-            base.toTop();
             remaining = size;
-            pendingBaseRowsToSkip = -1;
-            skipBaseRows(baseRowsToSkip);
-            /*
-             Now set pendingBaseRowsToSkip back to -1.
-             skipRows() needs it at -1 to function correctly.
-             In toTop(), we skipRows() in the base cursor, which is fine.
-             But in resolveSize(), we have to do the same thing.
-             If rowsToSkip == 0, instead of taking the correct count,
-             it will set up to return 0 rows and the wrong answer.
-             Example query that will break without this:
-             (SELECT timestamp FROM trades LIMIT 1)
-             UNION ALL
-             (SELECT timestamp FROM trades LIMIT -1)
-
-             In the above example, the query acts like LIMIT 1 in both branches.
-             */
-            pendingBaseRowsToSkip = -1;
+            if (!isToTopInProgress) {
+                isToTopInProgress = true;
+                base.toTop();
+                counter.set(baseRowsToSkip);
+            }
+            if (isToTopInProgress) {
+                if (counter.get() > 0) {
+                    base.skipRows(counter);
+                }
+                isToTopInProgress = false;
+                counter.clear();
+            }
         }
 
         private void ensureRowsCounted() {
@@ -293,6 +287,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             if (!areRowsCounted) {
+                base.toTop();
                 base.calculateSize(circuitBreaker, counter);
                 baseRowCount = counter.get();
                 areRowsCounted = true;
@@ -316,8 +311,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 size = 0;
                 return;
             }
-            // We must first get the actual row count to resolve the LIMIT range.
+            // Compute base cursor's row count and then resolve this cursor's row count,
+            // and how many base cursor's rows we must skip.
             ensureRowsCounted();
+
             long startInclusive, endExclusive;
             if (rightFunction == null) {
                 // There's only one LIMIT argument, could be positive or negative.
@@ -330,14 +327,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     startInclusive = baseRowCount + lo;
                     endExclusive = baseRowCount;
                 }
-            }
-            // There are two LIMIT arguments, and they aren't equal.
-            else if (lo >= 0) {
+            } else if (lo >= 0) {
                 // There are two LIMIT arguments, and the left one is non-negative.
                 if (hi >= 0) {
                     // Both arguments are non-negative.
-                    // The code in of() already ensured that lo <= hi for same-signed arguments.
-                    // Therefore, we have lo < hi.
+                    // The code in of() already ensured that lo <= hi for same-signed arguments,
+                    // and we eliminated lo == hi at the start of this method. Therefore, lo < hi.
                     // They denote a range counting from start, 0-based.
                     // Lower bound is inclusive, upper bound is exclusive.
                     startInclusive = lo;
@@ -346,7 +341,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     // Mixed-sign arguments, like `LIMIT 2, -2` or `LIMIT 0, -2`.
                     // Left arg is lower bound (inclusive) counting from start, 0-based.
                     // Right arg is upper bound (exclusive) counting from end. Last row is numbered -1.
-                    // Whether left bound is greater than right bound depends on baseRowCount.
                     startInclusive = lo;
                     endExclusive = baseRowCount + hi;
                 }
@@ -354,13 +348,14 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 // There are two LIMIT arguments, and the left one is negative.
                 // We already validated against the (negative, positive) combination.
                 // Therefore, both arguments are negative.
-                // The code in of() already ensured that lo <= hi for same-signed arguments.
-                // Therefore, we have lo < hi.
+                // The code in of() already ensured that lo <= hi for same-signed arguments,
+                // and we eliminated lo == hi at the start of this method. Therefore, lo < hi.
                 // They denote a range counting from the end. Last row is numbered -1.
                 // Lower bound is inclusive, upper bound is exclusive.
                 startInclusive = baseRowCount + lo;
                 endExclusive = baseRowCount + hi;
             }
+
             startInclusive = Math.max(0, startInclusive);
             endExclusive = Math.min(baseRowCount, endExclusive);
             if (startInclusive >= endExclusive) {
@@ -368,25 +363,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 return;
             }
             size = endExclusive - startInclusive;
-            if (startInclusive == 0) {
-                base.toTop();
-            } else {
-                skipBaseRows(startInclusive);
-            }
-        }
-
-        private void skipBaseRows(long rowCount) {
-            if (pendingBaseRowsToSkip == -1) {
-                baseRowsToSkip = Math.max(0, rowCount);
-                counter.set(baseRowsToSkip);
-                pendingBaseRowsToSkip = baseRowsToSkip;
-                base.toTop();
-            }
-            if (pendingBaseRowsToSkip > 0) {
-                base.skipRows(counter);
-                pendingBaseRowsToSkip = 0;
-                counter.clear();
-            }
+            baseRowsToSkip = startInclusive;
+            toTop();
         }
     }
 }
