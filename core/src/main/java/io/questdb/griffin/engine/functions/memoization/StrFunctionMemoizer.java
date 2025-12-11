@@ -59,7 +59,12 @@ public final class StrFunctionMemoizer extends StrFunction implements MemoizerFu
     @Override
     public CharSequence getStrA(final Record rec) {
         if (!validAValue) {
-            CharSequence strA = fn.getStrA(rec);
+            CharSequence strA;
+            if (validBValue) {
+                strA = cachedStrB;
+            } else {
+                strA = fn.getStrA(rec);
+            }
             if (strA == null) {
                 cachedStrA = null;
             } else {

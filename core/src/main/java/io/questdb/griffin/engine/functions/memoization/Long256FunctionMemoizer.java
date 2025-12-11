@@ -63,7 +63,11 @@ public final class Long256FunctionMemoizer extends Long256Function implements Me
     @Override
     public Long256 getLong256A(Record rec) {
         if (!validAValue) {
-            valueA.copyFrom(fn.getLong256A(rec));
+            if (validBValue) {
+                valueA.copyFrom(valueB);
+            } else {
+                valueA.copyFrom(fn.getLong256A(rec));
+            }
             validAValue = true;
         }
         return valueA;
@@ -72,7 +76,11 @@ public final class Long256FunctionMemoizer extends Long256Function implements Me
     @Override
     public Long256 getLong256B(Record rec) {
         if (!validBValue) {
-            valueB.copyFrom(fn.getLong256B(rec));
+            if (validAValue) {
+                valueB.copyFrom(valueA);
+            } else {
+                valueB.copyFrom(fn.getLong256B(rec));
+            }
             validBValue = true;
         }
         return valueB;

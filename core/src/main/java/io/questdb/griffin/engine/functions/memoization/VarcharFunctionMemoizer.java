@@ -60,7 +60,12 @@ public final class VarcharFunctionMemoizer extends VarcharFunction implements Me
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
         if (!validAValue) {
-            Utf8Sequence strA = fn.getVarcharA(rec);
+            Utf8Sequence strA;
+            if (validBValue) {
+                strA = cachedVarcharB;
+            } else {
+                strA = fn.getVarcharA(rec);
+            }
             if (strA == null) {
                 cachedVarcharA = null;
             } else {

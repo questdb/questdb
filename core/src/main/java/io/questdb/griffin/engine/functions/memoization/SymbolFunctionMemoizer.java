@@ -81,10 +81,14 @@ public final class SymbolFunctionMemoizer extends SymbolFunction implements Memo
     public CharSequence getSymbol(Record rec) {
         if (!validAValue) {
             CharSequence symbol;
-            if (validIntValue) {
-                symbol = valueOf(cachedInt);
+            if (validBValue) {
+                symbol = cachedSymbolB;
             } else {
-                symbol = fn.getSymbol(rec);
+                if (!validIntValue) {
+                    cachedInt = fn.getInt(rec);
+                    validIntValue = true;
+                }
+                symbol = valueOf(cachedInt);
             }
             if (symbol == null) {
                 cachedSymbolA = null;
@@ -104,10 +108,12 @@ public final class SymbolFunctionMemoizer extends SymbolFunction implements Memo
             CharSequence symbol;
             if (validAValue) {
                 symbol = cachedSymbolA;
-            } else if (validIntValue) {
-                symbol = valueBOf(cachedInt);
             } else {
-                symbol = fn.getSymbolB(rec);
+                if (!validIntValue) {
+                    cachedInt = fn.getInt(rec);
+                    validIntValue = true;
+                }
+                symbol = valueBOf(cachedInt);
             }
             if (symbol == null) {
                 cachedSymbolB = null;

@@ -421,15 +421,15 @@ public class RndMemoizationTest extends AbstractCairoTest {
                 """
                         sym	upper	concat
                         apple	APPLE	APPLE_FRUIT
-                        banana	CHERRY	CHERRY_FRUIT
-                        cherry	CHERRY	CHERRY_FRUIT
-                        cherry	BANANA	BANANA_FRUIT
-                        apple	BANANA	BANANA_FRUIT
-                        banana	CHERRY	CHERRY_FRUIT
+                        apple	APPLE	APPLE_FRUIT
                         banana	BANANA	BANANA_FRUIT
-                        banana	APPLE	APPLE_FRUIT
-                        apple	BANANA	BANANA_FRUIT
-                        apple	BANANA	BANANA_FRUIT
+                        cherry	CHERRY	CHERRY_FRUIT
+                        cherry	CHERRY	CHERRY_FRUIT
+                        cherry	CHERRY	CHERRY_FRUIT
+                        cherry	CHERRY	CHERRY_FRUIT
+                        banana	BANANA	BANANA_FRUIT
+                        apple	APPLE	APPLE_FRUIT
+                        banana	BANANA	BANANA_FRUIT
                         """,
                 "select rnd_symbol('apple', 'banana', 'cherry') sym, upper(sym) upper, upper || '_FRUIT' concat from long_sequence(10)"
         );
