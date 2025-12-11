@@ -736,8 +736,8 @@ public class HttpResponseSink implements Closeable, Mutable {
                 @NotNull Utf8Sequence message,
                 boolean appendEOL
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            final long contentLength = message.size();
-            assert contentLength > 0 : "json content is missing";
+            final long contentLength = message.size() + (appendEOL ? 2 : 0);
+            assert message.size() > 0 : "json content is missing";
             sendStatusWithContent(CONTENT_TYPE_JSON, code, message, null, null, null, contentLength, appendEOL);
         }
 
