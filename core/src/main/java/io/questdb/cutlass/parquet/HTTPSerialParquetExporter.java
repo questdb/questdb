@@ -231,10 +231,11 @@ public class HTTPSerialParquetExporter {
                     .$(", partitionIndex=").$(partitionIndex)
                     .$(']').$();
         }
+        long totalRows = exporter.getTotalRows();
         exporter.finishExport();
         copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
         LOG.info().$("stream export completed [id=").$hexPadded(task.getCopyID())
-                .$(", totalRows=").$(exporter.getTotalRows())
+                .$(", totalRows=").$(totalRows)
                 .$(']').$();
     }
 }
