@@ -29,31 +29,77 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 /**
  * Integration tests for RecordToRowCopier implementations.
- * These tests verify that both bytecode-based and loop-based implementations
+ * These tests verify that bytecode-based, chunked, and loop-based implementations
  * produce identical results across various scenarios.
+ * <p>
+ * The test is parameterized to run with three different copier modes:
+ * - BYTECODE: Single-method bytecode generation (small tables, chunking disabled)
+ * - CHUNKED: Chunked bytecode generation (wide tables, chunking enabled)
+ * - LOOPING: Loop-based fallback (wide tables, chunking disabled)
  */
+@RunWith(Parameterized.class)
 public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
+
+    private final CopierMode copierMode;
+
+    public RecordToRowCopierIntegrationTest(CopierMode copierMode) {
+        this.copierMode = copierMode;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {CopierMode.BYTECODE},
+                {CopierMode.CHUNKED},
+                {CopierMode.LOOPING}
+        });
+    }
 
     @Override
     public void setUp() {
         super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_SQL_COPIER_CHUNKED, false);
+        // Configure based on copier mode
+        switch (copierMode) {
+            case BYTECODE:
+            case LOOPING:
+                // Disable chunking - bytecode for small tables, looping for wide tables
+                node1.setProperty(PropertyKey.CAIRO_SQL_COPIER_CHUNKED, false);
+                break;
+            case CHUNKED:
+                // Enable chunking for wide tables
+                node1.setProperty(PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
+                break;
+        }
+    }
+
+    /**
+     * Returns the number of columns to use based on copier mode.
+     * - BYTECODE mode uses fewer columns to stay under bytecode limit
+     * - CHUNKED and LOOPING modes use many columns to exceed the limit
+     */
+    private int getColumnCount(int baseCount) {
+        return copierMode == CopierMode.BYTECODE ? Math.min(baseCount, 50) : baseCount;
     }
 
     @Test
     public void testCreateTableAsSelectWithManyColumns() throws Exception {
+        int columnCount = getColumnCount(200);
         assertMemoryLeak(() -> {
-            // Create source table with 200 columns
-            buildCreateTableSql(sink, "src", 200);
+            buildCreateTableSql(sink, "src", columnCount);
             execute(sink);
 
             // Insert test data
             sink.clear();
             sink.put("insert into src values (0");
-            for (int col = 0; col < 200; col++) {
+            for (int col = 0; col < columnCount; col++) {
                 sink.put(", ").put(col);
             }
             sink.put(")");
@@ -70,11 +116,12 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithManyColumnsAndRows() throws Exception {
+        int columnCount = getColumnCount(100);
         assertMemoryLeak(() -> {
-            // Create source table with 100 columns using long_sequence
+            // Create source table using long_sequence
             sink.clear();
             sink.put("create table src as (select cast(x * 1000000 as timestamp) as ts");
-            for (int col = 0; col < 100; col++) {
+            for (int col = 0; col < columnCount; col++) {
                 sink.put(", cast((x * 100 + ").put(col).put(") % 10000 as int) as col").put(col);
             }
             sink.put(" from long_sequence(100)) timestamp(ts) partition by DAY");
@@ -91,11 +138,12 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithMixedTypes() throws Exception {
+        int typeCount = getColumnCount(90) / 3; // 3 columns per type (int, long, double)
         assertMemoryLeak(() -> {
             // Create source table with many columns of various types
             sink.clear();
             sink.put("create table src (ts timestamp");
-            for (int i = 0; i < 30; i++) {
+            for (int i = 0; i < typeCount; i++) {
                 sink.put(", int_col").put(i).put(" int");
                 sink.put(", long_col").put(i).put(" long");
                 sink.put(", double_col").put(i).put(" double");
@@ -106,7 +154,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             // Insert test data
             sink.clear();
             sink.put("insert into src values (0");
-            for (int i = 0; i < 30; i++) {
+            for (int i = 0; i < typeCount; i++) {
                 sink.put(", ").put(i);       // int
                 sink.put(", ").put(i * 100L); // long
                 sink.put(", ").put(i * 1.5);  // double
@@ -125,15 +173,15 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithNulls() throws Exception {
+        int columnCount = getColumnCount(100);
         assertMemoryLeak(() -> {
-            // Create source table with 100 columns
-            buildCreateTableSql(sink, "src", 100);
+            buildCreateTableSql(sink, "src", columnCount);
             execute(sink);
 
             // Insert rows with null values
             sink.clear();
             sink.put("insert into src values (0");
-            for (int col = 0; col < 100; col++) {
+            for (int col = 0; col < columnCount; col++) {
                 sink.put(", null");
             }
             sink.put(")");
@@ -141,7 +189,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             sink.clear();
             sink.put("insert into src values (1000000");
-            for (int col = 0; col < 100; col++) {
+            for (int col = 0; col < columnCount; col++) {
                 sink.put(", ").put(col);
             }
             sink.put(")");
@@ -158,12 +206,13 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithPartitionAndFilter() throws Exception {
+        int columnCount = getColumnCount(50);
         assertMemoryLeak(() -> {
             // Create source table with many columns using long_sequence
             // Space rows across different days (86400000000 microseconds = 1 day)
             sink.clear();
             sink.put("create table src as (select cast((x - 1) * 86400000000L as timestamp) as ts");
-            for (int col = 0; col < 50; col++) {
+            for (int col = 0; col < columnCount; col++) {
                 sink.put(", cast((x - 1) * 100 + ").put(col).put(" as int) as col").put(col);
             }
             sink.put(" from long_sequence(20)) timestamp(ts) partition by DAY");
@@ -179,11 +228,12 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithStringsAndSymbols() throws Exception {
+        int columnCount = getColumnCount(50);
         assertMemoryLeak(() -> {
             // Create source table with string and symbol columns using long_sequence
             sink.clear();
             sink.put("create table src as (select cast((x - 1) * 1000000 as timestamp) as ts");
-            for (int i = 0; i < 50; i++) {
+            for (int i = 0; i < columnCount; i++) {
                 sink.put(", concat('str', x - 1, '_', ").put(i).put(") as str_col").put(i);
                 sink.put(", cast(concat('sym', (x - 1) % 5) as symbol) as sym_col").put(i);
             }
@@ -201,11 +251,12 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithTypeWidening() throws Exception {
+        int columnCount = getColumnCount(50);
         assertMemoryLeak(() -> {
             // Create source table with narrower types
             sink.clear();
             sink.put("create table src (ts timestamp");
-            for (int i = 0; i < 50; i++) {
+            for (int i = 0; i < columnCount; i++) {
                 sink.put(", byte_col").put(i).put(" byte");
                 sink.put(", short_col").put(i).put(" short");
             }
@@ -215,7 +266,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             // Insert test data
             sink.clear();
             sink.put("insert into src values (0");
-            for (int i = 0; i < 50; i++) {
+            for (int i = 0; i < columnCount; i++) {
                 sink.put(", ").put(i % 127);       // byte
                 sink.put(", ").put(i * 100);       // short
             }
@@ -225,7 +276,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             // Create table with wider types using CAST
             sink.clear();
             sink.put("create table dst as (select ts");
-            for (int i = 0; i < 50; i++) {
+            for (int i = 0; i < columnCount; i++) {
                 sink.put(", cast(byte_col").put(i).put(" as long) as long_from_byte").put(i);
                 sink.put(", cast(short_col").put(i).put(" as long) as long_from_short").put(i);
             }
@@ -236,23 +287,25 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             assertSql("count\n1\n", "select count(*) from dst");
 
             // Spot check some values
-            assertSql("long_from_byte0\tlong_from_byte25\tlong_from_short0\tlong_from_short25\n" +
-                    "0\t25\t0\t2500\n",
-                    "select long_from_byte0, long_from_byte25, long_from_short0, long_from_short25 from dst");
+            int checkIdx = Math.min(25, columnCount - 1);
+            String expected = "long_from_byte0\tlong_from_byte" + checkIdx + "\tlong_from_short0\tlong_from_short" + checkIdx + "\n" +
+                    "0\t" + checkIdx + "\t0\t" + (checkIdx * 100) + "\n";
+            assertSql(expected,
+                    "select long_from_byte0, long_from_byte" + checkIdx + ", long_from_short0, long_from_short" + checkIdx + " from dst");
         });
     }
 
     @Test
     public void testCreateTableAsSelectVeryWideTable() throws Exception {
+        int columnCount = getColumnCount(500);
         assertMemoryLeak(() -> {
-            // Test with 500 columns to stress the loop-based implementation
-            buildCreateTableSqlWithTypes(sink, "src", 500, "c", i -> "int");
+            buildCreateTableSqlWithTypes(sink, "src", columnCount, "c", i -> "int");
             execute(sink);
 
             // Insert a row
             sink.clear();
             sink.put("insert into src values (0");
-            for (int i = 0; i < 500; i++) {
+            for (int i = 0; i < columnCount; i++) {
                 sink.put(", ").put(i);
             }
             sink.put(")");
@@ -263,24 +316,28 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             // Verify
             assertSql("count\n1\n", "select count(*) from dst");
-            assertSql("c0\tc250\tc499\n0\t250\t499\n", "select c0, c250, c499 from dst");
+            int lastCol = columnCount - 1;
+            int midCol = columnCount / 2;
+            assertSql("c0\tc" + midCol + "\tc" + lastCol + "\n0\t" + midCol + "\t" + lastCol + "\n",
+                    "select c0, c" + midCol + ", c" + lastCol + " from dst");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src", "dst", LOG);
         });
     }
 
     @Test
     public void testBatchInsertWithManyColumns() throws Exception {
+        int columnCount = getColumnCount(200);
         assertMemoryLeak(() -> {
-            // Create source table with 200 columns using long_sequence
+            // Create source table using long_sequence
             sink.clear();
             sink.put("create table src as (select cast((x - 1) * 1000 as timestamp) as ts");
-            for (int col = 0; col < 200; col++) {
+            for (int col = 0; col < columnCount; col++) {
                 sink.put(", cast((x - 1 + ").put(col).put(") % 1000 as int) as col").put(col);
             }
             sink.put(" from long_sequence(1000)) timestamp(ts) partition by DAY");
             execute(sink);
 
-            buildCreateTableSql(sink, "dst", 200);
+            buildCreateTableSql(sink, "dst", columnCount);
             execute(sink);
 
             // Batch copy
@@ -293,19 +350,18 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     @Test
     public void testExtremelyWideTableInsert() throws Exception {
+        int columnCount = getColumnCount(100);
         assertMemoryLeak(() -> {
-            // Test with 100 columns to stress the loop-based implementation
-            // (using fewer columns to avoid file descriptor limits on some systems)
-            buildCreateTableSqlWithTypes(sink, "src_extreme", 100, "c", i -> "int");
+            buildCreateTableSqlWithTypes(sink, "src_extreme", columnCount, "c", i -> "int");
             execute(sink);
 
-            buildCreateTableSqlWithTypes(sink, "dst_extreme", 100, "c", i -> "int");
+            buildCreateTableSqlWithTypes(sink, "dst_extreme", columnCount, "c", i -> "int");
             execute(sink);
 
             // Insert a single row with all values
             sink.clear();
             sink.put("insert into src_extreme values (0");
-            for (int i = 0; i < 100; i++) {
+            for (int i = 0; i < columnCount; i++) {
                 sink.put(", ").put(i);
             }
             sink.put(")");
@@ -316,7 +372,10 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             // Verify
             assertSql("count\n1\n", "select count(*) from dst_extreme");
-            assertSql("c0\tc50\tc99\n0\t50\t99\n", "select c0, c50, c99 from dst_extreme");
+            int midCol = columnCount / 2;
+            int lastCol = columnCount - 1;
+            assertSql("c0\tc" + midCol + "\tc" + lastCol + "\n0\t" + midCol + "\t" + lastCol + "\n",
+                    "select c0, c" + midCol + ", c" + lastCol + " from dst_extreme");
         });
     }
 
@@ -359,16 +418,16 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectWithManyRows() throws Exception {
+        int columnCount = getColumnCount(50);
         assertMemoryLeak(() -> {
-            // Create source table with 50 columns
-            buildCreateTableSql(sink, "src", 50);
+            buildCreateTableSql(sink, "src", columnCount);
             execute(sink);
 
-            buildCreateTableSql(sink, "dst", 50);
+            buildCreateTableSql(sink, "dst", columnCount);
             execute(sink);
 
             // Insert test data with multiple rows
-            buildBatchInsertValuesSql(sink, "src", 50, 10);
+            buildBatchInsertValuesSql(sink, "src", columnCount, 10);
             execute(sink);
 
             // Copy data
@@ -438,22 +497,22 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectWithUnionExcept() throws Exception {
+        int columnCount = getColumnCount(100);
         assertMemoryLeak(() -> {
-            // Create tables with many columns to trigger loop-based copier
-            buildCreateTableSql(sink, "t1", 100);
+            buildCreateTableSql(sink, "t1", columnCount);
             execute(sink);
 
-            buildCreateTableSql(sink, "t2", 100);
+            buildCreateTableSql(sink, "t2", columnCount);
             execute(sink);
 
-            buildCreateTableSql(sink, "result", 100);
+            buildCreateTableSql(sink, "result", columnCount);
             execute(sink);
 
             // Insert data
-            buildInsertValuesSql(sink, "t1", 0, 100, 0);
+            buildInsertValuesSql(sink, "t1", 0, columnCount, 0);
             execute(sink);
 
-            buildInsertValuesSql(sink, "t2", 1000000, 100, 100);
+            buildInsertValuesSql(sink, "t2", 1000000, columnCount, 100);
             execute(sink);
 
             // Test UNION
@@ -464,11 +523,12 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectWithWhere() throws Exception {
+        int columnCount = getColumnCount(50);
         assertMemoryLeak(() -> {
-            // Create source table with 'id' column + 50 regular columns using long_sequence
+            // Create source table with 'id' column + regular columns using long_sequence
             sink.clear();
             sink.put("create table src as (select cast((x - 1) * 1000000 as timestamp) as ts, cast(x - 1 as int) as id");
-            for (int i = 0; i < 50; i++) {
+            for (int i = 0; i < columnCount; i++) {
                 sink.put(", cast((x - 1) * 100 + ").put(i).put(" as int) as col").put(i);
             }
             sink.put(" from long_sequence(10)) timestamp(ts) partition by DAY");
@@ -476,7 +536,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             sink.clear();
             sink.put("create table dst (ts timestamp, id int");
-            for (int i = 0; i < 50; i++) {
+            for (int i = 0; i < columnCount; i++) {
                 sink.put(", col").put(i).put(" int");
             }
             sink.put(") timestamp(ts) partition by DAY");
@@ -492,11 +552,6 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     /**
      * Builds an INSERT VALUES SQL statement with multiple rows.
-     *
-     * @param sink        the StringSink to write the SQL to
-     * @param tableName   the name of the table
-     * @param columnCount number of columns
-     * @param rowCount    number of rows to insert
      */
     private static void buildBatchInsertValuesSql(
             StringSink sink,
@@ -520,10 +575,6 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     /**
      * Builds a CREATE TABLE SQL statement with the specified columns.
-     *
-     * @param sink        the StringSink to write the SQL to
-     * @param tableName   the name of the table
-     * @param columnCount number of integer columns to create
      */
     private static void buildCreateTableSql(StringSink sink, String tableName, int columnCount) {
         sink.clear();
@@ -536,12 +587,6 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     /**
      * Builds a CREATE TABLE SQL statement with custom column definitions.
-     *
-     * @param sink         the StringSink to write the SQL to
-     * @param tableName    the name of the table
-     * @param columnCount  number of columns to create
-     * @param columnPrefix prefix for column names (e.g., "col", "c")
-     * @param typeProvider function that returns the type for each column index
      */
     private static void buildCreateTableSqlWithTypes(
             StringSink sink,
@@ -560,12 +605,6 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     /**
      * Builds an INSERT VALUES SQL statement with a single row.
-     *
-     * @param sink        the StringSink to write the SQL to
-     * @param tableName   the name of the table
-     * @param timestamp   the timestamp value
-     * @param columnCount number of columns
-     * @param valueOffset offset to add to each column value
      */
     private static void buildInsertValuesSql(
             StringSink sink,
@@ -585,5 +624,26 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface ColumnTypeProvider {
         String getType(int columnIndex);
+    }
+
+    /**
+     * Copier implementation modes to test.
+     */
+    public enum CopierMode {
+        /**
+         * Single-method bytecode generation for small schemas.
+         * Uses chunkedEnabled=false with small column counts.
+         */
+        BYTECODE,
+        /**
+         * Chunked bytecode generation for large schemas.
+         * Uses chunkedEnabled=true with large column counts.
+         */
+        CHUNKED,
+        /**
+         * Loop-based fallback implementation.
+         * Uses chunkedEnabled=false with large column counts.
+         */
+        LOOPING
     }
 }
