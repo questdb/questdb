@@ -170,9 +170,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                     if (!WalTxnType.isDataType(walTxnType)) {
                         firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
+                        continue;
                     }
                 } else {
                     firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
+                    continue;
                 }
 
                 // If the future transaction is a replace range operation

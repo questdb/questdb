@@ -3092,7 +3092,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             if (!ColumnType.isSymbol(columnType)) {
                                 throw CairoException.critical(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
-                                        .put(", seqTxn=").put(seqTxn).put(']')
+                                        .put(", seqTxn=").put(seqTxn)
                                         .put(", wal=").put(walTxnDetails.getWalId(seqTxn))
                                         .put(", segment=").put(walTxnDetails.getSegmentId(seqTxn))
                                         .put(']');
