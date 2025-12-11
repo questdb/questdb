@@ -105,7 +105,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         // cursor must be open to calculate the limit details.
         if (cursor.base != null && loFunc != null && loFunc.getLong(null) != Numbers.LONG_NULL) {
-            cursor.resolveSize();
+            cursor.ensureSizeResolved();
             sink.meta("skip-over-rows").val(cursor.skippedRows);
             sink.meta("limit").val(cursor.size);
         }
@@ -303,14 +303,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void ensureSizeResolved() {
-            if (!isSizeResolved) {
-                resolveSize();
-                remaining = size;
-                isSizeResolved = true;
+            if (isSizeResolved) {
+                return;
             }
-        }
-
-        private void resolveSize() {
             if (lo == hi) {
                 // There's either a single zero argument (LIMIT 0) or two equal arguments (LIMIT n, n).
                 // In both cases the result is an empty cursor.
@@ -382,6 +377,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                 }
             }
+            remaining = size;
+            isSizeResolved = true;
         }
 
         private void skipRows(long rowCount) {
