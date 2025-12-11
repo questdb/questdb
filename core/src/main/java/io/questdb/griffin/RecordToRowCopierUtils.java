@@ -726,9 +726,6 @@ public class RecordToRowCopierUtils {
         return asm.newInstance();
     }
 
-    // Helper method to generate bytecode for a single column copy
-    // This extracts the column copy logic to be reusable by both single-method and chunked approaches
-    @SuppressWarnings("unused")
     private static void generateColumnCopyBytecode(
             BytecodeAssembler asm,
             int i,
@@ -1143,7 +1140,51 @@ public class RecordToRowCopierUtils {
                         asm.invokeInterface(wPutSymChar, 2);
                         break;
                     default:
-                        // Handle other char conversions
+                    case ColumnType.BYTE:
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(implicitCastCharAsByte);
+                        asm.invokeInterface(wPutByte, 2);
+                        break;
+                    case ColumnType.SHORT:
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(implicitCastCharAsByte);
+                        asm.i2s();
+                        asm.invokeInterface(wPutShort, 2);
+                        break;
+                    case ColumnType.INT:
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(implicitCastCharAsByte);
+                        asm.invokeInterface(wPutInt, 2);
+                        break;
+                    case ColumnType.LONG:
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(implicitCastCharAsByte);
+                        asm.i2l();
+                        asm.invokeInterface(wPutLong, 3);
+                        break;
+                    case ColumnType.DATE:
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(implicitCastCharAsByte);
+                        asm.i2l();
+                        asm.invokeInterface(wPutDate, 3);
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        asm.ldc(toColumnType_0 + i * 2);
+                        asm.invokeStatic(implicitCastCharAsByte);
+                        asm.i2l();
+                        asm.invokeInterface(wPutTimestamp, 3);
+                        break;
+                    case ColumnType.FLOAT:
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(implicitCastCharAsByte);
+                        asm.i2f();
+                        asm.invokeInterface(wPutFloat, 2);
+                        break;
+                    case ColumnType.DOUBLE:
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(implicitCastCharAsByte);
+                        asm.i2d();
+                        asm.invokeInterface(wPutDouble, 3);
                         break;
                 }
                 break;

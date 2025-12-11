@@ -188,4 +188,25 @@ public class LoopingRecordToRowCopierTest extends AbstractCairoTest {
             assertSql("col0\tcol1000\tcol1999\n0\t1000\t1999\n", "select col0, col1000, col1999 from wide_dst");
         });
     }
+
+    @Test
+    public void testVarcharToLong256() throws Exception {
+        assertMemoryLeak(() -> {
+            // Test VARCHAR to LONG256 conversion to verify the cast is safe
+            execute("create table src (ts timestamp, vc varchar) timestamp(ts) partition by DAY");
+            execute("create table dst (ts timestamp, l256 long256) timestamp(ts) partition by DAY");
+
+            // Insert a valid long256 hex value as varchar
+            execute("insert into src values (0, '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')");
+            execute("insert into src values (1000000, null)");
+
+            // Copy using INSERT AS SELECT
+            execute("insert into dst select * from src");
+
+            // Verify data was copied correctly
+            assertSql("count\n2\n", "select count(*) from dst");
+            assertSql("l256\n0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n\n",
+                    "select l256 from dst order by ts");
+        });
+    }
 }

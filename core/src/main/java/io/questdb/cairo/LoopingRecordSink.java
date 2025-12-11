@@ -87,8 +87,8 @@ public class LoopingRecordSink implements RecordSink {
             this.timestampAsNanos.extendAndSet(i, writeTimestampAsNanos != null && writeTimestampAsNanos.get(actualIndex));
 
             final int tag = ColumnType.tagOf(type);
-            needsDecimal128 = tag == ColumnType.DECIMAL128;
-            needsDecimal256 = tag == ColumnType.DECIMAL256;
+            needsDecimal128 |= tag == ColumnType.DECIMAL128;
+            needsDecimal256 |= tag == ColumnType.DECIMAL256;
         }
 
         this.decimal128 = needsDecimal128 ? new Decimal128() : null;

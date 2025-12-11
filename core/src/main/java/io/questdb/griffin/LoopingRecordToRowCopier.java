@@ -651,7 +651,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
                 row.putSym(toIndex, value);
                 break;
             case ColumnType.DATE:
-                row.putTimestamp(toIndex, SqlUtil.implicitCastStrAsDate(value));
+                row.putDate(toIndex, SqlUtil.implicitCastStrAsDate(value));
                 break;
             case ColumnType.TIMESTAMP:
                 row.putTimestamp(toIndex, timestampDriver.implicitCast(value));

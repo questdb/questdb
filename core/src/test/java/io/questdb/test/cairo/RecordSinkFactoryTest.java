@@ -98,6 +98,51 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLoopingRecordSinkDecimalsNotLastColumn() {
+        // This test verifies that decimal128/256 fields are properly initialized
+        // even when these columns are not at the end of the column list.
+        // The bug was that the decimal128/256 objects would not be initialized
+        // if they appeared before other columns in the list.
+        ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        columnTypes.add(ColumnType.INT);           // 0
+        columnTypes.add(ColumnType.DECIMAL128);    // 1 - decimal not at end
+        columnTypes.add(ColumnType.LONG);          // 2
+        columnTypes.add(ColumnType.DECIMAL256);    // 3 - decimal not at end
+        columnTypes.add(ColumnType.STRING);        // 4 - columns after decimals
+
+        ListColumnFilter columnFilter = new ListColumnFilter();
+        for (int i = 0, n = columnTypes.getColumnCount(); i < n; i++) {
+            columnFilter.add(i + 1);
+        }
+
+        // Directly instantiate LoopingRecordSink to test it specifically
+        io.questdb.cairo.LoopingRecordSink sink = new io.questdb.cairo.LoopingRecordSink(
+                columnTypes,
+                columnFilter,
+                null,
+                null,
+                null,
+                null
+        );
+
+        TestRecord testRecord = new TestRecord();
+        TestRecordSink testRecordSink = new TestRecordSink();
+
+        // This should not throw NullPointerException when accessing decimal128/256
+        sink.copy(testRecord, testRecordSink);
+
+        // Verify all columns were processed
+        IntList expectedPutTypes = new IntList();
+        expectedPutTypes.add(ColumnType.INT);
+        expectedPutTypes.add(ColumnType.DECIMAL128);
+        expectedPutTypes.add(ColumnType.LONG);
+        expectedPutTypes.add(ColumnType.DECIMAL256);
+        expectedPutTypes.add(ColumnType.STRING);
+
+        Assert.assertEquals(expectedPutTypes, testRecordSink.recordedTypes);
+    }
+
+    @Test
     public void testFunctionKeysAllSupportedTypes() {
         ArrayColumnTypes columnTypes = new ArrayColumnTypes();
         ListColumnFilter columnFilter = new ListColumnFilter();
