@@ -66,9 +66,25 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             if (pattern.isConstant()) {
                 final CharSequence likeSeq = pattern.getStrA(null);
                 int len;
+
+//                Treating "LIKE NULL" as "IS NULL"
+                if (likeSeq == null) {
+                    return new EqSymStrFunctionFactory.NullCheckFunc(value);
+                }
+
                 if (likeSeq != null && (len = likeSeq.length()) > 0) {
                     if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
                         final int anyCount = countChar(likeSeq, '%');
+
+                        if (anyCount == 0) {
+                            final String target = isCaseInsensitive() ? likeSeq.toString().toLowerCase() : likeSeq.toString();
+                            if (isCaseInsensitive()) {
+                                return new ConstIEqualsStaticSymbolTableFunction(value, target);
+                            } else {
+                                return new ConstEqualsStaticSymbolTableFunction(value, target);
+                            }
+                        }
+
                         if (anyCount == 1) {
                             if (len == 1) {
                                 // LIKE '%' case
@@ -140,16 +156,47 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
         assert symbolTable != null;
         symbolKeys.clear();
-        if (matcher != null) {
+
+        if (matcher == null) {
             for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
-                if (matcher.reset(symbolTable.valueOf(i)).matches()) {
+                if (symbolTable.valueOf(i) == null) {
                     symbolKeys.add(i);
                 }
+            }
+            return;
+        }
+
+        for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+            final CharSequence s = symbolTable.valueOf(i);
+            if (s == null) {
+                continue;
+            }
+            if (matcher.reset(s).matches()) {
+                symbolKeys.add(i);
             }
         }
     }
 
     protected abstract boolean isCaseInsensitive();
+
+    private static boolean equalsLowerCase(CharSequence a, CharSequence b) {
+        if (a == null || b == null) return false;
+        final int n = a.length();
+        if (n != b.length()) return false;
+        for (int i = 0; i < n; i++) {
+            char ca = a.charAt(i);
+            char cb = b.charAt(i);
+            if (ca == cb) continue;
+            if (ca <= 0x7F && cb <= 0x7F) {
+                int la = ca | 32;
+                int lb = cb | 32;
+                if (la != lb) return false;
+                return false;
+            }
+            if (Character.toLowerCase(ca) != Character.toLowerCase(cb)) return false;
+        }
+        return true;
+    }
 
     private static class BindLikeStaticSymbolTableFunction extends BooleanFunction implements BinaryFunction {
         private final boolean caseInsensitive;
@@ -159,6 +206,10 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         private String lastPattern = null;
         private boolean stateInherited = false;
         private boolean stateShared = false;
+
+        // equality optimization fields for bind-time detection
+        private boolean useEquality = false;
+        private String exactPattern = null;
 
         public BindLikeStaticSymbolTableFunction(SymbolFunction value, Function pattern, boolean caseInsensitive) {
             this.value = value;
@@ -190,9 +241,46 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             this.stateShared = false;
             // this is bind variable, we can use it as constant
             final CharSequence patternValue = pattern.getStrA(null);
-            if (patternValue != null && patternValue.length() > 0) {
-                // lastPattern is used to avoid recompiling the same regex multiple times on
-                // different cursor invocations
+
+            if (patternValue == null) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (symbolTable.valueOf(i) == null) {
+                        symbolKeys.add(i);
+                    }
+                }
+                lastPattern = null;
+                return;
+            }
+
+            if (patternValue.length() > 0) {
+                if (countChar(patternValue, '_') == 0 && countChar(patternValue, '\\') == 0 && countChar(patternValue, '%') == 0) {
+                    this.useEquality = true;
+                    this.exactPattern = caseInsensitive ? patternValue.toString().toLowerCase() : patternValue.toString();
+                    this.lastPattern = exactPattern;
+                    final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                    assert symbolTable != null;
+                    symbolKeys.clear();
+                    for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                        final CharSequence s = symbolTable.valueOf(i);
+                        if (s == null) {
+                            continue;
+                        }
+                        if (caseInsensitive) {
+                            if (equalsLowerCase(s, exactPattern)) {
+                                symbolKeys.add(i);
+                            }
+                        } else {
+                            if (Chars.equals(s, exactPattern)) {
+                                symbolKeys.add(i);
+                            }
+                        }
+                    }
+                    return;
+                }
+
                 String p = escapeSpecialChars(patternValue, lastPattern);
                 if (p != null) {
                     int flags = Pattern.DOTALL;
@@ -200,9 +288,9 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                         flags |= Pattern.CASE_INSENSITIVE;
                         p = p.toLowerCase();
                     }
-                    Matcher matcher = Pattern.compile(p, flags).matcher("");
-                    this.lastPattern = p;
+                    final Matcher matcher = Pattern.compile(p, flags).matcher("");
                     extractSymbolKeys(value, symbolKeys, matcher);
+                    lastPattern = p;
                 }
             } else {
                 lastPattern = null;
@@ -220,7 +308,10 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                 BindLikeStaticSymbolTableFunction thatP = (BindLikeStaticSymbolTableFunction) that;
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
+                thatP.lastPattern = this.lastPattern;
                 thatP.stateInherited = this.stateShared = true;
+                thatP.useEquality = this.useEquality;
+                thatP.exactPattern = this.exactPattern;
             }
             BinaryFunction.super.offerStateTo(that);
         }
@@ -228,13 +319,19 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
+            if (useEquality) {
+                sink.val(" = ");
+                sink.val(exactPattern);
+                if (caseInsensitive) {
+                    sink.val(" [case-insensitive]");
+                }
+            }
             // impl is regex
             sink.val(" ~ ");
             sink.val(pattern);
             if (!caseInsensitive) {
                 sink.val(" [case-sensitive]");
             }
-
             if (stateShared) {
                 sink.val(" [state-shared]");
             }
@@ -274,7 +371,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             assert symbolTable != null;
             symbolKeys.clear();
             for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
-                if (Chars.contains(symbolTable.valueOf(i), pattern)) {
+                final CharSequence s = symbolTable.valueOf(i);
+                if (s == null) {
+                    continue;
+                }
+                if (Chars.contains(s, pattern)) {
                     symbolKeys.add(i);
                 }
             }
@@ -703,6 +804,144 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             sink.val(" like ");
             sink.val(pattern);
             sink.val('%');
+            if (stateShared) {
+                sink.val(" [state-shared]");
+            }
+        }
+    }
+
+    // exact equality implementation for constant patterns (case-sensitive)
+    private static class ConstEqualsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final IntList symbolKeys = new IntList();
+        private final SymbolFunction value;
+        private boolean stateInherited = false;
+        private boolean stateShared = false;
+
+        public ConstEqualsStaticSymbolTableFunction(SymbolFunction value, String pattern) {
+            this.value = value;
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            if (stateInherited) {
+                return;
+            }
+            this.stateShared = false;
+            final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+            assert symbolTable != null;
+            symbolKeys.clear();
+            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                if (Chars.equals(symbolTable.valueOf(i), pattern)) {
+                    symbolKeys.add(i);
+                }
+            }
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof ConstEqualsStaticSymbolTableFunction) {
+                ConstEqualsStaticSymbolTableFunction thatP = (ConstEqualsStaticSymbolTableFunction) that;
+                thatP.symbolKeys.clear();
+                thatP.symbolKeys.addAll(this.symbolKeys);
+                thatP.stateInherited = this.stateShared = true;
+            }
+            UnaryFunction.super.offerStateTo(that);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" = ");
+            sink.val(pattern);
+            if (stateShared) {
+                sink.val(" [state-shared]");
+            }
+        }
+    }
+
+    // exact equality implementation for constant patterns (case-insensitive)
+    private static class ConstIEqualsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final IntList symbolKeys = new IntList();
+        private final SymbolFunction value;
+        private boolean stateInherited = false;
+        private boolean stateShared = false;
+
+        public ConstIEqualsStaticSymbolTableFunction(SymbolFunction value, String pattern) {
+            this.value = value;
+            this.pattern = pattern.toLowerCase();
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            if (stateInherited) {
+                return;
+            }
+            // corrected: mark local state as not shared initially
+            this.stateShared = false;
+
+            final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+            assert symbolTable != null;
+            symbolKeys.clear();
+            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                // explicit lower-case comparison because Chars.equalsLowerCase(...) doesn't exist
+                if (equalsLowerCase(symbolTable.valueOf(i), pattern)) {
+                    symbolKeys.add(i);
+                }
+            }
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof ConstIEqualsStaticSymbolTableFunction) {
+                ConstIEqualsStaticSymbolTableFunction thatP = (ConstIEqualsStaticSymbolTableFunction) that;
+                thatP.symbolKeys.clear();
+                thatP.symbolKeys.addAll(this.symbolKeys);
+                thatP.stateInherited = this.stateShared = true;
+            }
+            UnaryFunction.super.offerStateTo(that);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" = ");
+            sink.val(pattern);
+            sink.val(" [case-insensitive]");
             if (stateShared) {
                 sink.val(" [state-shared]");
             }
