@@ -105,7 +105,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         // cursor must be open to calculate the limit details.
         if (cursor.base != null && loFunc != null && loFunc.getLong(null) != Numbers.LONG_NULL) {
-            cursor.countLimit();
+            cursor.resolveLimitRange();
             sink.meta("skip-over-rows").val(cursor.skippedRows);
             sink.meta("limit").val(cursor.limit);
         }
@@ -284,7 +284,34 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             rowsToSkip = -1;
         }
 
-        private void countLimit() {
+        private void countRows() {
+            if (rowCount == -1) {
+                rowCount = base.size();
+                if (rowCount > -1) {
+                    areRowsCounted = true;
+                    return;
+                }
+                rowCount = 0;
+            }
+
+            if (!areRowsCounted) {
+                base.calculateSize(circuitBreaker, counter);
+                base.toTop();
+                rowCount = counter.get();
+                areRowsCounted = true;
+                counter.clear();
+            }
+        }
+
+        private void ensureLimitCounted() {
+            if (!isLimitCounted) {
+                resolveLimitRange();
+                countedLimit = limit;
+                isLimitCounted = true;
+            }
+        }
+
+        private void resolveLimitRange() {
             if (lo == hi) {
                 // There's either a single zero argument (LIMIT 0) or two equal arguments (LIMIT n, n).
                 // In both cases the result is an empty cursor.
@@ -356,33 +383,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
             size = limit;
-        }
-
-        private void countRows() {
-            if (rowCount == -1) {
-                rowCount = base.size();
-                if (rowCount > -1) {
-                    areRowsCounted = true;
-                    return;
-                }
-                rowCount = 0;
-            }
-
-            if (!areRowsCounted) {
-                base.calculateSize(circuitBreaker, counter);
-                base.toTop();
-                rowCount = counter.get();
-                areRowsCounted = true;
-                counter.clear();
-            }
-        }
-
-        private void ensureLimitCounted() {
-            if (!isLimitCounted) {
-                countLimit();
-                countedLimit = limit;
-                isLimitCounted = true;
-            }
         }
 
         private void skipRows(long rowCount) {
