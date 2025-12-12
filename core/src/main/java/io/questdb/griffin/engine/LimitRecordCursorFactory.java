@@ -88,26 +88,35 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Limit");
-        Function loFunc = cursor.leftFunction;
-        Function hiFunc = cursor.rightFunction;
-        if (loFunc != null) {
-            sink.meta("lo").val(loFunc);
-            if (loFunc.isRuntimeConstant()) {
-                sink.val('[').val(loFunc.getLong(null)).val(']');
+        Function leftFunc = cursor.leftFunction;
+        Function rightFunc = cursor.rightFunction;
+        boolean isCursorOpen = cursor.base != null;
+        if (leftFunc != null) {
+            sink.meta(rightFunc != null ? "left" : "value");
+            sink.val(leftFunc);
+            if (leftFunc.isConstant() || isCursorOpen && leftFunc.isRuntimeConstant()) {
+                sink.val('[').val(leftFunc.getLong(null)).val(']');
             }
         }
-        if (hiFunc != null) {
-            sink.meta("hi").val(hiFunc);
-            if (hiFunc.isRuntimeConstant()) {
-                sink.val('[').val(hiFunc.getLong(null)).val(']');
+        if (rightFunc != null) {
+            sink.meta("right").val(rightFunc);
+            if (rightFunc.isConstant() || isCursorOpen && rightFunc.isRuntimeConstant()) {
+                sink.val('[').val(rightFunc.getLong(null)).val(']');
             }
         }
 
-        // cursor must be open to calculate the limit details.
-        if (cursor.base != null && loFunc != null && loFunc.getLong(null) != Numbers.LONG_NULL) {
-            cursor.ensureSizeResolved();
-            sink.meta("skip-over-rows").val(cursor.baseRowsToSkip);
-            sink.meta("limit").val(cursor.size);
+        if (isCursorOpen && leftFunc != null && leftFunc.getLong(null) != Numbers.LONG_NULL) {
+            cursor.ensureBoundsResolved();
+            String skipLabel, takeLabel;
+            if (cursor.areRowsCounted) {
+                skipLabel = "skip-rows";
+                takeLabel = "take-rows";
+            } else {
+                skipLabel = "skip-rows-max";
+                takeLabel = "take-rows-max";
+            }
+            sink.meta(skipLabel).val(cursor.baseRowsToSkip);
+            sink.meta(takeLabel).val(cursor.baseRowsToTake);
         }
         sink.child(base);
     }
