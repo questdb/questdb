@@ -26,7 +26,9 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -100,9 +102,17 @@ public class HTTPSerialParquetExporter {
                         sink.put(sql).put(" order by ").put(createOp.getColumnName(timestampIndex)).put(" desc");
                         sql = sink;
                     }
-                    CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
-                    factory = cc.getRecordCursorFactory();
-                    assert factory.supportsPageFrameCursor(); // simple temp table must support page frame cursor
+                    // in security context that doesn't allow database modifications we would allow
+                    // temp table creation and selection in this particular setting.
+                    SecurityContext sec = sqlExecutionContext.getSecurityContext();
+                    try {
+                        sqlExecutionContext.with(AllowAllSecurityContext.INSTANCE);
+                        CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
+                        factory = cc.getRecordCursorFactory();
+                        assert factory.supportsPageFrameCursor(); // simple temp table must support page frame cursor
+                    } finally {
+                        sqlExecutionContext.with(sec);
+                    }
                     sqlExecutionContext.changePageFrameSizes(task.getRowGroupSize(), task.getRowGroupSize());
                     PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
                     task.setUpStreamPartitionParquetExporter(factory, pageFrameCursor, factory.getMetadata(), descending);
