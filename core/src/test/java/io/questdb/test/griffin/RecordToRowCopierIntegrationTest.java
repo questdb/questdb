@@ -82,11 +82,21 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     /**
      * Returns the number of columns to use based on copier mode.
-     * - BYTECODE mode uses fewer columns to stay under bytecode limit
-     * - CHUNKED and LOOPING modes use many columns to exceed the limit
+     * - BYTECODE mode uses fewer columns to stay under bytecode limit (~50 cols)
+     * - CHUNKED mode uses many columns but chunking splits them into methods
+     * - LOOPING mode needs 400+ columns to exceed 8KB bytecode limit and trigger fallback
+     *   (BASE_BYTECODE_PER_COLUMN=20 bytes, so 8000/20=400 columns minimum)
      */
     private int getColumnCount(int baseCount) {
-        return copierMode == CopierMode.BYTECODE ? Math.min(baseCount, 50) : baseCount;
+        switch (copierMode) {
+            case BYTECODE:
+                return Math.min(baseCount, 50);  // Stay under bytecode limit
+            case LOOPING:
+                return Math.max(baseCount, 500); // Must exceed 8KB limit (500*20=10KB > 8KB)
+            case CHUNKED:
+            default:
+                return Math.max(baseCount, 500); // Also use 500+ to test chunking properly
+        }
     }
 
     @Test
@@ -263,12 +273,12 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             sink.put(") timestamp(ts) partition by DAY");
             execute(sink);
 
-            // Insert test data
+            // Insert test data - use modulo to stay within type limits
             sink.clear();
             sink.put("insert into src values (0");
             for (int i = 0; i < columnCount; i++) {
-                sink.put(", ").put(i % 127);       // byte
-                sink.put(", ").put(i * 100);       // short
+                sink.put(", ").put(i % 127);             // byte: max 127
+                sink.put(", ").put((i * 10) % 32000);    // short: max 32767
             }
             sink.put(")");
             execute(sink);
@@ -289,7 +299,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             // Spot check some values
             int checkIdx = Math.min(25, columnCount - 1);
             String expected = "long_from_byte0\tlong_from_byte" + checkIdx + "\tlong_from_short0\tlong_from_short" + checkIdx + "\n" +
-                    "0\t" + checkIdx + "\t0\t" + (checkIdx * 100) + "\n";
+                    "0\t" + (checkIdx % 127) + "\t0\t" + ((checkIdx * 10) % 32000) + "\n";
             assertSql(expected,
                     "select long_from_byte0, long_from_byte" + checkIdx + ", long_from_short0, long_from_short" + checkIdx + " from dst");
         });
@@ -824,11 +834,13 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     }
 
     /**
-     * Tests all types together in a single wide table
+     * Tests all types together in a single wide table.
+     * For LOOPING mode, we need enough columns to exceed 8KB bytecode limit.
+     * With 15 columns per multiplier iteration, we need 500/15 ≈ 34 iterations.
      */
     @Test
     public void testAllTypesWideTable() throws Exception {
-        int columnMultiplier = copierMode == CopierMode.BYTECODE ? 2 : 10;
+        int columnMultiplier = copierMode == CopierMode.BYTECODE ? 2 : 35;
         assertMemoryLeak(() -> {
             // Build source table with all types repeated
             sink.clear();
@@ -985,11 +997,13 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     }
 
     /**
-     * Tests many columns with mixed types to stress test all three copier modes
+     * Tests many columns with mixed types to stress test all three copier modes.
+     * For LOOPING mode, we need 500+ columns to exceed 8KB bytecode limit.
+     * With 5 columns per iteration (int, long, double, string, symbol), need 100 iterations.
      */
     @Test
     public void testManyColumnsAllTypes() throws Exception {
-        int baseCount = copierMode == CopierMode.BYTECODE ? 5 : 20;
+        int baseCount = copierMode == CopierMode.BYTECODE ? 5 : 100;
         assertMemoryLeak(() -> {
             // Create tables with repeated type patterns
             sink.clear();
