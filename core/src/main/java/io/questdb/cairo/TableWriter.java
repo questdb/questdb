@@ -144,9 +144,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -193,7 +193,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Publisher source is identified by a long value
     private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
-    private final DatabaseCheckpointStatus checkpointStatus;
     private final ColumnVersionWriter columnVersionWriter;
     private final MPSequence commandPubSeq;
     private final RingQueue<TableWriterTask> commandQueue;
@@ -352,7 +351,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LifecycleManager lifecycleManager,
             CharSequence root,
             DdlListener ddlListener,
-            DatabaseCheckpointStatus checkpointStatus,
             CairoEngine cairoEngine
     ) {
         this(
@@ -364,7 +362,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 lifecycleManager,
                 root,
                 ddlListener,
-                checkpointStatus,
                 cairoEngine,
                 cairoEngine.getTxnScoreboardPool()
         );
@@ -379,14 +376,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LifecycleManager lifecycleManager,
             CharSequence root,
             DdlListener ddlListener,
-            DatabaseCheckpointStatus checkpointStatus,
             CairoEngine cairoEngine,
             TxnScoreboardPool txnScoreboardPool
     ) {
         LOG.info().$("open '").$(tableToken).$('\'').$();
         this.configuration = configuration;
         this.ddlListener = ddlListener;
-        this.checkpointStatus = checkpointStatus;
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = configuration.getMetrics();
         this.ownMessageBus = ownMessageBus;
@@ -3066,6 +3061,69 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public final void truncateSoft() {
         truncate(true);
+    }
+
+    public boolean trySkipWalTransactions(long seqTxnLo, long skipTxnCount) {
+        assert skipTxnCount > 0;
+        if (txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0) {
+            // Apply symbol changes for symbol columns to keep the
+            // symbol indexes same as if the transactions were applied.
+            int addedSymbols = 0;
+            for (long seqTxn = seqTxnLo, n = seqTxnLo + skipTxnCount; seqTxn < n; seqTxn++) {
+
+                long segLo = walTxnDetails.getSegmentRowLo(seqTxn);
+                long segHi = walTxnDetails.getSegmentRowHi(seqTxn);
+
+                // Some very rare commits can be empty, where the rows are cancelled
+                // even with symbol changes, skip them
+                if (segHi > segLo) {
+                    SymbolMapDiffCursor symbolMapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
+                    if (symbolMapDiffCursor != null) {
+                        SymbolMapDiff symbolMapDiff;
+
+                        while ((symbolMapDiff = symbolMapDiffCursor.nextSymbolMapDiff()) != null) {
+                            int columnIndex = symbolMapDiff.getColumnIndex();
+                            int columnType = metadata.getColumnType(columnIndex);
+                            if (columnType == -ColumnType.SYMBOL) {
+                                // Scroll the cursor, don't apply, symbol is deleted
+                                symbolMapDiff.drain();
+                                continue;
+                            }
+
+                            if (!ColumnType.isSymbol(columnType)) {
+                                throw CairoException.critical(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
+                                        .put(", seqTxn=").put(seqTxn)
+                                        .put(", wal=").put(walTxnDetails.getWalId(seqTxn))
+                                        .put(", segment=").put(walTxnDetails.getSegmentId(seqTxn))
+                                        .put(']');
+                            }
+
+                            final MapWriter mapWriter = symbolMapWriters.get(columnIndex);
+                            if (symbolMapDiff.hasNullValue()) {
+                                mapWriter.updateNullFlag(true);
+                            }
+
+                            SymbolMapDiffEntry entry;
+                            while ((entry = symbolMapDiff.nextEntry()) != null) {
+                                final CharSequence symbolValue = entry.getSymbol();
+                                mapWriter.put(symbolValue);
+                                addedSymbols++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            LOG.info().$("skipping replaced WAL transactions [table=").$(tableToken)
+                    .$(", range=[").$(seqTxnLo)
+                    .$(", ").$(seqTxnLo + skipTxnCount).$(')')
+                    .$(", addedSymbols=").$(addedSymbols)
+                    .I$();
+
+            commitSeqTxn(seqTxnLo + skipTxnCount - 1);
+            return true;
+        }
+        return false;
     }
 
     public void updateTableToken(TableToken tableToken) {
