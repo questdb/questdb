@@ -33,8 +33,8 @@ public class LoopingRecordToRowCopierTest extends AbstractCairoTest {
 
     @Override
     public void setUp() {
-        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_SQL_COPIER_CHUNKED, false);
-        node1.getEngine().getConfigReloader().reload();
+        super.setUp();
+        node1.setProperty(PropertyKey.CAIRO_SQL_COPIER_CHUNKED, false);
     }
 
     @Test
@@ -143,8 +143,10 @@ public class LoopingRecordToRowCopierTest extends AbstractCairoTest {
             execute("insert into src values (0, 1, 2, 3, 4, 5.5, 6.6, 'hello', 'world')");
             execute("insert into dst select * from src");
 
-            assertSql("ts\tb\ts\ti\tl\tf\td\tstr\tsym\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t2\t3\t4\t5.5\t6.6\thello\tworld\n", "dst");
+            assertSql("""
+                    ts\tb\ts\ti\tl\tf\td\tstr\tsym
+                    1970-01-01T00:00:00.000000Z\t1\t2\t3\t4\t5.5\t6.6\thello\tworld
+                    """, "dst");
         });
     }
 
