@@ -3822,14 +3822,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void bumpMetadataAndColumnStructureVersion() {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.bumpMetadataAndColumnStructureVersion(this.denseSymbolMapWriters);
+        txWriter.bumpMetadataAndColumnStructureVersion(denseSymbolMapWriters);
         assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
     private void bumpMetadataVersion() {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.bumpMetadataVersion(this.denseSymbolMapWriters);
+        txWriter.bumpMetadataVersion(denseSymbolMapWriters);
         assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 

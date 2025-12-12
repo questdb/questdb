@@ -146,10 +146,6 @@ public class FuzzRunner {
     }
 
     public void applyManyWalParallel(ObjList<ObjList<FuzzTransaction>> fuzzTransactions, Rnd rnd, String tableNameBase, boolean multiTable, boolean waitApply) {
-        applyManyWalParallel(fuzzTransactions, rnd, tableNameBase, multiTable, waitApply, false);
-    }
-
-    public void applyManyWalParallel(ObjList<ObjList<FuzzTransaction>> fuzzTransactions, Rnd rnd, String tableNameBase, boolean multiTable, boolean waitApply, boolean concurrentReads) {
         final ObjList<WalWriter> writers = new ObjList<>();
         final int tableCount = fuzzTransactions.size();
         final AtomicInteger done = new AtomicInteger();
@@ -703,7 +699,7 @@ public class FuzzRunner {
     private void applyWalParallel(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd) {
         ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
         tablesTransactions.add(transactions);
-        applyManyWalParallel(tablesTransactions, applyRnd, tableName, false, true, true);
+        applyManyWalParallel(tablesTransactions, applyRnd, tableName, false, true);
     }
 
     private void assertMinMaxTimestamp(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String tableName) throws SqlException {
