@@ -34,6 +34,7 @@ public class LoopingRecordToRowCopierTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_SQL_COPIER_CHUNKED, false);
+        node1.getEngine().getConfigReloader().reload();
     }
 
     @Test
@@ -56,7 +57,7 @@ public class LoopingRecordToRowCopierTest extends AbstractCairoTest {
 
             // Insert test data
             StringBuilder insertSql = new StringBuilder("insert into src values (0");
-            for (int i = 0; i < 100; i++) {
+            for (int i = 0; i < 1000; i++) {
                 insertSql.append(", ").append(i);
             }
             insertSql.append(")");
