@@ -3079,6 +3079,69 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         truncate(true);
     }
 
+    public boolean trySkipWalTransactions(long seqTxnLo, long skipTxnCount) {
+        assert skipTxnCount > 0;
+        if (txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0) {
+            // Apply symbol changes for symbol columns to keep the
+            // symbol indexes same as if the transactions were applied.
+            int addedSymbols = 0;
+            for (long seqTxn = seqTxnLo, n = seqTxnLo + skipTxnCount; seqTxn < n; seqTxn++) {
+
+                long segLo = walTxnDetails.getSegmentRowLo(seqTxn);
+                long segHi = walTxnDetails.getSegmentRowHi(seqTxn);
+
+                // Some very rare commits can be empty, where the rows are cancelled
+                // even with symbol changes, skip them
+                if (segHi > segLo) {
+                    SymbolMapDiffCursor symbolMapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
+                    if (symbolMapDiffCursor != null) {
+                        SymbolMapDiff symbolMapDiff;
+
+                        while ((symbolMapDiff = symbolMapDiffCursor.nextSymbolMapDiff()) != null) {
+                            int columnIndex = symbolMapDiff.getColumnIndex();
+                            int columnType = metadata.getColumnType(columnIndex);
+                            if (columnType == -ColumnType.SYMBOL) {
+                                // Scroll the cursor, don't apply, symbol is deleted
+                                symbolMapDiff.drain();
+                                continue;
+                            }
+
+                            if (!ColumnType.isSymbol(columnType)) {
+                                throw CairoException.critical(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
+                                        .put(", seqTxn=").put(seqTxn)
+                                        .put(", wal=").put(walTxnDetails.getWalId(seqTxn))
+                                        .put(", segment=").put(walTxnDetails.getSegmentId(seqTxn))
+                                        .put(']');
+                            }
+
+                            final MapWriter mapWriter = symbolMapWriters.get(columnIndex);
+                            if (symbolMapDiff.hasNullValue()) {
+                                mapWriter.updateNullFlag(true);
+                            }
+
+                            SymbolMapDiffEntry entry;
+                            while ((entry = symbolMapDiff.nextEntry()) != null) {
+                                final CharSequence symbolValue = entry.getSymbol();
+                                mapWriter.put(symbolValue);
+                                addedSymbols++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            LOG.info().$("skipping replaced WAL transactions [table=").$(tableToken)
+                    .$(", range=[").$(seqTxnLo)
+                    .$(", ").$(seqTxnLo + skipTxnCount).$(')')
+                    .$(", addedSymbols=").$(addedSymbols)
+                    .I$();
+
+            commitSeqTxn(seqTxnLo + skipTxnCount - 1);
+            return true;
+        }
+        return false;
+    }
+
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
         this.metadata.updateTableToken(tableToken);
