@@ -461,7 +461,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                 sink.put(", concat('str', x - 1, '_', ").put(i).put(") as str_col").put(i);
                 sink.put(", cast(concat('sym', (x - 1) % 5) as symbol) as sym_col").put(i);
             }
-            sink.put(" from long_sequence(10)) timestamp(ts) partition by year");
+            sink.put(" from long_sequence(10)) timestamp(ts)");
             node1.getEngine().getConfigReloader().reload();
             execute(sink);
 
@@ -1272,11 +1272,12 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
      * - CHUNKED mode uses many columns but chunking splits them into methods
      * - LOOPING mode needs 400+ columns to exceed 8KB bytecode limit and trigger fallback
      * (BASE_BYTECODE_PER_COLUMN=20 bytes, so 8000/20=400 columns minimum)
+     * Note: Keep column count low enough to avoid exhausting file handles on macOS during full test runs.
      */
     private int getColumnCount(int baseCount) {
         return switch (copierMode) {
             case BYTECODE -> Math.min(baseCount, 50);  // Stay under bytecode limit
-            case LOOPING, CHUNKED -> Math.max(baseCount, 600); // Must exceed 8KB limit (500*20=10KB > 8KB)
+            case LOOPING, CHUNKED -> Math.max(baseCount, 450); // Must exceed 8KB limit (450*20=9KB > 8KB)
             default -> throw new UnsupportedOperationException();
         };
     }
