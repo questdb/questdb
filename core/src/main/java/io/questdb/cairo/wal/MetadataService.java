@@ -31,6 +31,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -106,6 +108,8 @@ public interface MetadataService {
 
     void addViewColumn(CharSequence columnName, int columnType);
 
+    void alterView(String viewSql, LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies);
+
     AttachDetachStatus attachPartition(long partitionTimestamp);
 
     void changeCacheFlag(int columnIndex, boolean isCacheOn);
@@ -145,8 +149,6 @@ public interface MetadataService {
      * to the table metadata always return false.
      */
     boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
-
-    void finalizeAlterView(SecurityContext securityContext);
 
     void forceRemovePartitions(LongList partitionTimestamps);
 

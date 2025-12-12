@@ -42,6 +42,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectString;
@@ -83,6 +85,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     // to exception message using TableUtils.setSinkForPartition.
     private final LongList extraInfo;
     private final ObjCharSequenceList extraStrInfo;
+    // used as a temp storage in alterView()
+    private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> viewDependencies = new LowerCaseCharSequenceObjHashMap<>();
     private CharSequenceList activeExtraStrInfo;
     private short command;
     private MemoryFCRImpl deserializeMem;
@@ -272,6 +276,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         activeExtraStrInfo = extraStrInfo;
         extraInfo.clear();
         keepMatViewsValid = false;
+        viewDependencies.clear();
         clearCommandCorrelationId();
     }
 
@@ -459,14 +464,33 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             }
         }
 
-        int lParam = 0;
-        for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
-            CharSequence columnName = activeExtraStrInfo.getStrA(i);
-            int type = (int) extraInfo.get(lParam++);
+        int extraInfoIndex = 0;
+        int extraStrInfoIndex = 0;
+
+        final int columnCount = (int) extraInfo.get(extraInfoIndex++);
+        for (int i = 0; i < columnCount; i++) {
+            final CharSequence columnName = activeExtraStrInfo.getStrA(extraStrInfoIndex++);
+            final int type = (int) extraInfo.get(extraInfoIndex++);
             svc.addViewColumn(columnName, type);
         }
 
-        svc.finalizeAlterView(securityContext);
+        final String viewSql = Chars.toString(activeExtraStrInfo.getStrA(extraStrInfoIndex++));
+
+        viewDependencies.clear();
+        final int numOfDependencies = (int) extraInfo.get(extraInfoIndex++);
+        for (int i = 0; i < numOfDependencies; i++) {
+            final String tableName = Chars.toString(activeExtraStrInfo.getStrA(extraStrInfoIndex++));
+            final int numOfColumns = (int) extraInfo.get(extraInfoIndex++);
+
+            final LowerCaseCharSequenceHashSet columns = new LowerCaseCharSequenceHashSet();
+            for (int j = 0; j < numOfColumns; j++) {
+                final CharSequence columnName = activeExtraStrInfo.getStrA(extraStrInfoIndex++);
+                columns.add(Chars.toString(columnName));
+            }
+            viewDependencies.put(tableName, columns);
+        }
+
+        svc.alterView(viewSql, viewDependencies);
     }
 
     private void applyAddColumn(MetadataService svc) {

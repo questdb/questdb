@@ -123,6 +123,17 @@ public class ViewDefinition implements Mutable {
         this.viewSql = viewSql;
     }
 
+    public void init(
+            @NotNull TableToken viewToken,
+            @NotNull String viewSql,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) {
+        init(viewToken, viewSql);
+
+        // shallow copy
+        this.dependencies.putAll(dependencies);
+    }
+
     private static void readDefinitionBlock(
             ViewDefinition destDefinition,
             ReadableBlock block,

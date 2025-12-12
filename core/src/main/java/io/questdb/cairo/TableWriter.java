@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -100,7 +101,9 @@ import io.questdb.std.FindVisitor;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -801,6 +804,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, e);
             }
         }
+    }
+
+    @Override
+    public void alterView(String viewSql, LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies) {
+        rewriteAndSwapMetadata(metadata);
+
+        clearTodoAndCommitMetaStructureVersion();
+
+        try {
+            if (!Os.isWindows()) {
+                try {
+                    ff.fsyncAndClose(openRO(ff, path.$(), LOG));
+                } catch (CairoException e) {
+                    LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
+                            .$(", msg=").$safe(e.getFlyweightMessage())
+                            .$(", errno=").$(e.getErrno())
+                            .I$();
+                }
+            }
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
+        } catch (CairoError err) {
+            throw err;
+        } catch (Throwable th) {
+            throwDistressException(th);
+        }
+
+        final ViewDefinition viewDefinition = new ViewDefinition();
+        viewDefinition.init(tableToken, viewSql, dependencies);
+
+        updateViewDefinition(viewDefinition);
+
+        // trigger a compile view, so view compiler job will validate the view after successful alter
+        engine.enqueueCompileView(tableToken);
     }
 
     public long apply(AbstractOperation operation, long seqTxn) {
@@ -2200,34 +2239,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void finalizeAlterView(SecurityContext securityContext) {
-        rewriteAndSwapMetadata(metadata);
-
-        clearTodoAndCommitMetaStructureVersion();
-
-        try {
-            if (!Os.isWindows()) {
-                try {
-                    ff.fsyncAndClose(openRO(ff, path.$(), LOG));
-                } catch (CairoException e) {
-                    LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
-                            .$(", msg=").$safe(e.getFlyweightMessage())
-                            .$(", errno=").$(e.getErrno())
-                            .I$();
-                }
-            }
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
-            }
-        } catch (CairoError err) {
-            throw err;
-        } catch (Throwable th) {
-            throwDistressException(th);
-        }
-    }
-
-    @Override
     public void forceRemovePartitions(LongList partitionTimestamps) {
         long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
         long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
@@ -2880,7 +2891,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             removeColumnFiles(index, columnName, type, isIndexed);
 
             finishColumnPurge();
-            LOG.info().$("REMOVED column '").$safe(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
         } catch (CairoError err) {
             throw err;
         } catch (Throwable th) {
@@ -10494,6 +10504,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
+    }
+
+    private void updateViewDefinition(ViewDefinition newDefinition) {
+        if (blockFileWriter == null) {
+            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+        }
+        try (BlockFileWriter definitionWriter = blockFileWriter) {
+            definitionWriter.of(path.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
+            ViewDefinition.append(newDefinition, definitionWriter);
+        } finally {
+            path.trimTo(pathSize);
+        }
+
+        engine.getViewGraph().updateView(newDefinition);
     }
 
     private void validateSwapMeta() {

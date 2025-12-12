@@ -78,6 +78,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1979,6 +1981,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void alterView(String viewSql, LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies) {
+            structureVersion++;
+        }
+
+        @Override
         public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
             int columnIndex = validateExistingColumnName(columnName, "cannot change type");
             validateNewColumnType(newType);
@@ -2011,11 +2018,6 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void finalizeAlterView(SecurityContext securityContext) {
-            structureVersion++;
-        }
-
-        @Override
         public TableRecordMetadata getMetadata() {
             return metadata;
         }
@@ -2038,7 +2040,11 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void removeViewColumn(@NotNull CharSequence columnName) {
-            validateExistingColumnName(columnName, "cannot remove");
+            int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            if (columnIndex < 0) {
+                throw CairoException.nonCritical().put("cannot remove").put(", column does not exist [table=").put(tableToken.getTableName())
+                        .put(", column=").put(columnName).put(']');
+            }
         }
 
         @Override
@@ -2238,6 +2244,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void alterView(String viewSql, LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies) {
+            metadata.alterView();
+        }
+
+        @Override
         public void changeColumnType(
                 CharSequence columnNameSeq,
                 int newType,
@@ -2324,11 +2335,6 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
             return metadata.enableDeduplicationWithUpsertKeys();
-        }
-
-        @Override
-        public void finalizeAlterView(SecurityContext securityContext) {
-            metadata.alterView();
         }
 
         @Override

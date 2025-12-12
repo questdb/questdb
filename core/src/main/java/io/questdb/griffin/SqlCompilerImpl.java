@@ -128,6 +128,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -2338,38 +2340,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int viewSqlPosition = lexer.getPosition();
         final String viewSql = parser.parseViewSql(lexer, this);
 
-        executionContext.getSecurityContext().authorizeAlterView(viewToken);
-
-        final ExecutionModel executionModel;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            executionModel = compiler.generateExecutionModel(viewSql, executionContext);
+            final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
+            final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+            SqlUtil.collectTableAndColumnReferences(engine, executionModel.getQueryModel(), dependencies);
             try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext)) {
-                final RecordMetadata newMetadata = factory.getMetadata();
-                for (int i = 0, n = newMetadata.getColumnCount(); i < n; i++) {
-                    alterOperationBuilder.addViewColumnToList(
-                            newMetadata.getColumnName(i),
-                            newMetadata.getColumnType(i)
-                    );
+                // test the cursor, if no exception thrown viewSql is working
+                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                    cursor.hasNext();
                 }
+
+                final RecordMetadata metadata = factory.getMetadata();
+                alterOperationBuilder.addAlterViewInfo(viewSql, metadata, dependencies);
             }
         } catch (SqlException | CairoException e) {
             // position is reported from the view SQL, we have to adjust it
             throw SqlException.$(viewSqlPosition + e.getPosition(), e.getFlyweightMessage());
-        }
-
-        final ViewDefinition viewDefinition = new ViewDefinition();
-        viewDefinition.init(viewToken, Chars.toString(viewSql));
-        SqlUtil.collectTableAndColumnReferences(engine, executionModel.getQueryModel(), viewDefinition.getDependencies());
-
-        try (BlockFileWriter viewDefinitionWriter = blockFileWriter) {
-            Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(viewToken);
-            viewDefinitionWriter.of(path.concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
-            ViewDefinition.append(viewDefinition, viewDefinitionWriter);
-        }
-
-        if (!engine.getViewGraph().updateView(viewDefinition)) {
-            // there was no view to update (concurrent drop)
-            throw SqlException.$(lexer.lastTokenPosition(), "view does not exist");
         }
 
         final AlterOperationBuilder alterView = alterOperationBuilder.ofAlterView(
@@ -2377,6 +2363,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 viewToken,
                 viewToken.getTableId()
         );
+        executionContext.getSecurityContext().authorizeAlterView(viewToken);
         compiledQuery.ofAlter(alterView.build(CMD_ALTER_VIEW));
     }
 
