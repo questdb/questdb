@@ -7282,9 +7282,6 @@ public class SqlOptimiser implements Mutable {
                     continue;
                 }
                 WindowJoinContext context = windowJoinModel.getWindowJoinContext();
-                if (context.isIncludePrevailing()) {
-                    throw SqlException.position(context.getPrevailingPos()).put("including prevailing is not supported in WINDOW joins");
-                }
                 long lo = 0, hi = 0;
                 switch (context.getLoKind()) {
                     case WindowJoinContext.PRECEDING:

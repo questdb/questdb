@@ -223,16 +223,24 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
             for (int i = 0; i < dynamicStart; i += 2) {
                 long lo = modelIntervals.getQuick(i);
-                if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
+                if (loOffset == Numbers.LONG_NULL || loOffset == Long.MAX_VALUE) {
+                    lo = loOffset;
+                } else if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
                     lo = timestampDriver.from(lo, driver.getTimestampType());
                     lo -= loOffset;
                 }
                 long hi = modelIntervals.getQuick(i + 1);
-                if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
+                if (hiOffset == Numbers.LONG_NULL || hiOffset == Long.MAX_VALUE) {
+                    hi = hiOffset;
+                } else if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
                     hi = timestampDriver.from(hi, driver.getTimestampType());
                     hi += hiOffset;
                 }
-                intersect(lo, hi);
+                if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
+                    return;
+                } else {
+                    intersect(lo, hi);
+                }
             }
 
             // TODO: Add support for dynamic intervals in merge() method
