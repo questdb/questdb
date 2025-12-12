@@ -446,7 +446,6 @@ impl Write for BufferWriter {
 pub struct StreamingParquetWriter {
     partition: Partition,
     // We need Box<Vec<u8>> here to ensure the Vec itself has a stable heap address
-    // Only Vec's large buffer uses QdbAllocator; Box uses Global (negligible ~32 bytes)
     #[allow(clippy::box_collection)]
     current_buffer: Box<Vec<u8, QdbAllocator>>,
     chunked_writer: ChunkedWriter<BufferWriter>,
