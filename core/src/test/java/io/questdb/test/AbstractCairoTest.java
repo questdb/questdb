@@ -2020,6 +2020,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertQueryNoLeakCheck(String expected, String query) throws SqlException {
+        assertQueryNoLeakCheck(expected, query, true);
+    }
+
+    protected void assertQueryNoLeakCheck(String expected, String query, boolean expectSize) throws SqlException {
         snapshotMemoryUsage();
         try (RecordCursorFactory factory = select(query)) {
             assertFactoryCursor(
@@ -2028,7 +2032,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     factory,
                     true,
                     sqlExecutionContext,
-                    true,
+                    expectSize,
                     false
             );
         }
