@@ -274,7 +274,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                     table_name_ptr,
                     table_name_size as usize,
                 ))
-                    .expect("invalid table name utf8")
+                .expect("invalid table name utf8")
             };
             err.add_context(format!(
                 "could not encode partition for table {table_name} and timestamp index {timestamp_index}"
@@ -358,7 +358,7 @@ fn create_partition_descriptor(
             table_name_size as usize,
         ))
     }
-        .to_string();
+    .to_string();
 
     let partition = Partition { table, columns };
     Ok(partition)
@@ -402,13 +402,13 @@ fn compression_from_i64(value: i64) -> Result<CompressionOptions, ParquetError> 
 }
 
 struct BufferWriter {
-    buffer: *mut Vec<u8>,
+    buffer: *mut Vec<u8, QdbAllocator>,
     offset: usize,
     init_offset: usize,
 }
 
 impl BufferWriter {
-    unsafe fn new_with_offset(buffer: *mut Vec<u8>, offset: usize) -> Self {
+    unsafe fn new_with_offset(buffer: *mut Vec<u8, QdbAllocator>, offset: usize) -> Self {
         Self { buffer, offset, init_offset: offset }
     }
 }
@@ -446,8 +446,9 @@ impl Write for BufferWriter {
 pub struct StreamingParquetWriter {
     partition: Partition,
     // We need Box<Vec<u8>> here to ensure the Vec itself has a stable heap address
+    // Only Vec's large buffer uses QdbAllocator; Box uses Global (negligible ~32 bytes)
     #[allow(clippy::box_collection)]
-    current_buffer: Box<Vec<u8>>,
+    current_buffer: Box<Vec<u8, QdbAllocator>>,
     chunked_writer: ChunkedWriter<BufferWriter>,
     additional_data: Vec<KeyValue>,
 }
@@ -456,6 +457,7 @@ pub struct StreamingParquetWriter {
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_createStreamingParquetWriter(
     mut env: JNIEnv,
     _class: JClass,
+    allocator_ptr: *const QdbAllocator,
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,
@@ -477,7 +479,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             col_meta_data,
             timestamp_index,
         )?;
-        let current_buffer = Vec::with_capacity(8192);
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
         let row_group_size_opt = if row_group_size > 0 {
@@ -509,10 +510,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             &partition_template,
             raw_array_encoding != 0,
         )?;
+        let allocator = unsafe { &*allocator_ptr };
         let encodings = crate::parquet_write::schema::to_encodings(&partition_template);
-        let mut current_buffer = Box::new(current_buffer);
-        let buffer_writer =
-            unsafe { BufferWriter::new_with_offset(&mut *current_buffer as *mut Vec<u8>, 8) };
+        let mut current_buffer = Box::new(Vec::with_capacity_in(8192, allocator.clone()));
+        let buffer_writer = unsafe {
+            BufferWriter::new_with_offset(&mut *current_buffer as *mut Vec<u8, QdbAllocator>, 8)
+        };
         let parquet_writer = ParquetWriter::new(buffer_writer)
             .with_version(version_from_i32(version)?)
             .with_compression(compression_options)
@@ -561,8 +564,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             encoder.current_buffer.set_len(0);
         }
         update_partition_data(&mut encoder.partition, col_data_ptr, row_count as usize)?;
-        encoder.chunked_writer.write_chunk_as_single_row_group(&encoder.partition)?;
-        debug_assert!(encoder.current_buffer.len() >= 8, "buffer too small: length header requires 8 bytes");
+        encoder
+            .chunked_writer
+            .write_chunk_as_single_row_group(&encoder.partition)?;
+        debug_assert!(
+            encoder.current_buffer.len() >= 8,
+            "buffer too small: length header requires 8 bytes"
+        );
         let data_len = (encoder.current_buffer.len() - 8) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
@@ -599,7 +607,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         encoder
             .chunked_writer
             .finish(encoder.additional_data.clone())?;
-        debug_assert!(encoder.current_buffer.len() >= 8, "buffer too small: length header requires 8 bytes");
+        debug_assert!(
+            encoder.current_buffer.len() >= 8,
+            "buffer too small: length header requires 8 bytes"
+        );
         let data_len = (encoder.current_buffer.len() - 8) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
@@ -786,8 +797,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         unsafe {
             encoder.current_buffer.set_len(0);
         }
-        encoder.chunked_writer.write_chunk_as_single_row_group(&partition)?;
-        debug_assert!(encoder.current_buffer.len() >= 8, "buffer too small: length header requires 8 bytes");
+        encoder
+            .chunked_writer
+            .write_chunk_as_single_row_group(&partition)?;
+        debug_assert!(
+            encoder.current_buffer.len() >= 8,
+            "buffer too small: length header requires 8 bytes"
+        );
         let data_len = (encoder.current_buffer.len() - 8) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())

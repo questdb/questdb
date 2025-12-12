@@ -43,6 +43,7 @@ public class PartitionEncoder {
     ) throws CairoException;
 
     public static native long createStreamingParquetWriter(
+            long allocator,
             int columnCount,
             long columnNamesPtr,
             int columnNamesSize,

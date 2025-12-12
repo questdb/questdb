@@ -370,6 +370,7 @@ public class CopyExportRequestTask implements Mutable {
                 columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | metadata.getColumnType(i));
             }
             streamWriter = createStreamingParquetWriter(
+                    Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER),
                     metadata.getColumnCount(),
                     columnNames.ptr(),
                     columnNames.size(),
