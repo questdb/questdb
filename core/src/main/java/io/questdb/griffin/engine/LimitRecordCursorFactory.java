@@ -141,14 +141,15 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private final RecordCursor.Counter counter = new Counter();
         private final Function leftFunction;
         private final Function rightFunction;
+        private boolean areBoundsResolved;
         private boolean areRowsCounted;
         private RecordCursor base;
         private long baseRowCount;
         private long baseRowsToSkip;
+        private long baseRowsToTake;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long hi;
-        private boolean isSizeResolved;
-        private boolean isToTopInProgress;
+        private boolean isSuspendableOpInProgress;
         private long lo;
         private long remaining;
         private long size;
@@ -197,7 +198,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            ensureSizeResolved();
+            ensureBoundsResolved();
             if (remaining <= 0) {
                 return false;
             }
@@ -245,16 +246,16 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
             baseRowCount = -1;
             size = -1;
-            isToTopInProgress = false;
+            isSuspendableOpInProgress = false;
             baseRowsToSkip = 0;
-            isSizeResolved = false;
+            areBoundsResolved = false;
             areRowsCounted = false;
             counter.clear();
         }
 
         @Override
         public long preComputedStateSize() {
-            return RecordCursor.fromBool(areRowsCounted) + RecordCursor.fromBool(isSizeResolved) + base.preComputedStateSize();
+            return RecordCursor.fromBool(areRowsCounted) + RecordCursor.fromBool(areBoundsResolved) + base.preComputedStateSize();
         }
 
         @Override
@@ -264,24 +265,31 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public long size() {
-            ensureSizeResolved();
+            ensureBoundsResolved();
             return size;
         }
 
         @Override
         public void toTop() {
-            remaining = size;
-            if (!isToTopInProgress) {
-                isToTopInProgress = true;
+            remaining = baseRowsToTake;
+            if (!isSuspendableOpInProgress) {
+                isSuspendableOpInProgress = true;
                 base.toTop();
                 counter.set(baseRowsToSkip);
             }
-            if (isToTopInProgress) {
+            if (isSuspendableOpInProgress) {
                 if (counter.get() > 0) {
                     base.skipRows(counter);
                 }
-                isToTopInProgress = false;
+                isSuspendableOpInProgress = false;
                 counter.clear();
+            }
+        }
+
+        private void ensureBoundsResolved() {
+            if (!areBoundsResolved) {
+                resolveBoundsAndGotoTop();
+                remaining = baseRowsToTake;
             }
         }
 
@@ -304,75 +312,48 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        private void ensureSizeResolved() {
-            if (isSizeResolved) {
-                return;
-            }
-            resolveSizeAndGotoTop();
-            remaining = size;
-            isSizeResolved = true;
-        }
-
-        private void resolveSizeAndGotoTop() {
+        private void resolveBoundsAndGotoTop() {
             if (lo == hi) {
                 // There's either a single zero argument (LIMIT 0) or two equal arguments (LIMIT n, n).
                 // In both cases the result is an empty cursor.
-                size = 0;
+                size = baseRowsToTake = 0;
                 return;
             }
-            // Compute base cursor's row count and then resolve this cursor's row count,
-            // and how many base cursor's rows we must skip.
-            ensureRowsCounted();
-
             long startInclusive, endExclusive;
-            if (rightFunction == null) {
-                // There's only one LIMIT argument, could be positive or negative.
-                if (lo == 0) {
-                    // arg is positive, it's the upper bound (hi) and specifies how many rows to take from the start
-                    startInclusive = 0;
-                    endExclusive = hi;
-                } else {
-                    // arg is negative, it's the lower bound (lo) and specifies how many rows to take from the end
+            if (lo < 0 || hi < 0) {
+                // At least one argument is negative. We must compute base cursor's
+                // row count to know how many base cursor's rows we'll skip.
+                ensureRowsCounted();
+                if (lo < 0) {
                     startInclusive = baseRowCount + lo;
-                    endExclusive = baseRowCount;
-                }
-            } else if (lo >= 0) {
-                // There are two LIMIT arguments, and the left one is non-negative.
-                if (hi >= 0) {
-                    // Both arguments are non-negative.
-                    // The code in of() already ensured that lo <= hi for same-signed arguments,
-                    // and we eliminated lo == hi at the start of this method. Therefore, lo < hi.
-                    // They denote a range counting from start, 0-based.
-                    // Lower bound is inclusive, upper bound is exclusive.
-                    startInclusive = lo;
-                    endExclusive = hi;
+                    if (hi <= 0) {
+                        endExclusive = baseRowCount + hi;
+                    } else {
+                        endExclusive = hi;
+                    }
                 } else {
-                    // Mixed-sign arguments, like `LIMIT 2, -2` or `LIMIT 0, -2`.
-                    // Left arg is lower bound (inclusive) counting from start, 0-based.
-                    // Right arg is upper bound (exclusive) counting from end. Last row is numbered -1.
+                    // (lo < 0) is false, therefore (hi < 0) is true
                     startInclusive = lo;
                     endExclusive = baseRowCount + hi;
                 }
             } else {
-                // There are two LIMIT arguments, and the left one is negative.
-                // We already validated against the (negative, positive) combination.
-                // Therefore, both arguments are negative.
-                // The code in of() already ensured that lo <= hi for same-signed arguments,
-                // and we eliminated lo == hi at the start of this method. Therefore, lo < hi.
-                // They denote a range counting from the end. Last row is numbered -1.
-                // Lower bound is inclusive, upper bound is exclusive.
-                startInclusive = baseRowCount + lo;
-                endExclusive = baseRowCount + hi;
+                startInclusive = lo;
+                endExclusive = hi;
             }
-
             startInclusive = Math.max(0, startInclusive);
-            endExclusive = Math.min(baseRowCount, endExclusive);
+            if (areRowsCounted) {
+                endExclusive = Math.min(baseRowCount, endExclusive);
+            }
             if (startInclusive >= endExclusive) {
-                size = 0;
+                size = baseRowsToTake = 0;
                 return;
             }
-            size = endExclusive - startInclusive;
+            baseRowsToTake = endExclusive - startInclusive;
             baseRowsToSkip = startInclusive;
+            if (areRowsCounted) {
+                size = baseRowsToTake;
+            }
+            areBoundsResolved = true;
             toTop();
         }
     }
