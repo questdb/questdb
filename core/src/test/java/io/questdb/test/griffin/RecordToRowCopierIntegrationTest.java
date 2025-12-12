@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -200,7 +199,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             sink.put(" from long_sequence(1000)) timestamp(ts) partition by year");
             execute(sink);
 
-            buildCreateTableSql(sink, "dst", columnCount);
+            buildCreateTableSql("dst", columnCount);
             execute(sink);
 
             // Batch copy
@@ -288,7 +287,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testCreateTableAsSelectVeryWideTable() throws Exception {
         int columnCount = getColumnCount(500);
         assertMemoryLeak(() -> {
-            buildCreateTableSqlWithTypes(sink, "src", columnCount, "c", i -> "int");
+            buildCreateTableSqlWithTypes("src", columnCount, i -> "int");
             execute(sink);
 
             // Insert a row
@@ -317,7 +316,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithManyColumns() throws Exception {
         int columnCount = getColumnCount(200);
         assertMemoryLeak(() -> {
-            buildCreateTableSql(sink, "src", columnCount);
+            buildCreateTableSql("src", columnCount);
             execute(sink);
 
             // Insert test data
@@ -399,7 +398,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testCreateTableAsSelectWithNulls() throws Exception {
         int columnCount = getColumnCount(100);
         assertMemoryLeak(() -> {
-            buildCreateTableSql(sink, "src", columnCount);
+            buildCreateTableSql("src", columnCount);
             execute(sink);
 
             // Insert rows with null values
@@ -452,7 +451,9 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectWithStringsAndSymbols() throws Exception {
-        int columnCount = getColumnCount(50);
+        // Use smaller base count since we create 2 columns per iteration (string + symbol)
+        // This still exceeds 8KB bytecode limit: 225 iterations * 2 cols * ~20 bytes = 9KB
+        int columnCount = getColumnCount(50) / 2;
         assertMemoryLeak(() -> {
             // Create source table with string and symbol columns using long_sequence
             sink.clear();
@@ -462,7 +463,6 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                 sink.put(", cast(concat('sym', (x - 1) % 5) as symbol) as sym_col").put(i);
             }
             sink.put(" from long_sequence(10)) timestamp(ts)");
-            node1.getEngine().getConfigReloader().reload();
             execute(sink);
 
 
@@ -558,10 +558,10 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testExtremelyWideTableInsert() throws Exception {
         int columnCount = getColumnCount(100);
         assertMemoryLeak(() -> {
-            buildCreateTableSqlWithTypes(sink, "src_extreme", columnCount, "c", i -> "int");
+            buildCreateTableSqlWithTypes("src_extreme", columnCount, i -> "int");
             execute(sink);
 
-            buildCreateTableSqlWithTypes(sink, "dst_extreme", columnCount, "c", i -> "int");
+            buildCreateTableSqlWithTypes("dst_extreme", columnCount, i -> "int");
             execute(sink);
 
             // Insert a single row with all values
@@ -714,14 +714,14 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testInsertAsSelectWithManyRows() throws Exception {
         int columnCount = getColumnCount(50);
         assertMemoryLeak(() -> {
-            buildCreateTableSql(sink, "src", columnCount);
+            buildCreateTableSql("src", columnCount);
             execute(sink);
 
-            buildCreateTableSql(sink, "dst", columnCount);
+            buildCreateTableSql("dst", columnCount);
             execute(sink);
 
             // Insert test data with multiple rows
-            buildBatchInsertValuesSql(sink, "src", columnCount, 10);
+            buildBatchInsertValuesSql(columnCount);
             execute(sink);
 
             // Copy data
@@ -793,20 +793,20 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testInsertAsSelectWithUnionExcept() throws Exception {
         int columnCount = getColumnCount(100);
         assertMemoryLeak(() -> {
-            buildCreateTableSql(sink, "t1", columnCount);
+            buildCreateTableSql("t1", columnCount);
             execute(sink);
 
-            buildCreateTableSql(sink, "t2", columnCount);
+            buildCreateTableSql("t2", columnCount);
             execute(sink);
 
-            buildCreateTableSql(sink, "result", columnCount);
+            buildCreateTableSql("result", columnCount);
             execute(sink);
 
             // Insert data
-            buildInsertValuesSql(sink, "t1", 0, columnCount, 0);
+            buildInsertValuesSql("t1", 0, columnCount, 0);
             execute(sink);
 
-            buildInsertValuesSql(sink, "t2", 1000000, columnCount, 100);
+            buildInsertValuesSql("t2", 1000000, columnCount, 100);
             execute(sink);
 
             // Test UNION
@@ -876,10 +876,12 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             assertSql("count\n3\n", "select count(*) from dst");
             // Verify values manually since types differ
-            assertSql("b\ts\ti\tl\n" +
-                            "42.00\t1234.00\t123456.00\t12345678901234.00\n" +
-                            "-42.00\t-1234.00\t-123456.00\t-12345678901234.00\n" +
-                            "0.00\t0.00\t0.00\t0.00\n",
+            assertSql("""
+                            b\ts\ti\tl
+                            42.00\t1234.00\t123456.00\t12345678901234.00
+                            -42.00\t-1234.00\t-123456.00\t-12345678901234.00
+                            0.00\t0.00\t0.00\t0.00
+                            """,
                     "select b, s, i, l from dst order by ts");
         });
     }
@@ -967,10 +969,12 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
 
             assertSql("count\n3\n", "select count(*) from dst");
             // Verify specific values
-            assertSql("b\ts\ti\n" +
-                            "1\t2\t3\n" +
-                            "-128\t-32768\t-100000\n" +
-                            "127\t32767\t2147483647\n",
+            assertSql("""
+                            b\ts\ti
+                            1\t2\t3
+                            -128\t-32768\t-100000
+                            127\t32767\t2147483647
+                            """,
                     "select b, s, i from dst order by ts");
         });
     }
@@ -1199,71 +1203,65 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
      * Builds an INSERT VALUES SQL statement with multiple rows.
      */
     private static void buildBatchInsertValuesSql(
-            StringSink sink,
-            String tableName,
-            int columnCount,
-            int rowCount
+            int columnCount
     ) {
-        sink.clear();
-        sink.put("insert into ").put(tableName).put(" values ");
-        for (int row = 0; row < rowCount; row++) {
+        AbstractCairoTest.sink.clear();
+        AbstractCairoTest.sink.put("insert into ").put("src").put(" values ");
+        for (int row = 0; row < 10; row++) {
             if (row > 0) {
-                sink.put(", ");
+                AbstractCairoTest.sink.put(", ");
             }
-            sink.put('(').put(row * 1000000L);
+            AbstractCairoTest.sink.put('(').put(row * 1000000L);
             for (int col = 0; col < columnCount; col++) {
-                sink.put(", ").put(row * 100 + col);
+                AbstractCairoTest.sink.put(", ").put(row * 100 + col);
             }
-            sink.put(')');
+            AbstractCairoTest.sink.put(')');
         }
     }
 
     /**
      * Builds a CREATE TABLE SQL statement with the specified columns.
      */
-    private static void buildCreateTableSql(StringSink sink, String tableName, int columnCount) {
-        sink.clear();
-        sink.put("create table ").put(tableName).put(" (ts timestamp");
+    private static void buildCreateTableSql(String tableName, int columnCount) {
+        AbstractCairoTest.sink.clear();
+        AbstractCairoTest.sink.put("create table ").put(tableName).put(" (ts timestamp");
         for (int i = 0; i < columnCount; i++) {
-            sink.put(", col").put(i).put(" int");
+            AbstractCairoTest.sink.put(", col").put(i).put(" int");
         }
-        sink.put(") timestamp(ts) partition by year");
+        AbstractCairoTest.sink.put(") timestamp(ts) partition by year");
     }
 
     /**
      * Builds a CREATE TABLE SQL statement with custom column definitions.
      */
     private static void buildCreateTableSqlWithTypes(
-            StringSink sink,
             String tableName,
             int columnCount,
-            String columnPrefix,
             ColumnTypeProvider typeProvider
     ) {
-        sink.clear();
-        sink.put("create table ").put(tableName).put(" (ts timestamp");
+        AbstractCairoTest.sink.clear();
+        AbstractCairoTest.sink.put("create table ").put(tableName).put(" (ts timestamp");
         for (int i = 0; i < columnCount; i++) {
-            sink.put(", ").put(columnPrefix).put(i).put(" ").put(typeProvider.getType(i));
+            AbstractCairoTest.sink.put(", ").put("c").put(i).put(" ").put(typeProvider.getType(i));
         }
-        sink.put(") timestamp(ts) partition by year");
+        AbstractCairoTest.sink.put(") timestamp(ts) partition by year");
     }
 
     /**
      * Builds an INSERT VALUES SQL statement with a single row.
      */
     private static void buildInsertValuesSql(
-            StringSink sink,
             String tableName,
             long timestamp,
             int columnCount,
             int valueOffset
     ) {
-        sink.clear();
-        sink.put("insert into ").put(tableName).put(" values (").put(timestamp);
+        AbstractCairoTest.sink.clear();
+        AbstractCairoTest.sink.put("insert into ").put(tableName).put(" values (").put(timestamp);
         for (int i = 0; i < columnCount; i++) {
-            sink.put(", ").put(valueOffset + i);
+            AbstractCairoTest.sink.put(", ").put(valueOffset + i);
         }
-        sink.put(")");
+        AbstractCairoTest.sink.put(")");
     }
 
     /**
@@ -1278,7 +1276,6 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
         return switch (copierMode) {
             case BYTECODE -> Math.min(baseCount, 50);  // Stay under bytecode limit
             case LOOPING, CHUNKED -> Math.max(baseCount, 450); // Must exceed 8KB limit (450*20=9KB > 8KB)
-            default -> throw new UnsupportedOperationException();
         };
     }
 
