@@ -94,13 +94,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         if (leftFunc != null) {
             sink.meta(rightFunc != null ? "left" : "value");
             sink.val(leftFunc);
-            if (leftFunc.isConstant() || isCursorOpen && leftFunc.isRuntimeConstant()) {
+            if (leftFunc.isRuntimeConstant() && isCursorOpen) {
                 sink.val('[').val(leftFunc.getLong(null)).val(']');
             }
         }
         if (rightFunc != null) {
             sink.meta("right").val(rightFunc);
-            if (rightFunc.isConstant() || isCursorOpen && rightFunc.isRuntimeConstant()) {
+            if (rightFunc.isRuntimeConstant() && isCursorOpen) {
                 sink.val('[').val(rightFunc.getLong(null)).val(']');
             }
         }
