@@ -33,7 +33,6 @@ import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.client.Response;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -159,9 +158,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 try (var respHeaders = req.send()) {
                                     respHeaders.await();
                                     TestUtils.assertEquals("200", respHeaders.getStatusCode());
-                                    Response response = respHeaders.getResponse();
-                                    while (response.recv() != null) {
-                                    }
+                                    respHeaders.getResponse().discard();
                                 }
                                 successCount.incrementAndGet();
                             } catch (Exception e) {
@@ -217,9 +214,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 try (var respHeaders = req.send()) {
                                     respHeaders.await();
                                     TestUtils.assertEquals("200", respHeaders.getStatusCode());
-                                    Response response = respHeaders.getResponse();
-                                    while (response.recv() != null) {
-                                    }
+                                    respHeaders.getResponse().discard();
                                 }
                                 successCount.incrementAndGet();
                             } catch (Exception e) {
@@ -332,9 +327,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 try (var respHeaders = req.send()) {
                                     respHeaders.await();
                                     TestUtils.assertEquals("200", respHeaders.getStatusCode());
-                                    Response response = respHeaders.getResponse();
-                                    while (response.recv() != null) {
-                                    }
+                                    respHeaders.getResponse().discard();
                                 }
                                 successCount.incrementAndGet();
                             } catch (Exception e) {
