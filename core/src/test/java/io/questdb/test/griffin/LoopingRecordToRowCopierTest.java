@@ -24,25 +24,31 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class LoopingRecordToRowCopierTest extends AbstractCairoTest {
 
+    @Override
+    public void setUp() {
+        node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_SQL_COPIER_CHUNKED, false);
+    }
+
     @Test
     public void testBasicInsertWithManyColumns() throws Exception {
         assertMemoryLeak(() -> {
-            // Create tables with 100 columns to trigger loop-based copier
+            // Create tables with 1000 columns to trigger loop-based copier
             StringBuilder createSql = new StringBuilder("create table src (ts timestamp");
-            for (int i = 0; i < 100; i++) {
+            for (int i = 0; i < 1000; i++) {
                 createSql.append(", col").append(i).append(" int");
             }
             createSql.append(") timestamp(ts) partition by DAY");
             execute(createSql.toString());
 
             createSql = new StringBuilder("create table dst (ts timestamp");
-            for (int i = 0; i < 100; i++) {
+            for (int i = 0; i < 1000; i++) {
                 createSql.append(", col").append(i).append(" int");
             }
             createSql.append(") timestamp(ts) partition by DAY");
@@ -155,6 +161,27 @@ public class LoopingRecordToRowCopierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarcharToLong256() throws Exception {
+        assertMemoryLeak(() -> {
+            // Test VARCHAR to LONG256 conversion to verify the cast is safe
+            execute("create table src (ts timestamp, vc varchar) timestamp(ts) partition by DAY");
+            execute("create table dst (ts timestamp, l256 long256) timestamp(ts) partition by DAY");
+
+            // Insert a valid long256 hex value as varchar
+            execute("insert into src values (0, '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')");
+            execute("insert into src values (1000000, null)");
+
+            // Copy using INSERT AS SELECT
+            execute("insert into dst select * from src");
+
+            // Verify data was copied correctly
+            assertSql("count\n2\n", "select count(*) from dst");
+            assertSql("l256\n0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n\n",
+                    "select l256 from dst order by ts");
+        });
+    }
+
+    @Test
     public void testVeryWideTable() throws Exception {
         assertMemoryLeak(() -> {
             // Test with 2000 columns to ensure loop-based implementation handles it
@@ -186,27 +213,6 @@ public class LoopingRecordToRowCopierTest extends AbstractCairoTest {
             // Verify
             assertSql("count\n1\n", "select count(*) from wide_dst");
             assertSql("col0\tcol1000\tcol1999\n0\t1000\t1999\n", "select col0, col1000, col1999 from wide_dst");
-        });
-    }
-
-    @Test
-    public void testVarcharToLong256() throws Exception {
-        assertMemoryLeak(() -> {
-            // Test VARCHAR to LONG256 conversion to verify the cast is safe
-            execute("create table src (ts timestamp, vc varchar) timestamp(ts) partition by DAY");
-            execute("create table dst (ts timestamp, l256 long256) timestamp(ts) partition by DAY");
-
-            // Insert a valid long256 hex value as varchar
-            execute("insert into src values (0, '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')");
-            execute("insert into src values (1000000, null)");
-
-            // Copy using INSERT AS SELECT
-            execute("insert into dst select * from src");
-
-            // Verify data was copied correctly
-            assertSql("count\n2\n", "select count(*) from dst");
-            assertSql("l256\n0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n\n",
-                    "select l256 from dst order by ts");
         });
     }
 }
