@@ -161,19 +161,33 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (isSizeResolved) {
-                counter.add(remaining);
-                remaining = 0;
-                return;
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter sizeCounter) {
+            if (areBoundsResolved && areRowsCounted && !isSuspendableOpInProgress) {
+                sizeCounter.add(remaining);
+            } else {
+                ensureBoundsResolved();
+                if (areRowsCounted) {
+                    sizeCounter.add(remaining);
+                } else {
+                    // TODO [mtopol]: the commented-out code would be more efficient, a single call to base.skipRows()
+                    // instead of a loop around base.hasNext(). But, skipRows() is broken in PageFrameRecordCursorImpl
+                    // and potentially other places too. It malfunctions when called after partial consumption with
+                    // hasNext().
+//                    if (!isSuspendableOpInProgress) {
+//                        counter.set(remaining);
+//                        isSuspendableOpInProgress = true;
+//                    }
+                    while (remaining > 0 && base.hasNext()) {
+                        remaining--;
+                        sizeCounter.inc();
+                    }
+//                    base.skipRows(counter);
+//                    sizeCounter.add(remaining - counter.get());
+//                    counter.clear();
+//                    isSuspendableOpInProgress = false;
+                }
             }
-
-            ensureSizeResolved();
-
-            while (remaining > 0 && base.hasNext()) {
-                remaining--;
-                counter.inc();
-            }
+            remaining = 0;
         }
 
         @Override
