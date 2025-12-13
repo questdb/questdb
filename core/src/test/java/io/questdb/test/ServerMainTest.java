@@ -262,7 +262,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                             "(show parameters) where property_path not in (" +
                                     "'cairo.root', 'cairo.sql.backup.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
                                     "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', 'cairo.sql.copy.export.root', " +
-                                    "'wal.apply.worker.count', 'export.worker.count', 'mat.view.refresh.worker.count'," +
+                                    "'wal.apply.worker.count', 'export.worker.count', 'mat.view.refresh.worker.count', 'view.compiler.worker.count', " +
                                     "'http.export.connection.limit'" +
                                     ") order by 1",
                             actualSink
@@ -365,6 +365,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.create.table.model.batch.size\tQDB_CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.distinct.timestamp.key.capacity\tQDB_CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY\t512\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.distinct.timestamp.load.factor\tQDB_CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR\t0.5\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.view.lexer.pool.capacity\tQDB_CAIRO_SQL_VIEW_LEXER_POOL_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.explain.model.pool.capacity\tQDB_CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.groupby.map.capacity\tQDB_CAIRO_SQL_GROUPBY_MAP_CAPACITY\t1024\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.groupby.pool.capacity\tQDB_CAIRO_SQL_GROUPBY_POOL_CAPACITY\t1024\tdefault\tfalse\tfalse\n" +
@@ -412,6 +413,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.read.parquet.enabled\tQDB_CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parquet.frame.cache.capacity\tQDB_CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY\t3\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.rename.table.model.pool.capacity\tQDB_CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.compile.view.model.pool.capacity\tQDB_CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sampleby.page.size\tQDB_CAIRO_SQL_SAMPLEBY_PAGE_SIZE\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sampleby.default.alignment.calendar\tQDB_CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.unsupported.sampleby.validate.fill.type\tQDB_CAIRO_SQL_UNSUPPORTED_SAMPLEBY_VALIDATE_FILL_TYPE\ttrue\tdefault\tfalse\tfalse\n" +
@@ -636,6 +638,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.udp.timestamp\tQDB_LINE_UDP_TIMESTAMP\tn\tdefault\tfalse\tfalse\n" +
                                     "line.udp.unicast\tQDB_LINE_UDP_UNICAST\tfalse\tdefault\tfalse\tfalse\n" +
                                     "metrics.enabled\tQDB_METRICS_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
+                                    "cairo.view.enabled\tQDB_CAIRO_VIEW_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.enabled\tQDB_CAIRO_MAT_VIEW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.max.refresh.retries\tQDB_CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES\t10\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.refresh.oom.retry.timeout\tQDB_CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT\t200\tdefault\tfalse\tfalse\n" +
@@ -657,6 +660,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "export.worker.haltOnError\tQDB_EXPORT_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "export.worker.yield.threshold\tQDB_EXPORT_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
                                     "export.worker.sleep.threshold\tQDB_EXPORT_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
+                                    "view.compiler.worker.yield.threshold\tQDB_VIEW_COMPILER_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
+                                    "view.compiler.worker.haltOnError\tQDB_VIEW_COMPILER_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "view.compiler.worker.sleep.threshold\tQDB_VIEW_COMPILER_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
+                                    "view.compiler.worker.sleep.timeout\tQDB_VIEW_COMPILER_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
+                                    "view.compiler.worker.affinity\tQDB_VIEW_COMPILER_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "view.compiler.worker.nap.threshold\tQDB_VIEW_COMPILER_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "net.test.connection.buffer.size\tQDB_NET_TEST_CONNECTION_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "pg.binary.param.count.capacity\tQDB_PG_BINARY_PARAM_COUNT_CAPACITY\t2\tdefault\tfalse\tfalse\n" +
                                     "pg.character.store.capacity\tQDB_PG_CHARACTER_STORE_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +

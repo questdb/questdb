@@ -152,6 +152,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
+            return delegate.generateExecutionModel(sqlText, executionContext);
+        }
+
+        @Override
         public RecordCursorFactory generateSelectWithRetries(
                 QueryModel queryModel,
                 @Nullable InsertModel insertModel,
@@ -214,11 +219,6 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public void setFullFatJoins(boolean fullFatJoins) {
             delegate.setFullFatJoins(fullFatJoins);
-        }
-
-        @Override
-        public ExecutionModel testCompileModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
-            return delegate.testCompileModel(sqlText, executionContext);
         }
 
         @Override

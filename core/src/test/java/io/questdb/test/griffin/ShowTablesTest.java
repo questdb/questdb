@@ -24,14 +24,23 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Before;
 import org.junit.Test;
 
 public class ShowTablesTest extends AbstractCairoTest {
+
+    @Before
+    public void setUp() {
+        // enable views
+        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
+        super.setUp();
+    }
 
     @Test
     public void testDropAndRecreateTable() throws Exception {
@@ -56,8 +65,10 @@ public class ShowTablesTest extends AbstractCairoTest {
                 try (RecordCursorFactory recordCursorFactory = compile.getRecordCursorFactory()) {
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
                         assertCursor(
-                                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
-                                        "1\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\n",
+                                """
+                                        id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
+                                        1\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tT
+                                        """,
                                 false,
                                 true,
                                 true,
@@ -75,8 +86,10 @@ public class ShowTablesTest extends AbstractCairoTest {
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
                         // note the ID is 2 now!
                         assertCursor(
-                                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
-                                        "2\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\n",
+                                """
+                                        id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
+                                        2\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tT
+                                        """,
                                 false,
                                 true,
                                 true,
@@ -99,10 +112,12 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("insert into balances values (2, 'b', 2)");
             execute("insert into balances values (3, 'c', 3)");
             assertQueryNoLeakCheck(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\t4\tfalse\tfalse\n" +
-                            "balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t4\tfalse\tfalse
+                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            """,
                     "select * from table_columns('balances')",
                     null,
                     null,
@@ -142,11 +157,13 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("insert into balances values (1, 'foo', 'bar', 1)");
             execute("insert into balances values (2, 'foo', null, 2)");
             assertQueryNoLeakCheck(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "ccx\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n" +
-                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\n" +
-                            "balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            ccx\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
+                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
+                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            """,
                     "show columns from balances",
                     null,
                     null,
@@ -158,8 +175,10 @@ public class ShowTablesTest extends AbstractCairoTest {
     @Test
     public void testShowStandardConformingStrings() throws Exception {
         assertMemoryLeak(() -> assertQuery(
-                "standard_conforming_strings\n" +
-                        "on\n",
+                """
+                        standard_conforming_strings
+                        on
+                        """,
                 "show standard_conforming_strings",
                 null,
                 null,
@@ -256,10 +275,14 @@ public class ShowTablesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table balances (ts timestamp, cust_id int, ccy symbol, balance double) timestamp(ts) partition by day wal");
             execute("create materialized view balances_1h as (select ts, max(balance) from balances sample by 1h) partition by week");
+            execute("create view balances_view as (select ts, max(balance) from balances sample by 1h)");
             assertSql(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
-                            "1\tbalances\tts\tDAY\t1000\t300000000\ttrue\tbalances~1\tfalse\t0\tHOUR\tfalse\n" +
-                            "2\tbalances_1h\tts\tWEEK\t1000\t-1\ttrue\tbalances_1h~2\tfalse\t0\tHOUR\ttrue\n",
+                    """
+                            id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
+                            1\tbalances\tts\tDAY\t1000\t300000000\ttrue\tbalances~1\tfalse\t0\tHOUR\tT
+                            2\tbalances_1h\tts\tWEEK\t1000\t-1\ttrue\tbalances_1h~2\tfalse\t0\tHOUR\tM
+                            3\tbalances_view\tts\tN/A\t-1\t-1\ttrue\tbalances_view~3\tfalse\t0\tHOUR\tV
+                            """,
                     "tables() order by table_name"
             );
         });

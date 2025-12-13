@@ -22,38 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.mv;
+package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
-import io.questdb.std.ObjList;
-import io.questdb.std.ReadOnlyObjList;
-import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.QueryModel;
 
-import java.util.concurrent.locks.ReadWriteLock;
+public interface CreateViewOperation extends TableStructure, Operation {
 
-/**
- * Holds the list of mat view tokens for the given base table (or base mat view).
- * The list is protected with a R/W mutex, so it can be read concurrently.
- */
-public class MatViewDependencyList {
-    private final ReadWriteLock lock = new SimpleReadWriteLock();
-    private final ObjList<TableToken> matViews = new ObjList<>();
+    CreateTableOperation getCreateTableOperation();
 
-    ReadOnlyObjList<TableToken> lockForRead() {
-        lock.readLock().lock();
-        return matViews;
-    }
+    CharSequence getSqlText();
 
-    ObjList<TableToken> lockForWrite() {
-        lock.writeLock().lock();
-        return matViews;
-    }
+    int getTableNamePosition();
 
-    void unlockAfterRead() {
-        lock.readLock().unlock();
-    }
+    boolean ignoreIfExists();
 
-    void unlockAfterWrite() {
-        lock.writeLock().unlock();
-    }
+    void updateOperationFutureTableToken(TableToken tableToken);
+
+    void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext, FunctionFactoryCache functionFactoryCache, QueryModel queryModel) throws SqlException;
+
+    void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, int scanDirection) throws SqlException;
 }

@@ -973,12 +973,12 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     @Test
     public void testExpectTableKeyword() throws Exception {
-        assertFailure("alter x", 6, "'table' or 'materialized' expected");
+        assertFailure("alter x", 6, "'table' or 'materialized' or 'view' expected");
     }
 
     @Test
     public void testExpectTableKeyword2() throws Exception {
-        assertFailure("alter", 5, "'table' or 'materialized' expected");
+        assertFailure("alter", 5, "'table' or 'materialized' or 'view' expected");
     }
 
     @Test

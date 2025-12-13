@@ -34,6 +34,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -94,6 +95,18 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion.incrementAndGet();
     }
 
+    public void addViewColumn(
+            CharSequence columnName,
+            int columnType
+    ) {
+        addColumn0(columnName, columnType, 0, false, false, 0, false);
+        readColumnOrder.add(columnMetadata.size() - 1);
+    }
+
+    public void alterView() {
+        structureVersion.incrementAndGet();
+    }
+
     public void changeColumnType(
             CharSequence columnName,
             int columnType,
@@ -138,6 +151,15 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         }
         metaMem.sync(false);
         metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
+
+        if (writeInitialMetadata && tableStruct.isView()) {
+            assert tableStruct.getViewDefinition() != null;
+            try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
+                writer.of(path.trimTo(pathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
+                ViewDefinition.append(tableStruct.getViewDefinition(), writer);
+            }
+            path.trimTo(pathLen);
+        }
 
         if (writeInitialMetadata && tableStruct.isMatView()) {
             assert tableStruct.getMatViewDefinition() != null;
@@ -229,6 +251,10 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     public void removeColumn(CharSequence columnName) {
         removeColumnFromMetadata(columnName, columnNameIndexMap, columnMetadata);
         structureVersion.incrementAndGet();
+    }
+
+    public void removeViewColumn(CharSequence columnName) {
+        removeColumnFromMetadata(columnName, columnNameIndexMap, columnMetadata);
     }
 
     public void renameColumn(CharSequence columnName, CharSequence newName) {

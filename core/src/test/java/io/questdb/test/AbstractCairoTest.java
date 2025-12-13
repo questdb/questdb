@@ -657,7 +657,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         TestFilesFacadeImpl.resetTracking();
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
-        sqlExecutionContext.resetFlags();
+        sqlExecutionContext.reset();
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
         sqlExecutionContext.setParallelReadParquetEnabled(configuration.isSqlParallelReadParquetEnabled());
@@ -1539,8 +1539,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
         TestUtils.drainPurgeJob(engine);
     }
 
+    protected static void drainViewQueue() {
+        drainViewQueue(engine);
+    }
+
     protected static void drainWalAndMatViewQueues() {
         drainWalAndMatViewQueues(engine);
+    }
+
+    protected static void drainWalAndViewQueues() {
+        drainWalAndViewQueues(engine);
     }
 
     protected static void drainWalQueue(QuestDBTestNode node) {
