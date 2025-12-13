@@ -103,9 +103,22 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         Misc.freeObjList(dynamicRangeList);
     }
 
+    public ObjList<Function> getDynamicRangeList() {
+        return dynamicRangeList;
+    }
+
+    public LongList getStaticIntervals() {
+        return intervals;
+    }
+
     @Override
     public TimestampDriver getTimestampDriver() {
         return timestampDriver;
+    }
+
+    @Override
+    public boolean isStatic() {
+        return dynamicRangeList == null || dynamicRangeList.size() == 0;
     }
 
     @Override
@@ -312,10 +325,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         } else {
             return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
         }
-    }
-
-    private boolean isStatic() {
-        return dynamicRangeList == null || dynamicRangeList.size() == 0;
     }
 
     private void negatedNothing(LongList outIntervals, int divider) {

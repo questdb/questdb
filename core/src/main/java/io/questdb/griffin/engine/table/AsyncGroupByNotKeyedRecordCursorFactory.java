@@ -247,13 +247,13 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final DirectLongList rows = task.getFilteredRows();
         final PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence = task.getFrameSequence(AsyncGroupByNotKeyedAtom.class);
         final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
 
+        final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
         final long frameRowCount = task.getFrameRowCount();

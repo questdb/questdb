@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
@@ -92,6 +93,17 @@ public class IntervalConstant extends IntervalFunction implements ConstantFuncti
     @Override
     public int getStrLen(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isEquivalentTo(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof IntervalConstant that) {
+            return this.interval.equals(that.interval) && this.intervalType == that.intervalType;
+        }
+        return false;
     }
 
     @Override

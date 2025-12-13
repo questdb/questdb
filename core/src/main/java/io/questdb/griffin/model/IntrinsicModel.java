@@ -55,10 +55,6 @@ public class IntrinsicModel implements Mutable {
         return runtimeIntervalBuilder.build();
     }
 
-    public void of(int timestampType, int partitionBy) {
-        this.runtimeIntervalBuilder.of(timestampType, partitionBy);
-    }
-
     @Override
     public void clear() {
         keyColumn = null;
@@ -128,6 +124,14 @@ public class IntrinsicModel implements Mutable {
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }
+    }
+
+    public void mergeIntervalModel(RuntimeIntervalModel model, long loOffset, long hiOffset) {
+        runtimeIntervalBuilder.merge(model, loOffset, hiOffset);
+    }
+
+    public void of(int timestampType, int partitionBy) {
+        this.runtimeIntervalBuilder.of(timestampType, partitionBy);
     }
 
     public void setBetweenBoundary(long timestamp) {
