@@ -144,9 +144,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -2124,6 +2124,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         long maxTimestamp = getMaxTimestamp();
+        // When wall clock mode is enabled (default), use the minimum of maxTimestamp and current wall clock time.
+        // This prevents accidental data loss when future timestamps are inserted into a table with TTL enabled.
+        if (configuration.isTtlWallClockEnabled()) {
+            long wallClockTimestamp = timestampDriver.fromMicros(configuration.getMicrosecondClock().getTicks());
+            maxTimestamp = Math.min(maxTimestamp, wallClockTimestamp);
+        }
         long evictedPartitionTimestamp = -1;
         boolean dropped = false;
         do {
