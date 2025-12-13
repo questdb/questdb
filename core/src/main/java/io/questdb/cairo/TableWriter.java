@@ -439,6 +439,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
             this.columnVersionWriter = openColumnVersionFile(configuration, path, pathSize, partitionBy != PartitionBy.NONE);
+            if (columnVersionWriter.getVersion() != txWriter.getColumnVersion()) {
+                if (columnVersionWriter.getVersion() - 1 == txWriter.getColumnVersion()) {
+                    // This is case when transaction was aborted during column version change
+                    // we need to use previous version of _cv file, which should still be available for reading
+                    LOG.info().$("rolling back column version change to match _txn file [table=").$(tableToken)
+                            .$(", txnVersion=").$(txWriter.getColumnVersion())
+                            .$(", actualFileVersion=").$(columnVersionWriter.getVersion())
+                            .I$();
+                    columnVersionWriter.rollback();
+                } else {
+                    throw CairoException.critical(0).put("Unrecoverable storage corruption detected: column version mismatch [table=").put(tableToken)
+                            .put(", txnVersion=").put(txWriter.getColumnVersion())
+                            .put(", actualFileVersion=").put(columnVersionWriter.getVersion())
+                            .put(']');
+                }
+            }
             this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;
             this.parquetStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_TABLE_WRITER);
             this.parquetColumnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_TABLE_WRITER);
@@ -3845,14 +3861,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void bumpMetadataAndColumnStructureVersion() {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.bumpMetadataAndColumnStructureVersion(this.denseSymbolMapWriters);
+        txWriter.bumpMetadataAndColumnStructureVersion(denseSymbolMapWriters);
         assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
     private void bumpMetadataVersion() {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.bumpMetadataVersion(this.denseSymbolMapWriters);
+        txWriter.bumpMetadataVersion(denseSymbolMapWriters);
         assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
