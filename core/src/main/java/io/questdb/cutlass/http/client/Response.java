@@ -24,8 +24,33 @@
 
 package io.questdb.cutlass.http.client;
 
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8s;
+
 public interface Response {
-    Fragment recv();
+
+    default void copyTextTo(Utf8Sink sink) {
+        Fragment fragment;
+        while ((fragment = recv()) != null) {
+            Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
+        }
+    }
+
+    default void copyTextTo(Utf16Sink sink) {
+        Fragment fragment;
+        while ((fragment = recv()) != null) {
+            Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), sink);
+        }
+    }
+
+    default void discard() {
+        //noinspection StatementWithEmptyBody
+        while ((recv()) != null) {
+        }
+    }
 
     Fragment recv(int timeout);
+
+    Fragment recv();
 }

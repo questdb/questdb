@@ -62,6 +62,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
     private final Decimal64 decimal64 = new Decimal64();
+    private final int defaultPageFrameMaxRows;
+    private final int defaultPageFrameMinRows;
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
     private final int sharedQueryWorkerCount;
@@ -84,6 +86,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long nowNanos;
     // Timestamp type only for now() function, used by NowFunctionFactory
     private int nowTimestampType;
+    private int pageFrameMaxRows;
+    private int pageFrameMinRows;
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;
     private boolean parallelReadParquetEnabled;
@@ -115,11 +119,21 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoEngine, cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
+        this.defaultPageFrameMaxRows = cairoConfiguration.getSqlPageFrameMaxRows();
+        this.defaultPageFrameMinRows = cairoConfiguration.getSqlPageFrameMinRows();
+        this.pageFrameMaxRows = defaultPageFrameMaxRows;
+        this.pageFrameMinRows = defaultPageFrameMinRows;
     }
 
     @Override
     public boolean allowNonDeterministicFunctions() {
         return allowNonDeterministicFunction;
+    }
+
+    @Override
+    public void changePageFrameSizes(int minRows, int maxRows) {
+        this.pageFrameMinRows = minRows;
+        this.pageFrameMaxRows = maxRows;
     }
 
     @Override
@@ -253,6 +267,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public int getNowTimestampType() {
         return nowTimestampType;
+    }
+
+    @Override
+    public int getPageFrameMaxRows() {
+        return pageFrameMaxRows;
+    }
+
+    @Override
+    public int getPageFrameMinRows() {
+        return pageFrameMinRows;
     }
 
     @Override
@@ -468,7 +492,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return with(securityContext, bindVariableService, null, -1, null);
     }
 
-
     public SqlExecutionContextImpl with(
             @NotNull SecurityContext securityContext,
             @Nullable BindVariableService bindVariableService,
@@ -481,6 +504,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.requestFd = requestFd;
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
+        this.pageFrameMaxRows = defaultPageFrameMaxRows;
+        this.pageFrameMinRows = defaultPageFrameMinRows;
         resetFlags();
         return this;
     }

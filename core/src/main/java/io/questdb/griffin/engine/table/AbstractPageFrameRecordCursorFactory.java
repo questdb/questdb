@@ -44,8 +44,6 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
     protected final IntList columnIndexes;
     protected final IntList columnSizeShifts;
-    protected final int pageFrameMaxRows;
-    protected final int pageFrameMinRows;
     protected final PartitionFrameCursorFactory partitionFrameCursorFactory;
     protected TablePageFrameCursor pageFrameCursor;
 
@@ -60,8 +58,6 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         this.partitionFrameCursorFactory = partitionFrameCursorFactory;
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
-        pageFrameMinRows = configuration.getSqlPageFrameMinRows();
-        pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
     }
 
     @Override
@@ -104,21 +100,17 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
                 pageFrameCursor = new FwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
-                        1, // used for single-threaded exec plans
-                        pageFrameMinRows,
-                        pageFrameMaxRows
+                        1 // used for single-threaded exec plans
                 );
             } else {
                 pageFrameCursor = new BwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
-                        1, // used for single-threaded exec plans
-                        pageFrameMinRows,
-                        pageFrameMaxRows
+                        1 // used for single-threaded exec plans
                 );
             }
         }
-        return pageFrameCursor.of(partitionFrameCursor);
+        return pageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
     }
 
     protected abstract RecordCursor initRecordCursor(
