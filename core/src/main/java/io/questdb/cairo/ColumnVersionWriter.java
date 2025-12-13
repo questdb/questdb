@@ -168,8 +168,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      * only one previous version is stored.
      */
     public void rollback() {
-        mem.putLong(OFFSET_VERSION_64, this.version - 1);
-        super.readUnsafe();
+        mem.putLong(OFFSET_VERSION_64, version - 1);
+        // load version and other fields from mem
+        readUnsafe();
     }
 
     public void squashPartition(long targetPartitionTimestamp, long sourcePartitionTimestamp) {
@@ -406,7 +407,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     private void storeNewVersion() {
-        mem.putLong(OFFSET_VERSION_64, ++this.version);
+        mem.putLong(OFFSET_VERSION_64, ++version);
     }
 
     private void updateA(long aOffset, long aSize) {
