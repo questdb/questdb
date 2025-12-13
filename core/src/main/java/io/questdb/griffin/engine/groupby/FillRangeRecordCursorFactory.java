@@ -45,6 +45,8 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
@@ -416,6 +418,60 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     return getFillFunction(col).getChar(null);
                 } else {
                     return baseRecord.getChar(col);
+                }
+            }
+
+            @Override
+            public void getDecimal128(int col, Decimal128 sink) {
+                if (gapFilling) {
+                    getFillFunction(col).getDecimal128(null, sink);
+                } else {
+                    baseRecord.getDecimal128(col, sink);
+                }
+            }
+
+            @Override
+            public short getDecimal16(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getDecimal16(null);
+                } else {
+                    return baseRecord.getDecimal16(col);
+                }
+            }
+
+            @Override
+            public void getDecimal256(int col, Decimal256 sink) {
+                if (gapFilling) {
+                    getFillFunction(col).getDecimal256(null, sink);
+                } else {
+                    baseRecord.getDecimal256(col, sink);
+                }
+            }
+
+            @Override
+            public int getDecimal32(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getDecimal32(null);
+                } else {
+                    return baseRecord.getDecimal32(col);
+                }
+            }
+
+            @Override
+            public long getDecimal64(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getDecimal64(null);
+                } else {
+                    return baseRecord.getDecimal64(col);
+                }
+            }
+
+            @Override
+            public byte getDecimal8(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getDecimal8(null);
+                } else {
+                    return baseRecord.getDecimal8(col);
                 }
             }
 
