@@ -211,7 +211,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 setDecimal(index, type);
                 return type;
             default:
-                throw SqlException.$(position, "bind variable cannot be used [contextType=").put(ColumnType.nameOf(type)).put(", index=").put(index).put(']');
+                throw SqlException.$(position, "bind variable cannot be used [contextType=").put(type).put(", index=").put(index).put(']');
         }
     }
 
@@ -1205,7 +1205,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((CharBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsChar(value, ColumnType.LONG) : 0;
                 break;
             default:
-                reportError(function, (int) ColumnType.LONG, index, name);
+                reportError(function, ColumnType.LONG, index, name);
                 break;
         }
     }
