@@ -50,8 +50,8 @@ public interface CompiledQuery {
     short INSERT_AS_SELECT = CREATE_TABLE + 1; // 10
     short COPY_REMOTE = INSERT_AS_SELECT + 1; // 11
     short RENAME_TABLE = COPY_REMOTE + 1; // 12
-    short BACKUP_TABLE = RENAME_TABLE + 1; // 13
-    short UPDATE = BACKUP_TABLE + 1; // 14
+    short BACKUP_DATABASE = RENAME_TABLE + 1; // 13
+    short UPDATE = BACKUP_DATABASE + 1; // 14
     short VACUUM = UPDATE + 3; // 17 , gap
     short BEGIN = VACUUM + 1; // 18
     short COMMIT = BEGIN + 1; // 19

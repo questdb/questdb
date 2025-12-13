@@ -131,15 +131,6 @@ public interface CairoConfiguration {
     @NotNull
     String getAttachPartitionSuffix();
 
-    DateFormat getBackupDirTimestampFormat();
-
-    int getBackupMkDirMode();
-
-    // null disables backups
-    CharSequence getBackupRoot();
-
-    CharSequence getBackupTempDirName();
-
     int getBinaryEncodingMaxLength();
 
     int getBindVariablePoolSize();
@@ -751,6 +742,8 @@ public interface CairoConfiguration {
     boolean isMatViewEnabled();
 
     boolean isMatViewParallelSqlEnabled();
+
+    boolean isMatViewRefreshMissingWalFilesFatal();
 
     boolean isMultiKeyDedupEnabled();
 

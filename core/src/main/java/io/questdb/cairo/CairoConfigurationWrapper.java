@@ -112,26 +112,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public DateFormat getBackupDirTimestampFormat() {
-        return getDelegate().getBackupDirTimestampFormat();
-    }
-
-    @Override
-    public int getBackupMkDirMode() {
-        return getDelegate().getBackupMkDirMode();
-    }
-
-    @Override
-    public CharSequence getBackupRoot() {
-        return getDelegate().getBackupRoot();
-    }
-
-    @Override
-    public @NotNull CharSequence getBackupTempDirName() {
-        return getDelegate().getBackupTempDirName();
-    }
-
-    @Override
     public int getBinaryEncodingMaxLength() {
         return getDelegate().getBinaryEncodingMaxLength();
     }
@@ -1344,6 +1324,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isMatViewParallelSqlEnabled() {
         return getDelegate().isMatViewParallelSqlEnabled();
+    }
+
+    @Override
+    public boolean isMatViewRefreshMissingWalFilesFatal() {
+        return getDelegate().isMatViewRefreshMissingWalFilesFatal();
     }
 
     @Override
