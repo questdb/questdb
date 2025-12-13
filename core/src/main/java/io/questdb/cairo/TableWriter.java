@@ -1282,6 +1282,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
+        // Capture wall clock once to reduce syscalls. Used for:
+        // - commit latency threshold check in processWalCommit()
+        // - recording last WAL commit timestamp
+        // - TTL wall clock comparison in housekeep()
+        final long wallClockMicros = configuration.getMicrosecondClock().getTicks();
 
         boolean committed;
         final long initialCommittedRowCount = txWriter.getRowCount();
@@ -1289,7 +1294,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try {
             if (transactionBlock == 1) {
-                committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp);
+                committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp, wallClockMicros);
             } else {
                 try {
                     int blockSize = processWalCommitBlock(
@@ -1314,7 +1319,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", startTxn=").$(seqTxn)
                                 .I$();
                         // Try applying 1 transaction at a time
-                        committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp);
+                        committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp, wallClockMicros);
                     } else {
                         throw e;
                     }
@@ -1337,8 +1342,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setLagOrdered(true);
 
             commit00();
-            lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
-            housekeep();
+            lastWalCommitTimestampMicros = wallClockMicros;
+            housekeep(wallClockMicros);
             shrinkO3Mem();
 
             assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
@@ -2111,57 +2116,78 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void enforceTtl() {
-        partitionRemoveCandidates.clear();
-        final int ttl = metadata.getTtlHoursOrMonths();
-        if (ttl == 0) {
+        enforceTtl(configuration.getMicrosecondClock().getTicks());
+    }
+
+    /**
+     * Commits newly added rows of data. This method updates transaction file with pointers to the end of appended data.
+     * <p>
+     * <b>Pending rows</b>
+     * <p>This method will cancel pending rows by calling {@link #rowCancel()}. Data in the partially appended row will be lost.</p>
+     *
+     * @param o3MaxLag if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
+     */
+    private void commit(long o3MaxLag) {
+        checkDistressed();
+        physicallyWrittenRowsSinceLastCommit.set(0);
+
+        if (o3InError) {
+            rollback();
             return;
         }
-        if (metadata.getPartitionBy() == PartitionBy.NONE) {
-            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
-            return;
+
+        if ((masterRef & 1) != 0) {
+            rowCancel();
         }
-        if (getPartitionCount() < 2) {
-            return;
-        }
-        long maxTimestamp = getMaxTimestamp();
-        // When wall clock mode is enabled (default), use the minimum of maxTimestamp and current wall clock time.
-        // This prevents accidental data loss when future timestamps are inserted into a table with TTL enabled.
-        if (configuration.isTtlWallClockEnabled()) {
-            long wallClockTimestamp = timestampDriver.fromMicros(configuration.getMicrosecondClock().getTicks());
-            maxTimestamp = Math.min(maxTimestamp, wallClockTimestamp);
-        }
-        long evictedPartitionTimestamp = -1;
-        boolean dropped = false;
-        do {
-            long partitionTimestamp = getPartitionTimestamp(0);
-            long floorTimestamp = txWriter.getPartitionFloor(partitionTimestamp);
-            if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
-                assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
-                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
-                continue;
+
+        if (inTransaction()) {
+            final boolean o3 = hasO3();
+            if (o3) {
+                final boolean noop = o3Commit(o3MaxLag);
+                if (noop) {
+                    // Bookmark masterRef to track how many rows is in uncommitted state
+                    this.committedMasterRef = masterRef;
+                    return;
+                } else if (o3MaxLag > 0) {
+                    // It is possible that O3 commit will create partition just before
+                    // the last one, leaving the last partition row count 0 when doing ic().
+                    // That's when the data from the last partition is moved to in-memory lag.
+                    // One way to detect this is to check if the index of the "last" partition is not
+                    // the last partition in the attached partition list.
+                    if (reconcileOptimisticPartitions()) {
+                        this.lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+                        this.partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(txWriter.getMaxTimestamp());
+                        openLastPartition();
+                    }
+                }
+            } else if (noOpRowCount > 0) {
+                LOG.critical()
+                        .$("o3 ignoring write on read-only partition [table=").$(tableToken)
+                        .$(", timestamp=").$ts(timestampDriver, lastOpenPartitionTs)
+                        .$(", numRows=").$(noOpRowCount)
+                        .$();
             }
 
 
-            long partitionCeiling = txWriter.getNextLogicalPartitionTimestamp(partitionTimestamp);
-            // TTL < 0 means it's in months
-            boolean shouldEvict = ttl > 0
-                    ? maxTimestamp - partitionCeiling >= timestampDriver.fromHours(ttl)
-                    : timestampDriver.monthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
-            if (shouldEvict) {
-                LOG.info()
-                        .$("Partition's TTL expired, evicting [table=").$(metadata.getTableToken())
-                        .$(", partitionTs=").microTime(partitionTimestamp)
-                        .I$();
-                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
-                evictedPartitionTimestamp = partitionTimestamp;
-            } else {
-                // Partitions are sorted by timestamp, no need to check the rest
-                break;
-            }
-        } while (getPartitionCount() > 1);
+            final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
+            final long rowsAdded = txWriter.getRowCount() - committedRowCount;
+            // Capture wall clock once for TTL wall clock comparison in housekeep()
+            final long wallClockMicros = configuration.getMicrosecondClock().getTicks();
 
-        if (dropped) {
-            commitRemovePartitionOperation();
+            commit00();
+            housekeep(wallClockMicros);
+            metrics.tableWriterMetrics().addCommittedRows(rowsAdded);
+            if (!o3) {
+                // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
+                addPhysicallyWrittenRows(rowsAdded);
+            }
+
+            noOpRowCount = 0L;
+
+            LOG.debug().$("table ranges after the commit [table=").$(tableToken)
+                    .$(", minTs=").$ts(timestampDriver, txWriter.getMinTimestamp())
+                    .$(", maxTs=").$ts(timestampDriver, txWriter.getMaxTimestamp())
+                    .I$();
         }
     }
 
@@ -4032,73 +4058,58 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * Commits newly added rows of data. This method updates transaction file with pointers to the end of appended data.
-     * <p>
-     * <b>Pending rows</b>
-     * <p>This method will cancel pending rows by calling {@link #rowCancel()}. Data in the partially appended row will be lost.</p>
-     *
-     * @param o3MaxLag if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
-     */
-    private void commit(long o3MaxLag) {
-        checkDistressed();
-        physicallyWrittenRowsSinceLastCommit.set(0);
-
-        if (o3InError) {
-            rollback();
+    private void enforceTtl(long wallClockMicros) {
+        partitionRemoveCandidates.clear();
+        final int ttl = metadata.getTtlHoursOrMonths();
+        if (ttl == 0) {
             return;
         }
-
-        if ((masterRef & 1) != 0) {
-            rowCancel();
+        if (metadata.getPartitionBy() == PartitionBy.NONE) {
+            LOG.error().$("TTL set on a non-partitioned table. Ignoring");
+            return;
         }
-
-        if (inTransaction()) {
-            final boolean o3 = hasO3();
-            if (o3) {
-                final boolean noop = o3Commit(o3MaxLag);
-                if (noop) {
-                    // Bookmark masterRef to track how many rows is in uncommitted state
-                    this.committedMasterRef = masterRef;
-                    return;
-                } else if (o3MaxLag > 0) {
-                    // It is possible that O3 commit will create partition just before
-                    // the last one, leaving the last partition row count 0 when doing ic().
-                    // That's when the data from the last partition is moved to in-memory lag.
-                    // One way to detect this is to check if the index of the "last" partition is not
-                    // the last partition in the attached partition list.
-                    if (reconcileOptimisticPartitions()) {
-                        this.lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-                        this.partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(txWriter.getMaxTimestamp());
-                        openLastPartition();
-                    }
-                }
-            } else if (noOpRowCount > 0) {
-                LOG.critical()
-                        .$("o3 ignoring write on read-only partition [table=").$(tableToken)
-                        .$(", timestamp=").$ts(timestampDriver, lastOpenPartitionTs)
-                        .$(", numRows=").$(noOpRowCount)
-                        .$();
+        if (getPartitionCount() < 2) {
+            return;
+        }
+        long maxTimestamp = getMaxTimestamp();
+        // When wall clock mode is enabled (default), use the minimum of maxTimestamp and current wall clock time.
+        // This prevents accidental data loss when future timestamps are inserted into a table with TTL enabled.
+        if (configuration.isTtlWallClockEnabled()) {
+            long wallClockTimestamp = timestampDriver.fromMicros(wallClockMicros);
+            maxTimestamp = Math.min(maxTimestamp, wallClockTimestamp);
+        }
+        long evictedPartitionTimestamp = -1;
+        boolean dropped = false;
+        do {
+            long partitionTimestamp = getPartitionTimestamp(0);
+            long floorTimestamp = txWriter.getPartitionFloor(partitionTimestamp);
+            if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
+                assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
+                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
+                continue;
             }
 
 
-            final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
-            final long rowsAdded = txWriter.getRowCount() - committedRowCount;
-
-            commit00();
-            housekeep();
-            metrics.tableWriterMetrics().addCommittedRows(rowsAdded);
-            if (!o3) {
-                // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
-                addPhysicallyWrittenRows(rowsAdded);
+            long partitionCeiling = txWriter.getNextLogicalPartitionTimestamp(partitionTimestamp);
+            // TTL < 0 means it's in months
+            boolean shouldEvict = ttl > 0
+                    ? maxTimestamp - partitionCeiling >= timestampDriver.fromHours(ttl)
+                    : timestampDriver.monthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
+            if (shouldEvict) {
+                LOG.info()
+                        .$("Partition's TTL expired, evicting [table=").$(metadata.getTableToken())
+                        .$(", partitionTs=").microTime(partitionTimestamp)
+                        .I$();
+                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
+                evictedPartitionTimestamp = partitionTimestamp;
+            } else {
+                // Partitions are sorted by timestamp, no need to check the rest
+                break;
             }
+        } while (getPartitionCount() > 1);
 
-            noOpRowCount = 0L;
-
-            LOG.debug().$("table ranges after the commit [table=").$(tableToken)
-                    .$(", minTs=").$ts(timestampDriver, txWriter.getMinTimestamp())
-                    .$(", maxTs=").$ts(timestampDriver, txWriter.getMaxTimestamp())
-                    .I$();
+        if (dropped) {
+            commitRemovePartitionOperation();
         }
     }
 
@@ -5762,12 +5773,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * What we need to achieve, is to report that data has been committed, but table writes should be discarded. It is
      * necessary when housekeeping runs into an error. To indicate the situation where data is committed.
      */
-    private void housekeep() {
+    private void housekeep(long wallClockMicros) {
         try {
             squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
             processPartitionRemoveCandidates();
             metrics.tableWriterMetrics().incrementCommits();
-            enforceTtl();
+            enforceTtl(wallClockMicros);
             scaleSymbolCapacities();
         } catch (Throwable e) {
             // Log the exception stack.
@@ -7590,7 +7601,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long commitToTimestamp,
             long walIdSegmentId,
             boolean isLastSegmentUsage,
-            TableWriterPressureControl pressureControl
+            TableWriterPressureControl pressureControl,
+            long wallClockMicros
     ) {
         int initialSize = segmentFileCache.getWalMappedColumns().size();
         int timestampIndex = metadata.getTimestampIndex();
@@ -7643,7 +7655,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() >= configuration.getWalMaxLagTxnCount())
                         // when the time between commits is too long we need to commit regardless of the row count or volume filled
                         // this is to bring the latency of data visibility inline with user expectations
-                        || (configuration.getMicrosecondClock().getTicks() - lastWalCommitTimestampMicros > configuration.getCommitLatency());
+                        || (wallClockMicros - lastWalCommitTimestampMicros > configuration.getCommitLatency());
 
                 boolean canFastCommit = indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
                 boolean lagOrderedNew = !isCommitDedupMode() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
@@ -7820,7 +7832,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private boolean processWalCommit(Path walPath, long seqTxn, TableWriterPressureControl pressureControl, long commitToTimestamp) {
+    private boolean processWalCommit(Path walPath, long seqTxn, TableWriterPressureControl pressureControl, long commitToTimestamp, long wallClockMicros) {
         int walId = walTxnDetails.getWalId(seqTxn);
         long txnMinTs = walTxnDetails.getMinTimestamp(seqTxn);
         long txnMaxTs = walTxnDetails.getMaxTimestamp(seqTxn);
@@ -7886,7 +7898,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     commitToTimestamp,
                     walIdSegmentId,
                     isLastSegmentUsage,
-                    pressureControl
+                    pressureControl,
+                    wallClockMicros
             );
         }
     }
