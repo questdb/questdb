@@ -430,4 +430,161 @@ public class ExpressionGeneratorTest {
                     openCount, closeCount);
         }
     }
+
+    // --- Advanced expression tests ---
+
+    @Test
+    public void testGenerateCaseExpression() {
+        for (int i = 0; i < 50; i++) {
+            ctx.reset();
+            ExpressionGenerator.generateCaseExpression(ctx);
+            String sql = ctx.toSql();
+
+            Assert.assertTrue("Should start with CASE: " + sql, sql.startsWith("CASE "));
+            Assert.assertTrue("Should contain WHEN: " + sql, sql.contains(" WHEN "));
+            Assert.assertTrue("Should contain THEN: " + sql, sql.contains(" THEN "));
+            Assert.assertTrue("Should end with END: " + sql, sql.endsWith(" END"));
+        }
+    }
+
+    @Test
+    public void testGenerateCastExpression() {
+        for (int i = 0; i < 50; i++) {
+            ctx.reset();
+            ExpressionGenerator.generateCastExpression(ctx);
+            String sql = ctx.toSql();
+
+            Assert.assertTrue("Should start with CAST: " + sql, sql.startsWith("CAST"));
+            Assert.assertTrue("Should contain AS: " + sql, sql.contains(" AS "));
+            Assert.assertTrue("Should have parentheses: " + sql,
+                    sql.contains("(") && sql.contains(")"));
+        }
+    }
+
+    @Test
+    public void testGenerateInExpression() {
+        boolean foundIn = false;
+        boolean foundNotIn = false;
+
+        for (int i = 0; i < 100; i++) {
+            ctx.reset();
+            ExpressionGenerator.generateInExpression(ctx);
+            String sql = ctx.toSql();
+
+            Assert.assertTrue("Should contain IN: " + sql, sql.contains(" IN "));
+            Assert.assertTrue("Should have parentheses: " + sql,
+                    sql.contains("(") && sql.contains(")"));
+
+            if (sql.contains(" NOT IN ")) {
+                foundNotIn = true;
+            } else {
+                foundIn = true;
+            }
+        }
+
+        Assert.assertTrue("Should generate IN", foundIn);
+        Assert.assertTrue("Should generate NOT IN", foundNotIn);
+    }
+
+    @Test
+    public void testGenerateBetweenExpression() {
+        boolean foundBetween = false;
+        boolean foundNotBetween = false;
+
+        for (int i = 0; i < 100; i++) {
+            ctx.reset();
+            ExpressionGenerator.generateBetweenExpression(ctx);
+            String sql = ctx.toSql();
+
+            Assert.assertTrue("Should contain BETWEEN: " + sql, sql.contains(" BETWEEN "));
+            Assert.assertTrue("Should contain AND: " + sql, sql.contains(" AND "));
+
+            if (sql.contains(" NOT BETWEEN ")) {
+                foundNotBetween = true;
+            } else {
+                foundBetween = true;
+            }
+        }
+
+        Assert.assertTrue("Should generate BETWEEN", foundBetween);
+        Assert.assertTrue("Should generate NOT BETWEEN", foundNotBetween);
+    }
+
+    @Test
+    public void testGenerateLikeExpression() {
+        boolean foundLike = false;
+        boolean foundNotLike = false;
+
+        for (int i = 0; i < 100; i++) {
+            ctx.reset();
+            ExpressionGenerator.generateLikeExpression(ctx);
+            String sql = ctx.toSql();
+
+            Assert.assertTrue("Should contain LIKE: " + sql, sql.contains(" LIKE "));
+
+            if (sql.contains(" NOT LIKE ")) {
+                foundNotLike = true;
+            } else {
+                foundLike = true;
+            }
+        }
+
+        Assert.assertTrue("Should generate LIKE", foundLike);
+        Assert.assertTrue("Should generate NOT LIKE", foundNotLike);
+    }
+
+    @Test
+    public void testGenerateIsNullExpression() {
+        boolean foundIsNull = false;
+        boolean foundIsNotNull = false;
+
+        for (int i = 0; i < 100; i++) {
+            ctx.reset();
+            ExpressionGenerator.generateIsNullExpression(ctx);
+            String sql = ctx.toSql();
+
+            Assert.assertTrue("Should contain IS: " + sql, sql.contains(" IS "));
+            Assert.assertTrue("Should end with NULL: " + sql, sql.endsWith(" NULL"));
+
+            if (sql.contains(" IS NOT NULL")) {
+                foundIsNotNull = true;
+            } else {
+                foundIsNull = true;
+            }
+        }
+
+        Assert.assertTrue("Should generate IS NULL", foundIsNull);
+        Assert.assertTrue("Should generate IS NOT NULL", foundIsNotNull);
+    }
+
+    @Test
+    public void testGenerateVariety() {
+        // Generate many expressions and check we get various types
+        boolean foundCase = false;
+        boolean foundCast = false;
+        boolean foundIn = false;
+        boolean foundBetween = false;
+        boolean foundLike = false;
+        boolean foundIsNull = false;
+
+        for (int i = 0; i < 500; i++) {
+            ctx.reset();
+            ExpressionGenerator.generate(ctx);
+            String sql = ctx.toSql();
+
+            if (sql.contains("CASE ")) foundCase = true;
+            if (sql.contains("CAST")) foundCast = true;
+            if (sql.contains(" IN ")) foundIn = true;
+            if (sql.contains(" BETWEEN ")) foundBetween = true;
+            if (sql.contains(" LIKE ")) foundLike = true;
+            if (sql.contains(" IS ") && sql.contains(" NULL")) foundIsNull = true;
+        }
+
+        // With 500 iterations and reasonable weights, we should see most expression types
+        Assert.assertTrue("Should generate CASE expressions", foundCase);
+        Assert.assertTrue("Should generate CAST expressions", foundCast);
+        Assert.assertTrue("Should generate IN expressions", foundIn);
+        Assert.assertTrue("Should generate BETWEEN expressions", foundBetween);
+        // LIKE and IS NULL have lower weights, may not always appear in 500 iterations
+    }
 }

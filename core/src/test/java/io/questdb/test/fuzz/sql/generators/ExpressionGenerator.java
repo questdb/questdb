@@ -38,6 +38,12 @@ import io.questdb.test.fuzz.sql.GeneratorContext;
  *   <li>Binary operators: arithmetic (+, -, *, /, %), comparison (=, !=, <, >, <=, >=), logical (AND, OR)</li>
  *   <li>Unary operators: -, NOT</li>
  *   <li>Function calls (basic)</li>
+ *   <li>CASE WHEN ... THEN ... ELSE ... END</li>
+ *   <li>CAST(expr AS type)</li>
+ *   <li>IN (list) and NOT IN</li>
+ *   <li>BETWEEN ... AND ... and NOT BETWEEN</li>
+ *   <li>LIKE and NOT LIKE</li>
+ *   <li>IS NULL and IS NOT NULL</li>
  * </ul>
  * <p>
  * Uses depth tracking to prevent infinite recursion.
@@ -45,14 +51,21 @@ import io.questdb.test.fuzz.sql.GeneratorContext;
 public final class ExpressionGenerator {
 
     // Expression type weights
-    private static final int WEIGHT_LITERAL = 25;
-    private static final int WEIGHT_COLUMN = 30;
-    private static final int WEIGHT_BINARY = 25;
+    private static final int WEIGHT_LITERAL = 20;
+    private static final int WEIGHT_COLUMN = 25;
+    private static final int WEIGHT_BINARY = 20;
     private static final int WEIGHT_UNARY = 5;
-    private static final int WEIGHT_PARENS = 10;
+    private static final int WEIGHT_PARENS = 8;
     private static final int WEIGHT_FUNCTION = 5;
+    private static final int WEIGHT_CASE = 4;
+    private static final int WEIGHT_CAST = 3;
+    private static final int WEIGHT_IN = 3;
+    private static final int WEIGHT_BETWEEN = 3;
+    private static final int WEIGHT_LIKE = 2;
+    private static final int WEIGHT_IS_NULL = 2;
     private static final int TOTAL_WEIGHT = WEIGHT_LITERAL + WEIGHT_COLUMN + WEIGHT_BINARY
-            + WEIGHT_UNARY + WEIGHT_PARENS + WEIGHT_FUNCTION;
+            + WEIGHT_UNARY + WEIGHT_PARENS + WEIGHT_FUNCTION + WEIGHT_CASE + WEIGHT_CAST
+            + WEIGHT_IN + WEIGHT_BETWEEN + WEIGHT_LIKE + WEIGHT_IS_NULL;
 
     // At max depth, only generate terminals
     private static final int WEIGHT_TERMINAL_LITERAL = 50;
@@ -68,6 +81,17 @@ public final class ExpressionGenerator {
     // Simple aggregate/scalar functions for basic testing
     private static final String[] FUNCTIONS = {
             "abs", "round", "floor", "ceil", "length", "lower", "upper", "trim"
+    };
+
+    // SQL types for CAST
+    private static final String[] CAST_TYPES = {
+            "INT", "LONG", "DOUBLE", "FLOAT", "STRING", "SYMBOL",
+            "BOOLEAN", "TIMESTAMP", "DATE", "SHORT", "BYTE"
+    };
+
+    // LIKE patterns
+    private static final String[] LIKE_PATTERNS = {
+            "'%'", "'%a%'", "'a%'", "'%b'", "'_a%'", "'%_'", "'test%'", "'%test'"
     };
 
     private ExpressionGenerator() {
@@ -120,7 +144,43 @@ public final class ExpressionGenerator {
                 return;
             }
 
-            generateFunctionCall(ctx);
+            cumulative += WEIGHT_FUNCTION;
+            if (roll < cumulative) {
+                generateFunctionCall(ctx);
+                return;
+            }
+
+            cumulative += WEIGHT_CASE;
+            if (roll < cumulative) {
+                generateCaseExpression(ctx);
+                return;
+            }
+
+            cumulative += WEIGHT_CAST;
+            if (roll < cumulative) {
+                generateCastExpression(ctx);
+                return;
+            }
+
+            cumulative += WEIGHT_IN;
+            if (roll < cumulative) {
+                generateInExpression(ctx);
+                return;
+            }
+
+            cumulative += WEIGHT_BETWEEN;
+            if (roll < cumulative) {
+                generateBetweenExpression(ctx);
+                return;
+            }
+
+            cumulative += WEIGHT_LIKE;
+            if (roll < cumulative) {
+                generateLikeExpression(ctx);
+                return;
+            }
+
+            generateIsNullExpression(ctx);
         } finally {
             ctx.decrementExpressionDepth();
         }
@@ -367,5 +427,142 @@ public final class ExpressionGenerator {
             ctx.keyword("AS");
             ctx.identifier(ctx.newAlias());
         }
+    }
+
+    // --- Advanced expression generators ---
+
+    /**
+     * Generates a CASE WHEN ... THEN ... ELSE ... END expression.
+     */
+    public static void generateCaseExpression(GeneratorContext ctx) {
+        Rnd rnd = ctx.rnd();
+
+        ctx.keyword("CASE");
+
+        // Generate 1-3 WHEN branches
+        int branchCount = 1 + rnd.nextInt(3);
+
+        for (int i = 0; i < branchCount; i++) {
+            ctx.keyword("WHEN");
+            generateComparisonExpression(ctx);
+            ctx.keyword("THEN");
+            generateTerminal(ctx);
+        }
+
+        // Optional ELSE
+        if (rnd.nextDouble() < 0.7) {
+            ctx.keyword("ELSE");
+            generateTerminal(ctx);
+        }
+
+        ctx.keyword("END");
+    }
+
+    /**
+     * Generates a CAST(expr AS type) expression.
+     */
+    public static void generateCastExpression(GeneratorContext ctx) {
+        Rnd rnd = ctx.rnd();
+
+        ctx.keyword("CAST");
+        ctx.openParen();
+        generateTerminal(ctx);
+        ctx.keyword("AS");
+        ctx.keyword(CAST_TYPES[rnd.nextInt(CAST_TYPES.length)]);
+        ctx.closeParen();
+    }
+
+    /**
+     * Generates an IN or NOT IN expression.
+     */
+    public static void generateInExpression(GeneratorContext ctx) {
+        Rnd rnd = ctx.rnd();
+
+        // Left side
+        generateColumnReference(ctx);
+
+        // Optional NOT
+        if (rnd.nextDouble() < 0.3) {
+            ctx.keyword("NOT");
+        }
+
+        ctx.keyword("IN");
+        ctx.openParen();
+
+        // Generate 2-5 values
+        int valueCount = 2 + rnd.nextInt(4);
+
+        for (int i = 0; i < valueCount; i++) {
+            if (i > 0) {
+                ctx.comma();
+            }
+            LiteralGenerator.generate(ctx);
+        }
+
+        ctx.closeParen();
+    }
+
+    /**
+     * Generates a BETWEEN ... AND ... expression.
+     */
+    public static void generateBetweenExpression(GeneratorContext ctx) {
+        Rnd rnd = ctx.rnd();
+
+        // Value to test
+        generateColumnReference(ctx);
+
+        // Optional NOT
+        if (rnd.nextDouble() < 0.3) {
+            ctx.keyword("NOT");
+        }
+
+        ctx.keyword("BETWEEN");
+
+        // Lower bound
+        LiteralGenerator.generateNumeric(ctx);
+
+        ctx.keyword("AND");
+
+        // Upper bound
+        LiteralGenerator.generateNumeric(ctx);
+    }
+
+    /**
+     * Generates a LIKE or NOT LIKE expression.
+     */
+    public static void generateLikeExpression(GeneratorContext ctx) {
+        Rnd rnd = ctx.rnd();
+
+        // Column reference
+        generateColumnReference(ctx);
+
+        // Optional NOT
+        if (rnd.nextDouble() < 0.3) {
+            ctx.keyword("NOT");
+        }
+
+        ctx.keyword("LIKE");
+
+        // Pattern
+        ctx.literal(LIKE_PATTERNS[rnd.nextInt(LIKE_PATTERNS.length)]);
+    }
+
+    /**
+     * Generates an IS NULL or IS NOT NULL expression.
+     */
+    public static void generateIsNullExpression(GeneratorContext ctx) {
+        Rnd rnd = ctx.rnd();
+
+        // Column reference
+        generateColumnReference(ctx);
+
+        ctx.keyword("IS");
+
+        // Optional NOT
+        if (rnd.nextDouble() < 0.5) {
+            ctx.keyword("NOT");
+        }
+
+        ctx.keyword("NULL");
     }
 }

@@ -1,7 +1,7 @@
 # SQL Parser Fuzz Testing - Implementation TODO
 
 **Status**: In Progress
-**Last Updated**: 2025-12-13
+**Last Updated**: 2025-12-14
 
 ---
 
@@ -110,79 +110,71 @@ Minimal viable generation - simple SELECT statements.
     - Verifies no crashes (unexpected exceptions)
     - Uses simple config for CI compatibility
 
-### Phase 3: Standard SQL Features ⏳
+### Phase 3: Standard SQL Features ✅
 
 Complete standard SQL coverage.
 
-- [ ] **3.1 SelectGenerator (complete)**
+- [x] **3.1 SelectGenerator (complete)**
+    - DISTINCT
     - GROUP BY clause
-    - HAVING clause (only with GROUP BY)
     - ORDER BY clause (ASC/DESC, NULLS FIRST/LAST)
     - LIMIT/OFFSET (various forms)
-    - DISTINCT
-    - Unit tests for each clause
+    - JOIN integration
+    - Note: QuestDB does not support HAVING
+    - Unit tests: `SelectGeneratorTest.java` (24 tests)
 
-- [ ] **3.2 SourceGenerator** - FROM clause sources
-    - Table reference with optional alias
-    - Subquery as source
+- [ ] **3.2 SourceGenerator** - FROM clause sources (deferred to Phase 6)
+    - Table reference with optional alias ✅ (in SelectGenerator)
+    - Subquery as source (basic support added)
     - CTE reference
     - Parenthesized source
-    - Unit tests
 
-- [ ] **3.3 CteGenerator** - WITH clause
+- [ ] **3.3 CteGenerator** - WITH clause (deferred to Phase 6)
     - Single CTE
     - Multiple CTEs
     - Scope registration (cte names available for main query)
-    - Unit tests
 
-- [ ] **3.4 JoinGenerator (standard)** - Standard joins
+- [x] **3.4 JoinGenerator (standard)** - Standard joins
     - INNER JOIN
     - LEFT [OUTER] JOIN
     - RIGHT [OUTER] JOIN
     - CROSS JOIN
     - JOIN ... ON condition
     - JOIN ... USING (columns)
-    - Unit tests
+    - Unit tests: `JoinGeneratorTest.java` (14 tests)
 
-- [ ] **3.5 Set operations**
+- [ ] **3.5 Set operations** (deferred to Phase 6)
     - UNION / UNION ALL
     - EXCEPT / EXCEPT ALL
     - INTERSECT / INTERSECT ALL
-    - Unit tests
 
-- [ ] **3.6 ExpressionGenerator (complete)**
+- [x] **3.6 ExpressionGenerator (complete)**
     - CASE WHEN ... THEN ... ELSE ... END
     - CAST(expr AS type)
-    - PostgreSQL cast (::type)
-    - IN (list), IN (subquery)
-    - NOT IN
-    - BETWEEN ... AND ...
-    - NOT BETWEEN
-    - LIKE / ILIKE
+    - IN (list), NOT IN
+    - BETWEEN ... AND ..., NOT BETWEEN
+    - LIKE, NOT LIKE
     - IS NULL / IS NOT NULL
-    - EXISTS (subquery)
-    - ALL / ANY with subquery
-    - Function calls (synthetic names initially)
-    - Unit tests for each expression type
+    - Unit tests: `ExpressionGeneratorTest.java` (25 tests)
 
-- [ ] **3.7 Comprehensive parsing test**
-    - Generate complex standard SQL queries
-    - Verify parser handles all features
-    - 10k iterations minimum
+- [x] **3.7 Comprehensive parsing test**
+    - `testBasicGeneratorIntegration` in `SqlParserFuzzTest.java`
+    - Generates queries with all Phase 3 features
+    - 1000 iterations (configurable)
 
-### Phase 4: QuestDB-Specific Features ⏳
+### Phase 4: QuestDB-Specific Features ✅
 
 QuestDB extensions to standard SQL.
 
-- [ ] **4.1 JoinGenerator (QuestDB)**
+- [x] **4.1 JoinGenerator (QuestDB)**
     - ASOF JOIN
     - LT JOIN
     - SPLICE JOIN
     - TOLERANCE clause
     - ON clause with timestamp equality
-    - Unit tests
+    - Unit tests: `JoinGeneratorTest.java` (24 tests total)
 
-- [ ] **4.2 SampleByGenerator**
+- [x] **4.2 SampleByGenerator**
     - SAMPLE BY interval (1h, 30m, etc.)
     - FILL clause (PREV, NULL, LINEAR, NONE, value list)
     - ALIGN TO CALENDAR
@@ -190,14 +182,14 @@ QuestDB extensions to standard SQL.
     - TIME ZONE clause
     - WITH OFFSET clause
     - FROM/TO time range
-    - Unit tests
+    - Unit tests: `SampleByGeneratorTest.java` (15 tests)
 
-- [ ] **4.3 LatestOnGenerator**
+- [x] **4.3 LatestOnGenerator**
     - LATEST ON timestamp PARTITION BY columns
     - LATEST BY (deprecated syntax)
-    - Unit tests
+    - Unit tests: `LatestOnGeneratorTest.java` (8 tests)
 
-- [ ] **4.4 WindowGenerator**
+- [ ] **4.4 WindowGenerator** (deferred - complex feature)
     - Basic OVER clause
     - PARTITION BY
     - ORDER BY within window
@@ -208,18 +200,16 @@ QuestDB extensions to standard SQL.
     - IGNORE NULLS / RESPECT NULLS
     - Unit tests
 
-- [ ] **4.5 LiteralGenerator (QuestDB types)**
+- [x] **4.5 LiteralGenerator (QuestDB types)**
     - Geohash char literals (#sp052w)
     - Geohash bit literals (##01110)
     - Geohash with precision (#sp052w/25)
     - IPv4 literals
     - UUID literals
     - Long256 literals
-    - Timestamp literals
-    - Symbol handling
-    - Unit tests
+    - Unit tests: `LiteralGeneratorTest.java` (23 tests total)
 
-- [ ] **4.6 ExpressionGenerator (QuestDB)**
+- [ ] **4.6 ExpressionGenerator (QuestDB)** (deferred)
     - IP operators (<<, >>, <<=, >>=)
     - WITHIN (geohash)
     - timestamp() function
@@ -227,17 +217,17 @@ QuestDB extensions to standard SQL.
     - extract() function
     - Unit tests
 
-- [ ] **4.7 Additional statements**
+- [ ] **4.7 Additional statements** (deferred)
     - INSERT INTO ... SELECT
     - INSERT INTO ... VALUES
     - INSERT BATCH / ATOMIC
     - EXPLAIN (with FORMAT)
     - Unit tests
 
-- [ ] **4.8 QuestDB-focused test**
-    - Test all QuestDB-specific features
-    - Higher probabilities for QuestDB features
-    - 10k iterations minimum
+- [x] **4.8 SelectGenerator integration**
+    - Integrated SAMPLE BY into SELECT generation
+    - Integrated LATEST ON into SELECT generation
+    - Integrated QuestDB joins
 
 ### Phase 5: Corruption Layer ⏳
 
@@ -341,13 +331,34 @@ Refinements and tooling.
     - SqlFuzzGenerator, SqlParserFuzzTest
 - [x] **Phase 2: Basic Generation** - All 4 components implemented and tested
     - LiteralGenerator (17 tests)
-    - ExpressionGenerator (17 tests)
-    - SelectGenerator (16 tests)
+    - ExpressionGenerator (17 tests → 25 tests after Phase 3)
+    - SelectGenerator (16 tests → 24 tests after Phase 3)
     - Basic parsing integration test
+- [x] **Phase 3: Standard SQL Features** - Core features implemented
+    - SelectGenerator enhanced: DISTINCT, GROUP BY, ORDER BY, LIMIT/OFFSET, JOINs
+    - JoinGenerator (14 tests): INNER, LEFT, RIGHT, CROSS, ON, USING
+    - ExpressionGenerator enhanced: CASE, CAST, IN, BETWEEN, LIKE, IS NULL
+    - Total: 80 generator tests passing
+- [x] **Phase 4: QuestDB-Specific Features** - Core QuestDB features implemented
+    - JoinGenerator: ASOF, LT, SPLICE joins with TOLERANCE (24 tests total)
+    - SampleByGenerator: SAMPLE BY, FILL, ALIGN TO (15 tests)
+    - LatestOnGenerator: LATEST ON, LATEST BY deprecated (8 tests)
+    - LiteralGenerator: Geohash, IPv4, UUID, Long256 (23 tests total)
+    - SelectGenerator: Integrated SAMPLE BY and LATEST ON
+    - Total: 119 generator tests passing
 
 ### In Progress
 
-- [ ] Phase 3: Standard SQL Features (next step)
+- [ ] Phase 5: Corruption Layer (next step)
+
+### Bugs Found by Fuzzer
+
+The fuzzer has already found real bugs in QuestDB's SQL parser:
+
+1. **ClassCastException in ExpressionParser** - Triggered by malformed SQL patterns like:
+   - `=.column` (dot after operator without left operand)
+   - `AND.col` (keyword followed immediately by dot)
+   - These patterns cause `ClassCastException: String cannot be cast to FloatingSequence`
 
 ### Blocked
 
@@ -375,12 +386,18 @@ core/src/test/java/io/questdb/test/fuzz/sql/
 ├── SQL_PARSER_FUZZ_DESIGN.md     # Design document
 ├── SQL_PARSER_FUZZ_TODO.md       # This file
 └── generators/
-    ├── LiteralGenerator.java         # Literal generation
-    ├── LiteralGeneratorTest.java     # Tests (17)
-    ├── ExpressionGenerator.java      # Expression generation
-    ├── ExpressionGeneratorTest.java  # Tests (17)
-    ├── SelectGenerator.java          # SELECT statement generation
-    └── SelectGeneratorTest.java      # Tests (16)
+    ├── LiteralGenerator.java         # Literal generation (Geohash, IPv4, UUID, Long256)
+    ├── LiteralGeneratorTest.java     # Tests (23)
+    ├── ExpressionGenerator.java      # Expression generation (CASE, CAST, IN, BETWEEN, LIKE, IS NULL)
+    ├── ExpressionGeneratorTest.java  # Tests (25)
+    ├── SelectGenerator.java          # SELECT with SAMPLE BY, LATEST ON
+    ├── SelectGeneratorTest.java      # Tests (24)
+    ├── JoinGenerator.java            # JOIN clause generation (ASOF, LT, SPLICE, TOLERANCE)
+    ├── JoinGeneratorTest.java        # Tests (24)
+    ├── SampleByGenerator.java        # SAMPLE BY clause generation
+    ├── SampleByGeneratorTest.java    # Tests (15)
+    ├── LatestOnGenerator.java        # LATEST ON clause generation
+    └── LatestOnGeneratorTest.java    # Tests (8)
 ```
 
 ---

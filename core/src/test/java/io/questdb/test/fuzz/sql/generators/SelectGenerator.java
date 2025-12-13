@@ -28,18 +28,27 @@ import io.questdb.std.Rnd;
 import io.questdb.test.fuzz.sql.GeneratorContext;
 
 /**
- * Generates basic SELECT statements.
+ * Generates SELECT statements.
  * <p>
  * Supports:
  * <ul>
  *   <li>SELECT column list (expressions with optional aliases)</li>
+ *   <li>SELECT DISTINCT</li>
  *   <li>SELECT * (star)</li>
  *   <li>FROM single table (with optional alias)</li>
  *   <li>Optional WHERE clause</li>
+ *   <li>Optional GROUP BY clause</li>
+ *   <li>Optional ORDER BY clause (ASC/DESC, NULLS FIRST/LAST)</li>
+ *   <li>Optional LIMIT/OFFSET clause</li>
  * </ul>
  * <p>
- * This is a basic implementation for Phase 2. More advanced features
- * (GROUP BY, HAVING, ORDER BY, joins, subqueries) will be added in Phase 3.
+ * QuestDB-specific features:
+ * <ul>
+ *   <li>LATEST ON timestamp PARTITION BY columns</li>
+ *   <li>SAMPLE BY interval [FILL] [ALIGN TO]</li>
+ * </ul>
+ * <p>
+ * Note: QuestDB does not support HAVING clause.
  */
 public final class SelectGenerator {
 
@@ -56,15 +65,55 @@ public final class SelectGenerator {
         // SELECT keyword
         ctx.keyword("SELECT");
 
+        // Optional DISTINCT
+        if (rnd.nextDouble() < ctx.config().distinctProb()) {
+            ctx.keyword("DISTINCT");
+        }
+
         // Select list
         generateSelectList(ctx);
 
         // FROM clause
         generateFromClause(ctx);
 
+        // Optional JOIN clauses
+        if (rnd.nextDouble() < ctx.config().joinProb() && ctx.canAddJoin()) {
+            int joinCount = 1 + rnd.nextInt(Math.min(3, ctx.config().maxJoins()));
+            for (int i = 0; i < joinCount && ctx.canAddJoin(); i++) {
+                JoinGenerator.generate(ctx);
+            }
+        }
+
+        // Optional LATEST ON clause (QuestDB-specific)
+        // Note: LATEST ON should come after JOINs but before WHERE
+        if (rnd.nextDouble() < ctx.config().latestOnProb()) {
+            LatestOnGenerator.generate(ctx);
+        }
+
         // Optional WHERE clause
         if (rnd.nextDouble() < ctx.config().whereProb()) {
             generateWhereClause(ctx);
+        }
+
+        // Optional SAMPLE BY clause (QuestDB-specific)
+        // SAMPLE BY should come after WHERE but before GROUP BY
+        if (rnd.nextDouble() < ctx.config().sampleByProb()) {
+            SampleByGenerator.generate(ctx);
+        }
+
+        // Optional GROUP BY clause
+        if (rnd.nextDouble() < ctx.config().groupByProb()) {
+            generateGroupByClause(ctx);
+        }
+
+        // Optional ORDER BY clause
+        if (rnd.nextDouble() < ctx.config().orderByProb()) {
+            generateOrderByClause(ctx);
+        }
+
+        // Optional LIMIT clause
+        if (rnd.nextDouble() < ctx.config().limitProb()) {
+            generateLimitClause(ctx);
         }
     }
 
@@ -147,6 +196,93 @@ public final class SelectGenerator {
     public static void generateWhereClause(GeneratorContext ctx) {
         ctx.keyword("WHERE");
         ExpressionGenerator.generateBooleanExpression(ctx);
+    }
+
+    /**
+     * Generates a GROUP BY clause.
+     */
+    public static void generateGroupByClause(GeneratorContext ctx) {
+        Rnd rnd = ctx.rnd();
+
+        ctx.keyword("GROUP");
+        ctx.keyword("BY");
+
+        // Generate 1 to maxGroupByColumns columns
+        int columnCount = 1 + rnd.nextInt(ctx.config().maxGroupByColumns());
+
+        for (int i = 0; i < columnCount; i++) {
+            if (i > 0) {
+                ctx.comma();
+            }
+            // GROUP BY typically uses column references or positions
+            if (rnd.nextDouble() < 0.8) {
+                ExpressionGenerator.generateColumnReference(ctx);
+            } else {
+                // Column position (1-based)
+                ctx.literal(String.valueOf(1 + rnd.nextInt(5)));
+            }
+        }
+    }
+
+    /**
+     * Generates an ORDER BY clause.
+     */
+    public static void generateOrderByClause(GeneratorContext ctx) {
+        Rnd rnd = ctx.rnd();
+
+        ctx.keyword("ORDER");
+        ctx.keyword("BY");
+
+        // Generate 1 to maxOrderByColumns columns
+        int columnCount = 1 + rnd.nextInt(ctx.config().maxOrderByColumns());
+
+        for (int i = 0; i < columnCount; i++) {
+            if (i > 0) {
+                ctx.comma();
+            }
+
+            // Column reference or position
+            if (rnd.nextDouble() < 0.7) {
+                ExpressionGenerator.generateColumnReference(ctx);
+            } else {
+                ctx.literal(String.valueOf(1 + rnd.nextInt(5)));
+            }
+
+            // Optional ASC/DESC
+            if (rnd.nextDouble() < 0.5) {
+                ctx.keyword(rnd.nextBoolean() ? "ASC" : "DESC");
+            }
+
+            // Optional NULLS FIRST/LAST
+            if (rnd.nextDouble() < 0.2) {
+                ctx.keyword("NULLS");
+                ctx.keyword(rnd.nextBoolean() ? "FIRST" : "LAST");
+            }
+        }
+    }
+
+    /**
+     * Generates a LIMIT clause with optional OFFSET.
+     */
+    public static void generateLimitClause(GeneratorContext ctx) {
+        Rnd rnd = ctx.rnd();
+
+        ctx.keyword("LIMIT");
+
+        // LIMIT value (1-1000)
+        ctx.literal(String.valueOf(1 + rnd.nextInt(1000)));
+
+        // Optional OFFSET
+        if (rnd.nextDouble() < 0.3) {
+            // Two syntaxes: LIMIT n OFFSET m  or  LIMIT n, m
+            if (rnd.nextBoolean()) {
+                ctx.keyword("OFFSET");
+                ctx.literal(String.valueOf(rnd.nextInt(100)));
+            } else {
+                ctx.comma();
+                ctx.literal(String.valueOf(rnd.nextInt(100)));
+            }
+        }
     }
 
     /**

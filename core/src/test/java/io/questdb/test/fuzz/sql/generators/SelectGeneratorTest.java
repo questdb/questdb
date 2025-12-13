@@ -335,6 +335,157 @@ public class SelectGeneratorTest {
     }
 
     @Test
+    public void testGenerateDistinct() {
+        // Configure with 100% DISTINCT probability
+        GeneratorConfig config = GeneratorConfig.builder()
+                .distinctProb(1.0)
+                .build();
+        Rnd rnd = new Rnd(SEED0, SEED1);
+        GeneratorContext distinctCtx = new GeneratorContext(rnd, config);
+
+        for (int i = 0; i < 20; i++) {
+            distinctCtx.reset();
+            SelectGenerator.generate(distinctCtx);
+            String sql = distinctCtx.toSql();
+
+            Assert.assertTrue("Should have DISTINCT: " + sql, sql.contains("SELECT DISTINCT"));
+        }
+    }
+
+    @Test
+    public void testGenerateGroupBy() {
+        // Configure with 100% GROUP BY probability
+        GeneratorConfig config = GeneratorConfig.builder()
+                .groupByProb(1.0)
+                .build();
+        Rnd rnd = new Rnd(SEED0, SEED1);
+        GeneratorContext groupByCtx = new GeneratorContext(rnd, config);
+
+        for (int i = 0; i < 20; i++) {
+            groupByCtx.reset();
+            SelectGenerator.generate(groupByCtx);
+            String sql = groupByCtx.toSql();
+
+            Assert.assertTrue("Should have GROUP BY: " + sql, sql.contains(" GROUP BY "));
+        }
+    }
+
+    @Test
+    public void testGenerateOrderBy() {
+        // Configure with 100% ORDER BY probability
+        GeneratorConfig config = GeneratorConfig.builder()
+                .orderByProb(1.0)
+                .build();
+        Rnd rnd = new Rnd(SEED0, SEED1);
+        GeneratorContext orderByCtx = new GeneratorContext(rnd, config);
+
+        boolean foundAsc = false;
+        boolean foundDesc = false;
+        boolean foundNulls = false;
+
+        for (int i = 0; i < 50; i++) {
+            orderByCtx.reset();
+            SelectGenerator.generate(orderByCtx);
+            String sql = orderByCtx.toSql();
+
+            Assert.assertTrue("Should have ORDER BY: " + sql, sql.contains(" ORDER BY "));
+
+            if (sql.contains(" ASC")) foundAsc = true;
+            if (sql.contains(" DESC")) foundDesc = true;
+            if (sql.contains(" NULLS ")) foundNulls = true;
+        }
+
+        Assert.assertTrue("Should sometimes generate ASC", foundAsc);
+        Assert.assertTrue("Should sometimes generate DESC", foundDesc);
+        // NULLS FIRST/LAST has low probability, may not always appear
+    }
+
+    @Test
+    public void testGenerateLimit() {
+        // Configure with 100% LIMIT probability
+        GeneratorConfig config = GeneratorConfig.builder()
+                .limitProb(1.0)
+                .build();
+        Rnd rnd = new Rnd(SEED0, SEED1);
+        GeneratorContext limitCtx = new GeneratorContext(rnd, config);
+
+        boolean foundOffset = false;
+
+        for (int i = 0; i < 50; i++) {
+            limitCtx.reset();
+            SelectGenerator.generate(limitCtx);
+            String sql = limitCtx.toSql();
+
+            Assert.assertTrue("Should have LIMIT: " + sql, sql.contains(" LIMIT "));
+
+            if (sql.contains(" OFFSET ") || sql.matches(".*LIMIT \\d+, \\d+.*")) {
+                foundOffset = true;
+            }
+        }
+
+        Assert.assertTrue("Should sometimes generate OFFSET", foundOffset);
+    }
+
+    @Test
+    public void testGenerateGroupByClauseDirectly() {
+        for (int i = 0; i < 50; i++) {
+            ctx.reset();
+            SelectGenerator.generateGroupByClause(ctx);
+            String sql = ctx.toSql();
+
+            Assert.assertTrue("Should start with GROUP BY: " + sql, sql.startsWith("GROUP BY "));
+        }
+    }
+
+    @Test
+    public void testGenerateOrderByClauseDirectly() {
+        for (int i = 0; i < 50; i++) {
+            ctx.reset();
+            SelectGenerator.generateOrderByClause(ctx);
+            String sql = ctx.toSql();
+
+            Assert.assertTrue("Should start with ORDER BY: " + sql, sql.startsWith("ORDER BY "));
+        }
+    }
+
+    @Test
+    public void testGenerateLimitClauseDirectly() {
+        for (int i = 0; i < 50; i++) {
+            ctx.reset();
+            SelectGenerator.generateLimitClause(ctx);
+            String sql = ctx.toSql();
+
+            Assert.assertTrue("Should start with LIMIT: " + sql, sql.startsWith("LIMIT "));
+        }
+    }
+
+    @Test
+    public void testGenerateWithJoins() {
+        // Configure with 100% JOIN probability
+        GeneratorConfig config = GeneratorConfig.builder()
+                .joinProb(1.0)
+                .maxJoins(3)
+                .build();
+        Rnd rnd = new Rnd(SEED0, SEED1);
+        GeneratorContext joinCtx = new GeneratorContext(rnd, config);
+
+        int queriesWithJoins = 0;
+
+        for (int i = 0; i < 50; i++) {
+            joinCtx.reset();
+            SelectGenerator.generate(joinCtx);
+            String sql = joinCtx.toSql();
+
+            if (sql.contains(" JOIN ")) {
+                queriesWithJoins++;
+            }
+        }
+
+        Assert.assertTrue("Should generate queries with JOINs: " + queriesWithJoins,
+                queriesWithJoins > 20);
+    }
+
+    @Test
     public void testTableAliasRegistration() {
         // When a table alias is generated, it should be registered
         GeneratorConfig config = GeneratorConfig.builder().build();

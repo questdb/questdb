@@ -343,4 +343,137 @@ public class LiteralGeneratorTest {
         // Should be identical
         Assert.assertArrayEquals(values1, values2);
     }
+
+    // --- QuestDB-specific literal tests ---
+
+    @Test
+    public void testGenerateGeohash() {
+        boolean foundChar = false;
+        boolean foundBit = false;
+        boolean foundWithPrecision = false;
+
+        for (int i = 0; i < 200; i++) {
+            ctx.reset();
+            LiteralGenerator.generateGeohash(ctx);
+            String sql = ctx.toSql();
+
+            Assert.assertTrue("Should start with #: " + sql, sql.startsWith("#"));
+
+            if (sql.startsWith("##")) {
+                // Bit geohash
+                foundBit = true;
+                String bits = sql.substring(2);
+                Assert.assertTrue("Bit geohash should contain only 0s and 1s: " + sql,
+                        bits.matches("[01]+"));
+            } else if (sql.contains("/")) {
+                // Char geohash with precision
+                foundWithPrecision = true;
+            } else {
+                // Char geohash
+                foundChar = true;
+            }
+        }
+
+        Assert.assertTrue("Should generate char geohash", foundChar);
+        Assert.assertTrue("Should generate bit geohash", foundBit);
+        Assert.assertTrue("Should generate geohash with precision", foundWithPrecision);
+    }
+
+    @Test
+    public void testGenerateIPv4() {
+        for (int i = 0; i < 100; i++) {
+            ctx.reset();
+            LiteralGenerator.generateIPv4(ctx);
+            String sql = ctx.toSql();
+
+            Assert.assertTrue("Should be quoted: " + sql, sql.startsWith("'") && sql.endsWith("'"));
+            String ip = sql.substring(1, sql.length() - 1);
+            Assert.assertTrue("Should be valid IPv4 format: " + ip,
+                    ip.matches("\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}"));
+        }
+    }
+
+    @Test
+    public void testGenerateIPv4Variety() {
+        boolean foundPrivateA = false;
+        boolean foundPrivateC = false;
+        boolean foundLocalhost = false;
+
+        for (int i = 0; i < 200; i++) {
+            ctx.reset();
+            LiteralGenerator.generateIPv4(ctx);
+            String sql = ctx.toSql();
+
+            if (sql.startsWith("'10.")) foundPrivateA = true;
+            if (sql.startsWith("'192.168.")) foundPrivateC = true;
+            if (sql.equals("'127.0.0.1'")) foundLocalhost = true;
+        }
+
+        Assert.assertTrue("Should generate Private Class A IPs", foundPrivateA);
+        Assert.assertTrue("Should generate Private Class C IPs", foundPrivateC);
+        Assert.assertTrue("Should generate localhost", foundLocalhost);
+    }
+
+    @Test
+    public void testGenerateUUID() {
+        for (int i = 0; i < 100; i++) {
+            ctx.reset();
+            LiteralGenerator.generateUUID(ctx);
+            String sql = ctx.toSql();
+
+            Assert.assertTrue("Should be quoted: " + sql, sql.startsWith("'") && sql.endsWith("'"));
+            String uuid = sql.substring(1, sql.length() - 1);
+            Assert.assertTrue("Should be valid UUID format: " + uuid,
+                    uuid.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"));
+        }
+    }
+
+    @Test
+    public void testGenerateLong256() {
+        boolean foundSmall = false;
+        boolean foundMedium = false;
+        boolean foundLarge = false;
+
+        for (int i = 0; i < 200; i++) {
+            ctx.reset();
+            LiteralGenerator.generateLong256(ctx);
+            String sql = ctx.toSql();
+
+            Assert.assertTrue("Should start with 0x: " + sql, sql.startsWith("0x"));
+            String hex = sql.substring(2);
+            Assert.assertTrue("Should be valid hex: " + sql, hex.matches("[0-9a-f]+"));
+
+            if (hex.length() <= 8) foundSmall = true;
+            else if (hex.length() <= 16) foundMedium = true;
+            else foundLarge = true;
+        }
+
+        Assert.assertTrue("Should generate small Long256 values", foundSmall);
+        Assert.assertTrue("Should generate medium Long256 values", foundMedium);
+        Assert.assertTrue("Should generate large Long256 values", foundLarge);
+    }
+
+    @Test
+    public void testGenerateIncludesQuestDBTypes() {
+        boolean foundGeohash = false;
+        boolean foundIPv4 = false;
+        boolean foundUUID = false;
+        boolean foundLong256 = false;
+
+        for (int i = 0; i < 1000; i++) {
+            ctx.reset();
+            LiteralGenerator.generate(ctx);
+            String sql = ctx.toSql();
+
+            if (sql.startsWith("#")) foundGeohash = true;
+            if (sql.startsWith("0x")) foundLong256 = true;
+            // IPv4 and UUID are quoted strings, harder to distinguish
+            if (sql.matches("'\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}'")) foundIPv4 = true;
+            if (sql.matches("'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'")) foundUUID = true;
+        }
+
+        Assert.assertTrue("Should generate Geohash literals", foundGeohash);
+        Assert.assertTrue("Should generate Long256 literals", foundLong256);
+        // IPv4 and UUID have lower weights, might not appear in 1000 iterations
+    }
 }

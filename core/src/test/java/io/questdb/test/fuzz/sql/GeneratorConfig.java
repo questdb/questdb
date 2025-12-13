@@ -301,6 +301,17 @@ public final class GeneratorConfig {
         return spliceJoinProb;
     }
 
+    /**
+     * Returns the combined probability of using a QuestDB time-series join (ASOF, LT, or SPLICE).
+     * When generating a join, this probability determines whether to use a QuestDB-specific
+     * join type instead of a standard SQL join.
+     */
+    public double questdbJoinProb() {
+        // Combine the individual QuestDB join probabilities
+        // Use the sum capped at 1.0, or take max if they overlap
+        return Math.min(1.0, asofJoinProb + ltJoinProb + spliceJoinProb);
+    }
+
     public double windowFunctionProb() {
         return windowFunctionProb;
     }
