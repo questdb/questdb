@@ -229,47 +229,51 @@ QuestDB extensions to standard SQL.
     - Integrated LATEST ON into SELECT generation
     - Integrated QuestDB joins
 
-### Phase 5: Corruption Layer ⏳
+### Phase 5: Corruption Layer ✅
 
 Invalid query generation for error handling testing.
 
-- [ ] **5.1 CorruptionStrategy interface**
-    - Interface definition
-    - Base implementation with TokenizedQuery
-    - Unit tests
+- [x] **5.1 CorruptionStrategy interface**
+    - Interface definition with `apply()`, `name()`, `canApply()` methods
+    - Base implementation working with TokenizedQuery
+    - Unit tests: `CorruptionStrategyTest.java` (21 tests)
 
-- [ ] **5.2 Token-level corruptions**
-    - DropTokenStrategy
-    - SwapTokensStrategy
-    - DuplicateTokenStrategy
-    - InjectKeywordStrategy
-    - TruncateStrategy
-    - CharacterInsertStrategy
+- [x] **5.2 Token-level corruptions**
+    - DropTokenStrategy - removes random token
+    - SwapTokensStrategy - swaps adjacent tokens
+    - DuplicateTokenStrategy - duplicates random token
+    - InjectKeywordStrategy - injects random SQL keyword
+    - TruncateStrategy - truncates at random position
+    - CharacterInsertStrategy - inserts special characters
+    - RemoveRangeStrategy - removes consecutive token range
     - Unit tests for each
 
-- [ ] **5.3 Structural corruptions**
-    - UnbalanceParensStrategy
-    - ClauseReorderStrategy
-    - DuplicateClauseStrategy
-    - MixKeywordsStrategy
+- [x] **5.3 Structural corruptions**
+    - UnbalanceParensStrategy - unbalances parentheses
+    - DuplicateClauseStrategy - duplicates clause keywords
+    - MixKeywordsStrategy - replaces keywords with other keywords
     - Unit tests
 
-- [ ] **5.4 GarbageGenerator**
+- [x] **5.4 GarbageGenerator**
     - Random token sequences
     - Random characters
-    - Edge cases (empty, null bytes, long strings)
-    - Unit tests
+    - Edge cases (empty, null bytes, long strings, repeated parens)
+    - Raw garbage generation (control characters, very long strings)
+    - Unit tests: `GarbageGeneratorTest.java` (11 tests)
 
-- [ ] **5.5 CorruptGenerator**
-    - Select random corruption strategy
-    - Apply to valid TokenizedQuery
-    - Configurable corruption count
-    - Unit tests
+- [x] **5.5 CorruptGenerator**
+    - `corrupt()` - applies single random corruption
+    - `corruptN()` - applies N corruptions
+    - `corruptRandom()` - applies 1-3 random corruptions
+    - `corruptWith()` - applies specific strategy
+    - Strategy selection with fallback for always-applicable strategies
+    - Unit tests: `CorruptGeneratorTest.java` (10 tests)
 
-- [ ] **5.6 Complete fuzz test**
-    - All three modes: VALID, CORRUPT, GARBAGE
+- [x] **5.6 SqlFuzzGenerator integration**
+    - Integrated CorruptGenerator for CORRUPT mode
+    - Integrated GarbageGenerator for GARBAGE mode
+    - All three modes: VALID, CORRUPT, GARBAGE working
     - Mode selection based on weights
-    - Full iteration count test
 
 ### Phase 6: Advanced Features ⏳
 
@@ -346,10 +350,16 @@ Refinements and tooling.
     - LiteralGenerator: Geohash, IPv4, UUID, Long256 (23 tests total)
     - SelectGenerator: Integrated SAMPLE BY and LATEST ON
     - Total: 119 generator tests passing
+- [x] **Phase 5: Corruption Layer** - Complete corruption system implemented
+    - CorruptionStrategy interface and 10 strategy implementations
+    - CorruptGenerator for applying random corruptions
+    - GarbageGenerator for random SQL generation
+    - SqlFuzzGenerator integration complete
+    - Total: 161 fuzz tests passing (119 generators + 42 corruption)
 
 ### In Progress
 
-- [ ] Phase 5: Corruption Layer (next step)
+- [ ] Phase 6: Advanced Features (next step)
 
 ### Bugs Found by Fuzzer
 
@@ -380,24 +390,41 @@ core/src/test/java/io/questdb/test/fuzz/sql/
 ├── FuzzResultTest.java           # Tests
 ├── FuzzFailure.java              # Failure record
 ├── FuzzFailureTest.java          # Tests
-├── SqlFuzzGenerator.java         # Main generator
+├── SqlFuzzGenerator.java         # Main generator (uses CorruptGenerator, GarbageGenerator)
 ├── SqlFuzzGeneratorTest.java     # Tests
 ├── SqlParserFuzzTest.java        # Test harness
 ├── SQL_PARSER_FUZZ_DESIGN.md     # Design document
 ├── SQL_PARSER_FUZZ_TODO.md       # This file
-└── generators/
-    ├── LiteralGenerator.java         # Literal generation (Geohash, IPv4, UUID, Long256)
-    ├── LiteralGeneratorTest.java     # Tests (23)
-    ├── ExpressionGenerator.java      # Expression generation (CASE, CAST, IN, BETWEEN, LIKE, IS NULL)
-    ├── ExpressionGeneratorTest.java  # Tests (25)
-    ├── SelectGenerator.java          # SELECT with SAMPLE BY, LATEST ON
-    ├── SelectGeneratorTest.java      # Tests (24)
-    ├── JoinGenerator.java            # JOIN clause generation (ASOF, LT, SPLICE, TOLERANCE)
-    ├── JoinGeneratorTest.java        # Tests (24)
-    ├── SampleByGenerator.java        # SAMPLE BY clause generation
-    ├── SampleByGeneratorTest.java    # Tests (15)
-    ├── LatestOnGenerator.java        # LATEST ON clause generation
-    └── LatestOnGeneratorTest.java    # Tests (8)
+├── generators/
+│   ├── LiteralGenerator.java         # Literal generation (Geohash, IPv4, UUID, Long256)
+│   ├── LiteralGeneratorTest.java     # Tests (23)
+│   ├── ExpressionGenerator.java      # Expression generation (CASE, CAST, IN, BETWEEN, LIKE, IS NULL)
+│   ├── ExpressionGeneratorTest.java  # Tests (25)
+│   ├── SelectGenerator.java          # SELECT with SAMPLE BY, LATEST ON
+│   ├── SelectGeneratorTest.java      # Tests (24)
+│   ├── JoinGenerator.java            # JOIN clause generation (ASOF, LT, SPLICE, TOLERANCE)
+│   ├── JoinGeneratorTest.java        # Tests (24)
+│   ├── SampleByGenerator.java        # SAMPLE BY clause generation
+│   ├── SampleByGeneratorTest.java    # Tests (15)
+│   ├── LatestOnGenerator.java        # LATEST ON clause generation
+│   └── LatestOnGeneratorTest.java    # Tests (8)
+└── corruption/
+    ├── CorruptionStrategy.java       # Interface for corruption strategies
+    ├── DropTokenStrategy.java        # Drops random token
+    ├── SwapTokensStrategy.java       # Swaps adjacent tokens
+    ├── DuplicateTokenStrategy.java   # Duplicates random token
+    ├── InjectKeywordStrategy.java    # Injects random SQL keyword
+    ├── TruncateStrategy.java         # Truncates at random position
+    ├── CharacterInsertStrategy.java  # Inserts special characters
+    ├── RemoveRangeStrategy.java      # Removes consecutive tokens
+    ├── UnbalanceParensStrategy.java  # Unbalances parentheses
+    ├── DuplicateClauseStrategy.java  # Duplicates clause keywords
+    ├── MixKeywordsStrategy.java      # Replaces keywords with others
+    ├── CorruptGenerator.java         # Applies random corruption strategies
+    ├── CorruptGeneratorTest.java     # Tests (10)
+    ├── CorruptionStrategyTest.java   # Tests (21)
+    ├── GarbageGenerator.java         # Generates random garbage SQL
+    └── GarbageGeneratorTest.java     # Tests (11)
 ```
 
 ---

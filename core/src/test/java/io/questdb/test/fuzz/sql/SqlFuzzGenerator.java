@@ -25,6 +25,8 @@
 package io.questdb.test.fuzz.sql;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.fuzz.sql.corruption.CorruptGenerator;
+import io.questdb.test.fuzz.sql.corruption.GarbageGenerator;
 import io.questdb.test.fuzz.sql.generators.SelectGenerator;
 
 /**
@@ -232,21 +234,23 @@ public final class SqlFuzzGenerator {
         return applyCorruptions(valid);
     }
 
-    // --- Garbage generation ---
+    // --- Garbage generation using GarbageGenerator ---
 
     private String generateGarbage() {
+        // Sometimes use raw garbage, sometimes tokenized
+        if (rnd.nextDouble() < 0.3) {
+            String raw = GarbageGenerator.generateRaw(rnd);
+            // If raw is empty, fall back to tokenized
+            if (raw == null || raw.isEmpty()) {
+                return generateGarbageTokenized().serialize();
+            }
+            return raw;
+        }
         return generateGarbageTokenized().serialize();
     }
 
     private TokenizedQuery generateGarbageTokenized() {
-        ctx.reset();
-        int tokenCount = 1 + rnd.nextInt(20);  // 1-20 random tokens
-
-        for (int i = 0; i < tokenCount; i++) {
-            ctx.tokens().add(randomToken());
-        }
-
-        return ctx.tokens();
+        return GarbageGenerator.generate(rnd);
     }
 
     // --- Statement generation ---
@@ -258,116 +262,13 @@ public final class SqlFuzzGenerator {
         SelectGenerator.generate(ctx);
     }
 
-    // --- Corruption (placeholder for Phase 4) ---
+    // --- Corruption using CorruptGenerator ---
 
     /**
-     * Applies random corruptions to a valid query.
-     * Placeholder implementation - will be expanded in Phase 4.
+     * Applies random corruptions to a valid query using CorruptGenerator.
      */
     private TokenizedQuery applyCorruptions(TokenizedQuery query) {
-        if (query.isEmpty()) {
-            return query;
-        }
-
-        // Apply 1-3 random corruptions
-        int corruptionCount = 1 + rnd.nextInt(3);
-        TokenizedQuery result = query;
-
-        for (int i = 0; i < corruptionCount; i++) {
-            result = applyOneCorruption(result);
-        }
-
-        return result;
+        return CorruptGenerator.corruptRandom(query, rnd);
     }
 
-    private TokenizedQuery applyOneCorruption(TokenizedQuery query) {
-        if (query.isEmpty()) {
-            return query;
-        }
-
-        int corruptionType = rnd.nextInt(6);
-        int pos = rnd.nextInt(query.size());
-
-        switch (corruptionType) {
-            case 0:  // Drop token
-                return query.removeToken(pos);
-            case 1:  // Duplicate token
-                return query.duplicateToken(pos);
-            case 2:  // Swap adjacent tokens
-                if (pos < query.size() - 1) {
-                    return query.swapTokens(pos, pos + 1);
-                }
-                return query;
-            case 3:  // Insert random token
-                return query.insertToken(pos, randomToken());
-            case 4:  // Replace with random token
-                return query.replaceToken(pos, randomToken());
-            case 5:  // Truncate
-                return query.truncateAt(pos);
-            default:
-                return query;
-        }
-    }
-
-    // --- Token generation helpers ---
-
-    private static final String[] KEYWORDS = {
-            "SELECT", "FROM", "WHERE", "JOIN", "ON", "AND", "OR",
-            "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "OFFSET",
-            "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE",
-            "INNER", "LEFT", "RIGHT", "OUTER", "CROSS", "ASOF", "LT",
-            "SAMPLE", "FILL", "ALIGN", "LATEST", "PARTITION",
-            "UNION", "EXCEPT", "INTERSECT", "ALL", "DISTINCT",
-            "CASE", "WHEN", "THEN", "ELSE", "END", "AS", "IN",
-            "BETWEEN", "LIKE", "IS", "NULL", "NOT", "TRUE", "FALSE"
-    };
-
-    private static final String[] OPERATORS = {
-            "+", "-", "*", "/", "%",
-            "=", "!=", "<>", "<", ">", "<=", ">=",
-            "AND", "OR", "NOT",
-            "||", "&", "|", "^", "~",
-            "<<", ">>"
-    };
-
-    private SqlToken randomToken() {
-        int tokenType = rnd.nextInt(5);
-
-        switch (tokenType) {
-            case 0:  // Keyword
-                return SqlToken.keyword(KEYWORDS[rnd.nextInt(KEYWORDS.length)]);
-            case 1:  // Identifier
-                return SqlToken.identifier(ctx.randomColumnName());
-            case 2:  // Literal
-                return randomLiteral();
-            case 3:  // Operator
-                return SqlToken.operator(OPERATORS[rnd.nextInt(OPERATORS.length)]);
-            case 4:  // Punctuation
-                return randomPunctuation();
-            default:
-                return SqlToken.keyword("SELECT");
-        }
-    }
-
-    private SqlToken randomLiteral() {
-        int literalType = rnd.nextInt(4);
-
-        switch (literalType) {
-            case 0:  // Integer
-                return SqlToken.literal(String.valueOf(rnd.nextInt(1000)));
-            case 1:  // Negative integer
-                return SqlToken.literal(String.valueOf(-rnd.nextInt(1000)));
-            case 2:  // Float
-                return SqlToken.literal(String.format("%.2f", rnd.nextDouble() * 1000));
-            case 3:  // String
-                return SqlToken.literal("'" + ctx.randomColumnName() + "'");
-            default:
-                return SqlToken.literal("0");
-        }
-    }
-
-    private SqlToken randomPunctuation() {
-        String[] puncts = {"(", ")", ",", ";", "."};
-        return SqlToken.punctuation(puncts[rnd.nextInt(puncts.length)]);
-    }
 }
