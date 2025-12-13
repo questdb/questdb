@@ -27,9 +27,9 @@ package io.questdb.cairo.frm.file;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.cairo.vm.api.MemoryCR;
 
-public class MemoryFixFrameColumn implements FrameColumn {
+public final class MemoryFixFrameColumn implements FrameColumn {
     // Introduce a flag to avoid double close, which will lead to very serious consequences.
-    protected boolean closed;
+    private boolean closed;
     private int columnIndex;
     private MemoryCR columnMemory;
     private int columnType;

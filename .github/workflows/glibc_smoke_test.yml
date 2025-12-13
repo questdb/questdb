@@ -50,6 +50,8 @@ jobs:
           echo "PATH=/opt/maven/bin:$PATH" >> $GITHUB_ENV
       - name: Build distribution
         run: /opt/maven/bin/mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl 'core'
+        env:
+          MAVEN_OPTS: "-XX:+UseParallelGC"
       - name: Unpack distribution
         run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
       - name: Start QuestDB
@@ -93,6 +95,8 @@ jobs:
           cache: 'maven'
       - name: Build distribution
         run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks'
+        env:
+          MAVEN_OPTS: "-XX:+UseParallelGC"
       - name: Unpack distribution
         run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
       - name: Start QuestDB
