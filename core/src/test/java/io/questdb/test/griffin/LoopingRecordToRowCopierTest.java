@@ -416,12 +416,10 @@ public class LoopingRecordToRowCopierTest extends AbstractCairoTest {
                     """, "dst_long");
 
             // Float has limited precision
-            assertSql("""
-                    ts\tf
-                    1970-01-01T00:00:00.000000Z\t2.1474836E9
-                    1970-01-01T00:00:00.001000Z\t-2.1474836E9
-                    1970-01-01T00:00:00.002000Z\t0.0
-                    """, "dst_float");
+            assertSql("ts\tf\n" +
+                    "1970-01-01T00:00:00.000000Z\t2.14748365E9\n" +
+                    "1970-01-01T00:00:00.001000Z\t-2.14748365E9\n" +
+                    "1970-01-01T00:00:00.002000Z\t0.0\n", "dst_float");
 
             assertSql("""
                     ts\td
