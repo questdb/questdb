@@ -25,6 +25,7 @@
 package io.questdb.test.fuzz.sql;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.fuzz.sql.generators.SelectGenerator;
 
 /**
  * Main orchestrator for SQL fuzz generation.
@@ -248,38 +249,13 @@ public final class SqlFuzzGenerator {
         return ctx.tokens();
     }
 
-    // --- Statement generation (placeholder for Phase 2) ---
+    // --- Statement generation ---
 
     /**
-     * Generates a SELECT statement.
-     * This is a placeholder that generates a simple query.
-     * Will be expanded in Phase 2.
+     * Generates a SELECT statement using the SelectGenerator.
      */
     private void generateSelectStatement(GeneratorContext ctx) {
-        // Simple placeholder: SELECT col FROM t
-        ctx.keyword("SELECT");
-        ctx.identifier(ctx.randomColumnName());
-        ctx.keyword("FROM");
-
-        String tableName = ctx.newTableName();
-        ctx.identifier(tableName);
-        ctx.registerTableAlias(tableName);
-
-        // Optional WHERE clause
-        if (ctx.withProbability(config.whereProb())) {
-            ctx.keyword("WHERE");
-            generateSimpleCondition(ctx);
-        }
-    }
-
-    /**
-     * Generates a simple condition.
-     * Placeholder for Phase 2's ExpressionGenerator.
-     */
-    private void generateSimpleCondition(GeneratorContext ctx) {
-        ctx.identifier(ctx.randomColumnName());
-        ctx.operator(randomComparisonOp());
-        ctx.literal(String.valueOf(rnd.nextInt(100)));
+        SelectGenerator.generate(ctx);
     }
 
     // --- Corruption (placeholder for Phase 4) ---
@@ -393,10 +369,5 @@ public final class SqlFuzzGenerator {
     private SqlToken randomPunctuation() {
         String[] puncts = {"(", ")", ",", ";", "."};
         return SqlToken.punctuation(puncts[rnd.nextInt(puncts.length)]);
-    }
-
-    private String randomComparisonOp() {
-        String[] ops = {"=", "!=", "<", ">", "<=", ">="};
-        return ops[rnd.nextInt(ops.length)];
     }
 }

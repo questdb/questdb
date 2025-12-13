@@ -168,6 +168,28 @@ public class SqlParserFuzzTest extends AbstractCairoTest {
     }
 
     /**
+     * Basic integration test for Phase 2 generators.
+     * Runs with a small iteration count suitable for CI.
+     * Verifies that generated queries either parse or throw SqlException (no crashes).
+     */
+    @Test
+    public void testBasicGeneratorIntegration() throws Exception {
+        final int iterations = 1000;  // Small count for CI
+        final long timeoutMs = DEFAULT_TIMEOUT_MS;
+
+        LOG.info().$("Starting basic generator integration test")
+                .$(" iterations=").$(iterations)
+                .$();
+
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        // Use simple config with valid only to test the generators
+        GeneratorConfig config = GeneratorConfig.simple();
+        SqlFuzzGenerator generator = new SqlFuzzGenerator(rnd, config);
+
+        runFuzzTest(generator, iterations, timeoutMs);
+    }
+
+    /**
      * Test that a specific seed can be reproduced.
      * Use this test to debug failures by setting SEED0 and SEED1.
      */

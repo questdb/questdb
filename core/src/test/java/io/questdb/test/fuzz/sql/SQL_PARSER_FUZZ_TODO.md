@@ -70,40 +70,45 @@ Foundation classes that everything else builds on.
     - Seed-based reproduction test
     - System property configuration: `questdb.fuzz.iterations`, `questdb.fuzz.timeout`
 
-### Phase 2: Basic Generation ⏳
+### Phase 2: Basic Generation ✅
 
 Minimal viable generation - simple SELECT statements.
 
-- [ ] **2.1 LiteralGenerator** - Generates literals
+- [x] **2.1 LiteralGenerator** - Generates literals
     - Integer literals (including edge cases: 0, negatives, Long.MAX_VALUE)
     - Float literals (including NaN, Infinity, -0)
     - String literals (including empty, escaped quotes)
     - Boolean literals (true, false)
     - Null literal
-    - Unit tests for each literal type
+    - Timestamp literals
+    - Unit tests: `LiteralGeneratorTest.java` (17 tests)
 
-- [ ] **2.2 ExpressionGenerator (basic)** - Simple expressions
-    - Literal expressions
+- [x] **2.2 ExpressionGenerator (basic)** - Simple expressions
+    - Literal expressions (via LiteralGenerator)
     - Column references (qualified and unqualified)
     - Parenthesized expressions
     - Binary operators (+, -, *, /, =, !=, <, >, <=, >=, AND, OR)
     - Unary operators (-, NOT)
+    - Function calls (basic)
     - Depth control via expressionDepth
-    - Unit tests
+    - Specialized generators: generateBooleanExpression, generateComparisonExpression, generateArithmeticExpression
+    - Unit tests: `ExpressionGeneratorTest.java` (17 tests)
 
-- [ ] **2.3 SelectGenerator (basic)** - Simple SELECT
+- [x] **2.3 SelectGenerator (basic)** - Simple SELECT
     - SELECT column list (expressions with aliases)
-    - FROM single table
+    - SELECT * (star)
+    - FROM single table (with optional alias)
     - Optional WHERE clause
     - Token-based generation (builds TokenizedQuery)
-    - Unit tests
-    - Integration test: generate 1000 queries, all should parse or throw SqlException
+    - Subquery support (basic)
+    - Unit tests: `SelectGeneratorTest.java` (16 tests)
 
-- [ ] **2.4 Basic parsing test** - End-to-end validation
-    - Generate simple queries
-    - Parse with SqlParser.parse()
-    - Verify no crashes (unexpected exceptions)
-    - Run with small iteration count in CI
+- [x] **2.4 Basic parsing test** - End-to-end validation
+    - `testBasicGeneratorIntegration` in `SqlParserFuzzTest.java`
+    - Generates 1000 queries using SelectGenerator
+    - Parses with SqlCompiler.testCompileModel()
+    - Verifies no crashes (unexpected exceptions)
+    - Uses simple config for CI compatibility
 
 ### Phase 3: Standard SQL Features ⏳
 
@@ -334,10 +339,15 @@ Refinements and tooling.
     - GeneratorConfig, GeneratorContext, SqlToken, TokenizedQuery
     - FuzzResult, FuzzFailure
     - SqlFuzzGenerator, SqlParserFuzzTest
+- [x] **Phase 2: Basic Generation** - All 4 components implemented and tested
+    - LiteralGenerator (17 tests)
+    - ExpressionGenerator (17 tests)
+    - SelectGenerator (16 tests)
+    - Basic parsing integration test
 
 ### In Progress
 
-- [ ] Phase 2: Basic Generation (next step)
+- [ ] Phase 3: Standard SQL Features (next step)
 
 ### Blocked
 
@@ -363,7 +373,14 @@ core/src/test/java/io/questdb/test/fuzz/sql/
 ├── SqlFuzzGeneratorTest.java     # Tests
 ├── SqlParserFuzzTest.java        # Test harness
 ├── SQL_PARSER_FUZZ_DESIGN.md     # Design document
-└── SQL_PARSER_FUZZ_TODO.md       # This file
+├── SQL_PARSER_FUZZ_TODO.md       # This file
+└── generators/
+    ├── LiteralGenerator.java         # Literal generation
+    ├── LiteralGeneratorTest.java     # Tests (17)
+    ├── ExpressionGenerator.java      # Expression generation
+    ├── ExpressionGeneratorTest.java  # Tests (17)
+    ├── SelectGenerator.java          # SELECT statement generation
+    └── SelectGeneratorTest.java      # Tests (16)
 ```
 
 ---
