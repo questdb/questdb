@@ -742,6 +742,8 @@ public interface CairoConfiguration {
      */
     boolean isColumnAliasExpressionEnabled();
 
+    boolean isCopierChunkedEnabled();
+
     boolean isDevModeEnabled();
 
     boolean isGroupByPresizeEnabled();
