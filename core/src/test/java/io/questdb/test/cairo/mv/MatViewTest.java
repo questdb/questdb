@@ -277,7 +277,10 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter materialized view price_1h set TTL 2 DAYS;");
             drainQueues();
 
-            // insert future timestamps
+            // advance wall clock to match data timestamps (TTL uses min of maxTimestamp and wall clock)
+            currentMicros = MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2024-09-30T13:00:00.000000Z");
+
+            // insert timestamps at current wall clock time
             execute(
                     "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-30T12:01')" +
                             ",('gbpusd', 1.323, '2024-09-30T12:02')" +
