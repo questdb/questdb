@@ -560,6 +560,62 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testFuzzVarcharStringConversions() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            int copierType = randomCopierType(rnd);
+            setCopierType(copierType);
+
+            // VARCHAR column to STRING column
+            execute("create table src_vc (ts timestamp, v varchar) timestamp(ts) partition by DAY");
+            execute("create table dst_str (ts timestamp, s string) timestamp(ts) partition by DAY");
+
+            execute("insert into src_vc values (0, 'hello'), (1000, 'world'), (2000, null), (3000, 'über'), (4000, '日本語')");
+            execute("insert into dst_str select * from src_vc");
+
+            assertSql("""
+                    ts\ts
+                    1970-01-01T00:00:00.000000Z\thello
+                    1970-01-01T00:00:00.001000Z\tworld
+                    1970-01-01T00:00:00.002000Z\t
+                    1970-01-01T00:00:00.003000Z\tüber
+                    1970-01-01T00:00:00.004000Z\t日本語
+                    """, "dst_str order by ts");
+
+            // STRING column to VARCHAR column
+            execute("create table src_str (ts timestamp, s string) timestamp(ts) partition by DAY");
+            execute("create table dst_vc (ts timestamp, v varchar) timestamp(ts) partition by DAY");
+
+            execute("insert into src_str values (0, 'foo'), (1000, 'bar'), (2000, null), (3000, 'café'), (4000, '日本語'), (5000, 'Привет'), (6000, '🎉emoji🚀')");
+            execute("insert into dst_vc select * from src_str");
+
+            assertSql("""
+                    ts\tv
+                    1970-01-01T00:00:00.000000Z\tfoo
+                    1970-01-01T00:00:00.001000Z\tbar
+                    1970-01-01T00:00:00.002000Z\t
+                    1970-01-01T00:00:00.003000Z\tcafé
+                    1970-01-01T00:00:00.004000Z\t日本語
+                    1970-01-01T00:00:00.005000Z\tПривет
+                    1970-01-01T00:00:00.006000Z\t🎉emoji🚀
+                    """, "dst_vc order by ts");
+
+            // STRING expression (cast) to VARCHAR column with non-ASCII
+            execute("create table dst_vc2 (ts timestamp, v varchar) timestamp(ts) partition by DAY");
+            execute("insert into dst_vc2 select ts, v::string from src_vc");
+
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src_vc order by ts", "dst_vc2 order by ts", LOG);
+
+            // VARCHAR expression (cast) to STRING column - tests function result path
+            // This exercises the transferVarcharToStrCol helper with non-DirectUtf8Sequence values
+            execute("create table dst_str2 (ts timestamp, s string) timestamp(ts) partition by DAY");
+            execute("insert into dst_str2 select ts, s::varchar from src_str");
+
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "src_str order by ts", "dst_str2 order by ts", LOG);
+        });
+    }
+
     private static @NotNull Record getLongRecord(int fromType, long value) {
         return new Record() {
             @Override

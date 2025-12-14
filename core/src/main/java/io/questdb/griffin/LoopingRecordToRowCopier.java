@@ -532,7 +532,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.VARCHAR -> row.putVarchar(toIndex, value);
             case ColumnType.ARRAY ->
                     RecordToRowCopierUtils.validateArrayDimensionsAndTransferCol(row, toIndex, arrayParser, value, toType);
-            case ColumnType.STRING -> row.putStrUtf8(toIndex, (DirectUtf8Sequence) value);
+            case ColumnType.STRING -> RecordToRowCopierUtils.transferVarcharToStrCol(row, toIndex, value);
             case ColumnType.IPv4 -> row.putInt(toIndex, SqlUtil.implicitCastStrAsIPv4(value));
             case ColumnType.LONG -> row.putLong(toIndex, SqlUtil.implicitCastVarcharAsLong(value));
             case ColumnType.SHORT -> row.putShort(toIndex, SqlUtil.implicitCastVarcharAsShort(value));
