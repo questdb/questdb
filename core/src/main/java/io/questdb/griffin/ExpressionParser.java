@@ -1508,7 +1508,7 @@ public class ExpressionParser {
                         if (prevBranch == BRANCH_DOT) {
                             // this deals with 'table.column' situations
                             ExpressionNode en = opStack.peek();
-                            if (en == null) {
+                            if (en == null || en.type == ExpressionNode.CONTROL) {
                                 throw SqlException.$(lastPos, "qualifier expected");
                             }
                             // two possibilities here:

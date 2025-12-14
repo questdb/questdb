@@ -1477,6 +1477,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testLeadingDotInExpression() throws Exception {
+        assertSyntaxError(
+                "SELECT x FROM t1 a4 WHERE (.a4.col4 <= 0)",
+                27,
+                "qualifier expected"
+        );
+    }
+
+    @Test
     public void testBlockCommentAtMiddle() throws Exception {
         assertQuery(
                 "select-choose x, a from (select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a'",
