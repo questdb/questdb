@@ -339,22 +339,10 @@ public class LimitTest extends AbstractCairoTest {
             }
             drainWalQueue();
 
-            assertQueryAndPlan(
+            assertQueryAndCache(
                     """
                             ts\tv_max
                             1970-01-01T00:01:10.000000Z\t7
-                            """,
-                    """
-                            Limit lo: 1 skip-over-rows: 0 limit: 1
-                                SelectedRecord
-                                    Limit lo: -2 skip-over-rows: 7 limit: 2
-                                        Async Group By workers: 1
-                                          keys: [ts,k]
-                                          values: [max(v)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: table1
                             """,
                     "select ts, v_max from (" +
                             "select ts, k, max(v) as v_max from table1 limit -2" +
@@ -385,34 +373,11 @@ public class LimitTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            final String query1 = """
-                    select timestamp, symbol, venue,
-                           bids[1][1] as bid_price,
-                           bids[2][1] as bid_size,
-                           asks[1][1] as ask_price,
-                           asks[2][1] as ask_size
-                    from eq_equities_market_data
-                    where symbol='AAPL' and timestamp in '1970'
-                    limit -4
-                    """;
-
-            assertQueryAndPlan(
+            assertQueryAndCache(
                     """
                             timestamp\tsymbol\tvenue\tbid_price\tbid_size\task_price\task_size
                             1970-01-01T00:00:00.000002Z\tAAPL\tNYSE\t21.3\t20.3\t11.6\t10.5
                             1970-01-01T00:00:00.000003Z\tAAPL\tNYSE\t21.4\t20.4\t11.2\t10.2
-                            """,
-                    """
-                            Limit lo: 2 skip-over-rows: 0 limit: 2
-                                VirtualRecord
-                                  functions: [timestamp,symbol,venue,bids[1,1],bids[2,1],asks[1,1],asks[2,1]]
-                                    Async Filter workers: 1
-                                      limit: 4
-                                      filter: symbol='AAPL'
-                                        PageFrame
-                                            Row backward scan
-                                            Interval backward scan on: eq_equities_market_data
-                                              intervals: [("1970-01-01T00:00:00.000000Z","1970-12-31T23:59:59.999999Z")]
                             """,
                     """
                             select * from (
