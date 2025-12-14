@@ -52,15 +52,20 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public class RecordToRowCopierUtils {
-    // Bytecode size estimates per column type, based on actual instruction sizes:
-    // - aload: 1-2 bytes, iconst: 1-3 bytes, invokeInterface: 5 bytes, invokeStatic: 3 bytes
-    // Simple column copy: aload(3) + iconst + aload(2) + iconst + invokeInterface + invokeInterface = ~16 bytes
-    private static final int BASE_BYTECODE_PER_COLUMN = 18;
+    public static final int COPIER_TYPE_CHUNKED = 2;  // Force chunked bytecode copier
+    // Copier type constants for configuration
+    public static final int COPIER_TYPE_DEFAULT = 0;  // Auto-select based on bytecode size
+    public static final int COPIER_TYPE_LOOPING = 3;  // Force loop-based copier
+    public static final int COPIER_TYPE_SINGLE_METHOD = 1;  // Force single-method bytecode copier
 
     // JVM's HugeMethodLimit default is 8000 bytes. Methods exceeding this limit
     // may not be fully optimized by C2 and cannot be inlined, causing significant
     // performance degradation (~7x slower in benchmarks).
     public static final int DEFAULT_HUGE_METHOD_LIMIT = 8000;
+    // Bytecode size estimates per column type, based on actual instruction sizes:
+    // - aload: 1-2 bytes, iconst: 1-3 bytes, invokeInterface: 5 bytes, invokeStatic: 3 bytes
+    // Simple column copy: aload(3) + iconst + aload(2) + iconst + invokeInterface + invokeInterface = ~16 bytes
+    private static final int BASE_BYTECODE_PER_COLUMN = 18;
     // Complex types (UUID, Decimal, Array) need extra instructions:
     // aload(1) + invokeInterface + ldc + invokeStatic = ~12 bytes extra
     private static final int COMPLEX_TYPE_OVERHEAD = 15;
@@ -95,6 +100,25 @@ public class RecordToRowCopierUtils {
             int methodSizeLimit,
             CairoConfiguration configuration
     ) {
+        int copierType = configuration.getCopierType();
+
+        // Handle forced copier types (for testing)
+        switch (copierType) {
+            case COPIER_TYPE_SINGLE_METHOD:
+                return generateSingleMethodCopier(asm, fromTypes, toMetadata, toColumnFilter, methodSizeLimit);
+            case COPIER_TYPE_CHUNKED:
+                RecordToRowCopier chunked = generateChunkedCopier(asm, fromTypes, toMetadata, toColumnFilter, methodSizeLimit);
+                if (chunked != null) {
+                    return chunked;
+                }
+                // Fall through to looping if chunked fails
+                LOG.info().$("forced chunked copier generation failed, falling back to looping copier [columnCount=").$(toColumnFilter.getColumnCount()).I$();
+                return new LoopingRecordToRowCopier(fromTypes, toMetadata, toColumnFilter);
+            case COPIER_TYPE_LOOPING:
+                return new LoopingRecordToRowCopier(fromTypes, toMetadata, toColumnFilter);
+        }
+
+        // Default: auto-select based on bytecode size
         int timestampIndex = toMetadata.getTimestampIndex();
         int estimatedSize = estimateTotalBytecodeSize(fromTypes, toMetadata, toColumnFilter, timestampIndex);
 
@@ -105,9 +129,9 @@ public class RecordToRowCopierUtils {
 
         // Path 2: Large schema with chunking enabled
         if (configuration.isCopierChunkedEnabled()) {
-            RecordToRowCopier chunked = generateChunkedCopier(asm, fromTypes, toMetadata, toColumnFilter, methodSizeLimit);
-            if (chunked != null) {
-                return chunked;
+            RecordToRowCopier chunkedCopier = generateChunkedCopier(asm, fromTypes, toMetadata, toColumnFilter, methodSizeLimit);
+            if (chunkedCopier != null) {
+                return chunkedCopier;
             }
             // Fall through to loop if chunking failed
             LOG.info().$("chunked copier generation failed, falling back to looping copier [columnCount=").$(toColumnFilter.getColumnCount())
@@ -400,30 +424,6 @@ public class RecordToRowCopierUtils {
         return size;
     }
 
-    /**
-     * Estimates total bytecode size for all columns.
-     */
-    private static int estimateTotalBytecodeSize(
-            ColumnTypes fromTypes,
-            RecordMetadata toMetadata,
-            ColumnFilter filter,
-            int timestampIndex
-    ) {
-        int total = 0;
-        int n = filter.getColumnCount();
-        for (int i = 0; i < n; i++) {
-            int toColumnIndex = filter.getColumnIndexFactored(i);
-            if (toColumnIndex == timestampIndex) {
-                continue;
-            }
-
-            int fromType = fromTypes.getColumnType(i);
-            int toType = toMetadata.getColumnType(toColumnIndex);
-            total += estimateColumnBytecodeSize(fromType, toType);
-        }
-        return total;
-    }
-
     // Generates a chunked copier with multiple sub-methods, each under 8KB
     private static RecordToRowCopier generateChunkedCopier(
             BytecodeAssembler asm,
@@ -439,6 +439,11 @@ public class RecordToRowCopierUtils {
         if (numChunks <= 1) {
             // No benefit from chunking, fall back to single method
             return generateSingleMethodCopier(asm, fromTypes, toMetadata, toColumnFilter, methodSizeLimit);
+        }
+
+        // Validate all chunks fit within the limit before generating any bytecode
+        if (!validateChunkSizes(fromTypes, toMetadata, toColumnFilter, boundaries, timestampIndex, methodSizeLimit)) {
+            return null;
         }
 
         int n = toColumnFilter.getColumnCount();
@@ -1548,12 +1553,8 @@ public class RecordToRowCopierUtils {
             asm.return_();
             asm.endMethodCode();
 
-            // Validate chunk size
-            int chunkSize = asm.getMethodCodeSize();
-            if (chunkSize > methodSizeLimit) {
-                // Estimation was wrong, fall back to looping
-                return null;
-            }
+            // Assert chunk size is within limit (validated upfront, this is a sanity check)
+            assert asm.getMethodCodeSize() <= methodSizeLimit : "chunk size exceeded limit after upfront validation";
 
             asm.putShort(0);  // exceptions
             asm.putShort(0);  // attributes
@@ -1564,6 +1565,65 @@ public class RecordToRowCopierUtils {
         asm.putShort(0);
 
         return asm.newInstance();
+    }
+
+    /**
+     * Estimates total bytecode size for all columns.
+     */
+    private static int estimateTotalBytecodeSize(
+            ColumnTypes fromTypes,
+            RecordMetadata toMetadata,
+            ColumnFilter filter,
+            int timestampIndex
+    ) {
+        int total = 0;
+        int n = filter.getColumnCount();
+        for (int i = 0; i < n; i++) {
+            int toColumnIndex = filter.getColumnIndexFactored(i);
+            if (toColumnIndex == timestampIndex) {
+                continue;
+            }
+
+            int fromType = fromTypes.getColumnType(i);
+            int toType = toMetadata.getColumnType(toColumnIndex);
+            total += estimateColumnBytecodeSize(fromType, toType);
+        }
+        return total;
+    }
+
+    /**
+     * Validates that all chunks will fit within the method size limit.
+     * Returns false if any chunk would exceed the limit.
+     */
+    private static boolean validateChunkSizes(
+            ColumnTypes fromTypes,
+            RecordMetadata toMetadata,
+            ColumnFilter toColumnFilter,
+            IntList boundaries,
+            int timestampIndex,
+            int methodSizeLimit
+    ) {
+        int numChunks = boundaries.size() - 1;
+        for (int chunk = 0; chunk < numChunks; chunk++) {
+            int start = boundaries.get(chunk);
+            int end = boundaries.get(chunk + 1);
+            int chunkSize = 0;
+
+            for (int i = start; i < end; i++) {
+                int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
+                if (toColumnIndex == timestampIndex) {
+                    continue;
+                }
+                int fromType = fromTypes.getColumnType(i);
+                int toType = toMetadata.getColumnType(toColumnIndex);
+                chunkSize += estimateColumnBytecodeSize(fromType, toType);
+            }
+
+            if (chunkSize > methodSizeLimit) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Generates a single-method copier (original implementation)

@@ -197,6 +197,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String confRoot;
     private final boolean configReloadEnabled;
     private final boolean copierChunkedEnabled;
+    private final int copierType;
     private final int createAsSelectRetryCount;
     private final int dateAdapterPoolCapacity;
     private final String dbDirectory;
@@ -1863,6 +1864,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
             this.copierChunkedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
+            this.copierType = getInt(properties, env, PropertyKey.DEBUG_CAIRO_COPIER_TYPE, 0);
             this.writerAsyncCommandBusyWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
             this.writerAsyncCommandMaxWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
             this.writerTickRowsCountMod = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_TICK_ROWS_COUNT, 1024)) - 1;
@@ -4209,6 +4211,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isColumnAliasExpressionEnabled() {
             return cairoSqlColumnAliasExpressionEnabled;
+        }
+
+        @Override
+        public int getCopierType() {
+            return copierType;
         }
 
         @Override
