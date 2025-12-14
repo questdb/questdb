@@ -764,7 +764,7 @@ public class WalTxnDetails implements QuietCloseable {
         symbolIndexes.add(Numbers.decodeHighInt(seqTxn));
 
         int totalSymbolsSaved = 0;
-        boolean hasNull = false;
+        boolean hasAnyNullFlags = false;
         while ((symbolMapDiff = commitInfo.nextSymbolMapDiff()) != null) {
             int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
 
@@ -775,7 +775,7 @@ public class WalTxnDetails implements QuietCloseable {
             symbolIndexes.add(-1);
             symbolIndexes.add(symbolMapDiff.getColumnIndex());
             symbolIndexes.add(symbolMapDiff.hasNullValue() ? 1 : 0);
-            hasNull = hasNull || symbolMapDiff.hasNullValue();
+            hasAnyNullFlags = hasAnyNullFlags || symbolMapDiff.hasNullValue();
             symbolIndexes.add(cleanSymbolCount);
 
             int symbolIndex = 0;
@@ -799,7 +799,7 @@ public class WalTxnDetails implements QuietCloseable {
         }
 
         // Empty record, return -1, save space, don't serialize empty records.
-        if ((symbolCount == 0 || totalSymbolsSaved == 0) && !hasNull) {
+        if ((symbolCount == 0 || totalSymbolsSaved == 0) && !hasAnyNullFlags) {
             symbolIndexes.setPos(startOffset);
             return -1 - (currentSymbolIndexesStartOffset + startOffset);
         }
