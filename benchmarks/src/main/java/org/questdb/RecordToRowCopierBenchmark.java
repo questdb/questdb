@@ -477,6 +477,10 @@ public class RecordToRowCopierBenchmark {
         }
 
         @Override
+        public void putLong256Utf8(int columnIndex, Utf8Sequence hexString) {
+        }
+
+        @Override
         public void putBool(int columnIndex, boolean value) {
         }
 
@@ -582,6 +586,10 @@ public class RecordToRowCopierBenchmark {
 
         @Override
         public void putStr(int columnIndex, CharSequence value, int pos, int len) {
+        }
+
+        @Override
+        public void putStrUtf8(int columnIndex, Utf8Sequence value) {
         }
 
         @Override

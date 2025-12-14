@@ -53,13 +53,21 @@ public class RecordSinkFactory {
     private static final int FIELD_POOL_OFFSET = 3;
     private static final Log LOG = LogFactory.getLog(RecordSinkFactory.class);
 
-    public static RecordSink getInstance(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            boolean chunkedEnabled
-    ) {
-        return getInstance(asm, columnTypes, columnFilter, null, null, null, null, null, chunkedEnabled);
+    /**
+     * Creates an instance of a record sink class previously generated via the
+     * {@link #getInstanceClass(BytecodeAssembler, ColumnTypes, ColumnFilter, ObjList, BitSet)} method.
+     */
+    public static RecordSink createSink(Class<RecordSink> clazz, @Nullable ObjList<Function> keyFunctions) {
+        try {
+            final RecordSink sink = clazz.getDeclaredConstructor().newInstance();
+            if (keyFunctions != null) {
+                sink.setFunctions(keyFunctions);
+            }
+            return sink;
+        } catch (Exception e) {
+            LOG.critical().$("could not create an instance of RecordSink, cause: ").$(e).$();
+            throw BytecodeException.INSTANCE;
+        }
     }
 
     public static RecordSink getInstance(
@@ -69,7 +77,17 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString,
             boolean chunkedEnabled
     ) {
-        return getInstance(asm, columnTypes, columnFilter, null, null, writeSymbolAsString, null, null, chunkedEnabled);
+        return getInstance(
+                asm,
+                columnTypes,
+                columnFilter,
+                null,
+                null,
+                writeSymbolAsString,
+                null,
+                null,
+                chunkedEnabled
+        );
     }
 
     public static RecordSink getInstance(
@@ -167,7 +185,7 @@ public class RecordSinkFactory {
 
         // Path 1: Small schema - use single-method approach
         if (estimatedSize <= methodSizeLimit) {
-            final Class<RecordSink> clazz = getInstanceClass(
+            final Class<RecordSink> clazz = getSingleInstanceClass(
                     asm,
                     columnTypes,
                     columnFilter,
@@ -177,7 +195,7 @@ public class RecordSinkFactory {
                     writeStringAsVarchar,
                     writeTimestampAsNanos
             );
-            return getInstance(clazz, keyFunctions);
+            return createSink(clazz, keyFunctions);
         }
 
         // Path 2: Large schema with chunking enabled
@@ -214,26 +232,28 @@ public class RecordSinkFactory {
         return sink;
     }
 
-    /**
-     * Creates an instance of a record sink class previously generated via the
-     * {@link #getInstanceClass(BytecodeAssembler, ColumnTypes, ColumnFilter, ObjList, BitSet)} method.
-     */
-    public static RecordSink getInstance(Class<RecordSink> clazz, @Nullable ObjList<Function> keyFunctions) {
-        try {
-            final RecordSink sink = clazz.getDeclaredConstructor().newInstance();
-            if (keyFunctions != null) {
-                sink.setFunctions(keyFunctions);
-            }
-            return sink;
-        } catch (Exception e) {
-            LOG.critical().$("could not create an instance of RecordSink, cause: ").$(e).$();
-            throw BytecodeException.INSTANCE;
-        }
+    public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            boolean chunkedEnabled
+    ) {
+        return getInstance(
+                asm,
+                columnTypes,
+                columnFilter,
+                null,
+                null,
+                null,
+                null,
+                null,
+                chunkedEnabled
+        );
     }
 
     /**
      * Same as the getInstance() methods, but returns the generated class instead of its instance.
-     * An instance can be later created via the {@link #getInstance(Class, ObjList)} method.
+     * An instance can be later created via the {@link #createSink(Class, ObjList)} method.
      * <p>
      * Used when creating per-worker sinks for parallel GROUP BY.
      */
@@ -244,7 +264,7 @@ public class RecordSinkFactory {
             @Nullable ObjList<Function> keyFunctions,
             @Nullable BitSet writeSymbolAsString
     ) {
-        return getInstanceClass(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null, null);
+        return getSingleInstanceClass(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null, null);
     }
 
     /**
@@ -428,557 +448,10 @@ public class RecordSinkFactory {
             if (clazz == null) {
                 return null;
             }
-            return getInstance(clazz, keyFunctions);
+            return createSink(clazz, keyFunctions);
         } catch (BytecodeException e) {
             // Chunking failed, fall back to looping
             return null;
-        }
-    }
-
-    /**
-     * Generates bytecode to copy a single column from Record to RecordSinkSPI.
-     */
-    private static void generateColumnCopyBytecode(
-            BytecodeAssembler asm,
-            int index,
-            int factor,
-            int type,
-            @Nullable IntList skewIndex,
-            boolean symAsString,
-            boolean strAsVarchar,
-            boolean timestampAsNanos,
-            int rGetInt, int rGetIPv4, int rGetGeoInt, int rGetLong, int rGetGeoLong, int rGetLong256,
-            int rGetLong128Lo, int rGetLong128Hi, int rGetDate, int rGetTimestamp, int rGetByte, int rGetGeoByte,
-            int rGetShort, int rGetGeoShort, int rGetChar, int rGetBool, int rGetFloat, int rGetDouble,
-            int rGetStr, int rGetVarchar, int rGetSym, int rGetBin, int rGetRecord, int rGetInterval, int rGetArray,
-            int rGetDecimal8, int rGetDecimal16, int rGetDecimal32, int rGetDecimal64, int rGetDecimal128, int rGetDecimal256,
-            int wSkip, int wPutInt, int wPutIPv4, int wPutLong, int wPutLong256, int wPutLong128, int wPutByte, int wPutShort,
-            int wPutChar, int wPutBool, int wPutFloat, int wPutDouble, int wPutStr, int wPutVarchar, int wPutStrAsVarchar,
-            int wPutDate, int wPutTimestamp, int wPutBin, int wPutRecord, int wPutInterval, int wPutArray,
-            int wPutDecimal128, int wPutDecimal256, int constantLong1000,
-            int decimal128FieldIndex, int decimal256FieldIndex
-    ) {
-        int skewedIdx = getSkewedIndex(index, skewIndex);
-
-        switch (factor * ColumnType.tagOf(type)) {
-            case ColumnType.INT:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetInt, 1);
-                asm.invokeInterface(wPutInt, 1);
-                break;
-            case ColumnType.IPv4:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetIPv4, 1);
-                asm.invokeInterface(wPutIPv4, 1);
-                break;
-            case ColumnType.SYMBOL:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                if (symAsString) {
-                    asm.invokeInterface(rGetSym, 1);
-                    if (strAsVarchar) {
-                        asm.invokeInterface(wPutStrAsVarchar, 1);
-                    } else {
-                        asm.invokeInterface(wPutStr, 1);
-                    }
-                } else {
-                    asm.invokeInterface(rGetInt, 1);
-                    asm.invokeInterface(wPutInt, 1);
-                }
-                break;
-            case ColumnType.LONG:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetLong, 1);
-                asm.invokeInterface(wPutLong, 2);
-                break;
-            case ColumnType.DATE:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetDate, 1);
-                asm.invokeInterface(wPutDate, 2);
-                break;
-            case ColumnType.TIMESTAMP:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetTimestamp, 1);
-                if (timestampAsNanos) {
-                    asm.ldc2_w(constantLong1000);
-                    asm.lmul();
-                }
-                asm.invokeInterface(wPutTimestamp, 2);
-                break;
-            case ColumnType.BYTE:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetByte, 1);
-                asm.invokeInterface(wPutByte, 1);
-                break;
-            case ColumnType.SHORT:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetShort, 1);
-                asm.invokeInterface(wPutShort, 1);
-                break;
-            case ColumnType.CHAR:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetChar, 1);
-                asm.invokeInterface(wPutChar, 1);
-                break;
-            case ColumnType.BOOLEAN:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetBool, 1);
-                asm.invokeInterface(wPutBool, 1);
-                break;
-            case ColumnType.FLOAT:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetFloat, 1);
-                asm.invokeInterface(wPutFloat, 1);
-                break;
-            case ColumnType.DOUBLE:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetDouble, 1);
-                asm.invokeInterface(wPutDouble, 2);
-                break;
-            case ColumnType.STRING:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetStr, 1);
-                if (strAsVarchar) {
-                    asm.invokeInterface(wPutStrAsVarchar, 1);
-                } else {
-                    asm.invokeInterface(wPutStr, 1);
-                }
-                break;
-            case ColumnType.VARCHAR:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetVarchar, 1);
-                asm.invokeInterface(wPutVarchar, 1);
-                break;
-            case ColumnType.BINARY:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetBin, 1);
-                asm.invokeInterface(wPutBin, 1);
-                break;
-            case ColumnType.LONG256:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetLong256, 1);
-                asm.invokeInterface(wPutLong256, 1);
-                break;
-            case ColumnType.RECORD:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetRecord, 1);
-                asm.invokeInterface(wPutRecord, 1);
-                break;
-            case ColumnType.GEOBYTE:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetGeoByte, 1);
-                asm.invokeInterface(wPutByte, 1);
-                break;
-            case ColumnType.GEOSHORT:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetGeoShort, 1);
-                asm.invokeInterface(wPutShort, 1);
-                break;
-            case ColumnType.GEOINT:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetGeoInt, 1);
-                asm.invokeInterface(wPutInt, 1);
-                break;
-            case ColumnType.GEOLONG:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetGeoLong, 1);
-                asm.invokeInterface(wPutLong, 2);
-                break;
-            case ColumnType.LONG128:
-            case ColumnType.UUID:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetLong128Lo, 1);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetLong128Hi, 1);
-                asm.invokeInterface(wPutLong128, 4);
-                break;
-            case ColumnType.INTERVAL:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetInterval, 1);
-                asm.invokeInterface(wPutInterval, 1);
-                break;
-            case ColumnType.DECIMAL8:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetDecimal8, 1);
-                asm.invokeInterface(wPutByte, 1);
-                break;
-            case ColumnType.DECIMAL16:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetDecimal16, 1);
-                asm.invokeInterface(wPutShort, 1);
-                break;
-            case ColumnType.DECIMAL32:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetDecimal32, 1);
-                asm.invokeInterface(wPutInt, 1);
-                break;
-            case ColumnType.DECIMAL64:
-                asm.aload(2);
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.invokeInterface(rGetDecimal64, 1);
-                asm.invokeInterface(wPutLong, 2);
-                break;
-            case ColumnType.DECIMAL128:
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.aload(0);
-                asm.getfield(decimal128FieldIndex);
-                asm.invokeInterface(rGetDecimal128, 2);
-                asm.aload(2);
-                asm.aload(0);
-                asm.getfield(decimal128FieldIndex);
-                asm.invokeInterface(wPutDecimal128, 1);
-                break;
-            case ColumnType.DECIMAL256:
-                asm.aload(1);
-                asm.iconst(skewedIdx);
-                asm.aload(0);
-                asm.getfield(decimal256FieldIndex);
-                asm.invokeInterface(rGetDecimal256, 2);
-                asm.aload(2);
-                asm.aload(0);
-                asm.getfield(decimal256FieldIndex);
-                asm.invokeInterface(wPutDecimal256, 1);
-                break;
-            default:
-                // Handle ARRAY type
-                if (ColumnType.tagOf(type) == ColumnType.ARRAY) {
-                    asm.aload(2);
-                    asm.aload(1);
-                    asm.iconst(skewedIdx);
-                    asm.iconst(type);
-                    asm.invokeInterface(rGetArray, 2);
-                    asm.invokeInterface(wPutArray, 1);
-                }
-                break;
-        }
-    }
-
-    /**
-     * Generates bytecode to copy function keys in the main copy method.
-     */
-    private static void generateFunctionCopyBytecode(
-            BytecodeAssembler asm,
-            ObjList<Function> keyFunctions,
-            int firstFieldIndex,
-            int fGetInt, int fGetIPv4, int fGetGeoInt, int fGetLong, int fGetGeoLong, int fGetLong256,
-            int fGetLong128Lo, int fGetLong128Hi, int fGetDate, int fGetTimestamp, int fGetByte, int fGetGeoByte,
-            int fGetShort, int fGetGeoShort, int fGetChar, int fGetBool, int fGetFloat, int fGetDouble,
-            int fGetStr, int fGetVarchar, int fGetSym, int fGetBin, int fGetRecord, int fGetInterval, int fGetArray,
-            int fGetDecimal8, int fGetDecimal16, int fGetDecimal32, int fGetDecimal64, int fGetDecimal128, int fGetDecimal256,
-            int wPutInt, int wPutIPv4, int wPutLong, int wPutLong256, int wPutLong128, int wPutByte, int wPutShort,
-            int wPutChar, int wPutBool, int wPutFloat, int wPutDouble, int wPutStr, int wPutVarchar, int wPutDate,
-            int wPutTimestamp, int wPutBin, int wPutRecord, int wPutInterval, int wPutArray,
-            int wPutDecimal128, int wPutDecimal256,
-            int decimal128FieldIndex, int decimal256FieldIndex
-    ) {
-        int functionSize = keyFunctions.size();
-        for (int i = 0; i < functionSize; i++) {
-            final Function func = keyFunctions.getQuick(i);
-            final int type = func.getType();
-
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.INT:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetInt, 1);
-                    asm.invokeInterface(wPutInt, 1);
-                    break;
-                case ColumnType.IPv4:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetIPv4, 1);
-                    asm.invokeInterface(wPutIPv4, 1);
-                    break;
-                case ColumnType.SYMBOL:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetSym, 1);
-                    asm.invokeInterface(wPutStr, 1);
-                    break;
-                case ColumnType.LONG:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetLong, 1);
-                    asm.invokeInterface(wPutLong, 2);
-                    break;
-                case ColumnType.DATE:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetDate, 1);
-                    asm.invokeInterface(wPutDate, 2);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetTimestamp, 1);
-                    asm.invokeInterface(wPutTimestamp, 2);
-                    break;
-                case ColumnType.BYTE:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetByte, 1);
-                    asm.invokeInterface(wPutByte, 1);
-                    break;
-                case ColumnType.SHORT:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetShort, 1);
-                    asm.invokeInterface(wPutShort, 1);
-                    break;
-                case ColumnType.CHAR:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetChar, 1);
-                    asm.invokeInterface(wPutChar, 1);
-                    break;
-                case ColumnType.BOOLEAN:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetBool, 1);
-                    asm.invokeInterface(wPutBool, 1);
-                    break;
-                case ColumnType.FLOAT:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetFloat, 1);
-                    asm.invokeInterface(wPutFloat, 1);
-                    break;
-                case ColumnType.DOUBLE:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetDouble, 1);
-                    asm.invokeInterface(wPutDouble, 2);
-                    break;
-                case ColumnType.STRING:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetStr, 1);
-                    asm.invokeInterface(wPutStr, 1);
-                    break;
-                case ColumnType.VARCHAR:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetVarchar, 1);
-                    asm.invokeInterface(wPutVarchar, 1);
-                    break;
-                case ColumnType.BINARY:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetBin, 1);
-                    asm.invokeInterface(wPutBin, 1);
-                    break;
-                case ColumnType.LONG256:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetLong256, 1);
-                    asm.invokeInterface(wPutLong256, 1);
-                    break;
-                case ColumnType.LONG128:
-                case ColumnType.UUID:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetLong128Lo, 1);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetLong128Hi, 1);
-                    asm.invokeInterface(wPutLong128, 4);
-                    break;
-                case ColumnType.INTERVAL:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetInterval, 1);
-                    asm.invokeInterface(wPutInterval, 1);
-                    break;
-                case ColumnType.ARRAY:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetArray, 1);
-                    asm.invokeInterface(wPutArray, 1);
-                    break;
-                case ColumnType.GEOBYTE:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetGeoByte, 1);
-                    asm.invokeInterface(wPutByte, 1);
-                    break;
-                case ColumnType.GEOSHORT:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetGeoShort, 1);
-                    asm.invokeInterface(wPutShort, 1);
-                    break;
-                case ColumnType.GEOINT:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetGeoInt, 1);
-                    asm.invokeInterface(wPutInt, 1);
-                    break;
-                case ColumnType.GEOLONG:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetGeoLong, 1);
-                    asm.invokeInterface(wPutLong, 2);
-                    break;
-                case ColumnType.DECIMAL8:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetDecimal8, 1);
-                    asm.invokeInterface(wPutByte, 1);
-                    break;
-                case ColumnType.DECIMAL16:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetDecimal16, 1);
-                    asm.invokeInterface(wPutShort, 1);
-                    break;
-                case ColumnType.DECIMAL32:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetDecimal32, 1);
-                    asm.invokeInterface(wPutInt, 1);
-                    break;
-                case ColumnType.DECIMAL64:
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.invokeInterface(fGetDecimal64, 1);
-                    asm.invokeInterface(wPutLong, 2);
-                    break;
-                case ColumnType.DECIMAL128:
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.aload(0);
-                    asm.getfield(decimal128FieldIndex);
-                    asm.invokeInterface(fGetDecimal128, 2);
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(decimal128FieldIndex);
-                    asm.invokeInterface(wPutDecimal128, 1);
-                    break;
-                case ColumnType.DECIMAL256:
-                    asm.aload(0);
-                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-                    asm.aload(1);
-                    asm.aload(0);
-                    asm.getfield(decimal256FieldIndex);
-                    asm.invokeInterface(fGetDecimal256, 2);
-                    asm.aload(2);
-                    asm.aload(0);
-                    asm.getfield(decimal256FieldIndex);
-                    asm.invokeInterface(wPutDecimal256, 1);
-                    break;
-                default:
-                    break;
-            }
         }
     }
 
@@ -1022,7 +495,6 @@ public class RecordSinkFactory {
      * Generates a chunked RecordSink class with multiple private methods for column copying.
      * Returns null if any chunk exceeds the method size limit.
      */
-    @SuppressWarnings("unchecked")
     private static Class<RecordSink> getChunkedInstanceClass(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
@@ -1215,16 +687,261 @@ public class RecordSinkFactory {
         }
         // Handle keyFunctions in the main method (after all chunks)
         if (functionSize > 0) {
-            generateFunctionCopyBytecode(asm, keyFunctions, firstFieldIndex,
-                    fGetInt, fGetIPv4, fGetGeoInt, fGetLong, fGetGeoLong, fGetLong256,
-                    fGetLong128Lo, fGetLong128Hi, fGetDate, fGetTimestamp, fGetByte, fGetGeoByte,
-                    fGetShort, fGetGeoShort, fGetChar, fGetBool, fGetFloat, fGetDouble,
-                    fGetStr, fGetVarchar, fGetSym, fGetBin, fGetRecord, fGetInterval, fGetArray,
-                    fGetDecimal8, fGetDecimal16, fGetDecimal32, fGetDecimal64, fGetDecimal128, fGetDecimal256,
-                    wPutInt, wPutIPv4, wPutLong, wPutLong256, wPutLong128, wPutByte, wPutShort,
-                    wPutChar, wPutBool, wPutFloat, wPutDouble, wPutStr, wPutVarchar, wPutDate,
-                    wPutTimestamp, wPutBin, wPutRecord, wPutInterval, wPutArray,
-                    wPutDecimal128, wPutDecimal256, decimal128FieldIndex, decimal256FieldIndex);
+            int functionSize1 = keyFunctions.size();
+            for (int i = 0; i < functionSize1; i++) {
+                final Function func = keyFunctions.getQuick(i);
+                final int type = func.getType();
+
+                switch (ColumnType.tagOf(type)) {
+                    case ColumnType.INT:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetInt, 1);
+                        asm.invokeInterface(wPutInt, 1);
+                        break;
+                    case ColumnType.IPv4:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetIPv4, 1);
+                        asm.invokeInterface(wPutIPv4, 1);
+                        break;
+                    case ColumnType.SYMBOL:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetSym, 1);
+                        asm.invokeInterface(wPutStr, 1);
+                        break;
+                    case ColumnType.LONG:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetLong, 1);
+                        asm.invokeInterface(wPutLong, 2);
+                        break;
+                    case ColumnType.DATE:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetDate, 1);
+                        asm.invokeInterface(wPutDate, 2);
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetTimestamp, 1);
+                        asm.invokeInterface(wPutTimestamp, 2);
+                        break;
+                    case ColumnType.BYTE:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetByte, 1);
+                        asm.invokeInterface(wPutByte, 1);
+                        break;
+                    case ColumnType.SHORT:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetShort, 1);
+                        asm.invokeInterface(wPutShort, 1);
+                        break;
+                    case ColumnType.CHAR:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetChar, 1);
+                        asm.invokeInterface(wPutChar, 1);
+                        break;
+                    case ColumnType.BOOLEAN:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetBool, 1);
+                        asm.invokeInterface(wPutBool, 1);
+                        break;
+                    case ColumnType.FLOAT:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetFloat, 1);
+                        asm.invokeInterface(wPutFloat, 1);
+                        break;
+                    case ColumnType.DOUBLE:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetDouble, 1);
+                        asm.invokeInterface(wPutDouble, 2);
+                        break;
+                    case ColumnType.STRING:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetStr, 1);
+                        asm.invokeInterface(wPutStr, 1);
+                        break;
+                    case ColumnType.VARCHAR:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetVarchar, 1);
+                        asm.invokeInterface(wPutVarchar, 1);
+                        break;
+                    case ColumnType.BINARY:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetBin, 1);
+                        asm.invokeInterface(wPutBin, 1);
+                        break;
+                    case ColumnType.LONG256:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetLong256, 1);
+                        asm.invokeInterface(wPutLong256, 1);
+                        break;
+                    case ColumnType.LONG128:
+                    case ColumnType.UUID:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetLong128Lo, 1);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetLong128Hi, 1);
+                        asm.invokeInterface(wPutLong128, 4);
+                        break;
+                    case ColumnType.INTERVAL:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetInterval, 1);
+                        asm.invokeInterface(wPutInterval, 1);
+                        break;
+                    case ColumnType.ARRAY:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetArray, 1);
+                        asm.invokeInterface(wPutArray, 1);
+                        break;
+                    case ColumnType.GEOBYTE:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetGeoByte, 1);
+                        asm.invokeInterface(wPutByte, 1);
+                        break;
+                    case ColumnType.GEOSHORT:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetGeoShort, 1);
+                        asm.invokeInterface(wPutShort, 1);
+                        break;
+                    case ColumnType.GEOINT:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetGeoInt, 1);
+                        asm.invokeInterface(wPutInt, 1);
+                        break;
+                    case ColumnType.GEOLONG:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetGeoLong, 1);
+                        asm.invokeInterface(wPutLong, 2);
+                        break;
+                    case ColumnType.DECIMAL8:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetDecimal8, 1);
+                        asm.invokeInterface(wPutByte, 1);
+                        break;
+                    case ColumnType.DECIMAL16:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetDecimal16, 1);
+                        asm.invokeInterface(wPutShort, 1);
+                        break;
+                    case ColumnType.DECIMAL32:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetDecimal32, 1);
+                        asm.invokeInterface(wPutInt, 1);
+                        break;
+                    case ColumnType.DECIMAL64:
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.invokeInterface(fGetDecimal64, 1);
+                        asm.invokeInterface(wPutLong, 2);
+                        break;
+                    case ColumnType.DECIMAL128:
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.aload(0);
+                        asm.getfield(decimal128FieldIndex);
+                        asm.invokeInterface(fGetDecimal128, 2);
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(decimal128FieldIndex);
+                        asm.invokeInterface(wPutDecimal128, 1);
+                        break;
+                    case ColumnType.DECIMAL256:
+                        asm.aload(0);
+                        asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                        asm.aload(1);
+                        asm.aload(0);
+                        asm.getfield(decimal256FieldIndex);
+                        asm.invokeInterface(fGetDecimal256, 2);
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(decimal256FieldIndex);
+                        asm.invokeInterface(wPutDecimal256, 1);
+                        break;
+                    default:
+                        break;
+                }
+            }
         }
         asm.return_();
         asm.endMethodCode();
@@ -1260,17 +977,254 @@ public class RecordSinkFactory {
                 final boolean strAsVarchar = writeStringAsVarchar != null && writeStringAsVarchar.get(index);
                 final boolean timestampAsNanos = writeTimestampAsNanos != null && writeTimestampAsNanos.get(index);
 
-                generateColumnCopyBytecode(asm, index, factor, type, skewIndex, symAsString, strAsVarchar, timestampAsNanos,
-                        rGetInt, rGetIPv4, rGetGeoInt, rGetLong, rGetGeoLong, rGetLong256,
-                        rGetLong128Lo, rGetLong128Hi, rGetDate, rGetTimestamp, rGetByte, rGetGeoByte,
-                        rGetShort, rGetGeoShort, rGetChar, rGetBool, rGetFloat, rGetDouble,
-                        rGetStr, rGetVarchar, rGetSym, rGetBin, rGetRecord, rGetInterval, rGetArray,
-                        rGetDecimal8, rGetDecimal16, rGetDecimal32, rGetDecimal64, rGetDecimal128, rGetDecimal256,
-                        wSkip, wPutInt, wPutIPv4, wPutLong, wPutLong256, wPutLong128, wPutByte, wPutShort,
-                        wPutChar, wPutBool, wPutFloat, wPutDouble, wPutStr, wPutVarchar, wPutStrAsVarchar,
-                        wPutDate, wPutTimestamp, wPutBin, wPutRecord, wPutInterval, wPutArray,
-                        wPutDecimal128, wPutDecimal256, constantLong1000,
-                        decimal128FieldIndex, decimal256FieldIndex);
+                int skewedIdx = getSkewedIndex(index, skewIndex);
+
+                switch (factor * ColumnType.tagOf(type)) {
+                    case ColumnType.INT:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetInt, 1);
+                        asm.invokeInterface(wPutInt, 1);
+                        break;
+                    case ColumnType.IPv4:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetIPv4, 1);
+                        asm.invokeInterface(wPutIPv4, 1);
+                        break;
+                    case ColumnType.SYMBOL:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        if (symAsString) {
+                            asm.invokeInterface(rGetSym, 1);
+                            if (strAsVarchar) {
+                                asm.invokeInterface(wPutStrAsVarchar, 1);
+                            } else {
+                                asm.invokeInterface(wPutStr, 1);
+                            }
+                        } else {
+                            asm.invokeInterface(rGetInt, 1);
+                            asm.invokeInterface(wPutInt, 1);
+                        }
+                        break;
+                    case ColumnType.LONG:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetLong, 1);
+                        asm.invokeInterface(wPutLong, 2);
+                        break;
+                    case ColumnType.DATE:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetDate, 1);
+                        asm.invokeInterface(wPutDate, 2);
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetTimestamp, 1);
+                        if (timestampAsNanos) {
+                            asm.ldc2_w(constantLong1000);
+                            asm.lmul();
+                        }
+                        asm.invokeInterface(wPutTimestamp, 2);
+                        break;
+                    case ColumnType.BYTE:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetByte, 1);
+                        asm.invokeInterface(wPutByte, 1);
+                        break;
+                    case ColumnType.SHORT:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetShort, 1);
+                        asm.invokeInterface(wPutShort, 1);
+                        break;
+                    case ColumnType.CHAR:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetChar, 1);
+                        asm.invokeInterface(wPutChar, 1);
+                        break;
+                    case ColumnType.BOOLEAN:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetBool, 1);
+                        asm.invokeInterface(wPutBool, 1);
+                        break;
+                    case ColumnType.FLOAT:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetFloat, 1);
+                        asm.invokeInterface(wPutFloat, 1);
+                        break;
+                    case ColumnType.DOUBLE:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetDouble, 1);
+                        asm.invokeInterface(wPutDouble, 2);
+                        break;
+                    case ColumnType.STRING:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetStr, 1);
+                        if (strAsVarchar) {
+                            asm.invokeInterface(wPutStrAsVarchar, 1);
+                        } else {
+                            asm.invokeInterface(wPutStr, 1);
+                        }
+                        break;
+                    case ColumnType.VARCHAR:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetVarchar, 1);
+                        asm.invokeInterface(wPutVarchar, 1);
+                        break;
+                    case ColumnType.BINARY:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetBin, 1);
+                        asm.invokeInterface(wPutBin, 1);
+                        break;
+                    case ColumnType.LONG256:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetLong256, 1);
+                        asm.invokeInterface(wPutLong256, 1);
+                        break;
+                    case ColumnType.RECORD:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetRecord, 1);
+                        asm.invokeInterface(wPutRecord, 1);
+                        break;
+                    case ColumnType.GEOBYTE:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetGeoByte, 1);
+                        asm.invokeInterface(wPutByte, 1);
+                        break;
+                    case ColumnType.GEOSHORT:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetGeoShort, 1);
+                        asm.invokeInterface(wPutShort, 1);
+                        break;
+                    case ColumnType.GEOINT:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetGeoInt, 1);
+                        asm.invokeInterface(wPutInt, 1);
+                        break;
+                    case ColumnType.GEOLONG:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetGeoLong, 1);
+                        asm.invokeInterface(wPutLong, 2);
+                        break;
+                    case ColumnType.LONG128:
+                    case ColumnType.UUID:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetLong128Lo, 1);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetLong128Hi, 1);
+                        asm.invokeInterface(wPutLong128, 4);
+                        break;
+                    case ColumnType.INTERVAL:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetInterval, 1);
+                        asm.invokeInterface(wPutInterval, 1);
+                        break;
+                    case ColumnType.DECIMAL8:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetDecimal8, 1);
+                        asm.invokeInterface(wPutByte, 1);
+                        break;
+                    case ColumnType.DECIMAL16:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetDecimal16, 1);
+                        asm.invokeInterface(wPutShort, 1);
+                        break;
+                    case ColumnType.DECIMAL32:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetDecimal32, 1);
+                        asm.invokeInterface(wPutInt, 1);
+                        break;
+                    case ColumnType.DECIMAL64:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.invokeInterface(rGetDecimal64, 1);
+                        asm.invokeInterface(wPutLong, 2);
+                        break;
+                    case ColumnType.DECIMAL128:
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.aload(0);
+                        asm.getfield(decimal128FieldIndex);
+                        asm.invokeInterface(rGetDecimal128, 2);
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(decimal128FieldIndex);
+                        asm.invokeInterface(wPutDecimal128, 1);
+                        break;
+                    case ColumnType.DECIMAL256:
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.aload(0);
+                        asm.getfield(decimal256FieldIndex);
+                        asm.invokeInterface(rGetDecimal256, 2);
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(decimal256FieldIndex);
+                        asm.invokeInterface(wPutDecimal256, 1);
+                        break;
+                    case ColumnType.ARRAY:
+                        asm.aload(2);
+                        asm.aload(1);
+                        asm.iconst(skewedIdx);
+                        asm.iconst(type * factor);
+                        asm.invokeInterface(rGetArray, 2);
+                        asm.invokeInterface(wPutArray, 1);
+                        break;
+                    case ColumnType.NULL:
+                        break; // ignore
+                    default:
+                        throw new IllegalArgumentException("Unexpected column type: " + ColumnType.nameOf(type));
+                }
             }
 
             asm.return_();
@@ -1297,7 +1251,7 @@ public class RecordSinkFactory {
         return asm.loadClass();
     }
 
-    private static Class<RecordSink> getInstanceClass(
+    private static Class<RecordSink> getSingleInstanceClass(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,

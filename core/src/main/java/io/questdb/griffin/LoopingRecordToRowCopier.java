@@ -39,7 +39,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Transient;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
@@ -547,7 +546,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.DATE -> RecordToRowCopierUtils.transferVarcharToDateCol(row, toIndex, value);
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
                     row.putGeoVarchar(toIndex, value);
-            case ColumnType.LONG256 -> row.putLong256Utf8(toIndex, (DirectUtf8Sequence) value);
+            case ColumnType.LONG256 -> row.putLong256Utf8(toIndex, value);
             default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
         }
     }

@@ -430,6 +430,26 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             execute("insert into dst_l256 select * from src_vc");
 
             assertSql("count\n2\n", "select count(*) from dst_l256");
+
+            // Varchar expression (cast) to Long256 - tests non-DirectUtf8Sequence path
+            execute("create table src_str (ts timestamp, s string) timestamp(ts) partition by DAY");
+            execute("create table dst_l256_cast (ts timestamp, l long256) timestamp(ts) partition by DAY");
+
+            execute("insert into src_str values (0, '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'), (1000, null)");
+            execute("insert into dst_l256_cast select ts, s::varchar from src_str");
+
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "dst_l256 order by ts", "dst_l256_cast order by ts", LOG);
+
+            // Negative test: non-ASCII varchar to Long256 should fail
+            execute("create table src_non_ascii (ts timestamp, s string) timestamp(ts) partition by DAY");
+            execute("create table dst_l256_fail (ts timestamp, l long256) timestamp(ts) partition by DAY");
+            execute("insert into src_non_ascii values (0, '0xкириллица')");
+
+            assertException(
+                    "insert into dst_l256_fail select ts, s::varchar from src_non_ascii",
+                    0,
+                    "inconvertible value"
+            );
         });
     }
 

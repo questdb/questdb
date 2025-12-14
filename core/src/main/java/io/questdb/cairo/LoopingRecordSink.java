@@ -80,7 +80,8 @@ public class LoopingRecordSink implements RecordSink {
             final int type = columnTypes.getColumnType(actualIndex);
 
             this.columnIndices.extendAndSet(i, actualIndex);
-            this.columnTypes.extendAndSet(i, factor * ColumnType.tagOf(type));
+            // Store full type (not just tag) to preserve ARRAY element type info
+            this.columnTypes.extendAndSet(i, factor * type);
             this.skewedIndices.extendAndSet(i, getSkewedIndex(actualIndex, skewIndex));
             this.symAsString.extendAndSet(i, writeSymbolAsString != null && writeSymbolAsString.get(actualIndex));
             this.strAsVarchar.extendAndSet(i, writeStringAsVarchar != null && writeStringAsVarchar.get(actualIndex));
@@ -139,7 +140,8 @@ public class LoopingRecordSink implements RecordSink {
     }
 
     private void copyColumn(Record r, RecordSinkSPI w, int type, int idx, boolean symStr, boolean strVar, boolean tsNanos) {
-        switch (type) {
+        // Switch on tag (like single sink) to handle ARRAY types correctly
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.INT:
                 w.putInt(r.getInt(idx));
                 break;
@@ -226,6 +228,10 @@ public class LoopingRecordSink implements RecordSink {
             case ColumnType.INTERVAL:
                 w.putInterval(r.getInterval(idx));
                 break;
+            case ColumnType.ARRAY:
+                // Pass full type (with element info) to getArray
+                w.putArray(r.getArray(idx, type));
+                break;
             case ColumnType.DECIMAL8:
                 w.putByte(r.getDecimal8(idx));
                 break;
@@ -250,11 +256,7 @@ public class LoopingRecordSink implements RecordSink {
                 // ignore
                 break;
             default:
-                // Handle ARRAY type - the type includes element type info
-                if (ColumnType.tagOf(type) == ColumnType.ARRAY) {
-                    w.putArray(r.getArray(idx, type));
-                }
-                break;
+                throw new IllegalArgumentException("Unexpected column type: " + ColumnType.nameOf(type));
         }
     }
 
