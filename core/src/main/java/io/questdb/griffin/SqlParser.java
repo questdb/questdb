@@ -2320,7 +2320,7 @@ public class SqlParser {
             parseSelectFrom(lexer, model, masterModel.getWithClauses(), sqlParserCallback);
             tok = setModelAliasAndTimestamp(lexer, model);
 
-            // expect [latest by] (deprecated syntax)
+            // expect [latest by]
             if (tok != null && isLatestKeyword(tok)) {
                 parseLatestBy(lexer, model);
                 tok = optTok(lexer);
@@ -2335,7 +2335,6 @@ public class SqlParser {
         }
 
         // expect [where]
-
         if (tok != null && isWhereKeyword(tok)) {
             if (model.getLatestByType() == QueryModel.LATEST_BY_NEW) {
                 throw SqlException.$((lexer.lastTokenPosition()), "unexpected where clause after 'latest on'");
@@ -2349,19 +2348,13 @@ public class SqlParser {
             }
         }
 
-        // expect [latest by] (new syntax)
-
+        // expect [latest by]
         if (tok != null && isLatestKeyword(tok)) {
-            if (model.getLatestByType() == QueryModel.LATEST_BY_DEPRECATED) {
-                throw SqlException.$((lexer.lastTokenPosition()), "mix of new and deprecated 'latest by' syntax");
-            }
-            expectTok(lexer, "on");
-            parseLatestByNew(lexer, model);
+            parseLatestBy(lexer, model);
             tok = optTok(lexer);
         }
 
         // expect [sample by]
-
         if (tok != null && isSampleKeyword(tok)) {
             expectBy(lexer);
             expectSample(lexer, model, sqlParserCallback);

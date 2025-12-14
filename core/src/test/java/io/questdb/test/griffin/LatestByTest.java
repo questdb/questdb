@@ -589,6 +589,56 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestBySubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE eq_equities_market_data (" +
+                    "timestamp TIMESTAMP, " +
+                    "symbol SYMBOL, " +
+                    "venue SYMBOL, " +
+                    "asks DOUBLE[][], bids DOUBLE[][]" +
+                    ") TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("INSERT INTO eq_equities_market_data VALUES " +
+                    "(0, 'HSBC', 'LSE', ARRAY[ [11.4, 12], [10.3, 15] ], ARRAY[ [21.1, 31], [20.1, 21] ]), " +
+                    "(1, 'HSBC', 'HKG', ARRAY[ [11.5, 13], [10.4, 14] ], ARRAY[ [21.2, 32], [20.2, 22] ]), " +
+                    "(2, 'BAC', 'NYSE', ARRAY[ [11.6, 17], [10.5, 15] ], ARRAY[ [21.3, 33], [20.3, 23] ]), " +
+                    "(3, 'HSBC', 'LSE', ARRAY[ [11.2, 30], [10.2, 16] ], ARRAY[ [21.4, 34], [20.4, 24] ]), " +
+                    "(4, 'BAC', 'NYSE', ARRAY[ [11.4, 20], [10.4,  7] ], ARRAY[ [21.5, 35], [20.5, 25] ]), " +
+                    "(5, 'MQG', 'ASX', ARRAY[ [16.0,  3], [15.0,  2] ], ARRAY[ [15.6, 36], [14.6, 26] ])"
+            );
+            drainWalQueue();
+
+            assertQueryAndCache(
+                    """
+                            timestamp\tsymbol\tvenue\tasks\tbids
+                            1970-01-01T00:00:00.000001Z\tHSBC\tHKG\t[[11.5,13.0],[10.4,14.0]]\t[[21.2,32.0],[20.2,22.0]]
+                            1970-01-01T00:00:00.000003Z\tHSBC\tLSE\t[[11.2,30.0],[10.2,16.0]]\t[[21.4,34.0],[20.4,24.0]]
+                            1970-01-01T00:00:00.000004Z\tBAC\tNYSE\t[[11.4,20.0],[10.4,7.0]]\t[[21.5,35.0],[20.5,25.0]]
+                            1970-01-01T00:00:00.000005Z\tMQG\tASX\t[[16.0,3.0],[15.0,2.0]]\t[[15.6,36.0],[14.6,26.0]]
+                            """,
+                    "select * from eq_equities_market_data latest by symbol, venue",
+                    "timestamp",
+                    true,
+                    true
+            );
+
+            assertQueryAndCache(
+                    """
+                            timestamp\tsymbol\tvenue\tasks\tbids
+                            1970-01-01T00:00:00.000003Z\tHSBC\tLSE\t[[11.2,30.0],[10.2,16.0]]\t[[21.4,34.0],[20.4,24.0]]
+                            1970-01-01T00:00:00.000004Z\tBAC\tNYSE\t[[11.4,20.0],[10.4,7.0]]\t[[21.5,35.0],[20.5,25.0]]
+                            1970-01-01T00:00:00.000005Z\tMQG\tASX\t[[16.0,3.0],[15.0,2.0]]\t[[15.6,36.0],[14.6,26.0]]
+                            """,
+                    "select * from (" +
+                            "select * from eq_equities_market_data latest by symbol, venue" +
+                            ") latest by symbol",
+                    "timestamp",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testLatestBySubQueryInitializesSymbolTables() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE 'offer_exchanges' (" +

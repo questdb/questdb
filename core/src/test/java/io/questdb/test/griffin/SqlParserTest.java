@@ -6351,7 +6351,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInvalidSubQuery() throws Exception {
-        assertSyntaxError("select x,y from (tab where x = 100 latest by x)", 42, "'on' expected");
+        assertSyntaxError("select x,y from (tab where x = 100 latest x)", 42, "'on' or 'by' expected");
     }
 
     @Test
