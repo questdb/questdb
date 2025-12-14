@@ -54,7 +54,6 @@ import io.questdb.std.str.Utf8StringSink;
 public class RecordToRowCopierUtils {
     public static final int COPIER_TYPE_CHUNKED = 2;  // Force chunked bytecode copier
     // Copier type constants for configuration
-    public static final int COPIER_TYPE_DEFAULT = 0;  // Auto-select based on bytecode size
     public static final int COPIER_TYPE_LOOPING = 3;  // Force loop-based copier
     public static final int COPIER_TYPE_SINGLE_METHOD = 1;  // Force single-method bytecode copier
 
@@ -2801,7 +2800,7 @@ public class RecordToRowCopierUtils {
                     // stack: [rowWriter, toColumnIndex, sqlExecutionContext]
                     asm.invokeInterface(sGetDecimal256, 0);
                     // Load both from and to column int to the stack
-                    // stack: [rowWriter, toColumnIndex, decimal256]
+                    // : [rowWriter, toColumnIndex, decimal256]
                     asm.ldc(fromColumnType_0 + i * 2);
                     // stack: [rowWriter, toColumnIndex, decimal256, fromType]
                     asm.ldc(toColumnType_0 + i * 2);
@@ -2829,7 +2828,7 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.DECIMAL128:
                             // Load Decimal128 to the stack
-                            // stack: [..., fromColumnIndex]
+                            // : [..., fromColumnIndex]
                             asm.aload(1);
                             // stack: [..., fromColumnIndex, sqlExecutionContext]
                             asm.invokeInterface(sGetDecimal128, 0);
@@ -2842,7 +2841,7 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.DECIMAL256:
                             // Load Decimal256 to the stack
-                            // stack: [..., fromColumnIndex]
+                            // : [..., fromColumnIndex]
                             asm.aload(1);
                             // stack: [..., fromColumnIndex, sqlExecutionContext]
                             asm.invokeInterface(sGetDecimal256, 0);
@@ -2873,7 +2872,7 @@ public class RecordToRowCopierUtils {
         // exceptions
         asm.putShort(0);
 
-        // we have do not have to add a stack map table because there are no branches
+        // do not add a stack map table because there are no branches
         // attributes: 0 (void, no branches -> no stack verification)
         asm.putShort(0);
 
