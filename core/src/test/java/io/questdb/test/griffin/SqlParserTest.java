@@ -1468,6 +1468,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testBetweenWithUnclosedParenthesis() throws Exception {
+        assertSyntaxError(
+                "SELECT fun(col BETWEEN (0 AND 1, col), col",
+                23,
+                "missing ')' before BETWEEN's AND"
+        );
+    }
+
+    @Test
     public void testBlockCommentAtMiddle() throws Exception {
         assertQuery(
                 "select-choose x, a from (select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a'",

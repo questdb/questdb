@@ -926,6 +926,9 @@ public class ExpressionParser {
                                 betweenAndCount++;
                                 thisBranch = BRANCH_BETWEEN_END;
                                 while ((node = opStack.pop()) != null && !SqlKeywords.isBetweenKeyword(node.token)) {
+                                    if (node.type == ExpressionNode.CONTROL) {
+                                        throw SqlException.$(node.position, "missing ')' before BETWEEN's AND");
+                                    }
                                     argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                 }
 
@@ -1519,7 +1522,7 @@ public class ExpressionParser {
                             }
 
                             SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lastPos);
-                            if (Chars.isQuoted(tok) || en.token instanceof CharacterStore.NameAssemblerCharSequence) {
+                            if (Chars.isQuoted(tok) || !(en.token instanceof GenericLexer.FloatingSequence)) {
                                 // replacing node, must remove old one from stack
                                 opStack.pop();
                                 // this was more analogous to 'a."b"'
