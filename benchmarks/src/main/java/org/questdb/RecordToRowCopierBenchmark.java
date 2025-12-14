@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
@@ -123,20 +124,16 @@ public class RecordToRowCopierBenchmark {
 //    @Param({"459", "460"})
     private int columnCount;
 
-    private EntityColumnFilter columnFilter;
     private SqlExecutionContext context;
     // Pre-created objects for execution benchmarks
     private RecordToRowCopier copier;
     // Engine resources
     private CairoEngine engine;
-    // For compile benchmark
-    private MockColumnTypes fromTypes;
     @Param({"BYTECODE", "CHUNKED", "LOOP"})
     private String implementation;
     private MockRecord record;
     private MockRow row;
     private String tempDbRoot;
-    private MockRecordMetadata toMetadata;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -161,7 +158,7 @@ public class RecordToRowCopierBenchmark {
         bh.consume(row);
     }
 
-    /**
+    /*
      * Measures the time to create a copier (compile time).
      * For bytecode implementation, this includes bytecode generation.
      * For loop implementation, this is just constructor time.
@@ -218,17 +215,28 @@ public class RecordToRowCopierBenchmark {
         }
 
         // Create mock metadata
-        fromTypes = new MockColumnTypes(columnTypes);
-        toMetadata = new MockRecordMetadata(columnTypes);
-        columnFilter = new EntityColumnFilter();
+        // For compile benchmark
+        MockColumnTypes fromTypes = new MockColumnTypes(columnTypes);
+        MockRecordMetadata toMetadata = new MockRecordMetadata(columnTypes);
+        EntityColumnFilter columnFilter = new EntityColumnFilter();
         columnFilter.of(columnCount);
 
         // Create copier based on implementation type
         if ("BYTECODE".equals(implementation)) {
             // Use the default method size limit (8000 bytes) which will auto-fallback to loop
             copier = RecordToRowCopierUtils.generateCopier(
-                    new BytecodeAssembler(), fromTypes, toMetadata, columnFilter,
-                    RecordToRowCopierUtils.DEFAULT_HUGE_METHOD_LIMIT, false);
+                    new BytecodeAssembler(),
+                    fromTypes,
+                    toMetadata,
+                    columnFilter,
+                    RecordToRowCopierUtils.DEFAULT_HUGE_METHOD_LIMIT,
+                    new DefaultCairoConfiguration(tempDbRoot) {
+                        @Override
+                        public boolean isCopierChunkedEnabled() {
+                            return false;
+                        }
+                    }
+            );
         } else if ("CHUNKED".equals(implementation)) {
             // For proper chunking test, we need:
             // 1. estimatedSize > methodSizeLimit (to enter chunked path at line 170)
@@ -240,7 +248,7 @@ public class RecordToRowCopierBenchmark {
             // (identical to BYTECODE) since estimatedSize <= 6500 or only 1 chunk is created.
             copier = RecordToRowCopierUtils.generateCopier(
                     new BytecodeAssembler(), fromTypes, toMetadata, columnFilter,
-                    RecordToRowCopierUtils.DEFAULT_HUGE_METHOD_LIMIT, true);
+                    RecordToRowCopierUtils.DEFAULT_HUGE_METHOD_LIMIT, configuration);
         } else {
             // Use loop implementation directly
             copier = new LoopingRecordToRowCopier(fromTypes, toMetadata, columnFilter);
@@ -261,13 +269,13 @@ public class RecordToRowCopierBenchmark {
         if (tempDbRoot != null) {
             java.nio.file.Files.walkFileTree(java.nio.file.Paths.get(tempDbRoot), new SimpleFileVisitor<>() {
                 @Override
-                public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                public @NotNull FileVisitResult postVisitDirectory(@NotNull Path dir, IOException exc) throws IOException {
                     java.nio.file.Files.delete(dir);
                     return FileVisitResult.CONTINUE;
                 }
 
                 @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                public @NotNull FileVisitResult visitFile(@NotNull Path file, @NotNull BasicFileAttributes attrs) throws IOException {
                     java.nio.file.Files.delete(file);
                     return FileVisitResult.CONTINUE;
                 }
@@ -278,12 +286,7 @@ public class RecordToRowCopierBenchmark {
     /**
      * Mock ColumnTypes implementation for benchmark.
      */
-    private static class MockColumnTypes implements ColumnTypes {
-        private final int[] types;
-
-        MockColumnTypes(int[] types) {
-            this.types = types;
-        }
+    private record MockColumnTypes(int[] types) implements ColumnTypes {
 
         @Override
         public int getColumnCount() {
@@ -299,12 +302,7 @@ public class RecordToRowCopierBenchmark {
     /**
      * Mock Record implementation that returns random values.
      */
-    private static class MockRecord implements Record {
-        private final Rnd rnd;
-
-        MockRecord(Rnd rnd) {
-            this.rnd = rnd;
-        }
+    private record MockRecord(Rnd rnd) implements Record {
 
         @Override
         public boolean getBool(int col) {
@@ -390,12 +388,7 @@ public class RecordToRowCopierBenchmark {
     /**
      * Mock RecordMetadata implementation for benchmark.
      */
-    private static class MockRecordMetadata implements RecordMetadata {
-        private final int[] types;
-
-        MockRecordMetadata(int[] types) {
-            this.types = types;
-        }
+    private record MockRecordMetadata(int[] types) implements RecordMetadata {
 
         @Override
         public int getColumnCount() {
@@ -408,7 +401,7 @@ public class RecordToRowCopierBenchmark {
         }
 
         @Override
-        public io.questdb.cairo.TableColumnMetadata getColumnMetadata(int columnIndex) {
+        public TableColumnMetadata getColumnMetadata(int columnIndex) {
             return null;
         }
 

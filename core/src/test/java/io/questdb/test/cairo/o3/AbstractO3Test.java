@@ -509,7 +509,7 @@ public class AbstractO3Test extends AbstractTest {
                         metadata,
                         writer.getMetadata(),
                         toColumnFilter,
-                        sqlExecutionContext.getCairoEngine().getConfiguration().isCopierChunkedEnabled()
+                        sqlExecutionContext.getCairoEngine().getConfiguration()
                 );
             }
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
