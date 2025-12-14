@@ -1390,7 +1390,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         entityColumnFilter.of(slaveMetadata.getColumnCount());
-        RecordSink slaveSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter, configuration.isCopierChunkedEnabled());
+        RecordSink slaveSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter, configuration);
 
         if (joinType == JOIN_INNER) {
             return new HashJoinRecordCursorFactory(
@@ -1494,7 +1494,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 writeSymbolAsString,
                 writeStringAsVarcharB,
                 writeTimestampAsNanosB,
-                configuration.isCopierChunkedEnabled()
+                configuration
         );
     }
 
@@ -1506,7 +1506,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 writeSymbolAsString,
                 writeStringAsVarcharA,
                 writeTimestampAsNanosA,
-                configuration.isCopierChunkedEnabled()
+                configuration
         );
     }
 
@@ -2864,7 +2864,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 unionMetadata,
                 entityColumnFilter,
                 writeSymbolAsString,
-                configuration.isCopierChunkedEnabled()
+                configuration
         );
 
         RecordCursorFactory unionAllFactory = constructor.create(
@@ -3395,7 +3395,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (horizonInfo != null) {
                                     // Create RecordSink for materializing slave records
                                     entityColumnFilter.of(slaveMetadata.getColumnCount());
-                                    RecordSink slaveRecordSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter, configuration.isCopierChunkedEnabled());
+                                    RecordSink slaveRecordSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter, configuration);
 
                                     // Use the optimized MarkoutHorizonRecordCursorFactory
                                     master = new MarkoutHorizonRecordCursorFactory(
@@ -3631,7 +3631,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new LatestByRecordCursorFactory(
                     configuration,
                     factory,
-                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, configuration.isCopierChunkedEnabled()),
+                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, configuration),
                     keyTypes,
                     timestampIndex
             );
@@ -3653,7 +3653,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new LatestByLightRecordCursorFactory(
                 configuration,
                 factory,
-                RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, configuration.isCopierChunkedEnabled()),
+                RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, configuration),
                 keyTypes,
                 timestampIndex,
                 orderedByTimestampAsc
@@ -3726,7 +3726,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         configuration,
                         metadata,
                         partitionFrameCursorFactory,
-                        RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, configuration.isCopierChunkedEnabled()),
+                        RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, configuration),
                         keyTypes,
                         partitionByColumnIndexes,
                         partitionBySymbolCounts,
@@ -3739,7 +3739,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     configuration,
                     metadata,
                     partitionFrameCursorFactory,
-                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, configuration.isCopierChunkedEnabled()),
+                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, configuration),
                     keyTypes,
                     filter,
                     columnIndexes,
@@ -4186,7 +4186,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         configuration,
                         orderedMetadata,
                         recordCursorFactory,
-                        RecordSinkFactory.getInstance(asm, orderedMetadata, entityColumnFilter, configuration.isCopierChunkedEnabled()),
+                        RecordSinkFactory.getInstance(asm, orderedMetadata, entityColumnFilter, configuration),
                         recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
                         listColumnFilterA.copy()
                 );
@@ -5573,7 +5573,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             keyTypes.add(partitionByFunctions.getQuick(j).getType());
                         }
                         entityColumnFilter.of(partitionByCount);
-                        partitionBySink = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, configuration.isCopierChunkedEnabled());
+                        partitionBySink = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, configuration);
                     } else {
                         partitionByRecord = null;
                         partitionBySink = null;
@@ -5812,7 +5812,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         entityColumnFilter.of(partitionByCount);
                         // create sink
-                        partitionBySink = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, configuration.isCopierChunkedEnabled());
+                        partitionBySink = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, configuration);
                     } else {
                         partitionByRecord = null;
                         partitionBySink = null;
@@ -5954,7 +5954,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     listColumnFilterB,
                     null,
                     null,
-                    configuration.isCopierChunkedEnabled());
+                    configuration);
 
             return new CachedWindowRecordCursorFactory(
                     configuration,
@@ -6797,7 +6797,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     configuration,
                     queryMeta,
                     new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, ORDER_DESC),
-                    RecordSinkFactory.getInstance(asm, queryMeta, listColumnFilterA, configuration.isCopierChunkedEnabled()),
+                    RecordSinkFactory.getInstance(asm, queryMeta, listColumnFilterA, configuration),
                     keyTypes,
                     partitionByColumnIndexes,
                     null,
@@ -6811,7 +6811,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 configuration,
                 queryMeta,
                 new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, ORDER_DESC),
-                RecordSinkFactory.getInstance(asm, queryMeta, listColumnFilterA, configuration.isCopierChunkedEnabled()),
+                RecordSinkFactory.getInstance(asm, queryMeta, listColumnFilterA, configuration),
                 keyTypes,
                 null,
                 columnIndexes,
@@ -6872,7 +6872,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 unionMetadata,
                 entityColumnFilter,
                 writeSymbolAsString,
-                configuration.isCopierChunkedEnabled()
+                configuration
         );
 
         RecordCursorFactory unionFactory = constructor.create(

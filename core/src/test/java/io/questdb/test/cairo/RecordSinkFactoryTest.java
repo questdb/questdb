@@ -25,6 +25,8 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -87,7 +89,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         TestRecord testRecord = new TestRecord();
         TestRecordSink testRecordSink = new TestRecordSink();
 
-        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, null, skewIndex, null, null, true);
+        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, null, skewIndex, null, null, configuration);
         sink.copy(testRecord, testRecordSink);
 
         Assert.assertEquals(expectedGetIndexes, testRecord.recordedIndexes);
@@ -542,6 +544,44 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFunctionKeysAllSupportedTypes() {
+        ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        ListColumnFilter columnFilter = new ListColumnFilter();
+        BitSet writeSymbolAsString = new BitSet();
+
+        ObjList<Function> keyFunctions = allKeyFunctionTypes();
+
+        IntList expectedPutTypes = new IntList();
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            TestFunction func = (TestFunction) keyFunctions.getQuick(i);
+            if (func.type == ColumnType.SYMBOL) {
+                writeSymbolAsString.set(i);
+            }
+            prepareExpectedPutType(i, func.type, expectedPutTypes, writeSymbolAsString);
+        }
+
+        TestRecord testRecord = new TestRecord();
+        TestRecordSink testRecordSink = new TestRecordSink();
+
+        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, keyFunctions, null, configuration);
+        sink.copy(testRecord, testRecordSink);
+
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            TestFunction func = (TestFunction) keyFunctions.getQuick(i);
+            switch (func.type) {
+                case ColumnType.LONG128:
+                case ColumnType.UUID:
+                    Assert.assertEquals(2, func.callCount);
+                    break;
+                default:
+                    Assert.assertEquals(1, func.callCount);
+                    break;
+            }
+        }
+        Assert.assertEquals(expectedPutTypes, testRecordSink.recordedTypes);
+    }
+
+    @Test
     public void testLargeSchemaUsesLoopingRecordSink() {
         // Test that creating a sink with many columns produces a LoopingRecordSink
         // when chunking is disabled and schema exceeds methodSizeLimit.
@@ -557,6 +597,12 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         // Disable chunking to force LoopingRecordSink when over the limit
+        CairoConfiguration configWithChunkedDisabled = new CairoConfigurationWrapper(configuration) {
+            @Override
+            public boolean isCopierChunkedEnabled() {
+                return false;
+            }
+        };
         RecordSink sink = RecordSinkFactory.getInstance(
                 new BytecodeAssembler(),
                 columnTypes,
@@ -564,7 +610,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
                 null,
                 null,
                 null,
-                false  // chunkedEnabled = false
+                configWithChunkedDisabled
         );
 
         // The sink should be a LoopingRecordSink for large schemas when chunking is disabled
@@ -604,7 +650,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
                 null,
                 null,
                 null,
-                true
+                configuration
         );
 
         TestRecord testRecord = new TestRecord();
@@ -612,37 +658,6 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         sink.copy(testRecord, testRecordSink);
 
         Assert.assertEquals(500, testRecordSink.recordedTypes.size());
-    }
-
-    @Test
-    public void testRecordSinkFactoryWithNullBitSet() {
-        // Test that null BitSet is handled correctly
-        ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-        columnTypes.add(ColumnType.SYMBOL);
-        columnTypes.add(ColumnType.STRING);
-
-        ListColumnFilter columnFilter = new ListColumnFilter();
-        columnFilter.add(1);
-        columnFilter.add(2);
-
-        // Pass null for writeSymbolAsString
-        RecordSink sink = RecordSinkFactory.getInstance(
-                new BytecodeAssembler(),
-                columnTypes,
-                columnFilter,
-                null, // null writeSymbolAsString
-                null,
-                null,
-                true
-        );
-
-        TestRecord testRecord = new TestRecord();
-        TestRecordSink testRecordSink = new TestRecordSink();
-        sink.copy(testRecord, testRecordSink);
-
-        // Symbol should default to INT (symbol index), not STRING
-        Assert.assertEquals(ColumnType.INT, testRecordSink.recordedTypes.get(0));
-        Assert.assertEquals(ColumnType.STRING, testRecordSink.recordedTypes.get(1));
     }
 
     @Test
@@ -662,7 +677,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
                 null,
                 null,
                 null,
-                true
+                configuration
         );
 
         TestRecord testRecord = new TestRecord();
@@ -822,41 +837,34 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFunctionKeysAllSupportedTypes() {
+    public void testRecordSinkFactoryWithNullBitSet() {
+        // Test that null BitSet is handled correctly
         ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        columnTypes.add(ColumnType.SYMBOL);
+        columnTypes.add(ColumnType.STRING);
+
         ListColumnFilter columnFilter = new ListColumnFilter();
-        BitSet writeSymbolAsString = new BitSet();
+        columnFilter.add(1);
+        columnFilter.add(2);
 
-        ObjList<Function> keyFunctions = allKeyFunctionTypes();
-
-        IntList expectedPutTypes = new IntList();
-        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
-            TestFunction func = (TestFunction) keyFunctions.getQuick(i);
-            if (func.type == ColumnType.SYMBOL) {
-                writeSymbolAsString.set(i);
-            }
-            prepareExpectedPutType(i, func.type, expectedPutTypes, writeSymbolAsString);
-        }
+        // Pass null for writeSymbolAsString
+        RecordSink sink = RecordSinkFactory.getInstance(
+                new BytecodeAssembler(),
+                columnTypes,
+                columnFilter,
+                null, // null writeSymbolAsString
+                null,
+                null,
+                configuration
+        );
 
         TestRecord testRecord = new TestRecord();
         TestRecordSink testRecordSink = new TestRecordSink();
-
-        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, keyFunctions, null, true);
         sink.copy(testRecord, testRecordSink);
 
-        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
-            TestFunction func = (TestFunction) keyFunctions.getQuick(i);
-            switch (func.type) {
-                case ColumnType.LONG128:
-                case ColumnType.UUID:
-                    Assert.assertEquals(2, func.callCount);
-                    break;
-                default:
-                    Assert.assertEquals(1, func.callCount);
-                    break;
-            }
-        }
-        Assert.assertEquals(expectedPutTypes, testRecordSink.recordedTypes);
+        // Symbol should default to INT (symbol index), not STRING
+        Assert.assertEquals(ColumnType.INT, testRecordSink.recordedTypes.get(0));
+        Assert.assertEquals(ColumnType.STRING, testRecordSink.recordedTypes.get(1));
     }
 
     @NotNull
@@ -1045,7 +1053,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         TestRecord testRecord = new TestRecord();
         TestRecordSink testRecordSink = new TestRecordSink();
 
-        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, writeSymbolAsString, null, null, true);
+        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, writeSymbolAsString, null, null, configuration);
         sink.copy(testRecord, testRecordSink);
 
         Assert.assertEquals(expectedGetIndexes, testRecord.recordedIndexes);

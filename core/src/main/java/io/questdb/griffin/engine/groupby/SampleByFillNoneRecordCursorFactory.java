@@ -73,7 +73,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
         super(base, groupByMetadata, recordFunctions);
         try {
             // sink will be storing record columns to map key
-            final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, configuration.isCopierChunkedEnabled());
+            final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, configuration);
             // this is the map itself, which we must not forget to free when factory closes
             final Map map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
             final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);

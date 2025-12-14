@@ -45,11 +45,11 @@ public class RecordSinkFactory {
     // by C2 and cannot be inlined, causing significant performance degradation.
     // This matches the threshold used in RecordToRowCopierUtils.
     public static final int DEFAULT_METHOD_SIZE_LIMIT = 8000;
-    // Bytecode size estimates per column type
-    private static final int BASE_BYTECODE_PER_COLUMN = 12;  // aload, iconst, invokeInterface x2
+    // Bytecode size estimate for standard column types: aload + aload + iconst + invokeInterface x2
+    // 1 + 1 + 2 + 5 + 5 = 14 bytes
+    private static final int BASE_BYTECODE_PER_COLUMN = 14;
     // Target size for each chunk, leaving buffer below 8KB limit
     private static final int CHUNK_TARGET_SIZE = 6000;
-    private static final int COMPLEX_TYPE_OVERHEAD = 30;  // UUID, Decimal types need more bytecode
     private static final int FIELD_POOL_OFFSET = 3;
     private static final Log LOG = LogFactory.getLog(RecordSinkFactory.class);
 
@@ -75,7 +75,7 @@ public class RecordSinkFactory {
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
             @Nullable BitSet writeSymbolAsString,
-            boolean chunkedEnabled
+            CairoConfiguration configuration
     ) {
         return getInstance(
                 asm,
@@ -86,7 +86,7 @@ public class RecordSinkFactory {
                 writeSymbolAsString,
                 null,
                 null,
-                chunkedEnabled
+                configuration
         );
     }
 
@@ -97,7 +97,7 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
             @Nullable BitSet writeTimestampAsNanos,
-            boolean chunkedEnabled
+            CairoConfiguration configuration
     ) {
         return getInstance(
                 asm,
@@ -108,7 +108,7 @@ public class RecordSinkFactory {
                 writeSymbolAsString,
                 writeStringAsVarchar,
                 writeTimestampAsNanos,
-                chunkedEnabled);
+                configuration);
     }
 
     public static RecordSink getInstance(
@@ -117,9 +117,19 @@ public class RecordSinkFactory {
             @Transient @NotNull ColumnFilter columnFilter,
             @Nullable ObjList<Function> keyFunctions,
             @Nullable BitSet writeSymbolAsString,
-            boolean chunkedEnabled
+            CairoConfiguration configuration
     ) {
-        return getInstance(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null, null, chunkedEnabled);
+        return getInstance(
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                null,
+                writeSymbolAsString,
+                null,
+                null,
+                configuration
+        );
     }
 
     public static RecordSink getInstance(
@@ -130,9 +140,19 @@ public class RecordSinkFactory {
             @Transient @Nullable IntList skewIndex,
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
-            boolean chunkedEnabled
+            CairoConfiguration configuration
     ) {
-        return getInstance(asm, columnTypes, columnFilter, keyFunctions, skewIndex, writeSymbolAsString, writeStringAsVarchar, null, chunkedEnabled);
+        return getInstance(
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                null,
+                configuration
+        );
     }
 
     public static RecordSink getInstance(
@@ -144,7 +164,7 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
             @Nullable BitSet writeTimestampAsNanos,
-            boolean chunkedEnabled
+            CairoConfiguration configuration
     ) {
         return getInstance(
                 asm,
@@ -155,7 +175,7 @@ public class RecordSinkFactory {
                 writeSymbolAsString,
                 writeStringAsVarchar,
                 writeTimestampAsNanos,
-                chunkedEnabled,
+                configuration,
                 DEFAULT_METHOD_SIZE_LIMIT
         );
     }
@@ -166,7 +186,7 @@ public class RecordSinkFactory {
      * 2. Chunked bytecode generation if chunkedEnabled and above limit
      * 3. LoopingRecordSink as final fallback
      *
-     * @param chunkedEnabled  whether to try chunked generation before looping
+     * @param configuration   Cairo configuration (provides chunkedEnabled setting)
      * @param methodSizeLimit bytecode size limit per method (default 8000), for testing
      */
     public static RecordSink getInstance(
@@ -178,7 +198,7 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
             @Nullable BitSet writeTimestampAsNanos,
-            boolean chunkedEnabled,
+            CairoConfiguration configuration,
             int methodSizeLimit
     ) {
         int estimatedSize = estimateBytecodeSize(columnTypes, columnFilter, keyFunctions);
@@ -199,7 +219,7 @@ public class RecordSinkFactory {
         }
 
         // Path 2: Large schema with chunking enabled
-        if (chunkedEnabled) {
+        if (configuration.isCopierChunkedEnabled()) {
             RecordSink chunked = generateChunkedSink(
                     asm,
                     columnTypes,
@@ -236,7 +256,7 @@ public class RecordSinkFactory {
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
-            boolean chunkedEnabled
+            CairoConfiguration configuration
     ) {
         return getInstance(
                 asm,
@@ -247,7 +267,7 @@ public class RecordSinkFactory {
                 null,
                 null,
                 null,
-                chunkedEnabled
+                configuration
         );
     }
 
@@ -377,6 +397,13 @@ public class RecordSinkFactory {
         for (int i = 0, n = columnFilter.getColumnCount(); i < n; i++) {
             int index = columnFilter.getColumnIndex(i);
             int factor = columnFilter.getIndexFactor(index);
+
+            if (factor < 0) {
+                // Skip columns generate: aload + iconst + invokeInterface = ~9 bytes
+                total += 9;
+                continue;
+            }
+
             index = index * factor - 1;
             int type = columnTypes.getColumnType(index);
             total += estimateColumnBytecodeSize(type);
@@ -395,23 +422,51 @@ public class RecordSinkFactory {
 
     /**
      * Estimates the bytecode size for copying a single column.
+     * Bytecode sizes per instruction (approximate):
+     * - aload: 1 byte
+     * - iconst: 1-3 bytes (depends on value)
+     * - invokeInterface: 5 bytes
+     * - getfield: 3 bytes
+     * - dup_x2: 1 byte
+     * - ldc2_w: 3 bytes
+     * - lmul: 1 byte
      */
     private static int estimateColumnBytecodeSize(int type) {
         int tag = ColumnType.tagOf(type);
-        int size = BASE_BYTECODE_PER_COLUMN;
 
-        // Complex types need more bytecode
-        if (tag == ColumnType.UUID || tag == ColumnType.LONG128 ||
-                tag == ColumnType.DECIMAL128 || tag == ColumnType.DECIMAL256) {
-            size += COMPLEX_TYPE_OVERHEAD;
+        switch (tag) {
+            case ColumnType.UUID:
+            case ColumnType.LONG128:
+                // aload + (aload + iconst + invokeInterface) x2 + invokeInterface
+                // 1 + (1+2+5)*2 + 5 = 22 bytes
+                return 22;
+
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                // aload + aload + iconst + aload + getfield + dup_x2 + invokeInterface x2
+                // 1+1+2+1+3+1+5+5 = 19 bytes
+                return 19;
+
+            case ColumnType.ARRAY:
+                // aload + aload + iconst + iconst(type) + invokeInterface x2
+                // 1+1+2+3+5+5 = 17 bytes (extra iconst for array type)
+                return 17;
+
+            case ColumnType.NULL:
+                // No bytecode generated
+                return 0;
+
+            default:
+                // Standard pattern: aload + aload + iconst + invokeInterface x2
+                // 1+1+2+5+5 = 14 bytes
+                return BASE_BYTECODE_PER_COLUMN;
         }
-
-        return size;
     }
 
     /**
      * Generates a chunked RecordSink with multiple private methods for columns.
-     * Returns null if chunking fails (e.g., chunk too large), signaling fallback to looping.
+     * If only 1 chunk is needed, falls back to single-sink (faster than looping).
+     * Returns null only if bytecode generation fails, signaling fallback to looping.
      */
     private static RecordSink generateChunkedSink(
             BytecodeAssembler asm,
@@ -427,9 +482,24 @@ public class RecordSinkFactory {
         IntList boundaries = calculateChunkBoundaries(columnTypes, columnFilter);
         int numChunks = boundaries.size() - 1;
 
-        // No benefit from chunking if only one chunk
+        // If only one chunk needed, use single-sink (faster than chunked or looping)
         if (numChunks <= 1) {
-            return null;
+            try {
+                Class<RecordSink> clazz = getSingleInstanceClass(
+                        asm,
+                        columnTypes,
+                        columnFilter,
+                        keyFunctions,
+                        skewIndex,
+                        writeSymbolAsString,
+                        writeStringAsVarchar,
+                        writeTimestampAsNanos
+                );
+                return createSink(clazz, keyFunctions);
+            } catch (BytecodeException e) {
+                // Single-sink generation failed, fall back to looping
+                return null;
+            }
         }
 
         try {

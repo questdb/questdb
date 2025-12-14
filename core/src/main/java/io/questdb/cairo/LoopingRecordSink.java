@@ -79,9 +79,21 @@ public class LoopingRecordSink implements RecordSink {
             final int actualIndex = index * factor - 1;
             final int type = columnTypes.getColumnType(actualIndex);
 
+            // For negative factor (skip columns), store negative type and skip other lookups
+            // This aligns with single sink which checks factor < 0 before accessing skewIndex/BitSets
+            if (factor < 0) {
+                this.columnIndices.extendAndSet(i, actualIndex);
+                this.columnTypes.extendAndSet(i, -ColumnType.tagOf(type));
+                this.skewedIndices.extendAndSet(i, -1);  // sentinel, not used
+                this.symAsString.extendAndSet(i, false);
+                this.strAsVarchar.extendAndSet(i, false);
+                this.timestampAsNanos.extendAndSet(i, false);
+                continue;
+            }
+
             this.columnIndices.extendAndSet(i, actualIndex);
             // Store full type (not just tag) to preserve ARRAY element type info
-            this.columnTypes.extendAndSet(i, factor * type);
+            this.columnTypes.extendAndSet(i, type);
             this.skewedIndices.extendAndSet(i, getSkewedIndex(actualIndex, skewIndex));
             this.symAsString.extendAndSet(i, writeSymbolAsString != null && writeSymbolAsString.get(actualIndex));
             this.strAsVarchar.extendAndSet(i, writeStringAsVarchar != null && writeStringAsVarchar.get(actualIndex));

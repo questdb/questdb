@@ -24,8 +24,11 @@
 
 package org.questdb;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.LoopingRecordSink;
 import io.questdb.cairo.RecordSink;
@@ -145,26 +148,39 @@ public class RecordSinkBenchmark {
         columnFilter.of(columnCount);
 
         // Create sink based on implementation type
+        CairoConfiguration baseConfig = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
         switch (implementation) {
             case "BYTECODE":
                 // Force single-method bytecode generation by using very high limit
+                CairoConfiguration configNoChunking = new CairoConfigurationWrapper(baseConfig) {
+                    @Override
+                    public boolean isCopierChunkedEnabled() {
+                        return false;
+                    }
+                };
                 sink = RecordSinkFactory.getInstance(
                         new BytecodeAssembler(),
                         types,
                         columnFilter,
                         null, null, null, null, null,
-                        false,  // Disable chunking
+                        configNoChunking,
                         Integer.MAX_VALUE  // Very high limit to force single-method
                 );
                 break;
             case "CHUNKED":
                 // Use chunked bytecode generation
+                CairoConfiguration configWithChunking = new CairoConfigurationWrapper(baseConfig) {
+                    @Override
+                    public boolean isCopierChunkedEnabled() {
+                        return true;
+                    }
+                };
                 sink = RecordSinkFactory.getInstance(
                         new BytecodeAssembler(),
                         types,
                         columnFilter,
                         null, null, null, null, null,
-                        true,  // Enable chunking
+                        configWithChunking,
                         RecordSinkFactory.DEFAULT_METHOD_SIZE_LIMIT
                 );
                 break;
@@ -184,12 +200,7 @@ public class RecordSinkBenchmark {
     /**
      * Mock ColumnTypes implementation for benchmark.
      */
-    private static class MockColumnTypes implements ColumnTypes {
-        private final int[] types;
-
-        MockColumnTypes(int[] types) {
-            this.types = types;
-        }
+    private record MockColumnTypes(int[] types) implements ColumnTypes {
 
         @Override
         public int getColumnCount() {
@@ -205,12 +216,7 @@ public class RecordSinkBenchmark {
     /**
      * Mock Record implementation that returns random values.
      */
-    private static class MockRecord implements Record {
-        private final Rnd rnd;
-
-        MockRecord(Rnd rnd) {
-            this.rnd = rnd;
-        }
+    private record MockRecord(Rnd rnd) implements Record {
 
         @Override
         public boolean getBool(int col) {
