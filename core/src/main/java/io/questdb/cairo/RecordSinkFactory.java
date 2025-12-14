@@ -45,6 +45,10 @@ public class RecordSinkFactory {
     // by C2 and cannot be inlined, causing significant performance degradation.
     // This matches the threshold used in RecordToRowCopierUtils.
     public static final int DEFAULT_METHOD_SIZE_LIMIT = 8000;
+    // Sink type constants for configuration (matching RecordToRowCopierUtils pattern)
+    public static final int SINK_TYPE_CHUNKED = 2;  // Force chunked bytecode sink
+    public static final int SINK_TYPE_LOOPING = 3;  // Force loop-based sink
+    public static final int SINK_TYPE_SINGLE = 1;   // Force single-method bytecode sink
     // Bytecode size estimate for standard column types: aload + aload + iconst + invokeInterface x2
     // 1 + 1 + 2 + 5 + 5 = 14 bytes
     private static final int BASE_BYTECODE_PER_COLUMN = 14;
@@ -185,8 +189,10 @@ public class RecordSinkFactory {
      * 1. Single-method bytecode generation (fastest) if under methodSizeLimit
      * 2. Chunked bytecode generation if chunkedEnabled and above limit
      * 3. LoopingRecordSink as final fallback
+     * <p>
+     * The sink type can be forced via configuration.getCopierType() for testing.
      *
-     * @param configuration   Cairo configuration (provides chunkedEnabled setting)
+     * @param configuration   Cairo configuration (provides copierType and chunkedEnabled settings)
      * @param methodSizeLimit bytecode size limit per method (default 8000), for testing
      */
     public static RecordSink getInstance(
@@ -201,55 +207,66 @@ public class RecordSinkFactory {
             CairoConfiguration configuration,
             int methodSizeLimit
     ) {
+        int copierType = configuration.getCopierType();
+
+        // Handle forced sink types (for testing)
+        switch (copierType) {
+            case SINK_TYPE_SINGLE:
+                return generateSingleSink(
+                        asm, columnTypes, columnFilter, keyFunctions, skewIndex,
+                        writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
+                );
+            case SINK_TYPE_CHUNKED:
+                RecordSink chunked = generateChunkedSink(
+                        asm, columnTypes, columnFilter, keyFunctions, skewIndex,
+                        writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos,
+                        methodSizeLimit
+                );
+                if (chunked != null) {
+                    return chunked;
+                }
+                // Fall through to looping if chunked fails
+                LOG.info().$("forced chunked sink generation failed, falling back to looping sink [columnCount=").$(columnFilter.getColumnCount()).I$();
+                return generateLoopingSink(
+                        columnTypes, columnFilter, keyFunctions, skewIndex,
+                        writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
+                );
+            case SINK_TYPE_LOOPING:
+                return generateLoopingSink(
+                        columnTypes, columnFilter, keyFunctions, skewIndex,
+                        writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
+                );
+        }
+
+        // Default: auto-select based on bytecode size
         int estimatedSize = estimateBytecodeSize(columnTypes, columnFilter, keyFunctions);
 
         // Path 1: Small schema - use single-method approach
         if (estimatedSize <= methodSizeLimit) {
-            final Class<RecordSink> clazz = getSingleInstanceClass(
-                    asm,
-                    columnTypes,
-                    columnFilter,
-                    keyFunctions,
-                    skewIndex,
-                    writeSymbolAsString,
-                    writeStringAsVarchar,
-                    writeTimestampAsNanos
+            return generateSingleSink(
+                    asm, columnTypes, columnFilter, keyFunctions, skewIndex,
+                    writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
             );
-            return createSink(clazz, keyFunctions);
         }
 
         // Path 2: Large schema with chunking enabled
         if (configuration.isCopierChunkedEnabled()) {
-            RecordSink chunked = generateChunkedSink(
-                    asm,
-                    columnTypes,
-                    columnFilter,
-                    keyFunctions,
-                    skewIndex,
-                    writeSymbolAsString,
-                    writeStringAsVarchar,
-                    writeTimestampAsNanos,
+            RecordSink chunkedSink = generateChunkedSink(
+                    asm, columnTypes, columnFilter, keyFunctions, skewIndex,
+                    writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos,
                     methodSizeLimit
             );
-            if (chunked != null) {
-                return chunked;
+            if (chunkedSink != null) {
+                return chunkedSink;
             }
             // Fall through to looping if chunking failed
         }
 
         // Path 3: Fall back to loop-based implementation
-        LoopingRecordSink sink = new LoopingRecordSink(
-                columnTypes,
-                columnFilter,
-                skewIndex,
-                writeSymbolAsString,
-                writeStringAsVarchar,
-                writeTimestampAsNanos
+        return generateLoopingSink(
+                columnTypes, columnFilter, keyFunctions, skewIndex,
+                writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
         );
-        if (keyFunctions != null) {
-            sink.setFunctions(keyFunctions);
-        }
-        return sink;
     }
 
     public static RecordSink getInstance(
@@ -434,33 +451,27 @@ public class RecordSinkFactory {
     private static int estimateColumnBytecodeSize(int type) {
         int tag = ColumnType.tagOf(type);
 
-        switch (tag) {
-            case ColumnType.UUID:
-            case ColumnType.LONG128:
+        return switch (tag) {
+            case ColumnType.UUID, ColumnType.LONG128 ->
                 // aload + (aload + iconst + invokeInterface) x2 + invokeInterface
                 // 1 + (1+2+5)*2 + 5 = 22 bytes
-                return 22;
-
-            case ColumnType.DECIMAL128:
-            case ColumnType.DECIMAL256:
+                    22;
+            case ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
                 // aload + aload + iconst + aload + getfield + dup_x2 + invokeInterface x2
                 // 1+1+2+1+3+1+5+5 = 19 bytes
-                return 19;
-
-            case ColumnType.ARRAY:
+                    19;
+            case ColumnType.ARRAY ->
                 // aload + aload + iconst + iconst(type) + invokeInterface x2
                 // 1+1+2+3+5+5 = 17 bytes (extra iconst for array type)
-                return 17;
-
-            case ColumnType.NULL:
+                    17;
+            case ColumnType.NULL ->
                 // No bytecode generated
-                return 0;
-
-            default:
+                    0;
+            default ->
                 // Standard pattern: aload + aload + iconst + invokeInterface x2
                 // 1+1+2+5+5 = 14 bytes
-                return BASE_BYTECODE_PER_COLUMN;
-        }
+                    BASE_BYTECODE_PER_COLUMN;
+        };
     }
 
     /**
@@ -525,6 +536,25 @@ public class RecordSinkFactory {
         }
     }
 
+    private static RecordSink generateLoopingSink(
+            ColumnTypes columnTypes,
+            ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos
+    ) {
+        LoopingRecordSink sink = new LoopingRecordSink(
+                columnTypes, columnFilter, skewIndex,
+                writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
+        );
+        if (keyFunctions != null) {
+            sink.setFunctions(keyFunctions);
+        }
+        return sink;
+    }
+
     /**
      * Sets function keys to the respective fields.
      * Generates bytecode equivalent of the following Java code:
@@ -559,6 +589,23 @@ public class RecordSinkFactory {
         // attributes
         asm.putShort(0);
         asm.endMethod();
+    }
+
+    private static RecordSink generateSingleSink(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar,
+            @Nullable BitSet writeTimestampAsNanos
+    ) {
+        final Class<RecordSink> clazz = getSingleInstanceClass(
+                asm, columnTypes, columnFilter, keyFunctions, skewIndex,
+                writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
+        );
+        return createSink(clazz, keyFunctions);
     }
 
     /**
@@ -639,7 +686,6 @@ public class RecordSinkFactory {
         final int fGetVarchar = asm.poolInterfaceMethod(Function.class, "getVarcharA", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/str/Utf8Sequence;");
         final int fGetSym = asm.poolInterfaceMethod(Function.class, "getSymbol", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
         final int fGetBin = asm.poolInterfaceMethod(Function.class, "getBin", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/BinarySequence;");
-        final int fGetRecord = asm.poolInterfaceMethod(Function.class, "getRecord", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/cairo/sql/Record;");
         final int fGetInterval = asm.poolInterfaceMethod(Function.class, "getInterval", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/Interval;");
         final int fGetArray = asm.poolInterfaceMethod(Function.class, "getArray", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/cairo/arr/ArrayView;");
         final int fGetDecimal8 = asm.poolInterfaceMethod(Function.class, "getDecimal8", "(Lio/questdb/cairo/sql/Record;)B");
@@ -1790,7 +1836,6 @@ public class RecordSinkFactory {
         //   w.putInt(f1.getInt(r));
         //   w.putStr(f2.getStr(r));
         //   ...
-        boolean fnStrAsVarchar = false; // TODO: pass as bitflag
         for (int i = 0; i < functionSize; i++) {
             final Function func = keyFunctions.getQuick(i);
             final int type = func.getType();
@@ -1818,11 +1863,7 @@ public class RecordSinkFactory {
                     asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
                     asm.aload(1);
                     asm.invokeInterface(fGetSym, 1);
-                    if (fnStrAsVarchar) {
-                        asm.invokeInterface(wPutStrAsVarchar, 1);
-                    } else {
-                        asm.invokeInterface(wPutStr, 1);
-                    }
+                    asm.invokeInterface(wPutStr, 1);
                     break;
                 case ColumnType.LONG:
                     asm.aload(2);
@@ -1902,11 +1943,7 @@ public class RecordSinkFactory {
                     asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
                     asm.aload(1);
                     asm.invokeInterface(fGetStr, 1);
-                    if (fnStrAsVarchar) {
-                        asm.invokeInterface(wPutStrAsVarchar, 1);
-                    } else {
-                        asm.invokeInterface(wPutStr, 1);
-                    }
+                    asm.invokeInterface(wPutStr, 1);
                     break;
                 case ColumnType.VARCHAR:
                     asm.aload(2);
