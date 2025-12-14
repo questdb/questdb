@@ -440,7 +440,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         limitAdviceHi = null;
         limitAdviceLo = null;
         limitPosition = 0;
-        isLimitImplemented = false;
         timestamp = null;
         sqlNodeStack.clear();
         joinColumns.clear();
@@ -635,7 +634,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && joinType == that.joinType
                 && joinKeywordPosition == that.joinKeywordPosition
                 && limitPosition == that.limitPosition
-                && isLimitImplemented == that.isLimitImplemented
                 && isSelectTranslation == that.isSelectTranslation
                 && selectModelType == that.selectModelType
                 && nestedModelIsSubQuery == that.nestedModelIsSubQuery
@@ -1076,7 +1074,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 sampleByUnit, sampleByTo, sampleByFrom, context, joinCriteria,
                 joinType, joinKeywordPosition, orderedJoinModels,
                 limitLo, limitHi, limitPosition,
-                limitAdviceLo, limitAdviceHi, isLimitImplemented,
+                limitAdviceLo, limitAdviceHi,
                 isSelectTranslation, selectModelType, nestedModelIsSubQuery,
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
@@ -1099,10 +1097,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isForceBackwardScan() {
         return forceBackwardScan;
-    }
-
-    public boolean isLimitImplemented() {
-        return isLimitImplemented;
     }
 
     public boolean isNestedModelIsSubQuery() {
@@ -1379,10 +1373,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void setLimitAdvice(ExpressionNode lo, ExpressionNode hi) {
         this.limitAdviceLo = lo;
         this.limitAdviceHi = hi;
-    }
-
-    public void setLimitImplemented(boolean limitImplemented) {
-        isLimitImplemented = limitImplemented;
     }
 
     public void setLimitPosition(int limitPosition) {
