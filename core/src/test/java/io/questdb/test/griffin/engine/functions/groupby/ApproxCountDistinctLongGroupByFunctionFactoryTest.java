@@ -341,7 +341,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                 "create table x as (select * from (select rnd_long(0, 16, 0) s, timestamp_sequence(0, 60000000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 true,
-                true
+                false
         );
     }
 

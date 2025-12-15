@@ -701,7 +701,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                 "select l, ts from trips " +
                         "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
                         "order by ts desc limit 3, 5",
-                null, "ts###DESC", true, true
+                null, "ts###DESC", true, false
         );
     }
 

@@ -41,7 +41,7 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
                         "select cast(x as symbol) as id, cast(x as double) as reading  from long_sequence(9)), index(id)",
                 null,
                 true,
-                true
+                false
         );
     }
 
@@ -54,7 +54,7 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
                         "select cast(x as symbol) as id, cast(x as double) as reading  from long_sequence(9)), index(id)",
                 null,
                 true,
-                true
+                false
         );
     }
 
@@ -125,7 +125,7 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
                         "select x as id, cast(x as double) as reading  from long_sequence(9))",
                 null,
                 true,
-                true
+                false
         );
     }
 
@@ -164,7 +164,7 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
                         "select cast(x as symbol) as id, cast(x as double) as reading  from long_sequence(9))",
                 null,
                 true,
-                true
+                false
         );
     }
 
@@ -177,7 +177,7 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
                         "select cast(x as symbol) as id, cast(x as double) as reading  from long_sequence(9))",
                 null,
                 true,
-                true
+                false
         );
     }
 
@@ -538,7 +538,7 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
                 "CREATE TABLE test as ( select x as id from long_sequence(9) )",
                 null,
                 true,
-                true
+                false
         );
     }
 }
