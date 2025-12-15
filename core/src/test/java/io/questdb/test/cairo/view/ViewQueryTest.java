@@ -428,6 +428,32 @@ public class ViewQueryTest extends AbstractViewTest {
     }
 
     @Test
+    public void testViewAllowNonDetermisticFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            // rnd_byte() is technically a non-deterministic function
+            String view = "select * from " + TABLE1 + " where rnd_byte() >= 0";
+
+            createView(VIEW1, view, TABLE1);
+
+            assertQueryNoLeakCheck("""
+                            ts	k	k2	v
+                            1970-01-01T00:00:00.000000Z	k0	k2_0	0
+                            1970-01-01T00:00:10.000000Z	k1	k2_1	1
+                            1970-01-01T00:00:20.000000Z	k2	k2_2	2
+                            1970-01-01T00:00:30.000000Z	k3	k2_3	3
+                            1970-01-01T00:00:40.000000Z	k4	k2_4	4
+                            1970-01-01T00:00:50.000000Z	k5	k2_5	5
+                            1970-01-01T00:01:00.000000Z	k6	k2_6	6
+                            1970-01-01T00:01:10.000000Z	k7	k2_7	7
+                            1970-01-01T00:01:20.000000Z	k8	k2_8	8
+                            """,
+                    VIEW1, "ts", true, sqlExecutionContext);
+        });
+    }
+
+    @Test
     public void testViewFilterPushedDownToTable() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
