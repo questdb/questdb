@@ -86,7 +86,6 @@ public class CheckpointTest extends AbstractCairoTest {
         path = new Path();
         triggerFilePath = new Path();
         ff = testFilesFacade;
-        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
     }
 
@@ -102,7 +101,6 @@ public class CheckpointTest extends AbstractCairoTest {
         // sync() system call is not available on Windows, so we skip the whole test suite there.
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
-        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
         super.setUp();
         ff = testFilesFacade;
         path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).slash();
@@ -872,7 +870,6 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointRestoresViewWithBaseTableData() throws Exception {
         final String snapshotId = "id1";
         final String restartedId = "id2";
-        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
@@ -969,7 +966,6 @@ public class CheckpointTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointViewMetadataFiles() throws Exception {
-        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             execute("create view test_view as select * from test;");
@@ -1510,7 +1506,6 @@ public class CheckpointTest extends AbstractCairoTest {
 
     @Test
     public void testViewDoesNotObstructCheckpointCreation() throws Exception {
-        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("create table test (ts timestamp, name symbol, val int)");
             execute("create view test_view as select * from test");

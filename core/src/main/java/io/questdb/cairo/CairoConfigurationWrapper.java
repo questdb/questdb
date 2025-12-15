@@ -1447,11 +1447,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isViewEnabled() {
-        return getDelegate().isViewEnabled();
-    }
-
-    @Override
     public boolean isWalApplyEnabled() {
         return getDelegate().isWalApplyEnabled();
     }

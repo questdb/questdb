@@ -48,7 +48,6 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
-import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -61,12 +60,6 @@ import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 public class SqlParserTest extends AbstractSqlParserTest {
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
     private static final List<String> outerJoinTypes = Arrays.asList("left", "right", "full");
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
-    }
 
     @Test
     public void test2Between() throws Exception {

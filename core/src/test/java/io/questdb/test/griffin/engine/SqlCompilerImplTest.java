@@ -111,7 +111,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 512);
-        node1.setProperty(PropertyKey.CAIRO_VIEW_ENABLED, true);
         super.setUp();
     }
 

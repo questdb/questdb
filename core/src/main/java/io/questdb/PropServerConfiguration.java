@@ -520,7 +520,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long viewCompilerWorkerNapThreshold;
     private final long viewCompilerWorkerSleepThreshold;
     private final long viewCompilerWorkerYieldThreshold;
-    private final boolean viewEnabled;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
@@ -1397,8 +1396,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
             this.matViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
 
-            // TODO: change default to true
-            this.viewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_VIEW_ENABLED, false);
             this.viewCompilerWorkerCount = getInt(properties, env, PropertyKey.VIEW_COMPILER_WORKER_COUNT, 1);
             this.viewCompilerWorkerNapThreshold = getLong(properties, env, PropertyKey.VIEW_COMPILER_WORKER_NAP_THRESHOLD, 7_000);
             this.viewCompilerWorkerSleepThreshold = getLong(properties, env, PropertyKey.VIEW_COMPILER_WORKER_SLEEP_THRESHOLD, 10_000);
@@ -4365,11 +4362,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isValidateSampleByFillType() {
             return sqlSampleByValidateFillType;
-        }
-
-        @Override
-        public boolean isViewEnabled() {
-            return viewEnabled;
         }
 
         @Override

@@ -65,7 +65,6 @@ import java.sql.SQLException;
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
-import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 import static java.net.HttpURLConnection.HTTP_OK;
 import static org.junit.Assert.*;
 
@@ -76,7 +75,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     private static final String VIEW2 = "view2";
     private static final LogCapture capture = new LogCapture();
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
-    private boolean isViewEnabled = true;
     private ServerMain questdb;
 
     @Before
@@ -480,108 +478,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         }
     }
 
-    @Test
-    public void testViewsAreDisabled() throws SQLException {
-        try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-            createTable(httpClient, TABLE1);
-            drainWalQueue();
-
-            final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
-            createView(httpClient, VIEW1, query1);
-            drainWalQueue();
-
-            assertExecRequest(
-                    httpClient,
-                    VIEW1 + " order by ts",
-                    HTTP_OK,
-                    "{" +
-                            "\"query\":\"view1 order by ts\"," +
-                            "\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"k\",\"type\":\"SYMBOL\"},{\"name\":\"v_max\",\"type\":\"LONG\"}]," +
-                            "\"timestamp\":0," +
-                            "\"dataset\":[" +
-                            "[\"1970-01-01T00:00:50.000000Z\",\"k5\",5]," +
-                            "[\"1970-01-01T00:01:00.000000Z\",\"k6\",6]," +
-                            "[\"1970-01-01T00:01:10.000000Z\",\"k7\",7]," +
-                            "[\"1970-01-01T00:01:20.000000Z\",\"k8\",8]" +
-                            "]," +
-                            "\"count\":4" +
-                            "}"
-            );
-        }
-
-        // restart with views disabled
-        stopQuestDB();
-
-        isViewEnabled = false;
-        startQuestDB();
-
-        // existing view still readable
-        assertSqlViaPG(
-                VIEW1 + " order by ts",
-                """
-                        ts[TIMESTAMP],k[VARCHAR],v_max[BIGINT]
-                        1970-01-01 00:00:50.0,k5,5
-                        1970-01-01 00:01:00.0,k6,6
-                        1970-01-01 00:01:10.0,k7,7
-                        1970-01-01 00:01:20.0,k8,8
-                        """
-        );
-
-        // cannot create new view via PG
-        final String query2 = "select ts, k2, max(v) as v_max from " + TABLE1 + " where v > 6";
-        assertSqlFailureViaPG(
-                "create view " + VIEW2 + " as (" + query2 + ")"
-        );
-
-        // cannot compile existing view via PG
-        assertSqlFailureViaPG(
-                "compile view " + VIEW1
-        );
-
-        // cannot drop existing view via PG
-        assertSqlFailureViaPG(
-                "drop view " + VIEW1
-        );
-
-        try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-            // cannot create new view via HTTP
-            assertExecRequest(
-                    httpClient,
-                    "create view " + VIEW2 + " as (" + query2 + ")",
-                    HTTP_BAD_REQUEST,
-                    "{" +
-                            "\"query\":\"create view view2 as (select ts, k2, max(v) as v_max from table1 where v > 6)\"," +
-                            "\"error\":\"views are disabled, set 'cairo.view.enabled=true' in the config to enable them\"," +
-                            "\"position\":7" +
-                            "}"
-            );
-
-            // cannot compile existing view via PG
-            assertExecRequest(
-                    httpClient,
-                    "compile view " + VIEW1,
-                    HTTP_BAD_REQUEST,
-                    "{" +
-                            "\"query\":\"compile view view1\"," +
-                            "\"error\":\"views are disabled, set 'cairo.view.enabled=true' in the config to enable them\"," +
-                            "\"position\":8" +
-                            "}"
-            );
-
-            // cannot drop existing view via PG
-            assertExecRequest(
-                    httpClient,
-                    "drop view " + VIEW1,
-                    HTTP_BAD_REQUEST,
-                    "{" +
-                            "\"query\":\"drop view view1\"," +
-                            "\"error\":\"views are disabled, set 'cairo.view.enabled=true' in the config to enable them\"," +
-                            "\"position\":5" +
-                            "}"
-            );
-        }
-    }
-
     private static void assertExecRequest(
             HttpClient httpClient,
             String sql,
@@ -733,7 +629,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     private void startQuestDB() {
         unchecked(() -> createDummyConfiguration(
                 PropertyKey.DEV_MODE_ENABLED + "=true",
-                PropertyKey.CAIRO_VIEW_ENABLED + "=" + isViewEnabled,
                 PropertyKey.CAIRO_WAL_ENABLED_DEFAULT + "=true"
         ));
         questdb = createServerMain();

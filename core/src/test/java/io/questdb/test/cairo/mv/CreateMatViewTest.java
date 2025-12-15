@@ -69,7 +69,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
-        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
     }
 
     @Test

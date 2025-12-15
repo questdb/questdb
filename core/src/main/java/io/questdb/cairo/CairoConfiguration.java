@@ -828,8 +828,6 @@ public interface CairoConfiguration {
         return true;
     }
 
-    boolean isViewEnabled();
-
     boolean isWalApplyEnabled();
 
     boolean isWalApplyParallelSqlEnabled();

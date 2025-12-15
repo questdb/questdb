@@ -24,23 +24,14 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Before;
 import org.junit.Test;
 
 public class ShowTablesTest extends AbstractCairoTest {
-
-    @Before
-    public void setUp() {
-        // enable views
-        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
-        super.setUp();
-    }
 
     @Test
     public void testDropAndRecreateTable() throws Exception {

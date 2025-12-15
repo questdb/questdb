@@ -1184,7 +1184,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
         tableNameRegistry.reload(convertedTables);
         matViewStateStore = createMatViewStateStore();
-        viewStateStore = createViewStateStore();
+        viewStateStore = new ViewStateStoreImpl(this);
     }
 
     public String lockAll(TableToken tableToken, String lockReason, boolean ignoreInProgressCheckpoint) {
@@ -1830,10 +1830,6 @@ public class CairoEngine implements Closeable, WriterSource {
             enqueueCompileView(tableToken);
             return tableToken;
         }
-    }
-
-    private ViewStateStore createViewStateStore() {
-        return configuration.isViewEnabled() ? new ViewStateStoreImpl(this) : NoOpViewStateStore.INSTANCE;
     }
 
     private void notifyViewStoresAboutDrop(TableToken droppedToken) {

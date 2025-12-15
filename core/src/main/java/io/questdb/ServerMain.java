@@ -282,7 +282,6 @@ public class ServerMain implements Closeable {
         final boolean isReadOnly = cairoConfig.isReadOnlyInstance();
         final boolean walApplyEnabled = cairoConfig.isWalApplyEnabled();
         final boolean matViewEnabled = cairoConfig.isMatViewEnabled();
-        final boolean viewEnabled = cairoConfig.isViewEnabled();
 
         workerPoolManager = new WorkerPoolManager(config) {
             @Override
@@ -391,21 +390,19 @@ public class ServerMain implements Closeable {
             }
         }
 
-        if (viewEnabled) {
-            if (config.getViewCompilerPoolConfiguration().getWorkerCount() > 0) {
-                // This starts view compiler jobs only when there is a dedicated pool configured
-                // this will not use shared pool write because getWorkerCount() > 0
-                WorkerPool viewCompilerWorkerPool = workerPoolManager.getSharedPoolWrite(
-                        config.getViewCompilerPoolConfiguration(),
-                        WorkerPoolManager.Requester.VIEW_COMPILER
-                );
-                setupViewJobs(viewCompilerWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
-            } else {
-                log.advisory().$("view compiler job is disabled; set ")
-                        .$(VIEW_COMPILER_WORKER_COUNT.getPropertyPath())
-                        .$(" to a positive value or keep default to enable view compiler.")
-                        .$();
-            }
+        if (config.getViewCompilerPoolConfiguration().getWorkerCount() > 0) {
+            // This starts view compiler jobs only when there is a dedicated pool configured
+            // this will not use shared pool write because getWorkerCount() > 0
+            WorkerPool viewCompilerWorkerPool = workerPoolManager.getSharedPoolWrite(
+                    config.getViewCompilerPoolConfiguration(),
+                    WorkerPoolManager.Requester.VIEW_COMPILER
+            );
+            setupViewJobs(viewCompilerWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
+        } else {
+            log.advisory().$("view compiler job is disabled; set ")
+                    .$(VIEW_COMPILER_WORKER_COUNT.getPropertyPath())
+                    .$(" to a positive value or keep default to enable view compiler.")
+                    .$();
         }
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {

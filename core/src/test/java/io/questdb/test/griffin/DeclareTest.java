@@ -219,13 +219,6 @@ public class DeclareTest extends AbstractSqlParserTest {
               timestamp TIMESTAMP
             ) timestamp (timestamp) PARTITION BY DAY WAL;""";
 
-    @Before
-    public void setUp() {
-        // enable views
-        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
-        super.setUp();
-    }
-
     @Test
     public void testDeclareCreateAsSelect() throws Exception {
         assertMemoryLeak(() -> {

@@ -38,32 +38,16 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.sql.RandomSelectGenerator;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ViewFuzzTest extends AbstractFuzzTest {
     private static final String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
-        AbstractCairoTest.setUpStatic();
-    }
-
-    @Before
-    public void setUp() {
-        // enable views
-        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
-        super.setUp();
-    }
 
     @Test
     public void testBaseTableCanHaveColumnsAdded() throws Exception {

@@ -37,7 +37,6 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Before;
 import org.junit.BeforeClass;
 
 import static io.questdb.cairo.SqlJitMode.JIT_MODE_DISABLED;
@@ -58,15 +57,7 @@ class AbstractViewTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         // JIT does not support ARM, and we want query plans to be the same
         setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(JIT_MODE_DISABLED));
-        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
-    }
-
-    @Before
-    public void setUp() {
-        // enable views
-        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
-        super.setUp();
     }
 
     static void assertViewDefinition(String name, String query, String... expectedDependencies) {

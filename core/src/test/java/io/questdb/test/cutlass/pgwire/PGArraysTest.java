@@ -427,7 +427,7 @@ public class PGArraysTest extends BasePGTest {
                     );
                 }
             }
-        }, () -> setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true"));
+        });
     }
 
     @Test
