@@ -105,7 +105,7 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
         Assert.assertEquals("[7]", partitionList.toString());
         assertSql(
                 "QUERY PLAN\n" +
-                        "Limit lo: 20 hi: 30 skip-over-rows: 20 limit: 10\n" +
+                        "Limit left: 20 right: 30 skip-rows: 20 take-rows: 10\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tmp\n",
@@ -176,7 +176,7 @@ public class IntervalSearchOpenPartitionTrackingTest extends AbstractCairoTest {
         Assert.assertEquals("[8,9]", partitionList.toString());
         assertSql(
                 "QUERY PLAN\n" +
-                        "Limit lo: -20 skip-over-rows: 80 limit: 20\n" +
+                        "Limit value: -20 skip-rows: 80 take-rows: 20\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tmp\n",

@@ -62,7 +62,7 @@ public class DistinctTest extends AbstractCairoTest {
                         "foo\t592859671\t73575701\n" +
                         "foo\t-1191262516\t592859671\n" +
                         "foo\t-1575378703\t-1191262516\n",
-                "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
+                "Limit value: 5 skip-rows: 0 take-rows: 5\n" +
                         "    Distinct\n" +
                         "      keys: sym,origin,lag\n" +
                         "      earlyExit: 5\n" +
@@ -87,7 +87,7 @@ public class DistinctTest extends AbstractCairoTest {
                         "foo\t-1575135393\t-1162267908\n" +
                         "foo\t326010667\t-1575135393\n" +
                         "foo\t-2034804966\t326010667\n",
-                "Limit lo: 20 hi: 28 skip-over-rows: 20 limit: 8\n" +
+                "Limit left: 20 right: 28 skip-rows: 20 take-rows: 8\n" +
                         "    Distinct\n" +
                         "      keys: sym,origin,lag\n" +
                         "      earlyExit: 28\n" +
@@ -110,7 +110,7 @@ public class DistinctTest extends AbstractCairoTest {
                         "foo\t-1822590290\t1431775887\n" +
                         "foo\t957075831\t-1822590290\n" +
                         "foo\t-2043541236\t957075831\n",
-                "Limit lo: -5 skip-over-rows: 95 limit: 5\n" +
+                "Limit value: -5 skip-rows: 95 take-rows: 5\n" +
                         "    Distinct\n" +
                         "      keys: sym,origin,lag\n" +
                         "        Window\n" +
@@ -132,7 +132,7 @@ public class DistinctTest extends AbstractCairoTest {
                         "foo\t592859671\t73575701\n" +
                         "foo\t-1191262516\t592859671\n" +
                         "foo\t-1575378703\t-1191262516\n",
-                "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
+                "Limit value: 5 skip-rows: 0 take-rows: 5\n" +
                         "    Sort\n" +
                         "      keys: [sym]\n" +
                         "        Distinct\n" +

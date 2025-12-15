@@ -73,7 +73,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                         try (final ResultSet resultSet = stmt.executeQuery()) {
                             assertResultSet(
                                     "QUERY PLAN[VARCHAR]\n" +
-                                            "Limit lo: $0::int[1] skip-over-rows: 0 limit: 1\n" +
+                                            "Limit value: $0::int[1] skip-rows: 0 take-rows: 1\n" +
                                             "    PageFrame\n" +
                                             "        Row forward scan\n" +
                                             "        Frame forward scan on: tab\n",
@@ -85,7 +85,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 stmt,
                                 -1,
                                 "QUERY PLAN[VARCHAR]\n" +
-                                        "Limit lo: $0::int[-1] skip-over-rows: 99 limit: 1\n" +
+                                        "Limit value: $0::int[-1] skip-rows: 99 take-rows: 1\n" +
                                         "    PageFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: tab\n");
@@ -328,7 +328,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                         try (final ResultSet resultSet = stmt.executeQuery()) {
                             assertResultSet(
                                     "QUERY PLAN[VARCHAR]\n" +
-                                            "Limit lo: 4 hi: -3 skip-over-rows: 4 limit: 3\n" +
+                                            "Limit left: 4 right: -3 skip-rows: 4 take-rows: 3\n" +
                                             "    Sort light\n" +
                                             "      keys: [col1 desc]\n" +
                                             "        GroupBy vectorized: false\n" +
@@ -530,7 +530,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 stmt,
                                 1,
                                 "QUERY PLAN[VARCHAR]\n" +
-                                        "Limit lo: $0::int[1] skip-over-rows: 0 limit: 1\n" +
+                                        "Limit value: $0::int[1] skip-rows: 0 take-rows: 1\n" +
                                         "    PageFrame\n" +
                                         "        Row backward scan\n" +
                                         "        Frame backward scan on: tab\n"
@@ -541,7 +541,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 stmt,
                                 -1,
                                 "QUERY PLAN[VARCHAR]\n" +
-                                        "Limit lo: $0::int[-1] skip-over-rows: 9999 limit: 1\n" +
+                                        "Limit value: $0::int[-1] skip-rows: 9999 take-rows: 1\n" +
                                         "    PageFrame\n" +
                                         "        Row backward scan\n" +
                                         "        Frame backward scan on: tab\n"
@@ -551,7 +551,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 stmt,
                                 -10,
                                 "QUERY PLAN[VARCHAR]\n" +
-                                        "Limit lo: $0::int[-10] skip-over-rows: 9990 limit: 10\n" +
+                                        "Limit value: $0::int[-10] skip-rows: 9990 take-rows: 10\n" +
                                         "    PageFrame\n" +
                                         "        Row backward scan\n" +
                                         "        Frame backward scan on: tab\n"
