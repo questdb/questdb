@@ -401,6 +401,7 @@ public class WindowJoinTimeFrameHelperTest {
         WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
         helper.of(cursor);
         long row = helper.findRowLoWithPrevailing(20, 35);
+        helper.recordAtRowIndex(row);
 
         Assert.assertEquals(1, row);
         Assert.assertEquals(20, helper.getRecord().getTimestamp(0));
@@ -412,6 +413,7 @@ public class WindowJoinTimeFrameHelperTest {
         WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
         helper.of(cursor);
         long row = helper.findRowLoWithPrevailing(25, 35);
+        helper.recordAtRowIndex(row);
 
         Assert.assertEquals(1, row);
         Assert.assertEquals(20, helper.getRecord().getTimestamp(0));
@@ -427,6 +429,7 @@ public class WindowJoinTimeFrameHelperTest {
         WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1); // trigger binary search
         helper.of(cursor);
         long row = helper.findRowLoWithPrevailing(555, 600);
+        helper.recordAtRowIndex(row);
 
         Assert.assertEquals(55, row);
         Assert.assertEquals(550, helper.getRecord().getTimestamp(0));
@@ -440,6 +443,7 @@ public class WindowJoinTimeFrameHelperTest {
         WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
         helper.of(cursor);
         long row = helper.findRowLoWithPrevailing(50, 150);
+        helper.recordAtRowIndex(row);
 
         Assert.assertEquals(1, row);
         Assert.assertEquals(20, helper.getRecord().getTimestamp(0));
@@ -453,6 +457,8 @@ public class WindowJoinTimeFrameHelperTest {
         WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
         helper.of(cursor);
         long row = helper.findRowLoWithPrevailing(50, 60);
+        helper.recordAtRowIndex(row);
+
         Assert.assertEquals(1, row);
         Assert.assertEquals(40, helper.getRecord().getTimestamp(0));
     }
@@ -466,10 +472,12 @@ public class WindowJoinTimeFrameHelperTest {
         helper.of(cursor);
 
         long row = helper.findRowLoWithPrevailing(35, 55);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(2, row);
         Assert.assertEquals(30, helper.getRecord().getTimestamp(0));
 
         row = helper.findRowLoWithPrevailing(40, 55);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(0, row);
         Assert.assertEquals(40, helper.getRecord().getTimestamp(0));
     }
@@ -481,7 +489,9 @@ public class WindowJoinTimeFrameHelperTest {
         MockTimeFrameCursor cursor = new MockTimeFrameCursor(Arrays.asList(frame1, frame2), 0);
         WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
         helper.of(cursor);
+
         long row = helper.findRowLoWithPrevailing(100, 250);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(0, row);
         Assert.assertEquals(100, helper.getRecord().getTimestamp(0));
     }
@@ -494,6 +504,7 @@ public class WindowJoinTimeFrameHelperTest {
         WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
         helper.of(cursor);
         long row = helper.findRowLoWithPrevailing(5, 15);
+        helper.recordAtRowIndex(row);
 
         Assert.assertEquals(0, row);
         Assert.assertEquals(10, helper.getRecord().getTimestamp(0));
@@ -508,6 +519,7 @@ public class WindowJoinTimeFrameHelperTest {
         WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
         helper.of(cursor);
         long row = helper.findRowLoWithPrevailing(80, 150);
+        helper.recordAtRowIndex(row);
 
         Assert.assertEquals(1, row);
         Assert.assertEquals(60, helper.getRecord().getTimestamp(0));
@@ -521,9 +533,10 @@ public class WindowJoinTimeFrameHelperTest {
         MockTimeFrameCursor cursor = new MockTimeFrameCursor(Arrays.asList(frame1, frame2), 0);
         WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
         helper.of(cursor);
-
         // Interval in gap between frames
         long row = helper.findRowLoWithPrevailing(50, 80);
+        helper.recordAtRowIndex(row);
+
         Assert.assertEquals(2, row); // frame1's last row as prevailing
         Assert.assertEquals(30, helper.getRecord().getTimestamp(0));
     }
@@ -579,6 +592,7 @@ public class WindowJoinTimeFrameHelperTest {
         WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1_000);
         helper.of(cursor);
         long row = helper.findRowLoWithPrevailing(2_500, 3_500);
+        helper.recordAtRowIndex(row);
 
         Assert.assertEquals(1, row);
         Assert.assertEquals(2, helper.getRecord().getTimestamp(0));
@@ -595,21 +609,25 @@ public class WindowJoinTimeFrameHelperTest {
 
         // timestampLo equals frame1's end
         long row = helper.findRowLoWithPrevailing(30, 45);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(2, row);
         Assert.assertEquals(30, helper.getRecord().getTimestamp(0));
 
         // timestampLo equals frame2's start (exact match)
         row = helper.findRowLoWithPrevailing(40, 55);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(0, row);
         Assert.assertEquals(40, helper.getRecord().getTimestamp(0));
 
         // timestampLo in gap after frame2
         row = helper.findRowLoWithPrevailing(65, 75);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(2, row);
         Assert.assertEquals(60, helper.getRecord().getTimestamp(0));
 
         // timestampLo equals frame3's start (exact match)
         row = helper.findRowLoWithPrevailing(70, 85);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(0, row);
         Assert.assertEquals(70, helper.getRecord().getTimestamp(0));
     }
@@ -625,51 +643,61 @@ public class WindowJoinTimeFrameHelperTest {
 
         // 1. No prevailing, return first in interval
         long row = helper.findRowLoWithPrevailing(5, 15);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(0, row);
         Assert.assertEquals(10, helper.getRecord().getTimestamp(0));
 
         // 2. Exact match at frame1 boundary
         row = helper.findRowLoWithPrevailing(10, 25);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(0, row);
         Assert.assertEquals(10, helper.getRecord().getTimestamp(0));
 
         // 3. In middle of frame1
         row = helper.findRowLoWithPrevailing(15, 25);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(0, row);
         Assert.assertEquals(10, helper.getRecord().getTimestamp(0));
 
         // 4. Exact match at frame1's last row
         row = helper.findRowLoWithPrevailing(30, 45);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(2, row);
         Assert.assertEquals(30, helper.getRecord().getTimestamp(0));
 
         // 5. Gap between frame1 and frame2
         row = helper.findRowLoWithPrevailing(35, 45);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(2, row);
         Assert.assertEquals(30, helper.getRecord().getTimestamp(0));
 
         // 6. Exact match at frame2 start
         row = helper.findRowLoWithPrevailing(40, 55);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(0, row);
         Assert.assertEquals(40, helper.getRecord().getTimestamp(0));
 
         // 7. Exact match at frame2 end
         row = helper.findRowLoWithPrevailing(60, 80);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(2, row);
         Assert.assertEquals(60, helper.getRecord().getTimestamp(0));
 
         // 8. Large gap between frame2 and frame3
         row = helper.findRowLoWithPrevailing(80, 105);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(2, row);
         Assert.assertEquals(60, helper.getRecord().getTimestamp(0));
 
         // 9. Exact match at frame3 start
         row = helper.findRowLoWithPrevailing(100, 115);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(0, row);
         Assert.assertEquals(100, helper.getRecord().getTimestamp(0));
 
         // 10. Past all frames
         row = helper.findRowLoWithPrevailing(150, 200);
+        helper.recordAtRowIndex(row);
         Assert.assertEquals(2, row);
         Assert.assertEquals(120, helper.getRecord().getTimestamp(0));
     }

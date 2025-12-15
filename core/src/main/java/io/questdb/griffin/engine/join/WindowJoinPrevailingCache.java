@@ -44,9 +44,7 @@ import io.questdb.std.Rows;
  * other matching keys encountered.
  */
 public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reopenable {
-    // used when the symbol key is not present in the cache;
-    // must be different from Long.MIN_VALUE since the latter is used as a marker
-    // for no slave row found as a result of the scan
+    // used when the symbol key is not present in the cache
     private static final long NO_ENTRY_VALUE = Rows.toRowID(-1, 0);
     // holds <master_key, slave_rowid> pairs
     private final DirectIntLongHashMap cache;

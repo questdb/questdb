@@ -107,12 +107,14 @@ public class WindowJoinTimeFrameHelper {
         return Long.MIN_VALUE;
     }
 
+    // Note: don't forget to call recordAtRowIndex() prior to using the record.
     public long findRowLo(long timestampLo, long timestampHi) {
         return findRowLo(timestampLo, timestampHi, false);
     }
 
-    // finds the first row id within the given interval and load the record to it
-    // Also records the prevailing candidate (last row with timestamp < timestampLo)
+    // Finds the first row id within the given interval and load the record to it.
+    // Also records the prevailing candidate (last row with timestamp < timestampLo).
+    // Note: don't forget to call recordAtRowIndex() prior to using the record.
     public long findRowLo(long timestampLo, long timestampHi, boolean recordPrevailing) {
         long rowLo = Long.MIN_VALUE;
         // Reset prevailing candidate
@@ -214,6 +216,7 @@ public class WindowJoinTimeFrameHelper {
         }
     }
 
+    // Note: don't forget to call recordAtRowIndex() prior to using the record.
     public long findRowLoWithPrevailing(long timestampLo, long timestampHi) {
         long rowLo = Long.MIN_VALUE;
         // record prevailing candidate across frames
