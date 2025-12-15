@@ -24,12 +24,12 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoKeywords;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MutableMetadataRecordCursorFactory;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -60,7 +60,7 @@ import io.questdb.std.str.Utf8s;
 import java.io.Closeable;
 import java.util.Comparator;
 
-public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFactory {
+public class ShowPartitionsRecordCursorFactory extends MutableMetadataRecordCursorFactory {
 
     private static final Comparator<String> CHAR_COMPARATOR = Chars::compare;
     private static final Log LOG = LogFactory.getLog(ShowPartitionsRecordCursor.class);

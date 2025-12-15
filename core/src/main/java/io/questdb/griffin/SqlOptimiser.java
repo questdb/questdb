@@ -27,9 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -53,9 +51,6 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLev
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
-import io.questdb.griffin.engine.functions.table.HivePartitionedReadParquetRecordCursorFactory;
-import io.questdb.griffin.engine.functions.table.ReadParquetPageFrameRecordCursorFactory;
-import io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -3454,64 +3449,6 @@ public class SqlOptimiser implements Mutable {
             union.setOrderByAdviceMnemonic(orderByMnemonic);
             optimiseOrderBy(union, orderByMnemonic);
         }
-    }
-
-    /**
-     * Reconfigures a parquet reading model to project columns
-     * todo(nwoolmer): Ideally, we should lazy compile the cursors. Currently, we generate the cursor with its metadata
-     * earlier, then have to wait for top-down columns before we can push down the projection.
-     */
-    private void parquetProjectionPushdown(QueryModel model) {
-
-        if (model == null) {
-            return;
-        }
-        // Recurse into joins, nested, and unions first.
-        final ObjList<QueryModel> jm = model.getJoinModels();
-        for (int i = 1, n = jm.size(); i < n; i++) {
-            parquetProjectionPushdown(jm.getQuick(i));
-        }
-        parquetProjectionPushdown(model.getNestedModel());
-        parquetProjectionPushdown(model.getUnionModel());
-
-        final RecordCursorFactory existingFactory = model.getTableNameFunction();
-        if (!(existingFactory instanceof ReadParquetPageFrameRecordCursorFactory)
-                && !(existingFactory instanceof ReadParquetRecordCursorFactory)
-                && !(existingFactory instanceof HivePartitionedReadParquetRecordCursorFactory)) {
-            return;
-        }
-
-        RecordMetadata existingMetadata = model.getTableNameFunction().getMetadata();
-        GenericRecordMetadata projectionMetadata = new GenericRecordMetadata();
-        for (int i = 0, n = model.getTopDownColumns().size(); i < n; i++) {
-            QueryColumn column = model.getTopDownColumns().getQuick(i);
-            int existingIndex = existingMetadata.getColumnIndex(column.getName());
-            TableColumnMetadata existingColumn = existingMetadata.getColumnMetadata(existingIndex);
-            projectionMetadata.add(existingColumn);
-        }
-
-        if (projectionMetadata.getColumnCount() == 0) {
-            return; // no pushdown
-        }
-
-        projectionMetadata.setTimestampIndex(existingMetadata.getTimestampIndex());
-
-        RecordCursorFactory projectedFactory;
-        if (existingFactory instanceof ReadParquetPageFrameRecordCursorFactory oldFactory) {
-            projectedFactory = new ReadParquetPageFrameRecordCursorFactory(configuration, oldFactory.getPath(), projectionMetadata);
-        } else if (existingFactory instanceof ReadParquetRecordCursorFactory oldFactory) {
-            projectedFactory = new ReadParquetRecordCursorFactory(oldFactory.getPath(), projectionMetadata, configuration.getFilesFacade());
-        } else if (existingFactory instanceof HivePartitionedReadParquetRecordCursorFactory oldFactory) {
-            projectedFactory = new HivePartitionedReadParquetRecordCursorFactory(configuration,
-                    oldFactory.globCursorFactory, oldFactory.nonGlobbedRoot, oldFactory.globbedRoot, projectionMetadata);
-        } else {
-            throw new UnsupportedOperationException();
-        }
-
-        existingFactory.close();
-        tableFactoriesInFlight.remove(existingFactory);
-        model.setTableNameFunction(projectedFactory);
-        tableFactoriesInFlight.add(projectedFactory);
     }
 
     private void parseFunctionAndEnumerateColumns(
@@ -7375,7 +7312,6 @@ public class SqlOptimiser implements Mutable {
                 authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             }
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
-            parquetProjectionPushdown(rewrittenModel);
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed

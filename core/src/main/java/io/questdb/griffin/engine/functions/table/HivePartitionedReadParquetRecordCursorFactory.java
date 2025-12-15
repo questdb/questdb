@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.MutableMetadataRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -38,7 +38,7 @@ import org.jetbrains.annotations.NotNull;
  * Factory for reading multiple parquet files matching a glob pattern.
  * Iterates through files and returns their rows sequentially.
  */
-public class HivePartitionedReadParquetRecordCursorFactory extends AbstractRecordCursorFactory {
+public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetadataRecordCursorFactory {
     public final RecordCursorFactory globCursorFactory;
     public final CharSequence globbedRoot;
     public final CharSequence nonGlobbedRoot;

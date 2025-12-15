@@ -22,44 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine;
+package io.questdb.cairo;
 
-import io.questdb.cairo.MutableMetadataRecordCursorFactory;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
 
-public class EmptyTableRecordCursorFactory extends MutableMetadataRecordCursorFactory {
+public abstract class MutableMetadataRecordCursorFactory implements RecordCursorFactory {
+    private RecordMetadata metadata;
 
-    public EmptyTableRecordCursorFactory(RecordMetadata metadata) {
-        super(metadata);
+    public MutableMetadataRecordCursorFactory(RecordMetadata metadata) {
+        this.metadata = metadata;
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return EmptyTableRecordCursor.INSTANCE;
+    public final void close() {
+        _close();
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
-    @Override
-    public boolean supportsUpdateRowId(TableToken tableToken) {
-        return true;
+    public void setMetadata(RecordMetadata metadata) {
+        this.metadata = metadata;
     }
 
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Empty table");
-    }
-
-    @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
+        // nothing to do
     }
 }

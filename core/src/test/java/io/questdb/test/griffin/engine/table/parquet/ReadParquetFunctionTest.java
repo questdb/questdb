@@ -344,6 +344,84 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGlobMultipleFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create multiple tables and convert them to parquet files
+            execute("create table t1 as (select" +
+                    " cast(x as int) id," +
+                    " 'file1' as source" +
+                    " from long_sequence(5))");
+
+            execute("create table t2 as (select" +
+                    " cast(x+5 as int) id," +
+                    " 'file2' as source" +
+                    " from long_sequence(5))");
+
+            execute("create table t3 as (select" +
+                    " cast(x+10 as int) id," +
+                    " 'file3' as source" +
+                    " from long_sequence(5))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader1 = engine.getReader("t1");
+                    TableReader reader2 = engine.getReader("t2");
+                    TableReader reader3 = engine.getReader("t3")
+            ) {
+                // Export all tables to parquet files with pattern matching names
+                path.of(root).concat("data_1.parquet");
+                PartitionEncoder.populateFromTableReader(reader1, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                partitionDescriptor.clear();
+                path.of(root).concat("data_2.parquet");
+                PartitionEncoder.populateFromTableReader(reader2, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                partitionDescriptor.clear();
+                path.of(root).concat("data_3.parquet");
+                PartitionEncoder.populateFromTableReader(reader3, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // Now test reading all files with a glob pattern
+                // Use absolute path to ensure proper path handling
+                String absoluteGlobPath = root + "/data_*.parquet";
+                sink.clear();
+                sink.put("select * from read_parquet('" + absoluteGlobPath + "') order by id");
+
+                // We should get 15 rows total (5 from each file) with correct IDs and sources
+                assertQueryNoLeakCheck(
+                        """
+                                id\tsource
+                                1\tfile1
+                                2\tfile1
+                                3\tfile1
+                                4\tfile1
+                                5\tfile1
+                                6\tfile2
+                                7\tfile2
+                                8\tfile2
+                                9\tfile2
+                                10\tfile2
+                                11\tfile3
+                                12\tfile3
+                                13\tfile3
+                                14\tfile3
+                                15\tfile3
+                                """,
+                        sink.toString(),
+                        null,
+                        true
+                );
+            }
+        });
+    }
+
+    @Test
     public void testMetadata() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 1;
@@ -495,83 +573,6 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         "a_ts",
                         parallel,
                         true
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testGlobMultipleFiles() throws Exception {
-        assertMemoryLeak(() -> {
-            // Create multiple tables and convert them to parquet files
-            execute("create table t1 as (select" +
-                    " cast(x as int) id," +
-                    " 'file1' as source" +
-                    " from long_sequence(5))");
-
-            execute("create table t2 as (select" +
-                    " cast(x+5 as int) id," +
-                    " 'file2' as source" +
-                    " from long_sequence(5))");
-
-            execute("create table t3 as (select" +
-                    " cast(x+10 as int) id," +
-                    " 'file3' as source" +
-                    " from long_sequence(5))");
-
-            try (
-                    Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
-                    TableReader reader1 = engine.getReader("t1");
-                    TableReader reader2 = engine.getReader("t2");
-                    TableReader reader3 = engine.getReader("t3")
-            ) {
-                // Export all tables to parquet files with pattern matching names
-                path.of(root).concat("data_1.parquet");
-                PartitionEncoder.populateFromTableReader(reader1, partitionDescriptor, 0);
-                PartitionEncoder.encode(partitionDescriptor, path);
-                Assert.assertTrue(Files.exists(path.$()));
-
-                partitionDescriptor.clear();
-                path.of(root).concat("data_2.parquet");
-                PartitionEncoder.populateFromTableReader(reader2, partitionDescriptor, 0);
-                PartitionEncoder.encode(partitionDescriptor, path);
-                Assert.assertTrue(Files.exists(path.$()));
-
-                partitionDescriptor.clear();
-                path.of(root).concat("data_3.parquet");
-                PartitionEncoder.populateFromTableReader(reader3, partitionDescriptor, 0);
-                PartitionEncoder.encode(partitionDescriptor, path);
-                Assert.assertTrue(Files.exists(path.$()));
-
-                // Now test reading all files with a glob pattern
-                // Use absolute path to ensure proper path handling
-                String absoluteGlobPath = root + "/data_*.parquet";
-                sink.clear();
-                sink.put("select * from read_parquet('" + absoluteGlobPath + "') order by id");
-
-                // We should get 15 rows total (5 from each file) with correct IDs and sources
-                assertQueryNoLeakCheck(
-                        """
-                                id\tsource
-                                1\tfile1
-                                2\tfile1
-                                3\tfile1
-                                4\tfile1
-                                5\tfile1
-                                6\tfile2
-                                7\tfile2
-                                8\tfile2
-                                9\tfile2
-                                10\tfile2
-                                11\tfile3
-                                12\tfile3
-                                13\tfile3
-                                14\tfile3
-                                15\tfile3
-                                """,
-                        sink.toString(),
-                        null
                 );
             }
         });
