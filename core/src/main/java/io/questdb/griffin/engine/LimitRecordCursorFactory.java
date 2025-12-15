@@ -106,7 +106,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         if (isCursorOpen && leftFunc != null && leftFunc.getLong(null) != Numbers.LONG_NULL) {
-            if (cursor.areBoundsResolved && cursor.areRowsCounted) {
+            if (cursor.areBoundsResolved() && cursor.isBaseSizeKnown()) {
                 sink.meta("skip-rows").val(cursor.baseRowsToSkip);
                 sink.meta("take-rows").val(cursor.baseRowsToTake);
             } else {
@@ -152,12 +152,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private final RecordCursor.Counter counter = new Counter();
         private final Function leftFunction;
         private final Function rightFunction;
-        private boolean areBoundsResolved;
-        private boolean areRowsCounted;
         private RecordCursor base;
-        private long baseRowCount;
         private long baseRowsToSkip;
         private long baseRowsToTake;
+        private long baseSize;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long hi;
         private boolean isSuspendableOpInProgress;
@@ -173,11 +171,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter sizeCounter) {
-            if (areBoundsResolved && areRowsCounted) {
+            if (areBoundsResolved() && isBaseSizeKnown()) {
                 sizeCounter.add(remaining);
             } else {
                 ensureBoundsResolved();
-                if (areRowsCounted) {
+                if (isBaseSizeKnown()) {
                     sizeCounter.add(remaining);
                 } else {
                     // TODO [mtopol]: the commented-out code would be more efficient, a single call to base.skipRows()
@@ -269,18 +267,17 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
-            baseRowCount = -1;
+            baseSize = -1;
             size = -1;
             isSuspendableOpInProgress = false;
-            baseRowsToSkip = 0;
-            areBoundsResolved = false;
-            areRowsCounted = false;
+            baseRowsToSkip = -1;
+            baseRowsToTake = -1;
             counter.clear();
         }
 
         @Override
         public long preComputedStateSize() {
-            return RecordCursor.fromBool(areRowsCounted) + RecordCursor.fromBool(areBoundsResolved) + base.preComputedStateSize();
+            return RecordCursor.fromBool(isBaseSizeKnown()) + RecordCursor.fromBool(areBoundsResolved()) + base.preComputedStateSize();
         }
 
         @Override
@@ -311,74 +308,70 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
+        private boolean areBoundsResolved() {
+            return baseRowsToTake != -1;
+        }
+
         private void ensureBoundsResolved() {
-            if (!areBoundsResolved) {
+            if (!areBoundsResolved()) {
                 resolveBoundsAndGotoTop();
                 remaining = baseRowsToTake;
             }
         }
 
-        private void ensureRowsCounted() {
-            if (baseRowCount == -1) {
-                baseRowCount = base.size();
-                if (baseRowCount > -1) {
-                    areRowsCounted = true;
-                    return;
-                }
-                baseRowCount = 0;
-            }
-
-            if (!areRowsCounted) {
-                base.toTop();
-                base.calculateSize(circuitBreaker, counter);
-                baseRowCount = counter.get();
-                areRowsCounted = true;
-                counter.clear();
-            }
+        private boolean isBaseSizeKnown() {
+            return baseSize != -1;
         }
 
         private void resolveBoundsAndGotoTop() {
             if (lo == hi) {
                 // There's either a single zero argument (LIMIT 0) or two equal arguments (LIMIT n, n).
                 // In both cases the result is an empty cursor.
-                size = baseRowsToTake = 0;
+                size = baseRowsToSkip = baseRowsToTake = 0;
                 return;
+            }
+            if (baseSize == -1) {
+                baseSize = base.size();
             }
             long startInclusive, endExclusive;
             if (lo < 0 || hi < 0) {
-                // At least one argument is negative. We must compute base cursor's
-                // row count to know how many base cursor's rows we'll skip.
-                ensureRowsCounted();
+                // At least one argument is negative. We must compute base cursor size
+                // to know how many base cursor rows we'll skip.
+                if (baseSize == -1) {
+                    base.toTop();
+                    base.calculateSize(circuitBreaker, counter);
+                    baseSize = counter.get();
+                    counter.clear();
+                }
                 if (lo < 0) {
-                    startInclusive = baseRowCount + lo;
+                    startInclusive = baseSize + lo;
                     if (hi <= 0) {
-                        endExclusive = baseRowCount + hi;
+                        endExclusive = baseSize + hi;
                     } else {
                         endExclusive = hi;
                     }
                 } else {
                     // (lo < 0) is false, therefore (hi < 0) is true
                     startInclusive = lo;
-                    endExclusive = baseRowCount + hi;
+                    endExclusive = baseSize + hi;
                 }
             } else {
                 startInclusive = lo;
                 endExclusive = hi;
             }
             startInclusive = Math.max(0, startInclusive);
-            if (areRowsCounted) {
-                endExclusive = Math.min(baseRowCount, endExclusive);
+            if (baseSize != -1) {
+                endExclusive = Math.min(baseSize, endExclusive);
             }
             if (startInclusive >= endExclusive) {
-                size = baseRowsToTake = 0;
+                size = baseRowsToSkip = baseRowsToTake = 0;
                 return;
             }
             baseRowsToSkip = startInclusive;
             baseRowsToTake = endExclusive - startInclusive;
-            if (areRowsCounted) {
+            if (baseSize != -1) {
                 size = baseRowsToTake;
             }
-            areBoundsResolved = true;
             toTop();
         }
     }
