@@ -1,4 +1,4 @@
-//! Subcommand `dump`. This subcommand shows the parquet page data information
+//! Subcommand `dump`. This subcommand shows the parquet metadata information
 use parquet2::{
     page::{CompressedPage, DataPageHeader},
     read::{get_page_iterator, read_metadata},
@@ -13,7 +13,6 @@ use crate::{Result, SEPARATOR};
 // The columns to be printed is controlled using the arguments introduced in the command line
 pub fn dump_file<T, W>(
     file_name: T,
-    _sample_size: usize,
     columns: Option<Vec<usize>>,
     writer: &mut W,
 ) -> Result<()>
@@ -93,7 +92,7 @@ mod tests {
         let file_name = "data/sample.parquet";
         let mut buf = Vec::new();
 
-        dump_file(file_name, 1, None, &mut buf).unwrap();
+        dump_file(file_name, None, &mut buf).unwrap();
 
         let string_output = String::from_utf8(buf).unwrap();
         assert!(string_output.contains("Group: 0"));
