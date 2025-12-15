@@ -720,10 +720,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         encoder
             .chunked_writer
             .finish(encoder.additional_data.clone())?;
-        debug_assert!(
-            encoder.current_buffer.len() >= 8,
-            "buffer too small: length header requires 8 bytes"
-        );
         let data_len = (encoder.current_buffer.len() - 8) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
