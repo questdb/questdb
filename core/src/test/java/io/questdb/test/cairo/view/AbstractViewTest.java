@@ -176,7 +176,7 @@ class AbstractViewTest extends AbstractCairoTest {
     }
 
     void compileView(String viewName, String expectedErrorMessage) throws Exception {
-        assertExceptionNoLeakCheck("COMPILE VIEW " + viewName, 14, expectedErrorMessage);
+        assertExceptionNoLeakCheck("COMPILE VIEW " + viewName, "COMPILE VIEW ".length(), expectedErrorMessage);
     }
 
     void createMatView(String matViewName, String matViewQuery) throws SqlException {
