@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -74,6 +76,36 @@ public class SelectedRecord implements Record {
     @Override
     public long getDate(int col) {
         return base.getDate(getColumnIndex(col));
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        base.getDecimal128(getColumnIndex(col), sink);
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return base.getDecimal16(getColumnIndex(col));
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        base.getDecimal256(getColumnIndex(col), sink);
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return base.getDecimal32(getColumnIndex(col));
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return base.getDecimal64(getColumnIndex(col));
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return base.getDecimal8(getColumnIndex(col));
     }
 
     @Override

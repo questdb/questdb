@@ -271,7 +271,7 @@ public class FailureFileFacade implements FilesFacade {
     @Override
     public long length(long fd) {
         if (checkForFailure()) {
-            throw CairoException.critical(Os.errno()).put("Checking file size failed");
+            throw CairoException.critical(Os.errno()).put("[failure-facade] checking file size failed");
         }
         return ff.length(fd);
     }
@@ -433,7 +433,7 @@ public class FailureFileFacade implements FilesFacade {
     @Override
     public void remove(LPSZ name) {
         if (checkForFailure()) {
-            throw CairoException.critical(errno()).put("could not remove [file=").put(name).put(']');
+            throw CairoException.critical(errno()).put("[failure-facade] could not remove [file=").put(name).put(']');
         }
         ff.remove(name);
     }

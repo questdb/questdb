@@ -314,7 +314,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public void madvise(long address, long len, int advise) {
-        if (advise > -1) {
+        if (address != 0 && advise > -1) {
             Files.madvise(address, len, advise);
         }
     }

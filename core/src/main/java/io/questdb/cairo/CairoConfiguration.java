@@ -325,7 +325,7 @@ public interface CairoConfiguration {
 
     long getMatViewRefreshOomRetryTimeout();
 
-    int getMatViewRowsPerQueryEstimate();
+    long getMatViewRowsPerQueryEstimate();
 
     int getMaxCrashFiles();
 
@@ -791,6 +791,20 @@ public interface CairoConfiguration {
     boolean isSqlParallelWindowJoinEnabled();
 
     boolean isTableTypeConversionEnabled();
+
+    /**
+     * When true (the default), TTL enforcement uses the minimum of the max timestamp in the table
+     * and the current wall clock time. This prevents accidental data loss when future timestamps
+     * are inserted into a table with TTL enabled.
+     * <p>
+     * When false, TTL enforcement uses only the max timestamp in the table, which can cause
+     * unexpected partition eviction if future timestamps are inserted.
+     *
+     * @return true if wall clock should be used for TTL enforcement (default), false otherwise
+     */
+    default boolean isTtlWallClockEnabled() {
+        return true;
+    }
 
     /**
      * A compatibility switch that controls validation of sample-by fill type.
