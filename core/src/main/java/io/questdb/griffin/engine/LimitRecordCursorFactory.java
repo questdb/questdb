@@ -106,17 +106,28 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         if (isCursorOpen && leftFunc != null && leftFunc.getLong(null) != Numbers.LONG_NULL) {
-            cursor.ensureBoundsResolved();
-            String skipLabel, takeLabel;
-            if (cursor.areRowsCounted) {
-                skipLabel = "skip-rows";
-                takeLabel = "take-rows";
+            if (cursor.areBoundsResolved && cursor.areRowsCounted) {
+                sink.meta("skip-rows").val(cursor.baseRowsToSkip);
+                sink.meta("take-rows").val(cursor.baseRowsToTake);
             } else {
-                skipLabel = "skip-rows-max";
-                takeLabel = "take-rows-max";
+                long lo = cursor.lo;
+                long hi = cursor.hi;
+                if (lo >= 0 && hi >= 0) {
+                    sink.meta("skip-rows-max").val(lo);
+                    sink.meta("take-rows-max").val(hi - lo);
+                } else if (lo < 0) {
+                    sink.meta("skip-rows").val("baseRows" + lo);
+                    // if lo < 0, hi should always be <= 0, but guard it just in case.
+                    // We don't want any exceptions in toPlan(), so just silently skip unexpected value.
+                    if (hi <= 0) {
+                        sink.meta("take-rows-max").val(hi - lo);
+                    }
+                } else {
+                    // (lo < 0) is false, therefore (hi < 0) is true
+                    sink.meta("skip-rows-max").val(lo);
+                    sink.meta("take-rows").val("baseRows" + (hi - lo));
+                }
             }
-            sink.meta(skipLabel).val(cursor.baseRowsToSkip);
-            sink.meta(takeLabel).val(cursor.baseRowsToTake);
         }
         sink.child(base);
     }
@@ -162,7 +173,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter sizeCounter) {
-            if (areBoundsResolved && areRowsCounted && !isSuspendableOpInProgress) {
+            if (areBoundsResolved && areRowsCounted) {
                 sizeCounter.add(remaining);
             } else {
                 ensureBoundsResolved();
@@ -171,20 +182,20 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 } else {
                     // TODO [mtopol]: the commented-out code would be more efficient, a single call to base.skipRows()
                     // instead of a loop around base.hasNext(). But, skipRows() is broken in PageFrameRecordCursorImpl
-                    // and potentially other places too. It malfunctions when called after partial consumption with
+                    // and potentially other places. It malfunctions when called after partial consumption with
                     // hasNext().
 //                    if (!isSuspendableOpInProgress) {
 //                        counter.set(remaining);
 //                        isSuspendableOpInProgress = true;
 //                    }
-                    while (remaining > 0 && base.hasNext()) {
-                        remaining--;
-                        sizeCounter.inc();
-                    }
 //                    base.skipRows(counter);
 //                    sizeCounter.add(remaining - counter.get());
 //                    counter.clear();
 //                    isSuspendableOpInProgress = false;
+                    while (remaining > 0 && base.hasNext()) {
+                        remaining--;
+                        sizeCounter.inc();
+                    }
                 }
             }
             remaining = 0;
@@ -362,8 +373,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 size = baseRowsToTake = 0;
                 return;
             }
-            baseRowsToTake = endExclusive - startInclusive;
             baseRowsToSkip = startInclusive;
+            baseRowsToTake = endExclusive - startInclusive;
             if (areRowsCounted) {
                 size = baseRowsToTake;
             }
