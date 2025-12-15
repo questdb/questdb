@@ -487,56 +487,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                     "select b from xyz limit 5",
                                     "select ts, b from xyz limit 150",
                             };
-
-                            String[] hostnames = {"localhost", "127.0.0.1"};
-                            int hostnameIndex = 0;
-                            try (TestHttpClient testHttpClient = new TestHttpClient();
-                                 var sink = new DirectUtf8Sink(16_384)
-                            ) {
-                                testHttpClient.setKeepConnection(true);
-                                for (int i = 0; i < 100; i++) {
-                                    int index = rnd.nextInt(queries.length);
-                                    if (rnd.nextInt(100) < 5) {
-                                        hostnameIndex = 1 - hostnameIndex;
-                                    }
-
-                                    // Export to Parquet
-                                    HttpClient.Request req = testHttpClient.getHttpClient().newRequest(hostnames[hostnameIndex], 9001);
-                                    req.GET().url("/exp");
-                                    String query = queries[index];
-                                    req.query("query", query);
-                                    req.query("fmt", "parquet");
-                                    if (rnd.nextBoolean()) {
-                                        req.query("rmode", "nodelay");
-                                    }
-                                    req.query("row_group_size", String.valueOf(10 + rnd.nextInt(1191)));
-                                    sink.clear();
-                                    testHttpClient.reqToSink(req, sink, null, null, null, null);
-                                    int bytesReceived = sink.size();
-
-                                    // Save to file
-                                    String filename = "test_export_" + i + ".parquet";
-                                    Path path = Path.getThreadLocal(root);
-                                    path.concat("export").concat(filename).$();
-                                    Files.mkdirs(path, engine.getConfiguration().getMkDirMode());
-                                    long fd = Files.openRW(path.$(), CairoConfiguration.O_NONE);
-                                    try {
-                                        Files.truncate(fd, bytesReceived);
-                                        long bytesWritten = Files.write(fd, sink.ptr(), bytesReceived, 0);
-                                        Assert.assertEquals(bytesReceived, bytesWritten);
-                                    } finally {
-                                        Files.close(fd);
-                                    }
-
-                                    // Read back using read_parquet() and compare with result of direct query
-                                    String selectFromParquet = "read_parquet('" + filename + "')";
-                                    var expectedSink = new StringSink();
-                                    var actualSink = new StringSink();
-                                    TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
-                                    TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
-                                    TestUtils.assertEquals(expectedSink, actualSink);
-                                }
-                            }
+                            assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, 100, 1191);
                         }
                 );
     }
@@ -702,13 +653,53 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
                     engine.execute("create table test_table (ts TIMESTAMP, x int, sym symbol) timestamp(ts) partition by day wal;");
-                    engine.execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0, 'symA'), ('2020-01-02T00:00:00.000000Z', 1, 'symB')");
+                    engine.execute("insert into test_table " +
+                            "select dateadd('d', ((x-1)/1000)::int, '2020-01-01T00:00:00.000000Z'::timestamp) + ((x-1) % 1000) * 1000000L, " +
+                            "x::int, " +
+                            "case when x % 2 = 0 then 'symA' else 'symB' end " +
+                            "from long_sequence(10000)");
                     drainWalQueue(engine);
-                    engine.execute("alter table test_table convert partition to parquet where ts < '2020-01-02T00:00:00.000000Z'");
+                    assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select day(ts), count(*) from test_table group by day(ts) order by day(ts)",
+                            new StringSink(),
+                            """
+                                    day	count
+                                    1	1000
+                                    2	1000
+                                    3	1000
+                                    4	1000
+                                    5	1000
+                                    6	1000
+                                    7	1000
+                                    8	1000
+                                    9	1000
+                                    10	1000
+                                    """
+                    );
+                    engine.execute("alter table test_table convert partition to parquet where ts in '2020-01-01'");
+                    engine.execute("alter table test_table convert partition to parquet where ts in '2020-01-03'");
+                    engine.execute("alter table test_table convert partition to parquet where ts in '2020-01-05'");
+                    engine.execute("alter table test_table convert partition to parquet where ts in '2020-01-07'");
+                    engine.execute("alter table test_table convert partition to parquet where ts in '2020-01-10'");
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 1142, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 51882, params, "test_table");
+                    params.put("row_group_size", "1000");
+                    testHttpClient.assertGetParquet("/exp", 55397, params, "test_table");
+                    params.put("row_group_size", "500");
+                    testHttpClient.assertGetParquet("/exp", 65163, params, "test_table");
+                    params.put("row_group_size", "999");
+                    testHttpClient.assertGetParquet("/exp", 58728, params, "test_table");
+                    params.put("row_group_size", "201");
+                    testHttpClient.assertGetParquet("/exp", 90393, params, "test_table");
+                    params.put("row_group_size", "2001");
+                    testHttpClient.assertGetParquet("/exp", 54587, params, "test_table");
+                    params.put("row_group_size", "10000");
+                    testHttpClient.assertGetParquet("/exp", 51882, params, "test_table");
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{"test_table"}, 10, 10091);
                 });
     }
 
@@ -1401,6 +1392,15 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                     params.put("row_group_size", "5000");
                     testHttpClient.assertGetParquet("/exp", 5486, params, "SELECT * FROM row_group_valid_test");
+
+                    params.put("row_group_size", "5010");
+                    testHttpClient.assertGetParquet("/exp", 5486, params, "SELECT * FROM row_group_valid_test");
+
+                    params.put("row_group_size", "1500");
+                    testHttpClient.assertGetParquet("/exp", 6343, params, "SELECT * FROM row_group_valid_test");
+
+                    params.put("row_group_size", "1510");
+                    testHttpClient.assertGetParquet("/exp", 6342, params, "SELECT * FROM row_group_valid_test");
                 });
     }
 
@@ -1520,6 +1520,63 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             }
         }
         return req.send();
+    }
+
+    private void assertParquetExportDataCorrectness(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String[] queries,
+            int iterations,
+            int max_row_group
+    ) throws Exception {
+        String[] hostnames = {"localhost", "127.0.0.1"};
+        int hostnameIndex = 0;
+        try (TestHttpClient testHttpClient = new TestHttpClient();
+             var sink = new DirectUtf8Sink(16_384)
+        ) {
+            testHttpClient.setKeepConnection(true);
+            for (int i = 0; i < iterations; i++) {
+                int index = rnd.nextInt(queries.length);
+                if (rnd.nextInt(100) < 5) {
+                    hostnameIndex = 1 - hostnameIndex;
+                }
+
+                // Export to Parquet
+                HttpClient.Request req = testHttpClient.getHttpClient().newRequest(hostnames[hostnameIndex], 9001);
+                req.GET().url("/exp");
+                String query = queries[index];
+                req.query("query", query);
+                req.query("fmt", "parquet");
+                if (rnd.nextBoolean()) {
+                    req.query("rmode", "nodelay");
+                }
+                req.query("row_group_size", String.valueOf(10 + rnd.nextInt(max_row_group)));
+                sink.clear();
+                testHttpClient.reqToSink(req, sink, null, null, null, null);
+                int bytesReceived = sink.size();
+
+                // Save to file
+                String filename = "test_export_" + i + ".parquet";
+                Path path = Path.getThreadLocal(root);
+                path.concat("export").concat(filename).$();
+                Files.mkdirs(path, engine.getConfiguration().getMkDirMode());
+                long fd = Files.openRW(path.$(), CairoConfiguration.O_NONE);
+                try {
+                    Files.truncate(fd, bytesReceived);
+                    long bytesWritten = Files.write(fd, sink.ptr(), bytesReceived, 0);
+                    Assert.assertEquals(bytesReceived, bytesWritten);
+                } finally {
+                    Files.close(fd);
+                }
+
+                String selectFromParquet = "read_parquet('" + filename + "')";
+                var expectedSink = new StringSink();
+                var actualSink = new StringSink();
+                TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
+                TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
+                TestUtils.assertEquals(expectedSink, actualSink);
+            }
+        }
     }
 
     private HttpQueryTestBuilder getExportTester() {
