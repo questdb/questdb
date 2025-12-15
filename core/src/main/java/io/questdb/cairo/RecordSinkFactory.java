@@ -213,13 +213,25 @@ public class RecordSinkFactory {
         switch (copierType) {
             case SINK_TYPE_SINGLE:
                 return generateSingleSink(
-                        asm, columnTypes, columnFilter, keyFunctions, skewIndex,
-                        writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
+                        asm,
+                        columnTypes,
+                        columnFilter,
+                        keyFunctions,
+                        skewIndex,
+                        writeSymbolAsString,
+                        writeStringAsVarchar,
+                        writeTimestampAsNanos
                 );
             case SINK_TYPE_CHUNKED:
                 RecordSink chunked = generateChunkedSink(
-                        asm, columnTypes, columnFilter, keyFunctions, skewIndex,
-                        writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos,
+                        asm,
+                        columnTypes,
+                        columnFilter,
+                        keyFunctions,
+                        skewIndex,
+                        writeSymbolAsString,
+                        writeStringAsVarchar,
+                        writeTimestampAsNanos,
                         methodSizeLimit
                 );
                 if (chunked != null) {
@@ -228,13 +240,23 @@ public class RecordSinkFactory {
                 // Fall through to looping if chunked fails
                 LOG.info().$("forced chunked sink generation failed, falling back to looping sink [columnCount=").$(columnFilter.getColumnCount()).I$();
                 return generateLoopingSink(
-                        columnTypes, columnFilter, keyFunctions, skewIndex,
-                        writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
+                        columnTypes,
+                        columnFilter,
+                        keyFunctions,
+                        skewIndex,
+                        writeSymbolAsString,
+                        writeStringAsVarchar,
+                        writeTimestampAsNanos
                 );
             case SINK_TYPE_LOOPING:
                 return generateLoopingSink(
-                        columnTypes, columnFilter, keyFunctions, skewIndex,
-                        writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
+                        columnTypes,
+                        columnFilter,
+                        keyFunctions,
+                        skewIndex,
+                        writeSymbolAsString,
+                        writeStringAsVarchar,
+                        writeTimestampAsNanos
                 );
         }
 
@@ -296,12 +318,21 @@ public class RecordSinkFactory {
      */
     public static Class<RecordSink> getInstanceClass(
             BytecodeAssembler asm,
-            ColumnTypes columnTypes,
+            @Transient ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable ObjList<Function> keyFunctions,
             @Nullable BitSet writeSymbolAsString
     ) {
-        return getSingleInstanceClass(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null, null);
+        return getSingleInstanceClass(
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                null,
+                writeSymbolAsString,
+                null,
+                null
+        );
     }
 
     /**
@@ -546,8 +577,12 @@ public class RecordSinkFactory {
             @Nullable BitSet writeTimestampAsNanos
     ) {
         LoopingRecordSink sink = new LoopingRecordSink(
-                columnTypes, columnFilter, skewIndex,
-                writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
+                columnTypes,
+                columnFilter,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos
         );
         if (keyFunctions != null) {
             sink.setFunctions(keyFunctions);
@@ -602,8 +637,14 @@ public class RecordSinkFactory {
             @Nullable BitSet writeTimestampAsNanos
     ) {
         final Class<RecordSink> clazz = getSingleInstanceClass(
-                asm, columnTypes, columnFilter, keyFunctions, skewIndex,
-                writeSymbolAsString, writeStringAsVarchar, writeTimestampAsNanos
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar,
+                writeTimestampAsNanos
         );
         return createSink(clazz, keyFunctions);
     }
@@ -1369,9 +1410,9 @@ public class RecordSinkFactory {
 
     private static Class<RecordSink> getSingleInstanceClass(
             BytecodeAssembler asm,
-            ColumnTypes columnTypes,
+            @Transient ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable ObjList<Function> keyFunctions,
             @Transient @Nullable IntList skewIndex,
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
