@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.join.AsyncWindowJoinAtom;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -70,9 +71,10 @@ public class WindowJoinTest extends AbstractCairoTest {
         super.setUp();
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 4);
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 8);
-        AsyncWindowJoinAtom.GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP = TestUtils.generateRandom(LOG).nextBoolean();
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        AsyncWindowJoinAtom.GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP = rnd.nextBoolean();
         sink.clear();
-        includePrevailing = TestUtils.generateRandom(null).nextBoolean();
+        includePrevailing = rnd.nextBoolean();
     }
 
     @Test
