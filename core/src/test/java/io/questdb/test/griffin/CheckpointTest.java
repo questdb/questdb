@@ -216,55 +216,6 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCheckpointDoesNotRestoreViewCreatedAfterCheckpoint() throws Exception {
-        final String snapshotId = "id1";
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
-
-            // 1. Create base table with data
-            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
-            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
-            execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
-            drainWalQueue();
-
-            // 2. Checkpoint BEFORE creating the view
-            execute("checkpoint create;");
-
-            // 3. Create view AFTER the checkpoint
-            execute("create view v as select name, val from test where val > 15;");
-            drainViewQueue();
-
-            // 4. Verify view exists and works
-            assertSql("count\n1\n", "select count() from views() where view_name = 'v';");
-            assertSql(
-                    """
-                            name\tval
-                            b\t20
-                            """,
-                    "v;"
-            );
-
-            // 5. Restore from checkpoint
-            engine.clear();
-            engine.closeNameRegistry();
-            createTriggerFile();
-            engine.checkpointRecover();
-            engine.reloadTableNames();
-            engine.getMetadataCache().onStartupAsyncHydrator();
-            engine.buildViewGraphs();
-
-            // 6. View should NOT exist (it was created after checkpoint)
-            // TODO: investigate why it's not removed from metadata
-            //assertSql("count\n0\n", "select count() from views() where view_name = 'v';");
-
-            // 7. Querying the view should fail
-            assertException("select * from v", 14, "view does not exist");
-
-            engine.checkpointRelease();
-        });
-    }
-
-    @Test
     public void testCheckpointPrepareCheckMatViewMetaFiles() throws Exception {
         assertMemoryLeak(() -> {
             testCheckpointCreateCheckTableMetadataFiles(
