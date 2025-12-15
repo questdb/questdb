@@ -159,7 +159,7 @@ public class LimitTest extends AbstractCairoTest {
                 """;
 
         String query = "select * from y limit 5,";
-        testLimit(expected, expected, query, false);
+        testLimit(expected, expected, query, true);
     }
 
     @Test
@@ -175,7 +175,7 @@ public class LimitTest extends AbstractCairoTest {
                 """;
 
         String query = "select * from y limit ,5";
-        testLimit(expected, expected, query, false);
+        testLimit(expected, expected, query, true);
     }
 
     @Test
@@ -284,7 +284,7 @@ public class LimitTest extends AbstractCairoTest {
                 i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
                 6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.13264287\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE
                 """;
-        testLimit(expected, expected, "select * from y limit 6,5", false);
+        testLimit(expected, expected, "select * from y limit 6,5", true);
     }
 
     @Test
@@ -374,13 +374,13 @@ public class LimitTest extends AbstractCairoTest {
                     query,
                     "timestamp",
                     true,
-                    false
+                    true
             );
 
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit value: $0::long[2] skip-rows-max: 0 take-rows-max: 2
+                            Limit value: $0::long[2] skip-rows: 0 take-rows: 2
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -390,7 +390,7 @@ public class LimitTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from y limit -2",
                     """
-                            Limit value: -2[-2] skip-rows: 58 take-rows: 2
+                            Limit value: -2 skip-rows: 58 take-rows: 2
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -852,11 +852,11 @@ public class LimitTest extends AbstractCairoTest {
                 bindVariableService.setLong("lo", 4);
                 bindVariableService.setInt("hi", 8);
 
-                assertQueryAndCache(expected1, query, "timestamp", true, false);
+                assertQueryAndCache(expected1, query, "timestamp", true, true);
                 bindVariableService.setLong("lo", 6);
                 bindVariableService.setInt("hi", 12);
 
-                assertQueryAndCache(expected2, query, "timestamp", true, false);
+                assertQueryAndCache(expected2, query, "timestamp", true, true);
             } finally {
                 engine.clear();
             }
@@ -898,7 +898,7 @@ public class LimitTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Limit value: 10[10] skip-rows-max: 0 take-rows-max: 10
+                            Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                                 PageFrame
                                     Row backward scan
                                     Interval backward scan on: intervaltest
@@ -1239,7 +1239,7 @@ public class LimitTest extends AbstractCairoTest {
                 5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.021189213\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH
                 """;
 
-        testLimit(expected, expected, "select * from y limit 5", false);
+        testLimit(expected, expected, "select * from y limit 5", true);
     }
 
     @Test
@@ -1254,7 +1254,7 @@ public class LimitTest extends AbstractCairoTest {
                 5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.021189213\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH
                 """;
 
-        testLimit(expected, expected, "select * from y limit 0,5", false);
+        testLimit(expected, expected, "select * from y limit 0,5", true);
     }
 
     @Test
@@ -1306,9 +1306,9 @@ public class LimitTest extends AbstractCairoTest {
                 );
 
                 bindVariableService.setLong(0, 4);
-                assertQueryAndCache(expected1, query, "timestamp", true, false);
+                assertQueryAndCache(expected1, query, "timestamp", true, true);
                 bindVariableService.setLong(0, 6);
-                assertQueryAndCache(expected2, query, "timestamp", true, false);
+                assertQueryAndCache(expected2, query, "timestamp", true, true);
             } finally {
                 engine.clear();
             }
@@ -1364,9 +1364,9 @@ public class LimitTest extends AbstractCairoTest {
                 );
 
                 bindVariableService.setLong("lim", 4);
-                assertQueryAndCache(expected1, query, "timestamp", true, false);
+                assertQueryAndCache(expected1, query, "timestamp", true, true);
                 bindVariableService.setLong("lim", 6);
-                assertQueryAndCache(expected2, query, "timestamp", true, false);
+                assertQueryAndCache(expected2, query, "timestamp", true, true);
             } finally {
                 engine.clear();
             }
@@ -1382,7 +1382,7 @@ public class LimitTest extends AbstractCairoTest {
                 """;
 
         String query = "select * from y limit 4,6";
-        testLimit(expected, expected, query, false);
+        testLimit(expected, expected, query, true);
     }
 
     private static void testLimitDefinesBindVariables0(String sqlText, int bindVarCount) throws SqlException {
