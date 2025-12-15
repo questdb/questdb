@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.BeforeClass;
+import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static org.junit.Assert.fail;
@@ -67,5 +68,15 @@ public class ViewCompileTest extends ViewInvalidationTest {
         // if the view successfully compiles and becomes valid, its children
         // will be compiled recursively too.
         compileView(viewName);
+    }
+
+    @Test
+    public void testCompileViewSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException("compile view", 12, "view name expected");
+
+            execute("create view " + VIEW1 + " as (select 249)");
+            assertException("compile view " + VIEW1 + " bla", 19, "unexpected token [bla]");
+        });
     }
 }

@@ -816,6 +816,11 @@ public class SqlParser {
         final CompileViewModel model = compileViewModelPool.next();
         model.setTableNameExpr(nextLiteral(unquote(tok), lexer.lastTokenPosition()));
 
+        tok = optTok(lexer);
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw errUnexpected(lexer, tok);
+        }
+
         final QueryModel queryModel = queryModelPool.next();
         model.setQueryModel(queryModel);
 
